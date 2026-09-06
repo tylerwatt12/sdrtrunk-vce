@@ -2025,6 +2025,7 @@ function compareTableValues(left, right) {
 
 function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   const row = node('tr');
+  row.tableRowData = data;
   const classes = typeof rowClass === 'function' ? rowClass(data) : rowClass;
   if (classes) row.classList.add(...String(classes).split(/\s+/).filter(Boolean));
   if (rowKey) {
@@ -2038,11 +2039,16 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
     if (title) cell.title = String(title);
     const value = column.render ? column.render(data) : data[column.key];
     cell.append(valueNode(value));
+    if (typeof column.reconcileKey === 'function') {
+      cell.tableReconcileKey = column.reconcileKey(data);
+    }
     row.append(cell);
   });
   if (typeof onRowClick === 'function') {
     row.addEventListener('click', (event) => {
-      if (!event.target.closest('a, button, input, select, textarea, label')) onRowClick(data, row, event);
+      if (!event.target.closest('a, button, input, select, textarea, label')) {
+        onRowClick(row.tableRowData, row, event);
+      }
     });
   }
   return row;
@@ -2197,13 +2203,17 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     tableController.clientSortEnabled : options.sortable !== false;
   const clientSortControls = [];
 
-  const renderBody = () => {
-    body.replaceChildren();
+  const orderedDataRows = () => {
     const orderedRows = clientSort ? [...dataRows].sort((left, right) => {
       const result = compareTableValues(tableSortValue(left, clientSort.column),
         tableSortValue(right, clientSort.column));
       return clientSort.direction === 'asc' ? result : -result;
     }) : dataRows;
+    return orderedRows;
+  };
+
+  const replaceBody = (orderedRows) => {
+    body.replaceChildren();
     if (!orderedRows.length) {
       const row = node('tr');
       const cell = node('td', 'empty', emptyText);
@@ -2214,6 +2224,61 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     }
     orderedRows.forEach((data) => body.append(renderTableRow(data, columns, options.rowKey, options.rowClass,
       options.onRowClick)));
+  };
+
+  const reconcileBody = (orderedRows) => {
+    //Live rows can receive several quality-only updates per second.  Preserve keyed rows and unchanged cells so
+    //links, hover state, and focus do not churn when only a neighboring measurement changes.
+    if (!options.rowKey || !orderedRows.length || body.querySelector('td.empty')) {
+      replaceBody(orderedRows);
+      return;
+    }
+    const incomingKeys = orderedRows.map((data) => options.rowKey(data));
+    if (incomingKeys.some((key) => key === null || key === undefined) ||
+        new Set(incomingKeys.map(String)).size !== incomingKeys.length) {
+      replaceBody(orderedRows);
+      return;
+    }
+    const existing = new Map([...body.children]
+      .filter((row) => row.dataset.id !== undefined)
+      .map((row) => [row.dataset.id, row]));
+    let cursor = body.firstElementChild;
+    const retained = new Set();
+    orderedRows.forEach((data, index) => {
+      const key = String(incomingKeys[index]);
+      const replacement = renderTableRow(data, columns, options.rowKey, options.rowClass,
+        options.onRowClick);
+      let current = existing.get(key);
+      if (current) {
+        retained.add(current);
+        current.tableRowData = data;
+        current.className = replacement.className;
+        const currentCells = [...current.children];
+        const replacementCells = [...replacement.children];
+        replacementCells.forEach((nextCell, cellIndex) => {
+          const previousCell = currentCells[cellIndex];
+          const keyedMatch = nextCell.tableReconcileKey !== undefined &&
+            previousCell?.tableReconcileKey === nextCell.tableReconcileKey;
+          if (!previousCell) current.append(nextCell);
+          else if (!keyedMatch && !previousCell.isEqualNode(nextCell)) previousCell.replaceWith(nextCell);
+        });
+        while (current.children.length > replacementCells.length) current.lastElementChild.remove();
+      } else {
+        current = replacement;
+        retained.add(current);
+      }
+      if (current !== cursor) body.insertBefore(current, cursor);
+      cursor = current.nextElementSibling;
+    });
+    [...body.children].forEach((row) => {
+      if (!retained.has(row)) row.remove();
+    });
+  };
+
+  const renderBody = (reconcile = false) => {
+    const orderedRows = orderedDataRows();
+    if (reconcile) reconcileBody(orderedRows);
+    else replaceBody(orderedRows);
   };
 
   const updateSortIndicators = () => {
@@ -2492,6 +2557,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     replaceRows(rows) {
       dataRows = [...(rows || [])];
       renderBody();
+    },
+    reconcileRows(rows) {
+      dataRows = [...(rows || [])];
+      renderBody(true);
     },
     setEmptyText(value) {
       emptyText = String(value || 'No rows');
@@ -9474,6 +9543,12 @@ function liveDetailSelectionDelta(previous, next) {
   };
 }
 
+function liveDetailSelectionUnchanged(previous, next) {
+  return ['kind', 'role', 'logicalKey', 'transportKey', 'rowKey', 'configurationId',
+    'bindingFrequencyHz', 'bindingTimeslot', 'label', 'channelLabel']
+    .every((field) => previous?.[field] === next?.[field]);
+}
+
 function liveMessageTransportChanged(previous, next) {
   return String(previous?.configurationId || '') !== String(next?.configurationId || '') ||
     Number(previous?.bindingFrequencyHz || 0) !== Number(next?.bindingFrequencyHz || 0);
@@ -13327,6 +13402,16 @@ const LIVE_VOICE_QUALITY_FIELDS = [
   'vc_missing_frames', 'vc_fec_errors', 'vc_fec_protected_bits'
 ];
 
+function liveIdentityRenderKey(row, kind) {
+  return JSON.stringify([
+    row?.[`${kind}_id`], row?.[`${kind}_form`], row?.[`${kind}_alias`],
+    row?.[`${kind}_alias_description`], row?.[`${kind}_alias_display`],
+    row?.[`${kind}_aliases`], row?.[`${kind}_entity_ref`], row?.[`${kind}_matcher`],
+    kind === 'source' ? row?.talker_alias : null, row?.alias_list_id, row?.protocol,
+    row?.decoder, row?.tags, row?.entity_ref, row?.channel_kind, row?.channel_name
+  ]);
+}
+
 function liveRowIsActive(row) {
   const order = Number(row?.activation_order);
   return Number.isSafeInteger(order) && order > 0;
@@ -13464,16 +13549,20 @@ function liveChannelsSection(onSelectionChange) {
       } },
     { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias', width: 220,
       render: (row) => liveAliasValue(row, 'source'), title: (row) => row.source_alias_description || '',
-      sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '' },
+      sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '',
+      reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
     { id: 'source', label: 'Src ID', fullLabel: 'Source ID', width: 105,
-      render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0) },
+      render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0),
+      reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
     { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias', width: 220,
       render: (row) => isAnalogChannel(row) ? liveConventionalChannelValue(row) : liveAliasValue(row, 'target'),
       title: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias_description || '',
-      sortValue: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias || '' },
+      sortValue: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias || '',
+      reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
     { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID', width: 105,
       render: (row) => isAnalogChannel(row) ? '' : liveIdentifierAliasValue(row, 'target'),
-      sortValue: (row) => isAnalogChannel(row) ? 0 : Number(row.target_id || 0) },
+      sortValue: (row) => isAnalogChannel(row) ? 0 : Number(row.target_id || 0),
+      reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
     { id: 'decoder', label: 'Decoder', width: 80, render: (row) => decoderLabel(row.decoder, true),
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
   ];
@@ -13518,12 +13607,12 @@ function liveChannelsSection(onSelectionChange) {
     onSelectionChange(null);
   };
 
-  selectRow = (value, row) => {
+  selectRow = (value, row, renderSelection = true) => {
     if (!value || !row) return;
     const nextSelection = liveDetailRowSelection(value, row);
-    if (!nextSelection) return;
+    if (!nextSelection || liveDetailSelectionUnchanged(selection, nextSelection)) return;
     selection = nextSelection;
-    liveTable.tableController.render();
+    if (renderSelection) liveTable.tableController.render();
     onSelectionChange(selection);
   };
 
@@ -13549,7 +13638,7 @@ function liveChannelsSection(onSelectionChange) {
     if (activeFilter && selection && !incoming.has(selection.rowKey)) clearSelection();
     if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL) {
       const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
-      if (currentControl) selectRow(displayed, currentControl);
+      if (currentControl) selectRow(displayed, currentControl, false);
       else {
         const controlIntent = displayed.rows.find((row) =>
           LIVE_DETAIL_CONTROL_ROLES.has(String(row?.role || '').toUpperCase())) || {
@@ -13561,10 +13650,10 @@ function liveChannelsSection(onSelectionChange) {
       }
     } else if (selection) {
       const selectedRow = incoming.get(selection.rowKey);
-      if (selectedRow) selectRow(displayed, selectedRow);
+      if (selectedRow) selectRow(displayed, selectedRow, false);
       else clearSelection();
     }
-    liveTable.tableController.replaceRows(displayed.rows);
+    liveTable.tableController.reconcileRows(displayed.rows);
   };
 
   const upsertTable = (value) => {
@@ -14349,7 +14438,7 @@ function p25ChannelNeighborColumns() {
     { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
     { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status',
       render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -14382,10 +14471,21 @@ function trunkedChannelNeighborColumns(channel) {
       render: (row) => frequency(row.frequency_hz), className: 'numeric' },
     { id: 'status', label: 'Status', render: (row) => trunkedNeighborStatus(row.statuses) },
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms) }
   ];
+}
+
+function patchMembersByLocalGroup(values) {
+  const members = new Map();
+  (Array.isArray(values) ? values : []).forEach((row) => {
+    const localPatchGroupId = Number(row?.local_patch_group_id);
+    if (!Number.isInteger(localPatchGroupId) || localPatchGroupId <= 0) return;
+    if (!members.has(localPatchGroupId)) members.set(localPatchGroupId, []);
+    members.get(localPatchGroupId).push(row);
+  });
+  return members;
 }
 
 async function renderChannelNeighbors(channel, renderContext) {
@@ -14485,7 +14585,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     ];
     if (!overrideActive) homeBandColumns.push(
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     );
     const bandSource = badge(overrideActive ? 'P25 Override' : 'OTA Bandplan',
@@ -14504,21 +14604,13 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
       { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
   } else if (tab === 'patches') {
     const data = await api(channelApiPath(configurationId, 'patch-groups'));
-    const talkgroups = new Map();
-    const radios = new Map();
-    (data.talkgroups || []).forEach((row) => {
-      if (!talkgroups.has(row.patch_group)) talkgroups.set(row.patch_group, []);
-      talkgroups.get(row.patch_group).push(row);
-    });
-    (data.radios || []).forEach((row) => {
-      if (!radios.has(row.patch_group)) radios.set(row.patch_group, []);
-      radios.get(row.patch_group).push(row);
-    });
+    const talkgroups = patchMembersByLocalGroup(data.talkgroups);
+    const radios = patchMembersByLocalGroup(data.radios);
     const memberValues = (values, formatter) => {
       const span = node('span');
       (values || []).forEach((value, index) => {
@@ -14530,22 +14622,27 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     const groups = data.groups || [];
     const columns = [
       { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup ID',
-        render: (row) => identityNumber(row, row.patch_group),
-        className: 'numeric', sortValue: (row) => Number(row.patch_group) },
-      { id: 'patch-name', label: 'Alias', fullLabel: 'Local Patch Alias', render: (row) => row.patch_alias_name || '',
+        render: (row) => groupIdentityLink(row, row.local_patch_group_id),
+        className: 'numeric', sortValue: (row) => Number(row.local_patch_group_id) },
+      { id: 'patch-name', label: 'Alias', fullLabel: 'Local Patch Alias', render: (row) =>
+        row.patch_alias_name ? groupIdentityLink(row, row.local_patch_group_id, row.patch_alias_name) : '',
         className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
       { id: 'member-talkgroup-ids', label: 'Local TGIDs', fullLabel: 'Local Member Talkgroup IDs', render: (row) =>
-        memberValues(talkgroups.get(row.patch_group), (member) => identityNumber(member, member.talkgroup_id)) },
+        memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
+          groupIdentityLink(member, member.local_talkgroup_id)) },
       { id: 'member-talkgroup-names', label: 'TG Aliases', fullLabel: 'Local Talkgroup Aliases',
         className: 'alias-cell', render: (row) =>
-          memberValues(talkgroups.get(row.patch_group), (member) => member.alias_name || '') },
+          memberValues(talkgroups.get(row.local_patch_group_id), (member) => member.alias_name ?
+            groupIdentityLink(member, member.local_talkgroup_id, member.alias_name) : '') },
       { id: 'member-radio-ids', label: 'Local Radios', fullLabel: 'Local Radio IDs', render: (row) =>
-        memberValues(radios.get(row.patch_group), (member) => identifierNumber(member.radio_id)) },
+        memberValues(radios.get(row.local_patch_group_id), (member) =>
+          radioLink(member, member.local_radio_id)) },
       { id: 'member-radio-names', label: 'Radio Aliases', fullLabel: 'Local Radio Aliases',
         className: 'alias-cell', render: (row) =>
-          memberValues(radios.get(row.patch_group), (member) => member.alias_name || '') },
+          memberValues(radios.get(row.local_patch_group_id), (member) => member.alias_name ?
+            radioLink(member, member.local_radio_id, member.alias_name) : '') },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (groups.some((row) => Number(row.version))) columns.splice(2, 0,

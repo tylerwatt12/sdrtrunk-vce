@@ -37,6 +37,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
+        contract("channel patches", "channel-patches.test.js", APP_JAVASCRIPT),
         contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),
         contract("page lifecycle", "page-lifecycle.test.js", PAGE_LIFECYCLE),
         contract("radio identity presentation", "radio-identity-presentation.test.js", APP_JAVASCRIPT),

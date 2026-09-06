@@ -46,6 +46,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveRowIsActive')}
   ${functionSource('livePresentedRow')}
   ${functionSource('livePresentedTableRows')}
+  ${functionSource('liveIdentityRenderKey')}
+  ${functionSource('liveDetailSelectionUnchanged')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -53,7 +55,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('groupIdentityLabel')}
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
-    liveIdentityType, liveIdentityLabel, rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
+    liveIdentityRenderKey, liveDetailSelectionUnchanged, liveIdentityType, liveIdentityLabel,
+    rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
 
 const preferences = {
@@ -83,6 +86,23 @@ assert.equal(behavior.activityTargetKind({ target_kind: 'patch_group' }), 'patch
 assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgroup');
 assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');
 assert.equal(behavior.activityTargetKind({ target_kind: 'channel' }), '');
+
+const sourceIdentity = {
+  source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1, alias_list_id: 2 }],
+  source_entity_ref: { kind: 'radio', identity_key: 'v1-r-bee00-49f-1201' },
+  protocol: 'P25', signal_dbfs: -71, decode_health_pct: 99
+};
+assert.equal(behavior.liveIdentityRenderKey(sourceIdentity, 'source'),
+  behavior.liveIdentityRenderKey({ ...sourceIdentity, signal_dbfs: -82, decode_health_pct: 91 }, 'source'),
+  'Signal and decode updates must not replace an unchanged source cell');
+assert.notEqual(behavior.liveIdentityRenderKey(sourceIdentity, 'source'),
+  behavior.liveIdentityRenderKey({ ...sourceIdentity, source_id: '1202' }, 'source'));
+const selected = { kind: 'CONTROL', role: 'CURRENT_CONTROL', logicalKey: 'CONTROL:channel',
+  transportKey: 'channel:851012500:', rowKey: 'control', configurationId: 'channel',
+  bindingFrequencyHz: 851012500, bindingTimeslot: null, label: 'Site', channelLabel: 'Site · LCN 1' };
+assert.equal(behavior.liveDetailSelectionUnchanged(selected, { ...selected }), true);
+assert.equal(behavior.liveDetailSelectionUnchanged(selected,
+  { ...selected, transportKey: 'channel:852012500:', bindingFrequencyHz: 852012500 }), false);
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);
@@ -147,6 +167,10 @@ assert.doesNotMatch(channels, /activeRowOrders|activeOrders/,
   'Frontend ordering must come from the authoritative snapshot without duplicate state');
 assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
   'Conventional tables stay sortable while active-only trunked tables retain activation order');
+assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)/,
+  'Repeated snapshots must not redispatch an unchanged selected row');
+assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.rows\)/,
+  'Live updates must reconcile stable row cells instead of rebuilding the table body');
 assert.match(channels, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
 assert.match(channels, /if \(activeFilter && selection && !incoming\.has\(selection\.rowKey\)\) clearSelection\(\)/);

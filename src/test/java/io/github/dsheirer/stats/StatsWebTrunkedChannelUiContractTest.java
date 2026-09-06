@@ -107,7 +107,7 @@ class StatsWebTrunkedChannelUiContractTest
     }
 
     @Test
-    void presentsPatchTelemetryAsUnlinkedLocalEvidence() throws Exception
+    void presentsPatchTelemetryWithCanonicalFieldsAndIdentityLinks() throws Exception
     {
         String source = source();
         int patches = source.indexOf("tab === 'patches'");
@@ -119,12 +119,14 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(patchPresentation.contains("label: 'Local Patch'"));
         assertTrue(patchPresentation.contains("label: 'Local TGIDs'"));
         assertTrue(patchPresentation.contains("label: 'Local Radios'"));
-        assertTrue(patchPresentation.contains("identityNumber(row, row.patch_group)"));
-        assertTrue(patchPresentation.contains("identityNumber(member, member.talkgroup_id)"));
-        assertTrue(patchPresentation.contains("identifierNumber(member.radio_id)"));
-        assertFalse(patchPresentation.contains("groupIdentityLink("));
-        assertFalse(patchPresentation.contains("radioLink("));
-        assertFalse(patchPresentation.contains("entity_ref"));
+        assertTrue(patchPresentation.contains("patchMembersByLocalGroup(data.talkgroups)"));
+        assertTrue(patchPresentation.contains("patchMembersByLocalGroup(data.radios)"));
+        assertTrue(patchPresentation.contains("groupIdentityLink(row, row.local_patch_group_id)"));
+        assertTrue(patchPresentation.contains("groupIdentityLink(member, member.local_talkgroup_id)"));
+        assertTrue(patchPresentation.contains("radioLink(member, member.local_radio_id)"));
+        assertFalse(patchPresentation.contains("row.patch_group"));
+        assertFalse(patchPresentation.contains("member.talkgroup_id"));
+        assertFalse(patchPresentation.contains("member.radio_id"));
     }
 
     @Test
@@ -222,7 +224,8 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(channel.contains("data.band_source === 'P25_OVERRIDE'"));
         assertTrue(channel.contains("overrideActive ? 'P25 Override' : 'OTA Bandplan'"));
         assertTrue(channel.contains("if (!overrideActive) homeBandColumns.push("));
-        assertTrue(channel.contains("label: 'Obs'"));
+        assertTrue(channel.contains("label: 'Observations'"));
+        assertFalse(channel.contains("label: 'Obs'"));
         assertTrue(channel.contains("label: 'Seen'"));
         assertFalse(channel.contains("label: 'Source'"));
     }

@@ -3231,6 +3231,11 @@ class StatsWebDatabase
             mAliasResolver.enrichTalkgroups(connection, groups, "local_patch_group_id", "patch_alias_");
             mAliasResolver.enrichTalkgroups(connection, talkgroups, "local_talkgroup_id", "alias_");
             mAliasResolver.enrichRadios(connection, radios, "local_radio_id", "alias_");
+            groups.forEach(row -> putP25IdentityReference(row, IDENTITY_KIND_PATCH_GROUP,
+                "local_patch_group_id"));
+            talkgroups.forEach(row -> putP25IdentityReference(row, IDENTITY_KIND_TALKGROUP,
+                "local_talkgroup_id"));
+            radios.forEach(row -> putP25IdentityReference(row, IDENTITY_KIND_RADIO, "local_radio_id"));
 
             for(Map<String,Object> group: groups)
             {
@@ -3250,6 +3255,45 @@ class StatsWebDatabase
             return trunkedChannelPatchResponse(groups, talkgroups, radios, groupLimit, offset, hasMore,
                 membersTruncated);
         });
+    }
+
+    /**
+     * Site patch telemetry stores protocol-local identifiers.  Once its owning P25 radio system is known, the
+     * complete home tuple makes those identifiers safe to expose as canonical browser-navigation references.
+     */
+    private static void putP25IdentityReference(Map<String,Object> row, int identityKind, String identifierField)
+    {
+        if(row == null || number(row.get("protocol_code")) != StatsApiProtocol.P25.databaseCode())
+        {
+            return;
+        }
+
+        String radioSystemKey = textValue(row.get("radio_system_key"));
+        int wacn = (int)number(row.get("wacn"));
+        int systemId = (int)number(row.get("system_id"));
+        int identifier = (int)number(row.get(identifierField));
+
+        if(radioSystemKey.isBlank())
+        {
+            return;
+        }
+
+        try
+        {
+            String identityKey = RadioSystemIdentityKey.format(identityKind, wacn, systemId, identifier);
+            WebEntityRef reference = switch(identityKind)
+            {
+                case IDENTITY_KIND_TALKGROUP -> WebEntityRef.talkgroup(radioSystemKey, identityKey);
+                case IDENTITY_KIND_PATCH_GROUP -> WebEntityRef.patchGroup(radioSystemKey, identityKey);
+                case IDENTITY_KIND_RADIO -> WebEntityRef.radio(radioSystemKey, identityKey);
+                default -> null;
+            };
+            WebEntityRef.put(row, reference);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            //Reserved or malformed identifiers remain visible as local telemetry but are not linkable.
+        }
     }
 
     private static Map<String,Object> trunkedChannelPatchResponse(List<Map<String,Object>> groups,

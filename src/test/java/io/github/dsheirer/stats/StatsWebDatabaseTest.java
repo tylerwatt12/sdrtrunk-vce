@@ -563,7 +563,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void p25PatchTelemetryRemainsUnlinkedLocalEvidence() throws Exception
+    void p25PatchTelemetryUsesCanonicalLocalFieldsAndNavigableSystemIdentities() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -597,9 +597,12 @@ class StatsWebDatabaseTest
         assertEquals(500, number(patch.get("local_patch_group_id")));
         assertEquals(101, number(talkgroup.get("local_talkgroup_id")));
         assertEquals(202, number(radio.get("local_radio_id")));
-        assertFalse(patch.containsKey("entity_ref"));
-        assertFalse(talkgroup.containsKey("entity_ref"));
-        assertFalse(radio.containsKey("entity_ref"));
+        assertEquals(Map.of("kind", "patch_group", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", "v1-p-bee00-49f-500"), patch.get("entity_ref"));
+        assertEquals(Map.of("kind", "talkgroup", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", "v1-g-bee00-49f-101"), talkgroup.get("entity_ref"));
+        assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
+            "identity_key", "v1-r-bee00-49f-202"), radio.get("entity_ref"));
     }
 
     @Test
