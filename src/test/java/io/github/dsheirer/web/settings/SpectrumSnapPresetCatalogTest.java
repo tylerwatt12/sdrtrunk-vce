@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,7 @@ class SpectrumSnapPresetCatalogTest
         SpectrumSnapPresetCatalog.Country country = SpectrumSnapPresetCatalog.requireCountry("us");
         assertEquals("US", country.code());
         assertEquals("United States", country.label());
-        assertEquals(40, country.scopes().size());
+        assertEquals(41, country.scopes().size());
 
         SpectrumSnapPresetCatalog.Scope cb = scope(country, "cb");
         assertEquals("CHANNELS", cb.snap().kind());
@@ -28,10 +29,16 @@ class SpectrumSnapPresetCatalogTest
         assertTrue(frsGmrs.snap().frequenciesHz().contains(462_562_500L));
         assertTrue(frsGmrs.snap().frequenciesHz().contains(467_725_000L));
 
-        SpectrumSnapPresetCatalog.Scope murs = scope(country, "murs");
-        assertEquals(5, murs.snap().frequenciesHz().size());
-        assertTrue(murs.snap().frequenciesHz().contains(151_820_000L));
-        assertTrue(murs.snap().frequenciesHz().contains(154_600_000L));
+        SpectrumSnapPresetCatalog.Scope mursLower = scope(country, "murs-lower");
+        SpectrumSnapPresetCatalog.Scope mursUpper = scope(country, "murs-upper");
+        assertEquals(List.of(151_820_000L, 151_880_000L, 151_940_000L), mursLower.snap().frequenciesHz());
+        assertEquals(List.of(154_570_000L, 154_600_000L), mursUpper.snap().frequenciesHz());
+        assertEquals(151_820_000L, mursLower.minHz());
+        assertEquals(151_940_000L, mursLower.maxHz());
+        assertEquals(154_570_000L, mursUpper.minHz());
+        assertEquals(154_600_000L, mursUpper.maxHz());
+        assertEquals(15_000L, mursLower.snap().matchToleranceHz());
+        assertEquals(15_000L, mursUpper.snap().matchToleranceHz());
 
         SpectrumSnapPresetCatalog.Scope noaa = scope(country, "noaa-weather");
         assertEquals(25_000, noaa.snap().stepHz());
