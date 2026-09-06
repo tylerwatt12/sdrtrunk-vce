@@ -90,6 +90,10 @@ class StatsWebAliasCatalogUiContractTest
         assertFalse(tabs.contains("'System Evidence'"));
         assertTrue(view.contains("['calls', 'evidence']"));
         assertTrue(view.contains("'activity' : route.get('aliasTab')"));
+        assertTrue(function(source, "function aliasEditorDefaultOrder(view)")
+            .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
+        assertTrue(function(source, "async function renderAliases()")
+            .contains("sort: route.get('sort') || defaultOrder.sort"));
         assertTrue(columns.contains("view === 'activity'"));
         assertFalse(columns.contains("view === 'calls'"));
         assertFalse(columns.contains("view === 'evidence'"));

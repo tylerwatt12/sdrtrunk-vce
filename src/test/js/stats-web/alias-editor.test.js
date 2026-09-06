@@ -57,6 +57,7 @@ vm.runInContext(`
   ${functionSource('function aliasOptionLimit(options, name)')}
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
+  ${functionSource('function aliasEditorDefaultOrder(view)')}
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
@@ -76,6 +77,7 @@ vm.runInContext(`
   globalThis.optionLimit = aliasOptionLimit;
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
+  globalThis.editorDefaultOrder = aliasEditorDefaultOrder;
   globalThis.transferListDefaults = aliasTransferListDefaults;
   globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
   globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
@@ -146,6 +148,17 @@ assert.equal(context.streamOptionSelected(true, false, false, true), true,
   'A clone must preserve a valid stream omitted by bounded suggestions.');
 assert.equal(context.streamOptionSelected(true, false, false, false), false,
   'A clone should not preserve a stream confirmed absent from the complete options response.');
+assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('activity'))),
+  { sort: 'logical_call_count', direction: 'desc' },
+  'The Activity view must initially rank aliases by highest call count.');
+assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure'))),
+  { sort: 'name', direction: 'asc' },
+  'Configuration views must retain their alphabetical default.');
+const aliasRenderer = functionSource('async function renderAliases()');
+assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
+  'Explicit routed sorting must take precedence over the view default.');
+assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
+  'The table indicator must match the order requested from the server.');
 
 const transferDefaults = context.transferListDefaults({ unmatched_talkgroup_policy: {
   recordable: true, scan_list_ids: [2], broadcast_configuration_ids: ['stream-1']

@@ -3151,6 +3151,11 @@ function aliasEditorView(selectedList) {
   return allowed.includes(requested) ? requested : 'configure';
 }
 
+function aliasEditorDefaultOrder(view) {
+  return view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' } :
+    { sort: 'name', direction: 'asc' };
+}
+
 function aliasEditorViewTabs(selectedList) {
   const id = aliasListId(selectedList);
   const active = aliasEditorView(selectedList);
@@ -5611,6 +5616,7 @@ async function renderAliases() {
   }
 
   const view = aliasEditorView(selectedList);
+  const defaultOrder = aliasEditorDefaultOrder(view);
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
@@ -5620,7 +5626,9 @@ async function renderAliases() {
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
       pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
-      pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}) }));
+      pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
+        sort: route.get('sort') || defaultOrder.sort,
+        direction: route.get('direction') || defaultOrder.direction }));
   const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
@@ -5699,7 +5707,8 @@ async function renderAliases() {
   const renderTable = () => {
     const aliasTable = table(rows, columnsForView(), 'No aliases match these filters', {
       type: `alias-editor-${view}`, serverSort: true, sortable: false,
-      defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
+      defaultSort: defaultOrder.sort, defaultDirection: defaultOrder.direction,
+      rowKey: (row) => row.alias_id,
       defaultHiddenColumns: view === 'custom' ? definitions
         .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_COLUMNS.includes(id)) : [],
       layoutMenuHost: actions,
