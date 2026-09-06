@@ -29,6 +29,7 @@ public class EnrichedSite implements Comparable<EnrichedSite>
 {
     private Site mSite;
     private CountyInfo mCountyInfo;
+    private String mCountyName;
 
     /**
      * Constructs an instance
@@ -39,7 +40,17 @@ public class EnrichedSite implements Comparable<EnrichedSite>
     public EnrichedSite(Site site, CountyInfo countyInfo)
     {
         mSite = site;
-        mCountyInfo = countyInfo;
+        setCountyInfo(countyInfo);
+    }
+
+    /**
+     * Creates a site joined to the lightweight county name supplied by the RadioReference system information.
+     */
+    public static EnrichedSite withCountyName(Site site, String countyName)
+    {
+        EnrichedSite enrichedSite = new EnrichedSite(site, null);
+        enrichedSite.mCountyName = countyName;
+        return enrichedSite;
     }
 
     public static String format(int value)
@@ -87,6 +98,7 @@ public class EnrichedSite implements Comparable<EnrichedSite>
     public void setCountyInfo(CountyInfo countyInfo)
     {
         mCountyInfo = countyInfo;
+        mCountyName = countyInfo != null ? countyInfo.getName() : null;
     }
 
     /**
@@ -133,12 +145,7 @@ public class EnrichedSite implements Comparable<EnrichedSite>
      */
     public String getCountyName()
     {
-        if(mCountyInfo != null)
-        {
-            return mCountyInfo.getName();
-        }
-
-        return null;
+        return mCountyName;
     }
 
     /**

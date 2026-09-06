@@ -131,8 +131,7 @@ public class SystemSiteSelectionEditor extends GridPane
     }
 
     /**
-     * Replaces the displayed sites without resetting the selected system.  This is used when optional county names
-     * arrive after the sites themselves have already been rendered.
+     * Replaces the displayed sites without resetting the selected system.
      */
     public void updateSites(List<EnrichedSite> sites)
     {

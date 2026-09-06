@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.RadioReferenceException;
+import io.github.dsheirer.rrapi.type.County;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Site;
@@ -36,6 +37,7 @@ import io.github.dsheirer.service.radioreference.RadioReference;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -299,7 +301,6 @@ public class SystemEditor extends VBox
         try
         {
             List<Site> sites = mRadioReference.getService().getSites(system.getSystemId());
-            List<EnrichedSite> displaySites = enrich(sites, Map.of());
             SystemInformation systemInformation = null;
 
             try
@@ -313,6 +314,8 @@ public class SystemEditor extends VBox
                     system.getSystemId(), t);
             }
 
+            Map<Integer,String> countyNames = resolveCountyNames(system, sites, systemInformation, requestSequence);
+            List<EnrichedSite> displaySites = enrich(sites, countyNames);
             SystemInformation finalSystemInformation = systemInformation;
             Platform.runLater(() -> {
                 if(isCurrentSystemRequest(system, requestSequence))
@@ -321,8 +324,6 @@ public class SystemEditor extends VBox
                         finalSystemInformation);
                 }
             });
-
-            enrichCountyNames(system, sites, requestSequence);
         }
         catch(Exception t)
         {
@@ -388,31 +389,21 @@ public class SystemEditor extends VBox
     }
 
     /**
-     * Resolves distinct county names on four bounded workers.  The initial site table is already visible while this
-     * optional work runs, and any individual county failure leaves only that county name blank.
+     * Resolves site county names from the system information that has already been retrieved.  A system response can
+     * occasionally omit a county referenced by one of its sites, so only those missing IDs use the legacy county-info
+     * endpoint.  The caller does not publish the site table until this bounded fallback is complete.
      */
-    private void enrichCountyNames(System system, List<Site> sites, int requestSequence)
+    private Map<Integer,String> resolveCountyNames(System system, List<Site> sites,
+                                                   SystemInformation systemInformation, int requestSequence)
     {
-        Set<Integer> distinctCountyIds = new LinkedHashSet<>();
+        Map<Integer,String> countyNames = new java.util.concurrent.ConcurrentHashMap<>(countyNames(systemInformation));
+        List<Integer> countyIds = unresolvedCountyIds(sites, countyNames);
 
-        for(Site site: sites)
+        if(countyIds.isEmpty())
         {
-            int countyId = site.getCountyId();
-
-            //Temporary sites whose location is unknown can use this undocumented sentinel value.
-            if(countyId > 0 && countyId != 99999)
-            {
-                distinctCountyIds.add(countyId);
-            }
+            return countyNames;
         }
 
-        if(distinctCountyIds.isEmpty())
-        {
-            return;
-        }
-
-        List<Integer> countyIds = new ArrayList<>(distinctCountyIds);
-        Map<Integer,CountyInfo> counties = new java.util.concurrent.ConcurrentHashMap<>();
         AtomicInteger failedCount = new AtomicInteger();
         int workerCount = Math.min(4, countyIds.size());
         List<CompletableFuture<Void>> workers = new ArrayList<>(workerCount);
@@ -436,7 +427,12 @@ public class SystemEditor extends VBox
 
                         if(countyInfo != null)
                         {
-                            counties.put(countyId, countyInfo);
+                            String countyName = countyInfo.getName();
+
+                            if(countyName != null && !countyName.isBlank())
+                            {
+                                countyNames.put(countyId, countyName);
+                            }
                         }
                     }
                     catch(Exception t)
@@ -448,30 +444,67 @@ public class SystemEditor extends VBox
             }, ThreadPool.CACHED));
         }
 
-        CompletableFuture.allOf(workers.toArray(CompletableFuture[]::new)).whenComplete((ignored, failure) -> {
-            if(failedCount.get() > 0)
-            {
-                mLog.warn("{} of {} optional RadioReference county lookups failed for system ID {}",
-                    failedCount.get(), countyIds.size(), system.getSystemId());
-            }
+        CompletableFuture.allOf(workers.toArray(CompletableFuture[]::new)).join();
 
-            List<EnrichedSite> enrichedSites = enrich(sites, counties);
-            Platform.runLater(() -> {
-                if(isCurrentSystemRequest(system, requestSequence))
-                {
-                    getSystemSiteSelectionEditor().updateSites(enrichedSites);
-                }
-            });
-        });
+        if(failedCount.get() > 0)
+        {
+            mLog.warn("{} of {} fallback RadioReference county lookups failed for system ID {}",
+                failedCount.get(), countyIds.size(), system.getSystemId());
+        }
+
+        return countyNames;
     }
 
-    private static List<EnrichedSite> enrich(List<Site> sites, Map<Integer,CountyInfo> counties)
+    /**
+     * Finds distinct, valid site county IDs that were absent from the system-information county directory.
+     */
+    static List<Integer> unresolvedCountyIds(List<Site> sites, Map<Integer,String> countyNames)
+    {
+        Set<Integer> unresolved = new LinkedHashSet<>();
+
+        for(Site site: sites)
+        {
+            int countyId = site.getCountyId();
+
+            //Temporary sites whose location is unknown can use this undocumented sentinel value.
+            if(countyId > 0 && countyId != 99999 && !countyNames.containsKey(countyId))
+            {
+                unresolved.add(countyId);
+            }
+        }
+
+        return new ArrayList<>(unresolved);
+    }
+
+    /**
+     * Extracts the lightweight county directory included in a RadioReference system-information response.
+     */
+    static Map<Integer,String> countyNames(SystemInformation systemInformation)
+    {
+        Map<Integer,String> countyNames = new LinkedHashMap<>();
+
+        if(systemInformation != null && systemInformation.getCounties() != null)
+        {
+            for(County county: systemInformation.getCounties())
+            {
+                if(county != null && county.getCountyId() > 0 && county.getName() != null &&
+                    !county.getName().isBlank())
+                {
+                    countyNames.putIfAbsent(county.getCountyId(), county.getName());
+                }
+            }
+        }
+
+        return countyNames;
+    }
+
+    static List<EnrichedSite> enrich(List<Site> sites, Map<Integer,String> countyNames)
     {
         List<EnrichedSite> enrichedSites = new ArrayList<>(sites.size());
 
         for(Site site: sites)
         {
-            enrichedSites.add(new EnrichedSite(site, counties.get(site.getCountyId())));
+            enrichedSites.add(EnrichedSite.withCountyName(site, countyNames.get(site.getCountyId())));
         }
 
         return enrichedSites;

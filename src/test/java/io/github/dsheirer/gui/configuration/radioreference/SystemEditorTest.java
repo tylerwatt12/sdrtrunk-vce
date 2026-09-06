@@ -12,11 +12,16 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.github.dsheirer.rrapi.type.County;
+import io.github.dsheirer.rrapi.type.Site;
 import io.github.dsheirer.rrapi.type.System;
+import io.github.dsheirer.rrapi.type.SystemInformation;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class SystemEditorTest
@@ -41,6 +46,59 @@ class SystemEditorTest
 
         assertEquals(List.of(alpha, zulu, unknown),
             SystemEditor.sortedSystems(List.of(unknown, zulu, alpha)));
+    }
+
+    @Test
+    void joinsSiteCountyNamesFromAlreadyLoadedSystemInformation()
+    {
+        County first = county(101, "Alpha County");
+        County second = county(202, "Bravo County");
+        SystemInformation systemInformation = new SystemInformation();
+        systemInformation.setCounties(List.of(first, second));
+
+        Map<Integer,String> countyNames = SystemEditor.countyNames(systemInformation);
+        List<EnrichedSite> sites = SystemEditor.enrich(List.of(site(1, 202), site(2, 101)), countyNames);
+
+        assertEquals(Map.of(101, "Alpha County", 202, "Bravo County"), countyNames);
+        assertEquals("Bravo County", sites.get(0).getCountyName());
+        assertEquals("Alpha County", sites.get(1).getCountyName());
+    }
+
+    @Test
+    void leavesUnknownAndSentinelSiteCountiesBlank()
+    {
+        SystemInformation systemInformation = new SystemInformation();
+        systemInformation.setCounties(List.of(county(101, "Known County")));
+
+        List<EnrichedSite> sites = SystemEditor.enrich(List.of(site(1, 0), site(2, 99999)),
+            SystemEditor.countyNames(systemInformation));
+
+        assertNull(sites.get(0).getCountyName());
+        assertNull(sites.get(1).getCountyName());
+    }
+
+    @Test
+    void requestsFallbackOnlyForDistinctCountyIdsMissingFromSystemInformation()
+    {
+        List<Site> sites = List.of(site(1, 101), site(2, 202), site(3, 202), site(4, 0), site(5, 99999));
+
+        assertEquals(List.of(202), SystemEditor.unresolvedCountyIds(sites, Map.of(101, "Known County")));
+    }
+
+    private static County county(int id, String name)
+    {
+        County county = new County();
+        county.setCountyId(id);
+        county.setName(name);
+        return county;
+    }
+
+    private static Site site(int id, int countyId)
+    {
+        Site site = new Site();
+        site.setSiteId(id);
+        site.setCountyId(countyId);
+        return site;
     }
 
     private static System system(int id, String name, String lastUpdated)
