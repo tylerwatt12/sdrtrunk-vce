@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
@@ -83,6 +84,11 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
     private NativeBufferProcessor mBufferProcessor;
     private final Object mChannelizerLock = new Object();
+    private final AtomicBoolean mBufferListenerReconciliationInProgress = new AtomicBoolean();
+    private volatile boolean mBufferListenerDesired;
+    private volatile boolean mBufferListenerRegistered;
+    private volatile boolean mBufferProcessorDisposed;
+    private volatile boolean mDisposed;
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
     private TunerController mTunerController;
     private volatile boolean mRunning = true;
@@ -324,15 +330,82 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      */
     public void dispose()
     {
-        mRunning = false;
-
         synchronized(mChannelizerLock)
         {
-            mNativeBufferProvider.removeBufferListener(mBufferProcessor);
-            mBufferProcessor.dispose();
+            mRunning = false;
+            mBufferListenerDesired = false;
+            mDisposed = true;
         }
 
+        //A provider callback can acquire the tuner controller lock.  Reconcile only after releasing the channelizer
+        //lock; if another transition is active it observes the disposed state and completes this cleanup itself.
+        reconcileBufferListenerRegistration();
+
         mSourceEventBroadcaster.clear();
+    }
+
+    /**
+     * Reconciles the desired tuner-listener state without holding the channelizer lock.  Provider callbacks can take
+     * the tuner controller lock, while channel allocation takes the tuner lock before the channelizer lock.  Keeping
+     * those callbacks outside the channelizer lock prevents that lock order from being reversed.
+     *
+     * The atomic token serializes provider transitions without making a competing receiver lifecycle caller wait.
+     * The active reconciler rechecks the desired state after every callback, so a start/stop race converges on the
+     * newest state instead of leaving a stale listener registered.
+     */
+    private void reconcileBufferListenerRegistration()
+    {
+        while(mBufferListenerReconciliationInProgress.compareAndSet(false, true))
+        {
+            try
+            {
+                boolean shouldRegister = mBufferListenerDesired && !mDisposed;
+
+                if(shouldRegister && !mBufferListenerRegistered)
+                {
+                    mBufferProcessor.start();
+
+                    try
+                    {
+                        mNativeBufferProvider.addBufferListener(mBufferProcessor);
+                        mBufferListenerRegistered = true;
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        mBufferProcessor.stop();
+                        throw exception;
+                    }
+                }
+                else if(!shouldRegister && mBufferListenerRegistered)
+                {
+                    try
+                    {
+                        mNativeBufferProvider.removeBufferListener(mBufferProcessor);
+                    }
+                    finally
+                    {
+                        mBufferListenerRegistered = false;
+                        mBufferProcessor.stop();
+                    }
+                }
+
+                if(mDisposed && !mBufferListenerRegistered && !mBufferProcessorDisposed)
+                {
+                    mBufferProcessor.dispose();
+                    mBufferProcessorDisposed = true;
+                }
+            }
+            finally
+            {
+                mBufferListenerReconciliationInProgress.set(false);
+            }
+
+            if((mBufferListenerDesired && !mDisposed) == mBufferListenerRegistered &&
+                (!mDisposed || mBufferProcessorDisposed))
+            {
+                return;
+            }
+        }
     }
 
     /**
@@ -427,8 +500,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 //If this is the last/only channel, deregister to stop the sample buffers
                 if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() == 0)
                 {
-                    mNativeBufferProvider.removeBufferListener(mBufferProcessor);
-                    mBufferProcessor.stop();
+                    mBufferListenerDesired = false;
                     mPolyphaseChannelizer.stop();
                 }
             }
@@ -437,6 +509,8 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 mChannelLifecycleVersion.incrementAndGet();
             }
         }
+
+        reconcileBufferListenerRegistration();
 
         //Listener callbacks can acquire the tuner controller lock.  Broadcast only after releasing the channelizer
         //lock so channel allocation (tuner -> channelizer) and removal can never deadlock in opposite lock order.
@@ -638,14 +712,14 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 if(mPolyphaseChannelizer.getRegisteredChannelCount() == 1)
                 {
                     mPolyphaseChannelizer.start();
-                    mBufferProcessor.start();
-                    mNativeBufferProvider.addBufferListener(mBufferProcessor);
+                    mBufferListenerDesired = true;
                 }
             }
 
             //Keep external listener work outside mChannelizerLock.  Source allocation callers can already hold the
             //tuner controller lock, so invoking a listener here while locked would recreate the reverse lock order.
             mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(channelCount));
+            reconcileBufferListenerRegistration();
         }
 
         @Override

@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -598,6 +599,108 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
+    void tunerListenerRegistrationDoesNotReverseTheChannelAllocationLockOrder() throws Exception
+    {
+        LockOrderNativeBufferProvider provider = new LockOrderNativeBufferProvider();
+        PolyphaseChannelManager manager = new PolyphaseChannelManager(provider, 100_000_000L, 50_000.0);
+        Field lockField = PolyphaseChannelManager.class.getDeclaredField("mChannelizerLock");
+        lockField.setAccessible(true);
+        provider.mChannelizerLock = lockField.get(manager);
+        PolyphaseChannelSource first = (PolyphaseChannelSource)manager.getChannel(
+            new TunerChannel(100_000_000L, 12_500), "listener lock-order first source");
+        AtomicReference<PolyphaseChannelSource> second = new AtomicReference<>();
+        CountDownLatch tunerLockHeld = new CountDownLatch(1);
+        CountDownLatch allocationComplete = new CountDownLatch(1);
+        Thread allocator = new Thread(() ->
+        {
+            provider.mTunerLock.lock();
+
+            try
+            {
+                tunerLockHeld.countDown();
+
+                if(provider.awaitAddAttempt())
+                {
+                    second.set((PolyphaseChannelSource)manager.getChannel(
+                        new TunerChannel(100_012_500L, 12_500), "listener lock-order competing allocation"));
+                    allocationComplete.countDown();
+                }
+            }
+            finally
+            {
+                provider.mTunerLock.unlock();
+            }
+        }, "tuner-lock allocation regression");
+        Thread starter = new Thread(first::start, "channelizer listener registration regression");
+
+        try
+        {
+            allocator.start();
+            assertTrue(tunerLockHeld.await(5, TimeUnit.SECONDS));
+            starter.start();
+            assertTrue(provider.mAddAttempted.await(5, TimeUnit.SECONDS));
+            assertTrue(allocationComplete.await(1, TimeUnit.SECONDS),
+                "allocation holding the tuner lock must not wait for listener registration holding the channelizer lock");
+            starter.join(TimeUnit.SECONDS.toMillis(5));
+            allocator.join(TimeUnit.SECONDS.toMillis(5));
+            assertFalse(starter.isAlive());
+            assertFalse(allocator.isAlive());
+            assertFalse(provider.mCallbackWhileChannelizerLocked.get(),
+                "tuner listener callbacks must run after the channelizer lock is released");
+            assertTrue(provider.hasBufferListeners());
+        }
+        finally
+        {
+            starter.join(TimeUnit.SECONDS.toMillis(5));
+            allocator.join(TimeUnit.SECONDS.toMillis(5));
+
+            if(first != null)
+            {
+                first.stop();
+            }
+
+            if(second.get() != null)
+            {
+                second.get().stop();
+            }
+
+            manager.dispose();
+        }
+    }
+
+    @Test
+    void tunerListenerStateConvergesWhenTheLastChannelStopsDuringRegistration() throws Exception
+    {
+        BlockingListenerProvider provider = new BlockingListenerProvider();
+        PolyphaseChannelManager manager = new PolyphaseChannelManager(provider, 100_000_000L, 50_000.0);
+        PolyphaseChannelSource source = (PolyphaseChannelSource)manager.getChannel(
+            new TunerChannel(100_000_000L, 12_500), "listener registration stop race");
+        Thread starter = new Thread(source::start, "blocked listener registration");
+
+        try
+        {
+            starter.start();
+            assertTrue(provider.mAddEntered.await(5, TimeUnit.SECONDS));
+            source.stop();
+            provider.mAllowAdd.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(5));
+            assertFalse(starter.isAlive());
+            assertEquals(0, manager.getTunerChannelCount());
+            assertFalse(provider.hasBufferListeners(),
+                "a completed stale registration must be removed after the desired state changes to stopped");
+            assertEquals(1, provider.mAdds.get());
+            assertEquals(1, provider.mRemoves.get());
+        }
+        finally
+        {
+            provider.mAllowAdd.countDown();
+            starter.join(TimeUnit.SECONDS.toMillis(5));
+            source.stopOutputProcessorForRemoval();
+            manager.dispose();
+        }
+    }
+
+    @Test
     void stopAllRejectsAndDisposesAChannelWhoseConstructionWasAlreadyInFlight() throws Exception
     {
         BlockingAdmissionManager manager = new BlockingAdmissionManager(new EmptyNativeBufferProvider(),
@@ -742,6 +845,117 @@ class ChannelOutputProcessorBackpressureTest
         @Override
         public void removeBufferListener(Listener<INativeBuffer> listener)
         {
+            mHasListener.set(false);
+        }
+
+        @Override
+        public boolean hasBufferListeners()
+        {
+            return mHasListener.get();
+        }
+    }
+
+    /** Models the USB tuner's controller lock so the former tuner/channelizer ABBA deadlock is deterministic. */
+    private static class LockOrderNativeBufferProvider implements INativeBufferProvider
+    {
+        private final ReentrantLock mTunerLock = new ReentrantLock();
+        private final CountDownLatch mAddAttempted = new CountDownLatch(1);
+        private final AtomicBoolean mHasListener = new AtomicBoolean();
+        private final AtomicBoolean mCallbackWhileChannelizerLocked = new AtomicBoolean();
+        private volatile Object mChannelizerLock;
+
+        @Override
+        public void addBufferListener(Listener<INativeBuffer> listener)
+        {
+            mCallbackWhileChannelizerLocked.compareAndSet(false, Thread.holdsLock(mChannelizerLock));
+            mAddAttempted.countDown();
+
+            try
+            {
+                if(mTunerLock.tryLock(4, TimeUnit.SECONDS))
+                {
+                    try
+                    {
+                        mHasListener.set(true);
+                    }
+                    finally
+                    {
+                        mTunerLock.unlock();
+                    }
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        @Override
+        public void removeBufferListener(Listener<INativeBuffer> listener)
+        {
+            mCallbackWhileChannelizerLocked.compareAndSet(false, Thread.holdsLock(mChannelizerLock));
+            mTunerLock.lock();
+
+            try
+            {
+                mHasListener.set(false);
+            }
+            finally
+            {
+                mTunerLock.unlock();
+            }
+        }
+
+        @Override
+        public boolean hasBufferListeners()
+        {
+            return mHasListener.get();
+        }
+
+        private boolean awaitAddAttempt()
+        {
+            try
+            {
+                return mAddAttempted.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
+
+    private static class BlockingListenerProvider implements INativeBufferProvider
+    {
+        private final CountDownLatch mAddEntered = new CountDownLatch(1);
+        private final CountDownLatch mAllowAdd = new CountDownLatch(1);
+        private final AtomicBoolean mHasListener = new AtomicBoolean();
+        private final AtomicInteger mAdds = new AtomicInteger();
+        private final AtomicInteger mRemoves = new AtomicInteger();
+
+        @Override
+        public void addBufferListener(Listener<INativeBuffer> listener)
+        {
+            mAddEntered.countDown();
+
+            try
+            {
+                mAllowAdd.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            mAdds.incrementAndGet();
+            mHasListener.set(true);
+        }
+
+        @Override
+        public void removeBufferListener(Listener<INativeBuffer> listener)
+        {
+            mRemoves.incrementAndGet();
             mHasListener.set(false);
         }
 
