@@ -22,7 +22,8 @@ class StatsApiV1PayloadTest
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
-        "group_identity_summary_id", "source_identity_summary_id", "target_identity_summary_id",
+        "group_identity_summary_id", "affiliated_talkgroup_identity_summary_id",
+        "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key",
         "protocol_code", "variant_code", "site_variant_code",
         "address_domain_code", "location_category_code", "site_location_category_code",
@@ -142,6 +143,21 @@ class StatsApiV1PayloadTest
         assertEquals("v1-g-bee00-348-101", activity.path("target_identity_key").textValue());
         assertEquals("talkgroup", activity.path("target_kind").textValue());
         assertNoInternalFields(activity);
+    }
+
+    @Test
+    void keepsScopedNavigationReferencesOpaqueInsideProtocolRecords()
+    {
+        Map<String,Object> reference = Map.of(
+            "kind", "radio",
+            "radio_system_key", "p25:bee00:348",
+            "identity_key", "v1-r-bee00-348-205");
+        JsonNode payload = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 1,
+            "entity_ref", reference));
+
+        assertEquals(OBJECT_MAPPER.valueToTree(reference), payload.path("entity_ref"));
+        assertFalse(payload.path("entity_ref").has("protocol"));
     }
 
     @Test

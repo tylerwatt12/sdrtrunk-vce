@@ -62,10 +62,28 @@ class StatsWebChannelsUiContractTest
 
         assertTrue(tabs.contains("['AM', 'NBFM']"));
         assertTrue(tabs.contains("if (!analog && channelCapability(channel, 'group_identities'))"));
-        assertTrue(groupColumns.contains("groupIdentityDisplayId(row)"));
         assertTrue(groupColumns.contains("groupIdentityLabel(row)"));
+        assertTrue(groupColumns.contains("render: (row) => groupIdentityLink(row)"));
+        assertTrue(groupColumns.contains("render: (row) => groupIdentityAliasLink(row)"));
         assertTrue(groupColumns.contains("key: 'timeslot'"));
         assertTrue(groupColumns.contains("label: 'Slot'"));
+    }
+
+    @Test
+    void linksChannelIdentityTablesToTheirDrillDownPages() throws Exception
+    {
+        String source = source();
+        String groupColumns = function(source, "function channelGroupIdentityColumns()");
+        String radioColumns = function(source, "function channelRadioColumns()");
+
+        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id)"));
+        assertTrue(groupColumns.contains("radioLink(row, row.last_source_radio_id, row.last_source_alias_name)"));
+        assertTrue(radioColumns.contains("render: (row) => radioLink(row)"));
+        assertTrue(radioColumns.contains("radioLink(row, undefined, aliasLabel(row))"));
+        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id)"));
+        assertTrue(radioColumns.contains("groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name)"));
+        assertTrue(radioColumns.contains("radioLink(row, row.last_peer_radio_id)"));
+        assertTrue(radioColumns.contains("radioLink(row, row.last_peer_radio_id, row.last_peer_alias_name)"));
     }
 
     private static String source() throws Exception

@@ -312,11 +312,16 @@ class StatsWebDatabase
             coalesce(system.protocol_code, activity.protocol_code) AS protocol_code,
             activity.resolved_wacn AS wacn, activity.resolved_system_id AS system_id,
             activity.resolved_nac AS nac, activity.resolved_rfss AS rfss,
-            activity.resolved_site AS site_id
+            activity.resolved_site AS site_id,
+            source_directory.last_talker_alias AS source_talker_alias
         """;
     private static final String ACTIVITY_RELATED_JOINS_SQL = """
         LEFT JOIN configuration_channel config ON config.configuration_id = activity.configuration_id
         LEFT JOIN radio_system system ON system.id = activity.radio_system_id
+        LEFT JOIN radio_system_identity_summary source_directory
+          ON source_directory.id = activity.source_identity_summary_id
+         AND source_directory.radio_system_id = activity.radio_system_id
+         AND source_directory.identity_kind_code = 2
         """;
     static final String ACTIVITY_SELECT_SQL = ACTIVITY_PROJECTION_SQL + """
         FROM receiver_activity_event_resolved activity
@@ -1659,8 +1664,11 @@ class StatsWebDatabase
             system.put("capabilities", radioSystemCapabilities((int)number(system.get("protocol_code"))));
             WebEntityRef.put(system, WebEntityRef.radioSystem(radioSystemKey));
             attachRadioSystemAliasLists(connection, List.of(system));
+            List<Map<String,Object>> actionCounts = systemActionCounts(connection,
+                number(system.get("radio_system_id")));
+            system.put("action_counts", actionCounts);
             response.put("radio_system", system);
-            response.put("action_counts", systemActionCounts(connection, number(system.get("radio_system_id"))));
+            response.put("action_counts", actionCounts);
             return response;
         });
     }
@@ -1797,6 +1805,7 @@ class StatsWebDatabase
                     %s,
                     %s,
                     affiliated_group.identity_id AS affiliated_talkgroup_id,
+                    affiliated_group.id AS affiliated_talkgroup_identity_summary_id,
                     %s AS affiliated_talkgroup_identity_key,
                     affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
                     CASE WHEN affiliation.radio_identity_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
@@ -1822,6 +1831,8 @@ class StatsWebDatabase
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
         enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
+        enrichRadioSystemGroupIdentities(connection, rows, "affiliated_talkgroup_identity_summary_id",
+            "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
         nestRadioPresence(rows);
 
         for(Map<String,Object> row: rows)
@@ -2235,6 +2246,7 @@ class StatsWebDatabase
                     %s,
                     %s,
                     affiliated_group.identity_id AS affiliated_talkgroup_id,
+                    affiliated_group.id AS affiliated_talkgroup_identity_summary_id,
                     %s AS affiliated_talkgroup_identity_key,
                     affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
                     CASE WHEN affiliation.radio_identity_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
@@ -2258,6 +2270,8 @@ class StatsWebDatabase
                 radioPresenceJoins("summary.id")), radioSystemKey, identity.homeWacn(),
                 identity.homeSystemId(), radio);
             enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
+            enrichRadioSystemGroupIdentities(connection, rows, "affiliated_talkgroup_identity_summary_id",
+                "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
             enrichSummaryEncryption(rows);
             nestRadioPresence(rows);
             if(rows.isEmpty())
@@ -4870,7 +4884,7 @@ class StatsWebDatabase
                 ) AS callsign,
                 (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
                     THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
-                    FROM p25_site_channel_summary channel WHERE channel.channel_id = site.channel_id) AS channels,
+                    FROM p25_site_channel_summary channel WHERE channel.channel_id = site.channel_id) AS frequencies,
                 (SELECT COUNT(*) FROM p25_site_neighbor neighbor
                     WHERE neighbor.channel_id = site.channel_id) AS neighbors,
                 (SELECT COUNT(*) FROM p25_site_frequency_band band
@@ -4943,7 +4957,7 @@ class StatsWebDatabase
                 site.failure_code, site.primary_frequency_hz, site.current_control_hz,
                 site.first_seen_ms, site.last_seen_ms, site.observation_count,
                 (SELECT COUNT(*) FROM trunked_site_channel_summary channel
-                    WHERE channel.channel_id = site.channel_id) AS channels,
+                    WHERE channel.channel_id = site.channel_id) AS frequencies,
                 (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
                     WHERE neighbor.channel_id = site.channel_id) AS neighbors,
                 0 AS bands, 0 AS patches
@@ -5657,8 +5671,7 @@ class StatsWebDatabase
         List<Map<String,Object>> totals = queryRows(connection, """
             SELECT %s
             FROM trunked_signaling_activity_bucket bucket
-            JOIN receiver_channel channel ON channel.id = bucket.channel_id
-            WHERE channel.radio_system_id = ?
+            WHERE bucket.radio_system_id = ?
             """.formatted(sums), radioSystemId);
 
         if(totals.isEmpty())

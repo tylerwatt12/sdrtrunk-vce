@@ -133,6 +133,31 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void radioSystemDetailIncludesRetainedSignalingOwnedByTheSystem() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket (
+                    channel_id, radio_system_id, bucket_start_ms, denial_count, register_count)
+                VALUES (71, 71, 3600000, 2, 1)
+                """);
+            statement.executeUpdate("""
+                UPDATE receiver_channel
+                SET radio_system_id = NULL, radio_system_assigned_at_ms = NULL
+                WHERE id = 71
+                """);
+        }
+
+        Map<String,Object> detail = map(mDatabase.radioSystem(RADIO_SYSTEM_KEY), "radio_system");
+        List<Map<String,Object>> actions = rowsFrom(detail, "action_counts");
+        assertEquals(2, actions.size());
+        assertEquals(2, number(rowWith(actions, "action", "DENIAL").get("observation_count")));
+        assertEquals(1, number(rowWith(actions, "action", "REGISTER").get("observation_count")));
+    }
+
+    @Test
     void nativeDmrAndNxdnSystemFieldsAndObservedGroupsComeFromTheSharedRadioSystem() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
@@ -711,6 +736,28 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void trunkedChannelFrequencyMetricMatchesTheFrequencyTable() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_summary (
+                    channel_id, channel_key, descriptor, downlink_hz, uplink_hz,
+                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
+                VALUES (71, '0-1', '0-1', 851012500, 806012500, 0, 1, 1000, 4000, 2),
+                       (71, '0-2', '0-2', 851012500, 806012500, 0, 1, 1000, 4000, 1)
+                """);
+        }
+
+        Map<String,Object> channel = map(mDatabase.channelDetail(P25_CHANNEL_A, request("/")), "channel");
+        List<Map<String,Object>> frequencies = rows(mDatabase.channelFrequencies(P25_CHANNEL_A, request("/")));
+        assertEquals(1, number(channel.get("frequencies")));
+        assertEquals(1, frequencies.size());
+        assertEquals(851012500, number(frequencies.getFirst().get("downlink_hz")));
+    }
+
+    @Test
     void channelFilteringSortingAndTotalsHappenBeforePagination()
     {
         Map<String,Object> firstPage = mDatabase.channelDirectory(request(
@@ -882,8 +929,13 @@ class StatsWebDatabaseTest
         Map<String,Object> channelA = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
             request("/?configuration_id=" + P25_CHANNEL_A + "&affiliated=true"));
         assertEquals(1, number(channelA.get("total_count")));
+        assertEquals("Dispatch", rows(channelA).getFirst().get("affiliated_talkgroup_alias_name"));
         assertEquals(P25_CHANNEL_A,
             map(map(rows(channelA).getFirst(), "presence"), "channel").get("configuration_id"));
+
+        Map<String,Object> radio = map(mDatabase.radio(RADIO_SYSTEM_KEY,
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202)), "radio");
+        assertEquals("Dispatch", radio.get("affiliated_talkgroup_alias_name"));
 
         Map<String,Object> channelB = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
             request("/?configuration_id=" + P25_CHANNEL_B + "&affiliated=true"));
@@ -1396,6 +1448,11 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_talker_alias = 'Unit 202 OTA', last_talker_alias_seen_ms = 6000
+                WHERE id = 7102
+                """);
+            statement.executeUpdate("""
                 INSERT INTO receiver_activity_event (
                     channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
                     source_observed_local_id, target_observed_local_id, target_kind_code,
@@ -1414,6 +1471,8 @@ class StatsWebDatabaseTest
             .map(row -> number(row.get("observed_at_ms"))).toList());
         assertTrue((Boolean)firstPage.get("has_more"));
         assertTrue(rows(firstPage).stream().noneMatch(row -> "GRANT".equals(row.get("action"))));
+        assertTrue(rows(firstPage).stream().allMatch(row ->
+            "Unit 202 OTA".equals(row.get("source_talker_alias"))));
 
         long cursor = number(firstPage.get("next_before_id"));
         Map<String,Object> secondPage = mDatabase.activity(request(

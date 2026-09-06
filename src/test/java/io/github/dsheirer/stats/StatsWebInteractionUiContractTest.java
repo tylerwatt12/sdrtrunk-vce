@@ -285,7 +285,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"119\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"120\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -531,6 +531,8 @@ class StatsWebInteractionUiContractTest
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind, reference)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
+        String sourceTalkerAlias = function(source, "function activitySourceTalkerAlias(row)");
+        String columns = function(source, "function activityColumns()");
         assertTrue(labels.contains("0x0000: 'No Talkgroup'"));
         assertTrue(labels.contains("0xFFFF: 'Everyone'"));
         assertTrue(labels.contains("0x000000: 'No Unit'"));
@@ -555,7 +557,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(renderer.indexOf("if (specialLabel)") < renderer.indexOf("groupIdentityLink(row, value"));
         assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio')"));
         assertTrue(sourceAlias.indexOf("specialIdentifierLabel") < sourceAlias.indexOf("radioLink("));
-        assertTrue(source.contains("render: activitySourceAlias"));
+        assertTrue(sourceTalkerAlias.contains("row.source_talker_alias"));
+        assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref)"));
+        assertTrue(columns.contains("label: 'Src Alias'"));
+        assertTrue(columns.contains("label: 'Src OTA Alias'"));
+        assertTrue(columns.contains("render: activitySourceAlias"));
+        assertTrue(columns.contains("render: activitySourceTalkerAlias"));
     }
 
     @Test
@@ -571,7 +578,8 @@ class StatsWebInteractionUiContractTest
             .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
         assertTrue(function(source, "function identityNumber(row, value)")
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
-        assertTrue(source.contains("render: (row) => identityNumber(row, radioDisplayId(row))"));
+        assertTrue(function(source, "function radioLink(row, id, label, reference = row?.entity_ref)")
+            .contains("identityNumber(row, id)"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
     }
 
@@ -616,7 +624,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=97"));
+        assertTrue(html.contains("/assets/app.css?v=98"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1385,7 +1393,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("iconButton('icon-zoom-out', 'Zoom out')"));
         assertTrue(tuner.contains("iconButton('icon-replay', 'Reset zoom')"));
         assertTrue(tuner.contains("iconButton('icon-pause', 'Pause')"));
-        assertTrue(tuner.contains("iconButton('icon-live-presentation', 'Spectrum options'"));
+        assertTrue(tuner.contains("node('summary', 'button secondary tuner-spectrum-options-summary', 'Options')"));
         assertTrue(tuner.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause',"));
         assertTrue(html.contains("id=\"icon-zoom-in\""));
         assertTrue(html.contains("id=\"icon-zoom-out\""));
@@ -1456,10 +1464,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl, waterfallChannelsControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
-        assertTrue(tuner.contains("toolbarActions.append(optionsButton)"));
-        assertTrue(tuner.contains("optionSections.display.append(rangeControl, rangeHelp, snapControl)"));
-        assertTrue(tuner.contains("optionSections.plots.append(fftOptions, waterfallOptions)"));
-        assertTrue(tuner.contains("optionsButton.setAttribute('aria-haspopup', 'dialog')"));
+        assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
+        assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel)"));
+        assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
+        assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', String(options.open))"));
+        assertTrue(tuner.contains("toolbarActions.append(options)"));
         assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
         assertFalse(tuner.contains("displayControls.append(options"));
         assertTrue(tuner.contains("const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null"));
@@ -1607,17 +1616,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-plot"));
         assertTrue(css.contains(".tuner-spectrum-active-flag {\n  width: 6px;\n  height: 12px;\n  min-height: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-flag-legend"));
-        assertTrue(tuner.contains("openReadOnlyModal('Spectrum options'"));
-        assertTrue(tuner.contains("'Display'], ['plots', 'FFT & Waterfall'], ['performance', 'Performance'"));
-        assertTrue(tuner.contains("Changes save to your account immediately."));
-        assertTrue(css.contains(".tuner-spectrum-options-modal"));
-        assertTrue(css.contains(".tuner-spectrum-options-panel[hidden]"));
-        assertTrue(css.contains(".tuner-spectrum-options-tabs button.active"));
-        assertTrue(tuner.contains("if (event.key === 'ArrowLeft')"));
-        assertTrue(tuner.contains("else if (event.key === 'ArrowRight')"));
-        assertTrue(tuner.contains("else if (event.key === 'Home')"));
-        assertTrue(tuner.contains("else if (event.key === 'End')"));
-        assertFalse(css.contains(".tuner-spectrum-options:not([open])"));
+        assertFalse(tuner.contains("openReadOnlyModal('Spectrum options'"));
+        assertFalse(css.contains(".tuner-spectrum-options-modal"));
+        assertTrue(css.contains(".tuner-spectrum-options:not([open]) > .tuner-spectrum-options-panel"));
+        assertTrue(css.contains("padding: 12px;"));
+        assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
         assertTrue(css.contains(".tuner-spectrum-toggle-control"));
         assertTrue(css.contains(".tuner-spectrum-option-toggles"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));

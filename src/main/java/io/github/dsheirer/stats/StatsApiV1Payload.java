@@ -27,7 +27,8 @@ final class StatsApiV1Payload
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "radio_system_id", "channel_id", "identity_summary_id", "radio_identity_summary_id",
-        "group_identity_summary_id", "source_identity_summary_id", "target_identity_summary_id",
+        "group_identity_summary_id", "affiliated_talkgroup_identity_summary_id",
+        "source_identity_summary_id", "target_identity_summary_id",
         "representative_channel_id", "fallback_channel_id", "identity_id", "system_key", "site_type",
         "protocol_code", "variant_code", "site_variant_code",
         "address_domain_code", "location_category_code", "site_location_category_code",
@@ -88,8 +89,11 @@ final class StatsApiV1Payload
             source.has("group_identity_kind_code") || source.has("identity_key") || source.has("identity_id");
         boolean channelObservationRecord = !identityRecord && source.has("variant_code") &&
             (source.has("site_id") || source.has("ran") || source.has("rfss"));
-        boolean protocolRecord = source.has("protocol_code") || source.has("protocol") || identityRecord ||
-            channelObservationRecord || source.has("radio_system_key") || source.has("configuration_id");
+        boolean entityReference = source.path("kind").isTextual() &&
+            (source.has("key") || source.has("identity_key"));
+        boolean protocolRecord = !entityReference && (source.has("protocol_code") || source.has("protocol") ||
+            identityRecord || channelObservationRecord || source.has("radio_system_key") ||
+            source.has("configuration_id"));
         ObjectNode presented = OBJECT_MAPPER.createObjectNode();
         Iterator<Map.Entry<String,JsonNode>> fields = source.fields();
 

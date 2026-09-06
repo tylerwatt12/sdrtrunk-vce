@@ -209,6 +209,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'site': 66,
   'source': 82,
   'source-alias': 165,
+  'source-ota-alias': 165,
   'state': 82,
   'status': 116,
   'streamed': 82,
@@ -11332,10 +11333,14 @@ function tunerSpectrumPanel(snapPresetDocument) {
   toolbar.append(targetLabel, status, toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
-  const optionsButton = iconButton('icon-live-presentation', 'Spectrum options',
-    'button secondary icon-button tuner-spectrum-options-button');
-  optionsButton.setAttribute('aria-haspopup', 'dialog');
+  const options = node('details', 'tuner-spectrum-options');
+  const optionsSummary = node('summary', 'button secondary tuner-spectrum-options-summary', 'Options');
+  optionsSummary.setAttribute('role', 'button');
+  optionsSummary.setAttribute('aria-label', 'Options');
+  optionsSummary.setAttribute('aria-expanded', 'false');
   const optionsPanel = node('div', 'tuner-spectrum-options-panel');
+  optionsPanel.setAttribute('role', 'group');
+  optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
   let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
     TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_DISPLAY_DB,
     TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB);
@@ -11437,68 +11442,12 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
-  const optionSections = {
-    display: node('section', 'tuner-spectrum-options-panel'),
-    plots: node('section', 'tuner-spectrum-options-panel'),
-    performance: node('section', 'tuner-spectrum-options-panel')
-  };
-  optionSections.display.append(rangeControl, rangeHelp, snapControl);
-  optionSections.plots.append(fftOptions, waterfallOptions);
-  optionSections.performance.append(profilePanel);
-  const optionsTabs = node('nav', 'tabs tuner-spectrum-options-tabs');
-  optionsTabs.setAttribute('role', 'tablist');
-  optionsTabs.setAttribute('aria-label', 'Spectrum option sections');
-  const showOptionsSection = (selected) => {
-    Object.entries(optionSections).forEach(([id, panel]) => {
-      const active = id === selected;
-      panel.hidden = !active;
-      panel.id = `tuner-spectrum-options-panel-${id}`;
-      panel.setAttribute('role', 'tabpanel');
-      panel.setAttribute('aria-labelledby', `tuner-spectrum-options-${id}`);
-    });
-    [...optionsTabs.children].forEach((button) => {
-      const active = button.dataset.tab === selected;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
-      button.tabIndex = active ? 0 : -1;
-    });
-  };
-  [['display', 'Display'], ['plots', 'FFT & Waterfall'], ['performance', 'Performance']]
-    .forEach(([id, label]) => {
-      const button = node('button', 'secondary', label);
-      button.type = 'button';
-      button.id = `tuner-spectrum-options-${id}`;
-      button.dataset.tab = id;
-      button.setAttribute('role', 'tab');
-      button.setAttribute('aria-controls', `tuner-spectrum-options-panel-${id}`);
-      button.addEventListener('click', () => showOptionsSection(id));
-      button.addEventListener('keydown', (event) => {
-        const buttons = [...optionsTabs.children];
-        const current = buttons.indexOf(button);
-        let next = null;
-        if (event.key === 'ArrowLeft') next = (current - 1 + buttons.length) % buttons.length;
-        else if (event.key === 'ArrowRight') next = (current + 1) % buttons.length;
-        else if (event.key === 'Home') next = 0;
-        else if (event.key === 'End') next = buttons.length - 1;
-        if (next === null) return;
-        event.preventDefault();
-        buttons[next].click();
-        buttons[next].focus();
-      });
-      optionsTabs.append(button);
-    });
-  showOptionsSection('display');
-  optionsPanel.append(node('p', 'tuner-spectrum-options-intro',
-    'Adjust how this browser draws the spectrum. Changes save to your account immediately.'),
-    optionsTabs, ...Object.values(optionSections));
-  optionsButton.addEventListener('click', () => {
-    showOptionsSection('display');
-    openReadOnlyModal('Spectrum options', optionsPanel, {
-      id: 'tuner-spectrum-options', className: 'tuner-spectrum-options-modal',
-      returnFocusSelector: '.tuner-spectrum-options-button'
-    });
+  optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel);
+  options.append(optionsSummary, optionsPanel);
+  options.addEventListener('toggle', () => {
+    optionsSummary.setAttribute('aria-expanded', String(options.open));
   });
-  toolbarActions.append(optionsButton);
+  toolbarActions.append(options);
   const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
   refiningBadge.hidden = true;
   refiningBadge.setAttribute('role', 'status');
@@ -14965,6 +14914,13 @@ function activitySourceAlias(row) {
     alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
 }
 
+function activitySourceTalkerAlias(row) {
+  const alias = String(row.source_talker_alias || '').trim();
+  if (!alias) return '';
+  return specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+    alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
+}
+
 function activityTargetAlias(row) {
   if (isAnalogChannel(row)) return '';
   const alias = row.target_alias_name || '';
@@ -15002,6 +14958,9 @@ function activityColumns() {
     { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias',
       render: activitySourceAlias, className: 'alias-cell',
       sortValue: (row) => row.source_alias_name || '' },
+    { id: 'source-ota-alias', label: 'Src OTA Alias', fullLabel: 'Source Over-the-Air Talker Alias',
+      render: activitySourceTalkerAlias, className: 'alias-cell',
+      sortValue: (row) => row.source_talker_alias || '' },
     { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: activityTargetIdentifier,
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.target_id || 0) },
     { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: activityTargetAlias,
@@ -15245,9 +15204,10 @@ function channelTabItems(channel) {
 function channelGroupIdentityColumns() {
   return [
     { id: 'group-identity-id', label: 'Group', className: 'numeric',
-      sort: 'group_identity', render: (row) => identityNumber(row, groupIdentityDisplayId(row)) },
+      sort: 'group_identity', render: (row) => groupIdentityLink(row) },
     { id: 'group-identity-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
-    { id: 'group-identity-name', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+    { id: 'group-identity-name', label: 'Alias', render: (row) => groupIdentityAliasLink(row),
+      className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
     { id: 'group-identity-description', label: 'Description', key: 'alias_description',
       className: 'alias-cell' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
@@ -15263,8 +15223,11 @@ function channelGroupIdentityColumns() {
       sort: 'encrypted_logical_call_count',
       sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
     { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric',
-      render: (row) => identifierNumber(row.last_source_radio_id) },
-    { id: 'source-alias', label: 'Source Alias', key: 'last_source_alias_name', className: 'alias-cell' },
+      render: (row) => row.last_source_radio_id == null ? '' :
+        radioLink(row, row.last_source_radio_id) },
+    { id: 'source-alias', label: 'Source Alias', className: 'alias-cell',
+      render: (row) => row.last_source_alias_name ?
+        radioLink(row, row.last_source_radio_id, row.last_source_alias_name) : '' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
       sortValue: (row) => Number(row.first_seen_ms || 0) },
@@ -15277,8 +15240,10 @@ function channelGroupIdentityColumns() {
 function channelRadioColumns() {
   return [
     { id: 'radio', label: 'Radio', className: 'numeric', sort: 'radio',
-      render: (row) => identityNumber(row, radioDisplayId(row)) },
-    { id: 'radio-alias', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+      render: (row) => radioLink(row) },
+    { id: 'radio-alias', label: 'Alias', render: (row) => aliasLabel(row) ?
+      radioLink(row, undefined, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias',
+      sortValue: aliasLabel },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
       sortValue: (row) => Number(row.frequency_hz || 0) },
@@ -15308,12 +15273,17 @@ function channelRadioColumns() {
       sort: 'private_logical_call_count',
       sortValue: (row) => Number(row.private_logical_call_count || 0) },
     { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric',
-      render: (row) => identifierNumber(row.last_talkgroup_id) },
-    { id: 'talkgroup-name', label: 'Talkgroup Alias', key: 'last_talkgroup_alias_name',
-      className: 'alias-cell' },
+      render: (row) => row.last_talkgroup_id == null ? '' :
+        groupIdentityLink(row, row.last_talkgroup_id) },
+    { id: 'talkgroup-name', label: 'Talkgroup Alias', className: 'alias-cell',
+      render: (row) => row.last_talkgroup_alias_name ?
+        groupIdentityLink(row, row.last_talkgroup_id, row.last_talkgroup_alias_name) : '' },
     { id: 'last-peer', label: 'Last Peer', key: 'last_peer_radio_id', className: 'numeric',
-      render: (row) => identifierNumber(row.last_peer_radio_id) },
-    { id: 'peer-alias', label: 'Peer Alias', key: 'last_peer_alias_name', className: 'alias-cell' },
+      render: (row) => row.last_peer_radio_id == null ? '' :
+        radioLink(row, row.last_peer_radio_id) },
+    { id: 'peer-alias', label: 'Peer Alias', className: 'alias-cell',
+      render: (row) => row.last_peer_alias_name ?
+        radioLink(row, row.last_peer_radio_id, row.last_peer_alias_name) : '' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
       sortValue: (row) => Number(row.first_seen_ms || 0) },

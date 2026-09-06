@@ -2368,44 +2368,54 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   gap: 7px;
 }
 
-.tuner-spectrum-options-modal {
-  width: min(760px, 96vw);
+.tuner-spectrum-options {
+  position: relative;
+  z-index: 7;
 }
 
-.tuner-spectrum-options-modal .modal-content,
-.tuner-spectrum-options-panel {
-  display: grid;
-  gap: 14px;
+.tuner-spectrum-options[open] {
+  z-index: 9;
 }
 
-.tuner-spectrum-options-panel[hidden] {
+.tuner-spectrum-options-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tuner-spectrum-options-summary::-webkit-details-marker {
   display: none;
 }
 
-.tuner-spectrum-options-intro {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
+.tuner-spectrum-options-summary::after {
+  content: "▾";
+  font-size: 10px;
+  transition: transform 120ms ease;
 }
 
-.tuner-spectrum-options-tabs {
-  margin: 0;
+.tuner-spectrum-options[open] .tuner-spectrum-options-summary::after {
+  transform: rotate(180deg);
 }
 
-.tuner-spectrum-options-tabs button {
-  flex: 0 0 auto;
-  min-height: 38px;
-  padding: 8px 14px;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-bottom: 0;
-  border-radius: 0;
-}
-
-.tuner-spectrum-options-tabs button.active {
+.tuner-spectrum-options-panel {
+  width: min(760px, calc(100vw - 32px));
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
   background: var(--surface);
-  box-shadow: inset 0 -3px 0 var(--accent);
+  border: 1px solid var(--line-dark);
+  border-radius: 5px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 35%);
+}
+
+.tuner-spectrum-options:not([open]) > .tuner-spectrum-options-panel {
+  display: none;
 }
 
 .tuner-spectrum-display-controls {
@@ -6391,6 +6401,17 @@ th.numeric {
   .tuner-spectrum-toolbar-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .tuner-spectrum-options[open] {
+    flex: 1 0 100%;
+  }
+
+  .tuner-spectrum-options[open] .tuner-spectrum-options-panel {
+    width: 100%;
+    position: static;
+    margin-top: 6px;
+    box-sizing: border-box;
   }
 
   .tuner-spectrum-target {

@@ -167,6 +167,12 @@ class StatsApiV1HttpContractTest
             activityResponse.body());
         assertEquals("talkgroup", activity.at("/target_entity_ref/kind").textValue(),
             activityResponse.body());
+        assertEquals(3, activity.at("/source_entity_ref").size(), activityResponse.body());
+        assertEquals(3, activity.at("/target_entity_ref").size(), activityResponse.body());
+        assertFalse(activity.at("/source_entity_ref").has("protocol"), activityResponse.body());
+        assertFalse(activity.at("/target_entity_ref").has("protocol"), activityResponse.body());
+        assertEquals("Unit 2 OTA", activity.path("source_talker_alias").textValue(),
+            activityResponse.body());
         assertEquals("talkgroup", activity.path("target_kind").textValue(), activityResponse.body());
         assertFalse(activity.has("source_identity_kind_code"), activityResponse.body());
         assertFalse(activity.has("target_identity_kind_code"), activityResponse.body());
@@ -229,6 +235,22 @@ class StatsApiV1HttpContractTest
             systemsResponse.body());
         assertEquals("p25:00001:047", systems.at("/data/0/radio_system_key").textValue(),
             systemsResponse.body());
+
+        HttpResponse<String> systemResponse = get(StatsApiV1.RADIO_SYSTEMS + "/p25%3A00001%3A047");
+        assertEquals(200, systemResponse.statusCode(), systemResponse.body());
+        JsonNode system = OBJECT_MAPPER.readTree(systemResponse.body()).path("data");
+        assertEquals(1, system.path("action_counts").size(), systemResponse.body());
+        assertEquals("denial", system.at("/action_counts/0/action").textValue(), systemResponse.body());
+        assertEquals(2, system.at("/action_counts/0/observation_count").intValue(), systemResponse.body());
+
+        HttpResponse<String> talkerAliasesResponse = get(StatsApiV1.RADIO_SYSTEMS +
+            "/p25%3Abee00%3A49f/talker-aliases?limit=10");
+        assertEquals(200, talkerAliasesResponse.statusCode(), talkerAliasesResponse.body());
+        JsonNode talkerAlias = OBJECT_MAPPER.readTree(talkerAliasesResponse.body()).at("/data/0");
+        assertEquals("Unit 2 OTA", talkerAlias.path("last_talker_alias").textValue(),
+            talkerAliasesResponse.body());
+        assertEquals(3, talkerAlias.path("entity_ref").size(), talkerAliasesResponse.body());
+        assertFalse(talkerAlias.path("entity_ref").has("protocol"), talkerAliasesResponse.body());
 
         HttpResponse<String> systemPreviewResponse = get(StatsApiV1.RADIO_SYSTEMS +
             "?include_channel_preview=true&limit=25");
@@ -681,9 +703,9 @@ class StatsApiV1HttpContractTest
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary (
                     id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
-                    first_seen_ms, last_seen_ms
-                ) VALUES (21, 2, 1, 0xBEE00, 0x49F, 56735, 1000, 2000),
-                         (22, 2, 2, 0xBEE00, 0x49F, 2, 1000, 2000)
+                    first_seen_ms, last_seen_ms, last_talker_alias, last_talker_alias_seen_ms
+                ) VALUES (21, 2, 1, 0xBEE00, 0x49F, 56735, 1000, 2000, NULL, NULL),
+                         (22, 2, 2, 0xBEE00, 0x49F, 2, 1000, 2000, 'Unit 2 OTA', 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event (
@@ -691,6 +713,11 @@ class StatsApiV1HttpContractTest
                     source_observed_local_id, target_observed_local_id, target_kind_code,
                     source_identity_summary_id, source_identity_kind_code, target_identity_summary_id
                 ) VALUES (2, 2, 2000, 12, 2, 56735, 1, 22, 2, 21)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket (
+                    channel_id, radio_system_id, bucket_start_ms, denial_count)
+                VALUES (1, 1, 3600000, 2)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
