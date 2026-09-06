@@ -11116,14 +11116,10 @@ function tunerSpectrumPanel(snapPresetDocument) {
   toolbar.append(targetLabel, status, toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
-  const options = node('details', 'tuner-spectrum-options');
-  const optionsSummary = node('summary', 'button secondary tuner-spectrum-options-summary', 'Options');
-  optionsSummary.setAttribute('role', 'button');
-  optionsSummary.setAttribute('aria-label', 'Options');
-  optionsSummary.setAttribute('aria-expanded', 'false');
+  const optionsButton = node('button', 'button secondary tuner-spectrum-options-button', 'Options');
+  optionsButton.type = 'button';
+  optionsButton.setAttribute('aria-haspopup', 'dialog');
   const optionsPanel = node('div', 'tuner-spectrum-options-panel');
-  optionsPanel.setAttribute('role', 'group');
-  optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
   let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_PREFERENCE,
     TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_DISPLAY_DB,
     TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB);
@@ -11225,12 +11221,55 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
-  optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel);
-  options.append(optionsSummary, optionsPanel);
-  options.addEventListener('toggle', () => {
-    optionsSummary.setAttribute('aria-expanded', String(options.open));
+  const optionSections = {
+    display: node('section', 'tuner-spectrum-options-panel'),
+    plots: node('section', 'tuner-spectrum-options-panel'),
+    performance: node('section', 'tuner-spectrum-options-panel')
+  };
+  optionSections.display.append(rangeControl, rangeHelp, snapControl);
+  optionSections.plots.append(fftOptions, waterfallOptions);
+  optionSections.performance.append(profilePanel);
+  const optionsTabs = node('nav', 'tabs tuner-spectrum-options-tabs');
+  optionsTabs.setAttribute('role', 'tablist');
+  optionsTabs.setAttribute('aria-label', 'Spectrum option sections');
+  const showOptionsSection = (selected) => {
+    Object.entries(optionSections).forEach(([id, panel]) => {
+      const active = id === selected;
+      panel.hidden = !active;
+      panel.id = `tuner-spectrum-options-panel-${id}`;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', `tuner-spectrum-options-${id}`);
+    });
+    [...optionsTabs.children].forEach((button) => {
+      const active = button.dataset.tab === selected;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+  };
+  [['display', 'Display'], ['plots', 'FFT & Waterfall'], ['performance', 'Performance']]
+    .forEach(([id, label]) => {
+      const button = node('button', 'secondary', label);
+      button.type = 'button';
+      button.id = `tuner-spectrum-options-${id}`;
+      button.dataset.tab = id;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-controls', `tuner-spectrum-options-panel-${id}`);
+      button.addEventListener('click', () => showOptionsSection(id));
+      optionsTabs.append(button);
+    });
+  showOptionsSection('display');
+  optionsPanel.append(node('p', 'tuner-spectrum-options-intro',
+    'Adjust how this browser draws the spectrum. Changes save to your account immediately.'),
+    optionsTabs, ...Object.values(optionSections));
+  optionsButton.addEventListener('click', () => {
+    showOptionsSection('display');
+    openReadOnlyModal('Spectrum options', optionsPanel, {
+      id: 'tuner-spectrum-options', className: 'tuner-spectrum-options-modal',
+      returnFocusSelector: '.tuner-spectrum-options-button'
+    });
   });
-  toolbarActions.append(options);
+  toolbarActions.append(optionsButton);
   const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
   refiningBadge.hidden = true;
   refiningBadge.setAttribute('role', 'status');
