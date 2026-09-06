@@ -43,10 +43,15 @@ public final class SpectrumSnapPresetCatalog
             151_820_000, 151_880_000, 151_940_000),
         channels("murs-upper", "MURS channels 4–5", 15_000,
             154_570_000, 154_600_000),
-        channels("vhf-interoperability", "VHF public-safety interoperability", 3_750,
-            151_137_500, 154_452_500, 155_752_500, 158_737_500, 159_472_500),
-        channels("marine-vhf", "Marine VHF", 12_500,
-            combinedRanges(156_025_000, 157_425_000, 25_000, 160_625_000, 162_025_000, 25_000)),
+        channels("vhf-interoperability-151", "VHF interoperability 151.1375 MHz", 3_750, 151_137_500),
+        channels("vhf-interoperability-154", "VHF interoperability 154.4525 MHz", 3_750, 154_452_500),
+        channels("vhf-interoperability-155", "VHF interoperability 155.7525 MHz", 3_750, 155_752_500),
+        channels("vhf-interoperability-158", "VHF interoperability 158.7375 MHz", 3_750, 158_737_500),
+        channels("vhf-interoperability-159", "VHF interoperability 159.4725 MHz", 3_750, 159_472_500),
+        channels("marine-vhf-lower", "Marine VHF (lower)", 12_500,
+            channelRange(156_025_000, 157_425_000, 25_000)),
+        channels("marine-vhf-upper", "Marine VHF (upper)", 12_500,
+            channelRange(160_625_000, 162_025_000, 25_000)),
         raster("railroad", "Railroad", 159_810_000, 161_565_000, 159_810_000, 7_500),
         raster("federal-vhf", "Federal VHF land mobile", 162_000_000, 174_000_000,
             162_000_000, 12_500),
@@ -62,7 +67,10 @@ public final class SpectrumSnapPresetCatalog
         display("amateur-70cm", "Amateur 70 centimeter", 420_000_000, 450_000_000),
         raster("uhf-land-mobile-421", "UHF land mobile", 421_000_000, 429_987_500,
             421_000_000, 12_500),
-        channels("frs-gmrs", "FRS / GMRS", 6_250, frsGmrsChannels()),
+        channels("frs-gmrs-462", "FRS / GMRS (462 MHz)", 6_250,
+            frsGmrsChannels(462_550_000)),
+        channels("frs-gmrs-467", "FRS / GMRS (467 MHz)", 6_250,
+            frsGmrsChannels(467_550_000)),
         raster("uhf-land-mobile-450", "UHF land mobile", 450_000_000, 511_987_500,
             450_000_000, 12_500),
         raster("700-base", "700 MHz public safety (base)", 769_006_250, 774_993_750,
@@ -126,26 +134,24 @@ public final class SpectrumSnapPresetCatalog
             unique.add(frequency);
         }
         List<Long> frequencies = unique.stream().sorted().toList();
-        return new Scope(id, label, frequencies.getFirst(), frequencies.getLast(),
+        // A single channel needs a narrow visible scope, not a zero-width band or a bridge to other channels.
+        long paddingHz = frequencies.size() == 1 ? toleranceHz : 0;
+        return new Scope(id, label, frequencies.getFirst() - paddingHz, frequencies.getLast() + paddingHz,
             new Snap("CHANNELS", 0, 0, toleranceHz, frequencies));
     }
 
-    private static long[] combinedRanges(long firstStart, long firstEnd, long firstStep,
-                                         long secondStart, long secondEnd, long secondStep)
+    private static long[] channelRange(long start, long end, long step)
     {
         List<Long> values = new ArrayList<>();
-        appendRange(values, firstStart, firstEnd, firstStep);
-        appendRange(values, secondStart, secondEnd, secondStep);
+        appendRange(values, start, end, step);
         return values.stream().mapToLong(Long::longValue).toArray();
     }
 
-    private static long[] frsGmrsChannels()
+    private static long[] frsGmrsChannels(long start)
     {
         List<Long> values = new ArrayList<>();
-        appendRange(values, 462_562_500, 462_712_500, 25_000);
-        appendRange(values, 467_562_500, 467_712_500, 25_000);
-        appendRange(values, 462_550_000, 462_725_000, 25_000);
-        appendRange(values, 467_550_000, 467_725_000, 25_000);
+        appendRange(values, start + 12_500, start + 162_500, 25_000);
+        appendRange(values, start, start + 175_000, 25_000);
         return values.stream().mapToLong(Long::longValue).toArray();
     }
 

@@ -17,17 +17,25 @@ class SpectrumSnapPresetCatalogTest
         SpectrumSnapPresetCatalog.Country country = SpectrumSnapPresetCatalog.requireCountry("us");
         assertEquals("US", country.code());
         assertEquals("United States", country.label());
-        assertEquals(41, country.scopes().size());
+        assertEquals(47, country.scopes().size());
 
         SpectrumSnapPresetCatalog.Scope cb = scope(country, "cb");
         assertEquals("CHANNELS", cb.snap().kind());
         assertEquals(40, cb.snap().frequenciesHz().size());
         assertTrue(cb.snap().frequenciesHz().contains(27_255_000L));
 
-        SpectrumSnapPresetCatalog.Scope frsGmrs = scope(country, "frs-gmrs");
-        assertEquals(30, frsGmrs.snap().frequenciesHz().size());
-        assertTrue(frsGmrs.snap().frequenciesHz().contains(462_562_500L));
-        assertTrue(frsGmrs.snap().frequenciesHz().contains(467_725_000L));
+        for(long base: List.of(462_550_000L, 467_550_000L))
+        {
+            SpectrumSnapPresetCatalog.Scope frsGmrs = scope(country, "frs-gmrs-" + base / 1_000_000);
+            assertEquals(15, frsGmrs.snap().frequenciesHz().size());
+            assertEquals(base, frsGmrs.minHz());
+            assertEquals(base + 175_000, frsGmrs.maxHz());
+            assertEquals(6_250, frsGmrs.snap().matchToleranceHz());
+            for(long frequency = base; frequency <= base + 175_000; frequency += 12_500)
+            {
+                assertTrue(frsGmrs.snap().frequenciesHz().contains(frequency));
+            }
+        }
 
         SpectrumSnapPresetCatalog.Scope mursLower = scope(country, "murs-lower");
         SpectrumSnapPresetCatalog.Scope mursUpper = scope(country, "murs-upper");
@@ -44,6 +52,33 @@ class SpectrumSnapPresetCatalogTest
         assertEquals(25_000, noaa.snap().stepHz());
         assertEquals(162_400_000, noaa.snap().originHz());
         assertEquals(162_550_000, noaa.maxHz());
+    }
+
+    @Test
+    void separatesMarineGroupsAndIndividualInteroperabilityChannels()
+    {
+        SpectrumSnapPresetCatalog.Country country = SpectrumSnapPresetCatalog.requireCountry("US");
+        for(String group: List.of("lower", "upper"))
+        {
+            long start = group.equals("lower") ? 156_025_000L : 160_625_000L;
+            SpectrumSnapPresetCatalog.Scope marine = scope(country, "marine-vhf-" + group);
+            assertEquals(start, marine.minHz());
+            assertEquals(start + 1_400_000, marine.maxHz());
+            assertEquals(57, marine.snap().frequenciesHz().size());
+            assertEquals(12_500, marine.snap().matchToleranceHz());
+            for(long frequency = start; frequency <= start + 1_400_000; frequency += 25_000)
+            {
+                assertTrue(marine.snap().frequenciesHz().contains(frequency));
+            }
+        }
+        for(long frequency: List.of(151_137_500L, 154_452_500L, 155_752_500L, 158_737_500L, 159_472_500L))
+        {
+            SpectrumSnapPresetCatalog.Scope channel = scope(country, "vhf-interoperability-" + frequency / 1_000_000);
+            assertEquals(List.of(frequency), channel.snap().frequenciesHz());
+            assertEquals(frequency - 3_750, channel.minHz());
+            assertEquals(frequency + 3_750, channel.maxHz());
+            assertEquals(3_750, channel.snap().matchToleranceHz());
+        }
     }
 
     @Test
