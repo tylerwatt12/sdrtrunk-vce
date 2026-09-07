@@ -100,7 +100,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(columns.contains("view === 'custom'"));
         assertFalse(source.contains("function aliasColumnChooser("));
         assertTrue(source.contains("defaultHiddenColumns: view === 'custom' ? definitions"));
-        assertTrue(source.contains("exportCsvLink('aliases', exportContext)"));
+        assertTrue(source.contains("exportCsvLink('aliases', exportContext, 'Download table report')"));
         assertTrue(base.contains("id: 'description'"));
         for(String field: new String[]{"logical_call_count", "signaling_observation_count", "last_evidence_ms"})
         {

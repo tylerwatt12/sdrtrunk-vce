@@ -285,7 +285,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"120\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"121\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -487,12 +487,12 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String href = function(source, "function exportCsvHref(dataset, context = {})");
-        String helper = function(source, "function exportCsvLink(dataset, context = {})");
+        String helper = function(source, "function exportCsvLink(dataset, context = {}, label = 'Export CSV')");
         assertTrue(href.contains("`/api/v1/exports/${encodeURIComponent(String(dataset))}.csv`"));
         assertTrue(href.contains("['q', 'sort', 'direction']"));
         assertTrue(href.contains("return `${path}${parameters.size ? `?${parameters}` : ''}`"));
         assertFalse(href.contains("parameters.set('dataset'"));
-        assertTrue(helper.contains("anchor('Export CSV', exportCsvHref(dataset, context)"));
+        assertTrue(helper.contains("anchor(label, exportCsvHref(dataset, context)"));
         assertTrue(helper.contains("link.setAttribute('download', '')"));
         assertTrue(helper.contains("link.setAttribute('aria-label'"));
         assertFalse(href.contains("'limit'"));
@@ -624,7 +624,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=98"));
+        assertTrue(html.contains("/assets/app.css?v=99"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

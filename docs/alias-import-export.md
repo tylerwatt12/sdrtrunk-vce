@@ -1,21 +1,23 @@
 # Alias list CSV import and export
 
-In the web Alias Editor, select a list and open **Import / Export**. Administrator access is required.
-The modal transfers alias configuration. It does not import activity, counters, credentials, channels, or
-Alias List Defaults. The existing table **Export CSV** action remains a reporting export; use the modal's
-**Export list configuration CSV** action for files that can be imported again.
+In the web Alias Editor, select a list and choose **Import aliases…** or **Export aliases…**. Administrator access is
+required. These focused dialogs transfer alias configuration. They do not import activity, counters, credentials,
+channels, or Alias List Defaults. The existing table **Download table report** action remains a reporting export;
+choose **Export aliases…**, then **Download alias list CSV**, for a file that can be imported again.
 
 ## Import modes and review
 
-**Update/Add** is the default. It matches the complete matcher identity in the selected list, updates matching
-aliases, adds new aliases, and keeps aliases absent from the file. Names and database row IDs are not identity keys.
-**Replace** performs the same matching, then deletes aliases absent from the file. Matching aliases retain their
-existing IDs. Neither mode deletes the list or changes its defaults. Empty imports are rejected.
+**Add new aliases and update matches** is the recommended default. It matches the complete matcher identity in the
+selected list, updates matching aliases, adds new aliases, and keeps aliases absent from the file. Names and database
+row IDs are not identity keys. **Replace this list's aliases** performs the same matching, then deletes aliases absent
+from the file. Matching aliases retain their existing IDs. Neither mode deletes the list or changes its defaults.
+Empty imports are rejected.
 
-Select a UTF-8 CSV, choose its exact format and import mode, and press **Build preview**. Files are limited to 8 MiB and
-10,000 aliases. Review shows added, updated, unchanged, deleted, and error counts. Expand a row to see configuration
-values or current/proposed field differences. Results are paged in groups of 100. Replace requires checking the
-confirmation naming the destination list.
+Drop or choose a UTF-8 CSV. The dialog detects VCE exports and RadioReference talkgroup files from their headers; an
+unrecognized header displays the explicit file-type choice. Choose the import behavior, then select **Review import**.
+Files are limited to 8 MiB and 10,000 aliases. Review shows filterable Added, Updated, Unchanged, Removed, and Errors
+counts. Expand a row to see configuration values or current/proposed field differences. Results are paged in groups
+of 100. Replace requires checking the confirmation naming the destination list only when the review contains removals.
 
 Duplicate matchers in a file, multiple existing aliases with the same matcher, incompatible or invalid matchers,
 and unresolved assignments prevent applying the entire import. Fix the file and preview again. Syntax errors
@@ -28,7 +30,7 @@ unchanged counts. Reimporting an unchanged file does not create duplicates.
 
 ## VCE configuration CSV, version 2
 
-Export the selected list using the Export tab. Lists with duplicate exact matchers must be resolved before they can
+Choose **Export aliases…** for the selected list. Lists with duplicate exact matchers must be resolved before they can
 produce a transferable export. The importer requires this exact header, including order and capitalization:
 
 ```csv

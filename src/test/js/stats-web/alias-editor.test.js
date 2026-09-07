@@ -61,6 +61,7 @@ vm.runInContext(`
   ${functionSource('function aliasTransferListDefaults(selectedList, options = {})')}
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
+  ${functionSource('function aliasTransferDetectedFormat(csv)')}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
@@ -81,6 +82,7 @@ vm.runInContext(`
   globalThis.transferListDefaults = aliasTransferListDefaults;
   globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
   globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
+  globalThis.transferDetectedFormat = aliasTransferDetectedFormat;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
@@ -177,12 +179,23 @@ assert.deepEqual(Array.from(context.transferAssignmentNames(true, [], [])), [],
 assert.deepEqual(Array.from(context.transferAssignmentNames(true, ['Shown', 'Duplicate'],
   ['Exact', 'Duplicate'])), ['Shown', 'Duplicate', 'Exact'],
   'Displayed and exact-name destinations must be unioned without duplicates.');
+assert.equal(context.transferDetectedFormat(
+  '\uFEFFDecimal,Hex,Alpha Tag,Mode,Description,Tag,Category\n1,1,Dispatch,D,,,Fire'), 'RADIOREFERENCE');
+assert.equal(context.transferDetectedFormat(
+  'format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value'), 'VCE');
+assert.equal(context.transferDetectedFormat('name,description\nDispatch,County'), '',
+  'Unknown CSV headers must require an explicit format choice.');
 
-const transferModal = functionSource('function openAliasTransferModal(selectedList)');
+const transferModal = functionSource("function openAliasTransferModal(selectedList, action = 'Import')");
 assert.match(transferModal, /options\.streams_truncated === true/);
 assert.match(transferModal, /Add an exact configured name not shown/);
 assert.match(transferModal, /Up to 500 destinations are listed/);
-assert.match(transferModal, /Transfer export requires one alias per exact matcher/);
+assert.match(transferModal, /Drop a CSV file here/);
+assert.match(transferModal, /Add new aliases and update matches/);
+assert.match(transferModal, /Replace this list’s aliases/);
+assert.match(transferModal, /Download alias list CSV/);
+assert.match(transferModal, /duplicate exact matchers/);
+assert.match(transferModal, /preview\.counts\.deleted > 0/);
 assert.match(transferModal, /fetch\(endpoint/);
 assert.match(transferModal, /createObjectURL/);
 assert.match(transferModal, /timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS/g);
