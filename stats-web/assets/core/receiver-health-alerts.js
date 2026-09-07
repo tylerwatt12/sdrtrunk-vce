@@ -20,7 +20,7 @@
       alert('receiver-queue-pressure', 'Receiver queue nearly full',
         'The receiver sample queue stayed close to its limit.'),
       alert('tuner-allocation-failure', 'Tuner allocation failed',
-        'A control or traffic channel could not obtain a tuner source.')
+        'A conventional, control, or traffic channel could not obtain a tuner source.')
     ]),
     group('usb', 'USB delivery', 'Sample transfer between USB tuners and the receiver.', [
       alert('usb-sample-loss', 'USB sample delivery incomplete',

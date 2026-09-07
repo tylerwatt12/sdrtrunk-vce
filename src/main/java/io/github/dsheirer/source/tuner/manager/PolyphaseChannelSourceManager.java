@@ -42,6 +42,18 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     private TunerController mTunerController;
 
     /**
+     * Internal allocation stages used by the tuner manager.  Each stage is enforced while holding the tuner
+     * controller lock so that the channel-count check and any resulting allocation or retune are one operation.
+     */
+    enum AllocationMode
+    {
+        STANDARD,
+        CURRENT_CENTER,
+        ALLOW_IDLE_RETUNE,
+        ALLOW_BUSY_RETUNE
+    }
+
+    /**
      * Constructs an instance
      * @param tunerController with a center tuned frequency that will be managed by this instance
      */
@@ -115,6 +127,29 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     {
         return mTunerController.canTune(tunerChannel.getMinFrequency()) &&
                 mTunerController.canTune(tunerChannel.getMaxFrequency());
+    }
+
+    /**
+     * Indicates if every channel in the broader placement context is within the tuner's configured frequency extents
+     * and can fit within its usable bandwidth.  An unusable context remains a hint and must not prevent the requested
+     * channel from being allocated on its own.
+     */
+    private boolean isUsableCenterFrequencyContext(SortedSet<TunerChannel> tunerChannels)
+    {
+        if(tunerChannels == null || tunerChannels.isEmpty())
+        {
+            return false;
+        }
+
+        for(TunerChannel tunerChannel: tunerChannels)
+        {
+            if(!isTunable(tunerChannel))
+            {
+                return false;
+            }
+        }
+
+        return canTune(tunerChannels);
     }
 
     /**
@@ -475,7 +510,7 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     public TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
                                         String threadName)
     {
-        return getSource(tunerChannel, channelSpecification, threadName, null);
+        return getSource(tunerChannel, channelSpecification, threadName, null, AllocationMode.STANDARD);
     }
 
     /**
@@ -491,37 +526,95 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     public TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
                                         String threadName, SortedSet<TunerChannel> centerFrequencyChannels)
     {
+        return getSource(tunerChannel, channelSpecification, threadName, centerFrequencyChannels,
+            AllocationMode.STANDARD);
+    }
+
+    /**
+     * Attempts to allocate a tuner channel according to one retune-aware allocation stage.
+     *
+     * @param tunerChannel for requested source
+     * @param channelSpecification for the requested channel
+     * @param threadName for the dispatcher
+     * @param centerFrequencyChannels optional broader set used only for center-frequency selection
+     * @param allocationMode allocation stage to enforce atomically
+     * @return allocated DDC tuner channel source, or null when this tuner is not eligible for the stage
+     */
+    TunerChannelSource getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
+                                 String threadName, SortedSet<TunerChannel> centerFrequencyChannels,
+                                 AllocationMode allocationMode)
+    {
         TunerChannelSource tunerChannelSource = null;
+
+        boolean controllerLockAcquired = false;
+
+        if(allocationMode == AllocationMode.STANDARD)
+        {
+            mTunerController.getLock().lock();
+            controllerLockAcquired = true;
+        }
+        else
+        {
+            controllerLockAcquired = mTunerController.getLock().tryLock();
+        }
+
+        if(!controllerLockAcquired)
+        {
+            return null;
+        }
 
         try
         {
-            mTunerController.getLock().lock();
             if(isTunable(tunerChannel))
             {
                 //Get a new set of currently tuned channels
                 SortedSet<TunerChannel> tunerChannels = getTunerChannels();
+                boolean hasAllocatedChannels = !tunerChannels.isEmpty();
 
                 //Add the requested channel to the list
                 tunerChannels.add(tunerChannel);
 
                 long currentCenterFrequency = mTunerController.getFrequency();
                 boolean centerFrequencyLocked = mTunerController.isCenterFrequencyLocked();
+                boolean currentCenterValid = isValidCenterFrequency(tunerChannels, currentCenterFrequency);
+                boolean hasUsableBroaderContext = isUsableCenterFrequencyContext(centerFrequencyChannels);
+                boolean idleContextPlacementRequired = !hasAllocatedChannels && !centerFrequencyLocked &&
+                    hasUsableBroaderContext &&
+                    !isValidCenterFrequency(centerFrequencyChannels, currentCenterFrequency);
+                boolean currentCenterAllocation = currentCenterValid && !idleContextPlacementRequired;
+                boolean retuneAllowed = switch(allocationMode)
+                {
+                    case STANDARD -> !centerFrequencyLocked;
+                    case CURRENT_CENTER -> false;
+                    case ALLOW_IDLE_RETUNE -> !centerFrequencyLocked && !hasAllocatedChannels;
+                    //This final stage is cumulative.  If a tuner became idle between stages it can still be used.
+                    case ALLOW_BUSY_RETUNE -> !centerFrequencyLocked;
+                };
+                boolean allocationModeEligible = switch(allocationMode)
+                {
+                    case STANDARD -> !centerFrequencyLocked || currentCenterValid;
+                    //An unused, unlocked tuner that does not currently cover a usable site envelope must reach the idle
+                    //stage so that its initial tune can be placed for that envelope.
+                    case CURRENT_CENTER -> currentCenterAllocation;
+                    //Later stages remain eligible for a current-center allocation.  This prevents a tuner whose
+                    //lifecycle lock was briefly unavailable in an earlier stage from being skipped or needlessly moved.
+                    case ALLOW_IDLE_RETUNE, ALLOW_BUSY_RETUNE -> currentCenterAllocation || retuneAllowed;
+                };
 
-                if(canTune(tunerChannels) && (!centerFrequencyLocked ||
-                    isValidCenterFrequency(tunerChannels, currentCenterFrequency)))
+                if(canTune(tunerChannels) && allocationModeEligible)
                 {
                     long updatedCenterFrequency = currentCenterFrequency;
-                    boolean hasBroaderContext = !centerFrequencyLocked && centerFrequencyChannels != null &&
-                        !centerFrequencyChannels.isEmpty();
+                    boolean shouldRetune = allocationMode == AllocationMode.STANDARD ? retuneAllowed :
+                        !currentCenterAllocation && retuneAllowed;
 
                     //Attempt to adjust the center frequency before we allocate the channel
                     try
                     {
-                        if(!centerFrequencyLocked)
+                        if(shouldRetune)
                         {
                             try
                             {
-                                if(hasBroaderContext)
+                                if(hasUsableBroaderContext)
                                 {
                                     //When a site envelope is provided, center on it exclusively so the active channel
                                     //does not shift the midpoint.  Fall back to the real channel set if the envelope
@@ -575,7 +668,10 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         }
         finally
         {
-            mTunerController.getLock().unlock();
+            if(controllerLockAcquired)
+            {
+                mTunerController.getLock().unlock();
+            }
         }
 
         return tunerChannelSource;

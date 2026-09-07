@@ -432,9 +432,9 @@ public final class ReceiverHealthService implements AutoCloseable
             {
                 mIncidents.observe("tuner-allocation-failure", "warning", "A channel could not obtain a tuner source",
                     "Tuner allocation", now, allocation.failures(), failureDelta + " new failed allocation(s)",
-                    "No enabled tuner covered the requested frequency, a tuner was busy/locked, or allocation raced tuner lifecycle",
-                    "A control or granted traffic channel may not start",
-                    "Check enabled tuner frequency spans, center locks, preferred tuner settings, and active channel count");
+                    "No enabled tuner covered the requested frequency, an in-use tuner could not fit it, Lock Center prevented movement, or allocation raced tuner lifecycle",
+                    "A conventional, control, or granted traffic channel may not start",
+                    "Check enabled tuner frequency spans, Lock Center settings, preferred tuner settings, and active channel count");
             }
         }
 

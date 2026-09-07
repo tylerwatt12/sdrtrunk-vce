@@ -280,7 +280,7 @@ public class FC0013EmbeddedTuner extends EmbeddedTuner
         }
         catch(LibUsbException e)
         {
-            mLog.error("FC0013 tuner error while setting tuned frequency [" + frequency + "]", e);
+            throw new SourceException("FC0013 tuner error while setting tuned frequency [" + frequency + "]", e);
         }
         finally
         {

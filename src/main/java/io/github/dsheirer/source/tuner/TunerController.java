@@ -250,7 +250,15 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      */
     public void setCenterFrequencyLocked(boolean locked)
     {
-        mCenterFrequencyLocked = locked;
+        try
+        {
+            getLock().lock();
+            mCenterFrequencyLocked = locked;
+        }
+        finally
+        {
+            getLock().unlock();
+        }
     }
 
     /**

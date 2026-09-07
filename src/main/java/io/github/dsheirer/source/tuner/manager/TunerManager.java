@@ -27,6 +27,8 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
+import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
@@ -49,10 +51,10 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
@@ -82,6 +84,10 @@ import org.usb4java.LibUsb;
 public class TunerManager implements IDiscoveredTunerStatusListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerManager.class);
+    private static final List<PolyphaseChannelSourceManager.AllocationMode> CHANNEL_ALLOCATION_STAGES = List.of(
+        PolyphaseChannelSourceManager.AllocationMode.CURRENT_CENTER,
+        PolyphaseChannelSourceManager.AllocationMode.ALLOW_IDLE_RETUNE,
+        PolyphaseChannelSourceManager.AllocationMode.ALLOW_BUSY_RETUNE);
     public static final int USB_RESCAN_UNAVAILABLE = -1;
     public static final int USB_RESCAN_FAILED = -2;
     private final UserPreferences mUserPreferences;
@@ -108,8 +114,16 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public TunerManager(UserPreferences userPreferences)
     {
+        this(userPreferences, new TunerConfigurationManager());
+    }
+
+    /**
+     * Constructs an instance with an injected tuner-configuration manager for deterministic allocation tests.
+     */
+    TunerManager(UserPreferences userPreferences, TunerConfigurationManager tunerConfigurationManager)
+    {
         mUserPreferences = userPreferences;
-        mTunerConfigurationManager = new TunerConfigurationManager();
+        mTunerConfigurationManager = Objects.requireNonNull(tunerConfigurationManager);
         mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
     }
 
@@ -780,75 +794,76 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public Source getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification, String preferredTuner,
                             String threadName, SortedSet<TunerChannel> tunerChannels)
     {
-        TunerChannelSource source = null;
         boolean validRequest = tunerChannel != null && channelSpecification != null;
 
         if(validRequest)
         {
             mChannelAllocationRequests.incrementAndGet();
-            DiscoveredTuner discoveredTuner;
+            List<DiscoveredTuner> allocationCandidates = getAllocationCandidates(preferredTuner);
+
+            for(PolyphaseChannelSourceManager.AllocationMode allocationMode: CHANNEL_ALLOCATION_STAGES)
+            {
+                //Lifecycle and availability are rechecked on each attempt.  The immutable candidate snapshot keeps
+                //the preferred tuner first without rebuilding the list for each cumulative allocation stage.
+                for(DiscoveredTuner discoveredTuner: allocationCandidates)
+                {
+                    if(discoveredTuner.hasTuner())
+                    {
+                        try
+                        {
+                            TunerChannelSource source = getSource(discoveredTuner, tunerChannel, channelSpecification,
+                                threadName, tunerChannels, allocationMode);
+
+                            if(source != null)
+                            {
+                                mChannelAllocationSuccesses.incrementAndGet();
+                                return source;
+                            }
+                        }
+                        catch(Exception e)
+                        {
+                            mLog.error("Error obtaining channel from tuner [{}]", discoveredTuner.getId(), e);
+                        }
+                    }
+                }
+            }
 
             if(preferredTuner != null)
             {
-                discoveredTuner = getDiscoveredTuner(preferredTuner);
-
-                if(discoveredTuner != null)
-                {
-                    try
-                    {
-                        source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
-                            tunerChannels);
-
-                        if(source != null)
-                        {
-                            mChannelAllocationSuccesses.incrementAndGet();
-                            return source;
-                        }
-                    }
-                    catch(Exception e)
-                    {
-                        //Fall through to logger below
-                    }
-                }
-
-                mLog.info("Unable to source channel [" + tunerChannel.getFrequency() + "] from preferred tuner [" +
-                        preferredTuner + "] - searching for another tuner");
+                mLog.info("Unable to source channel [" + tunerChannel.getFrequency() +
+                    "] from any available tuner; configured preferred tuner was [" + preferredTuner + "]");
             }
 
-            Iterator<DiscoveredTuner> it = mDiscoveredTunerModel.getAvailableTuners().iterator();
-
-            while(it.hasNext() && source == null)
-            {
-                discoveredTuner = it.next();
-
-                if(discoveredTuner.hasTuner())
-                {
-                    try
-                    {
-                        source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
-                            tunerChannels);
-                    }
-                    catch(Exception e)
-                    {
-                        mLog.error("Error obtaining channel from tuner [{}]", discoveredTuner.getId(), e);
-                    }
-                }
-            }
+            mChannelAllocationFailures.incrementAndGet();
         }
 
-        if(validRequest)
+        return null;
+    }
+
+    /**
+     * Available tuner snapshot ordered with the preferred tuner first and without duplicating it in the stage.
+     */
+    private List<DiscoveredTuner> getAllocationCandidates(String preferredTuner)
+    {
+        List<DiscoveredTuner> availableTuners = mDiscoveredTunerModel.getAvailableTuners();
+        LinkedHashSet<DiscoveredTuner> candidates = new LinkedHashSet<>();
+
+        if(preferredTuner != null)
         {
-            if(source != null)
+            for(DiscoveredTuner discoveredTuner: availableTuners)
             {
-                mChannelAllocationSuccesses.incrementAndGet();
-            }
-            else
-            {
-                mChannelAllocationFailures.incrementAndGet();
+                Tuner tuner = discoveredTuner.getTuner();
+
+                if(tuner != null && tuner.getPreferredName().equalsIgnoreCase(preferredTuner))
+                {
+                    candidates.add(discoveredTuner);
+                    break;
+                }
             }
         }
 
-        return source;
+        candidates.addAll(availableTuners);
+        return List.copyOf(candidates);
     }
 
     /**
@@ -872,7 +887,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private TunerChannelSource getSource(DiscoveredTuner discoveredTuner, TunerChannel tunerChannel,
                                          ChannelSpecification channelSpecification, String threadName,
-                                         SortedSet<TunerChannel> tunerChannels)
+                                         SortedSet<TunerChannel> tunerChannels,
+                                         PolyphaseChannelSourceManager.AllocationMode allocationMode)
     {
         if(!discoveredTuner.tryAcquireForAllocation())
         {
@@ -893,28 +909,62 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return null;
             }
 
-            if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
-                tunerChannels != null && !tunerChannels.isEmpty())
+            if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager)
             {
+                Tuner tuner = discoveredTuner.getTuner();
+                TunerController tunerController = tuner.getTunerController();
+                long previousCenterFrequency = tunerController.getFrequency();
                 TunerChannelSource source = polyphaseChannelSourceManager.getSource(tunerChannel,
-                    channelSpecification, threadName, tunerChannels);
+                    channelSpecification, threadName, tunerChannels, allocationMode);
 
-                if(source != null)
+                long currentCenterFrequency = tunerController.getFrequency();
+
+                if(source != null && currentCenterFrequency != previousCenterFrequency)
                 {
-                    mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+                    mTunerConfigurationManager.updateTunerFrequency(tuner.getTunerType(), discoveredTuner.getId(),
+                        currentCenterFrequency);
                 }
 
                 return source;
             }
 
-            TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+            //Non-polyphase sources do not support allocator-managed retuning.  They may participate in any cumulative
+            //stage only when their current immutable recording window already covers the complete request.
+            TunerController tunerController = discoveredTuner.getTuner().getTunerController();
 
-            if(source != null && channelSourceManager instanceof PolyphaseChannelSourceManager)
+            if(!tunerController.getLock().tryLock())
             {
-                mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
+                return null;
             }
 
-            return source;
+            try
+            {
+                if(!tunerController.canTune(tunerChannel.getMinFrequency()) ||
+                    !tunerController.canTune(tunerChannel.getMaxFrequency()))
+                {
+                    return null;
+                }
+
+                SortedSet<TunerChannel> requestedChannels = new TreeSet<>();
+                requestedChannels.add(tunerChannel);
+
+                if(!tunerController.isTunedFor(requestedChannels))
+                {
+                    return null;
+                }
+
+                //A pass-through source forwards the tuner stream without mixing an offset channel to baseband.
+                if(tunerController.getFrequency() != tunerChannel.getFrequency())
+                {
+                    return null;
+                }
+
+                return channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+            }
+            finally
+            {
+                tunerController.getLock().unlock();
+            }
         }
         finally
         {

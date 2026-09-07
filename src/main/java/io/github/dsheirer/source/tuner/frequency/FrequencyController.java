@@ -180,13 +180,20 @@ public class FrequencyController
                     mMaximumFrequency + "]", frequency, mMaximumFrequency);
         }
 
-        mFrequency = frequency;
-        mTunedFrequency = getTunedFrequency(frequency);
+        long tunedFrequency = getTunedFrequency(frequency);
 
         if(mTunable != null)
         {
-            mTunable.setTunedFrequency(mTunedFrequency);
+            /*
+             * Publish the requested and corrected frequencies only after the hardware accepts the tune.  Otherwise,
+             * callers can mistake a failed hardware tune for a successful one and allocate a channel against a
+             * center frequency that the device never reached.
+             */
+            mTunable.setTunedFrequency(tunedFrequency);
         }
+
+        mFrequency = frequency;
+        mTunedFrequency = tunedFrequency;
 
         /* Broadcast to all listeners that the frequency has changed */
         if(broadcastChange)

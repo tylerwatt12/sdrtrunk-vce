@@ -400,11 +400,20 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
      */
     public void stop()
     {
-        if(hasTuner())
+        mAllocationLifecycleLock.lock();
+
+        try
         {
-            mLog.info("Stopping Tuner: " + getId());
-            getTuner().stop();
-            mTuner = null;
+            if(hasTuner())
+            {
+                mLog.info("Stopping Tuner: " + getId());
+                getTuner().stop();
+                mTuner = null;
+            }
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
         }
     }
 }

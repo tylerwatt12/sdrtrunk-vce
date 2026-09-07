@@ -26,10 +26,18 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
+import io.github.dsheirer.util.ThreadPool;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -42,6 +50,9 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerConfigurationManager.class);
     private final ApplicationSettingsStore mSettingsStore;
+    private final Executor mFrequencyUpdateExecutor;
+    private final Map<TunerFrequencyKey,Long> mPendingFrequencyUpdates = new ConcurrentHashMap<>();
+    private final AtomicBoolean mFrequencyUpdateWorkerScheduled = new AtomicBoolean();
     private List<DisabledTuner> mDisabledTunerList = new ArrayList<>();
     private List<TunerConfiguration> mTunerConfigurations = new ArrayList<>();
     private Lock mLock = new ReentrantLock();
@@ -52,7 +63,16 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     public TunerConfigurationManager()
     {
-        mSettingsStore = new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath());
+        this(new ApplicationSettingsStore(SdrTrunkDatabasePath.getDatabasePath()), ThreadPool.CACHED);
+    }
+
+    /**
+     * Constructs an instance with injected persistence dependencies for deterministic tests.
+     */
+    TunerConfigurationManager(ApplicationSettingsStore settingsStore, Executor frequencyUpdateExecutor)
+    {
+        mSettingsStore = Objects.requireNonNull(settingsStore);
+        mFrequencyUpdateExecutor = Objects.requireNonNull(frequencyUpdateExecutor);
         load();
     }
 
@@ -174,27 +194,146 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     }
 
     /**
-     * Updates the tuner configuration with the current tuner center frequency so that live retunes triggered by
-     * channel allocation are persisted across application restarts.
-     * @param discoveredTuner that has an updated center frequency
+     * Queues a center-frequency update after an allocator-driven tuner retune.  The caller supplies only immutable
+     * values so that configuration lookup, mutation, snapshot creation, and serialization all occur off the decoder
+     * path.  Repeated updates for the same tuner are coalesced to the latest frequency.
+     *
+     * @param tunerType type of tuner that moved
+     * @param uniqueID stable tuner identifier
+     * @param frequency new center frequency
      */
-    public void updateTunerFrequency(DiscoveredTuner discoveredTuner)
+    public void updateTunerFrequency(TunerType tunerType, String uniqueID, long frequency)
     {
-        if(discoveredTuner != null && discoveredTuner.hasTuner())
+        if(tunerType == null || tunerType == TunerType.RECORDING || uniqueID == null || uniqueID.isBlank())
         {
-            TunerType tunerType = discoveredTuner.getTuner().getTunerType();
+            return;
+        }
 
-            if(tunerType != TunerType.RECORDING)
+        mPendingFrequencyUpdates.put(new TunerFrequencyKey(tunerType, uniqueID.toLowerCase(Locale.ROOT)), frequency);
+        scheduleFrequencyUpdateWorker();
+    }
+
+    /**
+     * Schedules at most one drain worker.  Updates remain bounded to one map entry per physical tuner instead of one
+     * queued task per retune.
+     */
+    private void scheduleFrequencyUpdateWorker()
+    {
+        if(mFrequencyUpdateWorkerScheduled.compareAndSet(false, true))
+        {
+            try
             {
-                TunerConfiguration tunerConfiguration = getTunerConfiguration(tunerType, discoveredTuner.getId());
+                mFrequencyUpdateExecutor.execute(this::processPendingFrequencyUpdates);
+            }
+            catch(RuntimeException ignored)
+            {
+                //Persistence is best effort during shutdown.  Leave the coalesced values in place so that a later
+                //update can retry, but do not log or run persistence work on the decoder caller.
+                mFrequencyUpdateWorkerScheduled.set(false);
+            }
+        }
+    }
 
-                if(tunerConfiguration != null)
+    /**
+     * Drains immutable frequency updates on the persistence worker.  Conditional removal preserves a newer value
+     * that races with a worker snapshot, and the ownership handoff closes the empty-check/worker-exit race.
+     */
+    private void processPendingFrequencyUpdates()
+    {
+        try
+        {
+            while(true)
+            {
+                Map<TunerFrequencyKey,Long> updates = takePendingFrequencyUpdates();
+
+                if(!updates.isEmpty())
                 {
-                    tunerConfiguration.setFrequency(discoveredTuner.getTuner().getTunerController().getFrequency());
-                    saveConfigurations();
+                    applyFrequencyUpdates(updates);
+                    continue;
+                }
+
+                mFrequencyUpdateWorkerScheduled.set(false);
+
+                //An update that arrived before ownership was released saw the worker as scheduled.  Reclaim
+                //ownership and continue draining it here.  If a later arrival already scheduled a new worker, this
+                //CAS fails and that worker owns the pending values.
+                if(mPendingFrequencyUpdates.isEmpty() ||
+                    !mFrequencyUpdateWorkerScheduled.compareAndSet(false, true))
+                {
+                    return;
                 }
             }
         }
+        catch(RuntimeException e)
+        {
+            mLog.error("Error persisting tuner center-frequency updates", e);
+            mFrequencyUpdateWorkerScheduled.set(false);
+
+            if(!mPendingFrequencyUpdates.isEmpty())
+            {
+                scheduleFrequencyUpdateWorker();
+            }
+        }
+    }
+
+    /**
+     * Takes a coalesced snapshot without removing values that changed after the snapshot was made.
+     */
+    private Map<TunerFrequencyKey,Long> takePendingFrequencyUpdates()
+    {
+        Map<TunerFrequencyKey,Long> snapshot = Map.copyOf(mPendingFrequencyUpdates);
+        Map<TunerFrequencyKey,Long> updates = new HashMap<>();
+
+        for(Map.Entry<TunerFrequencyKey,Long> entry: snapshot.entrySet())
+        {
+            if(mPendingFrequencyUpdates.remove(entry.getKey(), entry.getValue()))
+            {
+                updates.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        return updates;
+    }
+
+    /**
+     * Applies one coalesced batch and serializes a single settings snapshot when at least one saved tuner changed.
+     */
+    private void applyFrequencyUpdates(Map<TunerFrequencyKey,Long> updates)
+    {
+        boolean changed = false;
+        mLock.lock();
+
+        try
+        {
+            for(Map.Entry<TunerFrequencyKey,Long> entry: updates.entrySet())
+            {
+                TunerFrequencyKey key = entry.getKey();
+                Optional<TunerConfiguration> configuration = mTunerConfigurations.stream()
+                    .filter(candidate -> candidate.getTunerType() == key.tunerType() &&
+                        candidate.getUniqueID() != null &&
+                        candidate.getUniqueID().equalsIgnoreCase(key.normalizedUniqueID()))
+                    .findFirst();
+
+                if(configuration.isPresent() && configuration.get().getFrequency() != entry.getValue())
+                {
+                    configuration.get().setFrequency(entry.getValue());
+                    changed = true;
+                }
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(changed)
+        {
+            saveConfigurations();
+        }
+    }
+
+    private record TunerFrequencyKey(TunerType tunerType, String normalizedUniqueID)
+    {
     }
 
     /**
@@ -288,10 +427,26 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     public void addTunerConfiguration(TunerConfiguration tunerConfiguration)
     {
-        if(!mTunerConfigurations.stream().filter(config -> config.getTunerType().equals(tunerConfiguration.getTunerType()) &&
-                config.getUniqueID().equalsIgnoreCase(tunerConfiguration.getUniqueID())).findFirst().isPresent())
+        boolean added = false;
+        mLock.lock();
+
+        try
         {
-            mTunerConfigurations.add(tunerConfiguration);
+            if(mTunerConfigurations.stream().noneMatch(config ->
+                config.getTunerType().equals(tunerConfiguration.getTunerType()) &&
+                    config.getUniqueID().equalsIgnoreCase(tunerConfiguration.getUniqueID())))
+            {
+                mTunerConfigurations.add(tunerConfiguration);
+                added = true;
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(added)
+        {
             saveConfigurations();
         }
     }
@@ -302,28 +457,56 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     public void removeTunerConfiguration(TunerConfiguration tunerConfiguration)
     {
-        mTunerConfigurations.remove(tunerConfiguration);
+        mLock.lock();
+
+        try
+        {
+            mTunerConfigurations.remove(tunerConfiguration);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
         saveConfigurations();
     }
 
     /**
      * Provides an existing or creates a new tuner configuration for the specified tuner type and unique ID value.
      *
-     * Note: this method is not thread-safe.
      */
     public TunerConfiguration getTunerConfiguration(TunerType type, String uniqueID )
     {
-        Optional<TunerConfiguration> optional = mTunerConfigurations.stream().filter(config -> config.getTunerType().equals(type) &&
-                config.getUniqueID().equalsIgnoreCase(uniqueID)).findFirst();
+        TunerConfiguration tunerConfiguration;
+        boolean created = false;
+        mLock.lock();
 
-        if(optional.isPresent())
+        try
         {
-            return optional.get();
+            tunerConfiguration = mTunerConfigurations.stream()
+                .filter(config -> config.getTunerType().equals(type) &&
+                    config.getUniqueID().equalsIgnoreCase(uniqueID))
+                .findFirst()
+                .orElse(null);
+
+            if(tunerConfiguration == null)
+            {
+                tunerConfiguration = TunerFactory.getTunerConfiguration(type, uniqueID);
+                mTunerConfigurations.add(tunerConfiguration);
+                created = true;
+            }
+        }
+        finally
+        {
+            mLock.unlock();
         }
 
-        TunerConfiguration config = TunerFactory.getTunerConfiguration(type, uniqueID);
-        addTunerConfiguration(config);
-        return config;
+        if(created)
+        {
+            saveConfigurations();
+        }
+
+        return tunerConfiguration;
     }
 
     /**
@@ -356,8 +539,17 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
      */
     public List<TunerConfiguration> getTunerConfigurations(TunerType tunerType)
     {
-        return mTunerConfigurations.stream().filter(tunerConfiguration -> tunerConfiguration.getTunerType()
+        mLock.lock();
+
+        try
+        {
+            return mTunerConfigurations.stream().filter(tunerConfiguration -> tunerConfiguration.getTunerType()
                 .equals(tunerType)).toList();
+        }
+        finally
+        {
+            mLock.unlock();
+        }
     }
 
 }
