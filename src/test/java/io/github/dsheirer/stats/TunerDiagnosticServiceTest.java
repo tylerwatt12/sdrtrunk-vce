@@ -163,7 +163,7 @@ class TunerDiagnosticServiceTest
 
         assertEquals("maximum-detail", state.profile());
         assertEquals(32_768, state.fftSize());
-        assertEquals(5, state.framesPerSecond());
+        assertEquals(20, state.framesPerSecond());
         assertEquals(32, state.maximumDecimation());
         assertEquals(400, state.iqQueueDurationMilliseconds());
         assertEquals(8, state.quantizationBits());
@@ -184,12 +184,10 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void capsHighCostProfilesAndNeverReducesTheReceiverQueue()
+    void preservesProfileRatesAndNeverReducesTheReceiverQueue()
     {
-        assertEquals(10, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.framesPerSecond());
-        assertEquals(5, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.framesPerSecond());
-        assertEquals(20, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.analysisBudgetFps());
-        assertEquals(20, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.analysisBudgetFps());
+        assertEquals(20, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.framesPerSecond());
+        assertEquals(20, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.framesPerSecond());
 
         FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeReceiverQueue queue = new FakeReceiverQueue(800, 0, 0);

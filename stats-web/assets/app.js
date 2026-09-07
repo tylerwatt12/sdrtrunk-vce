@@ -10862,8 +10862,8 @@ let tunerSpectrumSessionTarget = '';
 const TUNER_SPECTRUM_PROFILES = Object.freeze({
   efficient: Object.freeze({ fftSize: 2048, fps: 5 }),
   balanced: Object.freeze({ fftSize: 8192, fps: 10 }),
-  'high-detail': Object.freeze({ fftSize: 16384, fps: 10 }),
-  'maximum-detail': Object.freeze({ fftSize: 32768, fps: 5 })
+  'high-detail': Object.freeze({ fftSize: 16384, fps: 20 }),
+  'maximum-detail': Object.freeze({ fftSize: 32768, fps: 20 })
 });
 const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000;
 const TUNER_CHANNEL_MINIMUM_WIDTH_PX = 3.5;
@@ -11136,10 +11136,6 @@ function tunerStoredChoice(key, fallback, choices) {
 function storeTunerChoice(key, value) {
   if (key === 'session-target') tunerSpectrumSessionTarget = String(value);
   else void settleUserPreferenceMutation((preferences) => { preferences.tuner[key] = String(value); });
-}
-
-function tunerPersistentSpectrumProfile(value) {
-  return ['efficient', 'balanced', 'high-detail'].includes(value) ? value : 'balanced';
 }
 
 function tunerFrameDomain(frame, valueCount = frame?.valueCount || 0) {
@@ -11436,15 +11432,15 @@ function tunerSpectrumPanel(snapPresetDocument) {
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
     ['balanced', 'Balanced · 8,192 bins / 10 FPS'],
-    ['high-detail', 'High detail · 16,384 bins / 10 FPS'],
-    ['maximum-detail', 'Maximum detail · 32,768 bins / 5 FPS']
+    ['high-detail', 'High detail · 16,384 bins / 20 FPS'],
+    ['maximum-detail', 'Maximum detail · 32,768 bins / 20 FPS']
   ].forEach(([value, text]) => {
     const option = node('option', '', text);
     option.value = value;
     profileSelect.append(option);
   });
-  profileSelect.value = tunerPersistentSpectrumProfile(tunerStoredChoice(
-    TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced', Object.keys(TUNER_SPECTRUM_PROFILES)));
+  profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced',
+    Object.keys(TUNER_SPECTRUM_PROFILES));
   profileControl.append(node('span', '', 'Profile'), profileSelect);
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
@@ -12911,8 +12907,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   });
   function applySelectedProfile() {
     spectrumProfile = profileSelect.value;
-    storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
-      tunerPersistentSpectrumProfile(spectrumProfile));
+    storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
     if (shouldRun()) queueViewportUpdate(true);
   }
   profileSelect.addEventListener('change', applySelectedProfile);
