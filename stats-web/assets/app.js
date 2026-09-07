@@ -4732,11 +4732,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
   const options = aliasEditorContext?.options || {};
   const body = node('div', 'alias-editor-form alias-transfer');
-  body.append(node('div', 'alias-transfer-destination',
+  const destinationSummary = node('div', 'alias-transfer-destination');
+  destinationSummary.append(
     node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
     node('span', 'muted', importing ?
       'Only aliases in this list can change. History, counters, and Alias List Defaults are preserved.' :
-      `${number(selectedList.alias_count || 0)} aliases will be saved in an importable VCE file.`)));
+      `${number(selectedList.alias_count || 0)} aliases will be saved in an importable VCE file.`));
+  body.append(destinationSummary);
   const importPanel = node('div', 'alias-transfer-panel');
   const exportPanel = node('div', 'alias-transfer-panel');
   body.append(importing ? importPanel : exportPanel);
@@ -4799,7 +4801,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   behaviorSection.append(node('h3', '', 'Choose import behavior'), mode, modeChoices);
   const progress = node('ol', 'alias-transfer-progress');
   ['Choose file', 'Import options', 'Review'].forEach((label, index) => {
-    const step = node('li', '', node('span', '', String(index + 1)), document.createTextNode(label));
+    const step = node('li');
+    step.append(node('span', '', String(index + 1)), document.createTextNode(label));
     step.dataset.step = String(index + 1);
     progress.append(step);
   });
@@ -4930,12 +4933,14 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   exportButton.type = 'button';
   const exportCancel = node('button', 'button secondary', 'Cancel');
   exportCancel.type = 'button';
-  exportPanel.append(node('div', 'alias-transfer-export-summary',
+  const exportSummary = node('div', 'alias-transfer-export-summary');
+  exportSummary.append(
     node('h3', '', `Export ${selectedList.name}`),
     node('p', '', `Download all ${number(selectedList.alias_count || 0)} aliases in this list as an importable VCE CSV.`),
     node('p', 'muted', 'The file includes matchers, appearance, recording choices, scan-list memberships, ' +
       'named streaming destinations, and the source Alias List name.'),
-    node('p', 'muted', 'Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.')),
+    node('p', 'muted', 'Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.'));
+  exportPanel.append(exportSummary,
     aliasModalFooter(exportCancel, node('span', 'alias-modal-footer-spacer'), exportButton));
   body.insertBefore(errorHost, importing ? importPanel : exportPanel);
   let request = null;
