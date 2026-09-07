@@ -269,6 +269,11 @@ test('saved schema round-trips both boolean values and idle styling is outline-o
   const schemaSource = fs.readFileSync(path.join(path.dirname(applicationPath), 'core/preference-schema.js'), 'utf8');
   const schema = await import('data:text/javascript;base64,' + Buffer.from(schemaSource).toString('base64'));
   assert.equal(schema.defaults.tuner.show_idle_channels, false);
+  assert.match(source, /'high-detail': Object\.freeze\(\{ fftSize: 16384, fps: 20 \}\)/);
+  assert.match(source, /'maximum-detail': Object\.freeze\(\{ fftSize: 32768, fps: 20 \}\)/);
+  const maximumDetail = JSON.parse(JSON.stringify(schema.defaults));
+  maximumDetail.tuner.profile = 'maximum-detail';
+  assert.equal(schema.validate(maximumDetail).tuner.profile, 'maximum-detail');
   for (const enabled of [false, true]) {
     const preferences = JSON.parse(JSON.stringify(schema.defaults));
     preferences.tuner.show_idle_channels = enabled;
@@ -282,6 +287,33 @@ test('saved schema round-trips both boolean values and idle styling is outline-o
   assert.throws(() => schema.validate(invalid), /show_idle_channels/);
   const css = fs.readFileSync(path.join(path.dirname(applicationPath), 'app.css'), 'utf8');
   assert.match(css, /\.tuner-spectrum-flag-swatch\.status-idle\s*\{\s*background: transparent;\s*border: 2px solid/);
+});
+
+test('maximum detail persists while inactive and only updates a running spectrum', () => {
+  const stored = [];
+  let running = false;
+  let updates = 0;
+  const profileSelect = Object.assign(new Element('select'), { value: 'maximum-detail' });
+  const context = {
+    profileSelect,
+    TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
+    storeTunerChoice: (key, value) => stored.push([key, value]),
+    shouldRun: () => running,
+    queueViewportUpdate: () => { updates += 1; }
+  };
+  vm.createContext(context);
+  vm.runInContext("let spectrumProfile = 'balanced';", context);
+  const tunerStart = source.indexOf('function tunerSpectrumPanel');
+  vm.runInContext(source.slice(source.indexOf('  function applySelectedProfile()', tunerStart),
+    source.indexOf("  zoomIn.addEventListener('click'", tunerStart)), context);
+
+  profileSelect.dispatch('change');
+  assert.deepEqual(stored, [['profile', 'maximum-detail']]);
+  assert.equal(updates, 0);
+  running = true;
+  profileSelect.dispatch('change');
+  assert.deepEqual(stored.at(-1), ['profile', 'maximum-detail']);
+  assert.equal(updates, 1);
 });
 
 test('spectrum lifecycle serializes focus and tuner rebinds without duplicate streams', async () => {
