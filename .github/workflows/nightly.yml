@@ -144,10 +144,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: SDRTrunk VCE Nightly
           prerelease: true
-          body: |
-            Rolling build of the current `main` branch. Nightlies contain the newest features and may differ from the numbered Alpha line.
-
-            For the more conservative line, use the [numbered Alpha releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest). The in-app updater remains on the channel embedded in the installed package.
+          body_path: docs/whats-new-nightly-2026-09-07.md
           files: |
             build/image/*.zip
             build/image/build_info.txt
