@@ -426,20 +426,22 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     public enum SpectrumProfile
     {
-        EFFICIENT("efficient", 2_048, 5),
-        BALANCED("balanced", FFT_SIZE, FRAMES_PER_SECOND),
-        HIGH_DETAIL("high-detail", 16_384, 20),
-        MAXIMUM_DETAIL("maximum-detail", 32_768, 20);
+        EFFICIENT("efficient", 2_048, 5, 5),
+        BALANCED("balanced", FFT_SIZE, FRAMES_PER_SECOND, FRAMES_PER_SECOND),
+        HIGH_DETAIL("high-detail", 16_384, 10, 20),
+        MAXIMUM_DETAIL("maximum-detail", 32_768, 5, 20);
 
         private final String mId;
         private final int mFftSize;
         private final int mFramesPerSecond;
+        private final int mAnalysisBudgetFps;
 
-        SpectrumProfile(String id, int fftSize, int framesPerSecond)
+        SpectrumProfile(String id, int fftSize, int framesPerSecond, int analysisBudgetFps)
         {
             mId = id;
             mFftSize = fftSize;
             mFramesPerSecond = framesPerSecond;
+            mAnalysisBudgetFps = analysisBudgetFps;
         }
 
         public String id()
@@ -455,6 +457,11 @@ public final class TunerDiagnosticService implements AutoCloseable
         public int framesPerSecond()
         {
             return mFramesPerSecond;
+        }
+
+        int analysisBudgetFps()
+        {
+            return mAnalysisBudgetFps;
         }
 
         public static SpectrumProfile fromId(String id)
@@ -535,7 +542,8 @@ public final class TunerDiagnosticService implements AutoCloseable
             {
                 mProcessor.updateMetadata(target.target().centerFrequencyHz(), target.target().sampleRateHz());
                 mProcessor.updateConfiguration(viewport, profile);
-                target.receiverQueueControl().request(DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS);
+                target.receiverQueueControl().request(Math.max(mOriginalIqQueueDurationMilliseconds,
+                    DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS));
 
                 if(!target.controller().getLock().tryLock())
                 {
@@ -1389,7 +1397,7 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     private static int maximumDecimation(long tunerSampleRateHz, SpectrumProfile profile)
     {
-        long samplesPerFrame = Math.max(1, tunerSampleRateHz / profile.framesPerSecond());
+        long samplesPerFrame = Math.max(1, tunerSampleRateHz / profile.analysisBudgetFps());
         long supported = samplesPerFrame / (profile.fftSize() + TunerFftProcessor.FILTER_SETTLING_SAMPLES);
         int decimation = 1;
 

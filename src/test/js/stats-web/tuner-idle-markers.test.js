@@ -96,6 +96,78 @@ function harness(liveAllowed = true) {
     subscriber: () => subscriber, closed: () => closed };
 }
 
+function spectrumLifecycleHarness() {
+  const events = [];
+  const releases = [];
+  let documentFocused = true;
+  const context = {
+    liveConnections: new Set(), pageConnections: new Set(),
+    document: { hidden: false, hasFocus: () => documentFocused }, window: { clearTimeout: () => {} },
+    targetSelect: Object.assign(new Element('select'), { value: 'first' }),
+    DIAGNOSTIC_FRAME_TYPES: { HEARTBEAT: 127, STATE: 1 },
+    setStatus: () => {}, setOverlay: () => {}, setRefining: () => {}, clearSpectrumSmoothing: () => {},
+    acceptTunerState: () => {}, acceptTunerFrame: () => {},
+    connectActiveChannels: () => {}, closeActiveChannels: () => {},
+    storeTunerChoice: () => {}, resetViewportForTarget: () => {}, resetPlots: () => {},
+    binaryFrameConnection: (_topic, parameters) => {
+      const target = parameters.target_id;
+      events.push(`open:${target}`);
+      let release;
+      const closed = new Promise((resolve) => { release = resolve; });
+      releases.push(release);
+      return {
+        close: () => {
+          events.push(`close:${target}`);
+          return closed;
+        },
+        //The close promise is the server-control acknowledgement; this local flag must not win the race.
+        whenClosed: () => {
+          events.push(`local-close:${target}`);
+          return Promise.resolve();
+        }
+      };
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(`
+    let disposed = false;
+    let paused = false;
+    let pageFocused = true;
+    let pageSuspended = false;
+    let stream = null;
+    let streamRelease = Promise.resolve();
+    let streamEpoch = 0;
+    let viewportUpdateTimer = null;
+    let awaitingViewportState = false;
+    let sequence = null;
+    let refining = false;
+    let drag = null;
+    const selectedTargetId = () => targetSelect.value;
+    const shouldRun = () => !disposed && !paused && pageFocused && !pageSuspended &&
+      !document.hidden && selectedTargetId();
+    const diagnosticParameters = () => ({ target_id: selectedTargetId() });
+  `, context);
+  [
+    'function releaseConnection(connection)', 'function closeStreams()',
+    'function openDiagnosticStream()', 'function sync()'
+  ].forEach((signature) => vm.runInContext(functionSource(signature), context));
+  const tunerStart = source.indexOf('function tunerSpectrumPanel');
+  vm.runInContext(source.slice(source.indexOf("  targetSelect.addEventListener('change', () => {", tunerStart),
+    source.indexOf('  function applySelectedProfile()', tunerStart)), context);
+  vm.runInContext(source.slice(source.indexOf('  const onVisibilityChange = () => {', tunerStart),
+    source.indexOf('  const onResize = () => {', tunerStart)), context);
+  return {
+    events,
+    run: (expression) => vm.runInContext(expression, context),
+    setDocumentFocus: (focused) => { documentFocused = focused; },
+    release: () => {
+      const release = releases.shift();
+      assert.ok(release, 'a connection close acknowledgement is pending');
+      release();
+    }
+  };
+}
+
 const row = (status, frequency_hz = 150_250_000, extra = {}) => ({ status, frequency_hz, ...extra });
 const table = (rows) => ({ table_id: 'test', channel_name: 'Dispatch', system_name: 'Local', rows });
 const statuses = (carriers) => Array.from(carriers, (carrier) => carrier.status);
@@ -210,4 +282,117 @@ test('saved schema round-trips both boolean values and idle styling is outline-o
   assert.throws(() => schema.validate(invalid), /show_idle_channels/);
   const css = fs.readFileSync(path.join(path.dirname(applicationPath), 'app.css'), 'utf8');
   assert.match(css, /\.tuner-spectrum-flag-swatch\.status-idle\s*\{\s*background: transparent;\s*border: 2px solid/);
+});
+
+test('spectrum lifecycle serializes focus and tuner rebinds without duplicate streams', async () => {
+  const h = spectrumLifecycleHarness();
+  await h.run('sync()');
+  assert.deepEqual(h.events, ['open:first']);
+
+  h.run('onBlur()');
+  h.run('onFocus()');
+  h.run('onFocus()');
+  await Promise.resolve();
+  assert.deepEqual(h.events, ['open:first', 'close:first']);
+  h.release();
+  await h.run('streamRelease');
+  assert.deepEqual(h.events, ['open:first', 'close:first', 'open:first']);
+
+  h.run("targetSelect.value = 'second'; targetSelect.dispatch('change')");
+  await Promise.resolve();
+  assert.deepEqual(h.events.slice(-1), ['close:first']);
+  h.release();
+  await h.run('streamRelease');
+  assert.deepEqual(h.events.slice(-2), ['close:first', 'open:second']);
+
+  h.run('onPageHide()');
+  h.setDocumentFocus(true);
+  h.run('onPageShow()');
+  h.run('onPageShow()');
+  await Promise.resolve();
+  assert.deepEqual(h.events.slice(-1), ['close:second']);
+  h.release();
+  await h.run('streamRelease');
+  assert.deepEqual(h.events.slice(-2), ['close:second', 'open:second']);
+  assert.equal(h.events.some((event) => event.startsWith('local-close:')), false);
+});
+
+test('multiplexer close waits for server control even while another topic remains subscribed', async () => {
+  const context = {
+    LIVE_MULTIPLEX_TOPICS: Object.freeze({ 0: 'control', 1: 'channel_activity', 5: 'tuner_diagnostics' }),
+    snakeCasePayload: (value) => value,
+    invokeLiveSubscriber: () => {},
+    window: { setTimeout: () => 1, clearTimeout: () => {} },
+    queueMicrotask
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('class LiveMultiplexer'),
+    source.indexOf('const liveMultiplexer = new LiveMultiplexer()')), context);
+  const multiplexer = vm.runInContext('new LiveMultiplexer()', context);
+  multiplexer.controller = {};
+  multiplexer.ready = true;
+  multiplexer.clientId = 'test-client';
+  const diagnostic = multiplexer.subscribe('tuner_diagnostics');
+  multiplexer.subscribe('channel_activity');
+  let released = false;
+  const closing = diagnostic.close().then(() => { released = true; });
+  await Promise.resolve();
+  assert.equal(released, false);
+  multiplexer.settleControlWaiters(multiplexer.controlDesiredRevision, true);
+  await closing;
+  assert.equal(released, true);
+  assert.equal(multiplexer.hasSubscribers(), true);
+});
+
+test('multiplexer disconnect settles an idle close before focus can reopen diagnostics', async () => {
+  let finishRead;
+  const context = {
+    LIVE_MULTIPLEX_TOPICS: Object.freeze({ 0: 'control', 5: 'tuner_diagnostics' }),
+    LIVE_MULTIPLEX_READY_TIMEOUT_MS: 10_000,
+    LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS: 10_000,
+    LIVE_MULTIPLEX_HEADER_BYTES: 12,
+    LIVE_MULTIPLEX_MAGIC: 0,
+    LIVE_MULTIPLEX_VERSION: 1,
+    LIVE_MULTIPLEX_MAXIMUM_BYTES: 1_024,
+    LIVE_MULTIPLEX_DECODER: new TextDecoder(),
+    snakeCasePayload: (value) => value,
+    invokeLiveSubscriber: () => {},
+    randomLiveClientId: () => 'test-client',
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      body: { getReader: () => ({
+        read: () => new Promise((resolve) => { finishRead = resolve; }),
+        cancel: () => Promise.resolve()
+      }) }
+    }),
+    window: {
+      setInterval: () => 1,
+      clearInterval: () => {},
+      setTimeout: () => 1,
+      clearTimeout: () => {}
+    },
+    AbortController,
+    queueMicrotask
+  };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('class LiveMultiplexer'),
+    source.indexOf('const liveMultiplexer = new LiveMultiplexer()')), context);
+  const multiplexer = vm.runInContext('new LiveMultiplexer()', context);
+  multiplexer.subscribers.set('tuner_diagnostics', new Set([{}]));
+  const connecting = multiplexer.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof finishRead, 'function');
+  multiplexer.ready = true;
+  multiplexer.subscribers.clear();
+  const closing = multiplexer.closeIfIdle(multiplexer.queueControl(true));
+  let released = false;
+  void closing.then(() => { released = true; });
+  await Promise.resolve();
+  assert.equal(released, false);
+  finishRead({ done: true });
+  await connecting;
+  await closing;
+  assert.equal(released, true);
+  assert.equal(multiplexer.controlWaiters.length, 0);
 });

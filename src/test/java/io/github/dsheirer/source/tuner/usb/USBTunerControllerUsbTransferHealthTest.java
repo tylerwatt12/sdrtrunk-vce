@@ -102,6 +102,8 @@ class USBTunerControllerUsbTransferHealthTest
         health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000);
         health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_012);
         health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_032);
+        health.recordCallbackToResubmitDuration(20_000);
+        health.recordCallbackToResubmitDuration(10_000);
 
         USBTunerController.UsbTransferHealthSnapshot firstSession = health.snapshot();
         assertTrue(firstSession.streaming());
@@ -110,9 +112,12 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(1_032, firstSession.lastTransferTimestampMilliseconds());
         assertEquals(20, firstSession.lastInterTransferGapMilliseconds());
         assertEquals(20, firstSession.worstInterTransferGapMilliseconds());
+        assertEquals(10_000, firstSession.lastCallbackToResubmitDurationNanoseconds());
+        assertEquals(20_000, firstSession.worstCallbackToResubmitDurationNanoseconds());
 
         health.endStreaming();
         assertFalse(health.snapshot().streaming());
+        assertEquals(0, health.snapshot().lastCallbackToResubmitDurationNanoseconds());
 
         health.beginStreaming(1_024, 2);
         health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 100_000);
@@ -124,6 +129,7 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(100_000, secondSession.lastTransferTimestampMilliseconds());
         assertEquals(0, secondSession.lastInterTransferGapMilliseconds());
         assertEquals(20, secondSession.worstInterTransferGapMilliseconds());
+        assertEquals(20_000, secondSession.worstCallbackToResubmitDurationNanoseconds());
         assertEquals(4, secondSession.transferCount(), "cumulative transfer counters survive stream restarts");
         assertTrue(secondSession.streamStartedTimestampMilliseconds() > 0);
     }

@@ -72,6 +72,7 @@ public abstract class USBTunerController extends TunerController
     private TransferManager mTransferManager = new TransferManager();
     private UsbEventProcessor mEventProcessor = new UsbEventProcessor();
     private final UsbTransferHealth mUsbTransferHealth = new UsbTransferHealth();
+    private final UsbNativeBufferIngress mNativeBufferIngress;
     private AtomicBoolean mStreaming = new AtomicBoolean();
     private AtomicBoolean mStopping = new AtomicBoolean();
     private volatile boolean mRunning = false;
@@ -89,6 +90,9 @@ public abstract class USBTunerController extends TunerController
         super(tunerErrorListener);
         mBus = bus;
         mPortAddress = portAddress;
+        mNativeBufferIngress = new UsbNativeBufferIngress(
+            "sdrtrunk USB native-buffer ingress - bus [" + bus + "] port [" + portAddress + "]",
+            mNativeBufferBroadcaster);
     }
 
     /**
@@ -128,13 +132,35 @@ public abstract class USBTunerController extends TunerController
      */
     protected abstract int getTransferBufferSize();
 
+    /* Package-private native-transfer boundaries keep callback ordering testable without allocating test adapters on
+     * the production path. */
+    int transferStatus(Transfer transfer)
+    {
+        return transfer.status();
+    }
+
+    int transferActualLength(Transfer transfer)
+    {
+        return transfer.actualLength();
+    }
+
+    ByteBuffer transferBuffer(Transfer transfer)
+    {
+        return transfer.buffer();
+    }
+
+    int submitUsbTransfer(Transfer transfer)
+    {
+        return LibUsb.submitTransfer(transfer);
+    }
+
     /**
      * Immutable snapshot of USB sample-transfer measurements for this tuner.  The cumulative byte and transfer
      * counters give an off-thread sampler enough information to calculate delivered throughput between snapshots.
      */
     public UsbTransferHealthSnapshot getUsbTransferHealthSnapshot()
     {
-        return mUsbTransferHealth.snapshot();
+        return mUsbTransferHealth.snapshot(mNativeBufferIngress.snapshot());
     }
 
     /**
@@ -302,7 +328,10 @@ public abstract class USBTunerController extends TunerController
 
         //Spin the shutdown onto a new thread so that we can set a max wait threshold.
         Thread t = new Thread(() -> {
-            if(stopStreaming())
+            boolean streamingStopped = stopStreaming();
+            mNativeBufferIngress.close();
+
+            if(streamingStopped)
             {
                 mNativeBufferBroadcaster.clear();
                 deviceStop();
@@ -402,6 +431,8 @@ public abstract class USBTunerController extends TunerController
                 {
                     prepareStreaming();
                     List<Transfer> transfers = mTransferManager.getTransfers();
+                    mNativeBufferIngress.start(mTransferManager.mExpectedTransferLengthBytes,
+                        getBufferSampleCount(), getNativeBufferFactory());
                     mTransferManager.setAutoResubmitTransfers(true);
                     mTransferManager.submitTransfers(transfers);
                     mEventProcessor.start();
@@ -449,12 +480,13 @@ public abstract class USBTunerController extends TunerController
     private synchronized boolean stopStreaming()
     {
         boolean wasStreaming = mStreaming.getAndSet(false);
+        //Close the producer gate before the ingress generation so a concurrent callback cannot resubmit a transfer
+        //that the stopped ingress will necessarily discard.
+        mTransferManager.setAutoResubmitTransfers(false);
+        mNativeBufferIngress.stop();
 
         if(wasStreaming || mEventProcessor.isRunning() || mTransferManager.hasActiveTransfers())
         {
-            //Turn off auto-resubmit of USB transfer buffers
-            mTransferManager.setAutoResubmitTransfers(false);
-
             //Stop event processing thread to put all submitted tranfers in a stable state - blocks until stopped
             if(!mEventProcessor.stop())
             {
@@ -816,7 +848,18 @@ public abstract class USBTunerController extends TunerController
                                             long firstTransferTimestampMilliseconds,
                                             long lastTransferTimestampMilliseconds,
                                             long lastInterTransferGapMilliseconds,
-                                            long worstInterTransferGapMilliseconds, long longTransferGapCount)
+                                            long worstInterTransferGapMilliseconds, long longTransferGapCount,
+                                            long lastCallbackToResubmitDurationNanoseconds,
+                                            long worstCallbackToResubmitDurationNanoseconds,
+                                            int nativeIngressCapacity, int nativeIngressDepth,
+                                            int nativeIngressHighWaterDepth,
+                                            long nativeIngressSaturationDroppedBuffers,
+                                            long nativeIngressSaturationDroppedSamples,
+                                            long nativeIngressCopyFailures,
+                                            long nativeIngressConversionFailures,
+                                            long nativeIngressListenerFailures,
+                                            long nativeIngressLastQueueDelayNanoseconds,
+                                            long nativeIngressWorstQueueDelayNanoseconds)
     {
     }
 
@@ -859,6 +902,8 @@ public abstract class USBTunerController extends TunerController
         private volatile long mLastInterTransferGapMilliseconds;
         private volatile long mWorstInterTransferGapMilliseconds;
         private volatile long mLongTransferGapCount;
+        private volatile long mLastCallbackToResubmitDurationNanoseconds;
+        private volatile long mWorstCallbackToResubmitDurationNanoseconds;
 
         void beginStreaming(int expectedTransferLengthBytes, int sampleFrameSizeBytes)
         {
@@ -868,6 +913,7 @@ public abstract class USBTunerController extends TunerController
             mLastTransferTimestampMilliseconds = 0;
             mPreviousTransferTimestampMilliseconds = 0;
             mLastInterTransferGapMilliseconds = 0;
+            mLastCallbackToResubmitDurationNanoseconds = 0;
             mStreamStartedTimestampMilliseconds = System.currentTimeMillis();
             mStreamSequence++;
             mStreaming = true;
@@ -878,6 +924,7 @@ public abstract class USBTunerController extends TunerController
             mStreaming = false;
             mPreviousTransferTimestampMilliseconds = 0;
             mLastInterTransferGapMilliseconds = 0;
+            mLastCallbackToResubmitDurationNanoseconds = 0;
         }
 
         void setNegotiatedDeviceSpeed(int speedCode)
@@ -981,8 +1028,34 @@ public abstract class USBTunerController extends TunerController
             mPreviousTransferTimestampMilliseconds = timestampMilliseconds;
         }
 
+        void recordCallbackToResubmitDuration(long durationNanoseconds)
+        {
+            long duration = Math.max(0, durationNanoseconds);
+            mLastCallbackToResubmitDurationNanoseconds = duration;
+
+            if(duration > mWorstCallbackToResubmitDurationNanoseconds)
+            {
+                mWorstCallbackToResubmitDurationNanoseconds = duration;
+            }
+        }
+
         UsbTransferHealthSnapshot snapshot()
         {
+            return snapshot(null);
+        }
+
+        UsbTransferHealthSnapshot snapshot(UsbNativeBufferIngress.Snapshot ingress)
+        {
+            int ingressCapacity = ingress != null ? ingress.capacity() : 0;
+            int ingressDepth = ingress != null ? ingress.depth() : 0;
+            int ingressHighWaterDepth = ingress != null ? ingress.highWaterDepth() : 0;
+            long ingressSaturationDroppedBuffers = ingress != null ? ingress.saturationDroppedBuffers() : 0;
+            long ingressSaturationDroppedSamples = ingress != null ? ingress.saturationDroppedSamples() : 0;
+            long ingressCopyFailures = ingress != null ? ingress.copyFailures() : 0;
+            long ingressConversionFailures = ingress != null ? ingress.conversionFailures() : 0;
+            long ingressListenerFailures = ingress != null ? ingress.listenerFailures() : 0;
+            long ingressLastQueueDelay = ingress != null ? ingress.lastQueueDelayNanoseconds() : 0;
+            long ingressWorstQueueDelay = ingress != null ? ingress.worstQueueDelayNanoseconds() : 0;
             return new UsbTransferHealthSnapshot(mStreaming, mStreamSequence, mExpectedTransferLengthBytes,
                     mSampleFrameSizeBytes, mNegotiatedDeviceSpeedCode, mNegotiatedDeviceSpeed, mTransferPoolSize,
                     mActiveTransferCount, mRetryTransferCount, mSubmissionFailureCount, mTransferCount,
@@ -993,7 +1066,11 @@ public abstract class USBTunerController extends TunerController
                     mMalformedTransferCount, mMalformedRemainderBytes, mStreamStartedTimestampMilliseconds,
                     mFirstTransferTimestampMilliseconds,
                     mLastTransferTimestampMilliseconds, mLastInterTransferGapMilliseconds,
-                    mWorstInterTransferGapMilliseconds, mLongTransferGapCount);
+                    mWorstInterTransferGapMilliseconds, mLongTransferGapCount,
+                    mLastCallbackToResubmitDurationNanoseconds, mWorstCallbackToResubmitDurationNanoseconds,
+                    ingressCapacity, ingressDepth, ingressHighWaterDepth, ingressSaturationDroppedBuffers,
+                    ingressSaturationDroppedSamples, ingressCopyFailures, ingressConversionFailures,
+                    ingressListenerFailures, ingressLastQueueDelay, ingressWorstQueueDelay);
         }
     }
 
@@ -1133,7 +1210,8 @@ public abstract class USBTunerController extends TunerController
          */
         private void submitTransfer(Transfer transfer)
         {
-            TransferLedger.SubmissionResult<Transfer> result = mLedger.submit(transfer, LibUsb::submitTransfer);
+            TransferLedger.SubmissionResult<Transfer> result = mLedger.submit(transfer,
+                USBTunerController.this::submitUsbTransfer);
             int status = result.status();
 
             if(result.retryTransfer() != null)
@@ -1235,11 +1313,13 @@ public abstract class USBTunerController extends TunerController
         @Override
         public void processTransfer(Transfer transfer)
         {
+            long callbackStartedNanos = System.nanoTime();
             mLedger.transferReturned(transfer);
-            int transferStatus = transfer.status();
-            int transferLength = transfer.actualLength();
+            int transferStatus = transferStatus(transfer);
+            int transferLength = transferActualLength(transfer);
             boolean streaming = mAutoResubmitTransfers;
             long timestamp = 0;
+            long ingressGeneration = mNativeBufferIngress.activeGeneration();
 
             if(streaming)
             {
@@ -1257,21 +1337,41 @@ public abstract class USBTunerController extends TunerController
                 //resubmit the transfer for continued use.
                 case LibUsb.TRANSFER_CANCELLED:
                     //Do not dispatch stale sample data while draining cancellation callbacks during shutdown.
-                    if(shouldDispatchTransfer(mAutoResubmitTransfers, transferLength))
+                    UsbNativeBufferIngress.TransferSamples transferSamples = null;
+
+                    try
                     {
-                        dispatchTransfer(transfer, timestamp);
+                        if(shouldDispatchTransfer(mAutoResubmitTransfers, transferLength))
+                        {
+                            transferSamples = mNativeBufferIngress.copy(transferBuffer(transfer), transferLength,
+                                timestamp, ingressGeneration);
+                        }
                     }
-
-                    transfer.buffer().rewind();
-
-                    if(mAutoResubmitTransfers)
+                    finally
                     {
-                        submitTransfer(transfer);
+                        try
+                        {
+                            transferBuffer(transfer).rewind();
+
+                            if(mAutoResubmitTransfers)
+                            {
+                                submitTransfer(transfer);
+                                mUsbTransferHealth.recordCallbackToResubmitDuration(
+                                    System.nanoTime() - callbackStartedNanos);
+                            }
+                        }
+                        finally
+                        {
+                            if(transferSamples != null)
+                            {
+                                mNativeBufferIngress.offer(transferSamples);
+                            }
+                        }
                     }
                     break;
                 default:
                     //Unexpected transfer error - shutdown the tuner
-                    transfer.buffer().rewind();
+                    transferBuffer(transfer).rewind();
 
                     //Only set an error if we're not shutting down
                     if(mAutoResubmitTransfers)
@@ -1287,18 +1387,6 @@ public abstract class USBTunerController extends TunerController
             updateTransferLedgerHealth();
         }
 
-        /**
-         * Makes a copy of the transfer's native memory byte array payload so that the transfer can be reused.
-         * Dispatches the native buffer to registered listeners.
-         * @param transfer to copy and dispatch
-         */
-        private void dispatchTransfer(Transfer transfer, long timestamp)
-        {
-            //Pass the transfer's byte buffer so the native buffer factory can make a copy of the byte array contents
-            //and package it as a native buffer.
-            INativeBuffer nativeBuffer = getNativeBufferFactory().getBuffer(transfer.buffer(), timestamp);
-            mNativeBufferBroadcaster.broadcast(nativeBuffer);
-        }
     }
 
     /**

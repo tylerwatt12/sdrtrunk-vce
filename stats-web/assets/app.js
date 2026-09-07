@@ -7570,7 +7570,11 @@ class LiveMultiplexer {
         this.pending = new Uint8Array(0);
       }
     }
-    if (attempt !== this.attempt || !this.hasSubscribers()) return;
+    if (attempt !== this.attempt) return;
+    if (!this.hasSubscribers()) {
+      this.stop();
+      return;
+    }
     if (responseStatus === 401 || responseStatus === 403) return;
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
@@ -7720,9 +7724,8 @@ class LiveMultiplexer {
   }
 
   closeIfIdle(revision = this.controlDesiredRevision) {
-    if (this.hasSubscribers()) return Promise.resolve();
     if (!this.ready || !this.clientId) {
-      this.stop();
+      if (!this.hasSubscribers()) this.stop();
       return Promise.resolve();
     }
     return this.waitForControlRevision(revision).then(() => {
@@ -10859,8 +10862,8 @@ let tunerSpectrumSessionTarget = '';
 const TUNER_SPECTRUM_PROFILES = Object.freeze({
   efficient: Object.freeze({ fftSize: 2048, fps: 5 }),
   balanced: Object.freeze({ fftSize: 8192, fps: 10 }),
-  'high-detail': Object.freeze({ fftSize: 16384, fps: 20 }),
-  'maximum-detail': Object.freeze({ fftSize: 32768, fps: 20 })
+  'high-detail': Object.freeze({ fftSize: 16384, fps: 10 }),
+  'maximum-detail': Object.freeze({ fftSize: 32768, fps: 5 })
 });
 const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000;
 const TUNER_CHANNEL_MINIMUM_WIDTH_PX = 3.5;
@@ -11133,6 +11136,10 @@ function tunerStoredChoice(key, fallback, choices) {
 function storeTunerChoice(key, value) {
   if (key === 'session-target') tunerSpectrumSessionTarget = String(value);
   else void settleUserPreferenceMutation((preferences) => { preferences.tuner[key] = String(value); });
+}
+
+function tunerPersistentSpectrumProfile(value) {
+  return ['efficient', 'balanced', 'high-detail'].includes(value) ? value : 'balanced';
 }
 
 function tunerFrameDomain(frame, valueCount = frame?.valueCount || 0) {
@@ -11429,15 +11436,15 @@ function tunerSpectrumPanel(snapPresetDocument) {
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
     ['balanced', 'Balanced · 8,192 bins / 10 FPS'],
-    ['high-detail', 'High detail · 16,384 bins / 20 FPS'],
-    ['maximum-detail', 'Maximum detail · 32,768 bins / 20 FPS']
+    ['high-detail', 'High detail · 16,384 bins / 10 FPS'],
+    ['maximum-detail', 'Maximum detail · 32,768 bins / 5 FPS']
   ].forEach(([value, text]) => {
     const option = node('option', '', text);
     option.value = value;
     profileSelect.append(option);
   });
-  profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced',
-    Object.keys(TUNER_SPECTRUM_PROFILES));
+  profileSelect.value = tunerPersistentSpectrumProfile(tunerStoredChoice(
+    TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced', Object.keys(TUNER_SPECTRUM_PROFILES)));
   profileControl.append(node('span', '', 'Profile'), profileSelect);
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
@@ -11515,6 +11522,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   let disposed = false;
   let paused = false;
+  let pageFocused = document.hasFocus();
+  let pageSuspended = false;
   let stream = null;
   let streamRelease = Promise.resolve();
   let streamEpoch = 0;
@@ -11625,6 +11634,12 @@ function tunerSpectrumPanel(snapPresetDocument) {
       closeActiveChannels();
       if (readoutTimer !== null) window.clearTimeout(readoutTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
+      document.removeEventListener('freeze', onFreeze);
+      document.removeEventListener('resume', onResume);
       window.removeEventListener('resize', onResize);
       [spectrum.canvas, waterfall.canvas].forEach(removePlotInteractions);
     }
@@ -12015,7 +12030,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const closed = connection.close();
     liveConnections.delete(connection);
     pageConnections.delete(connection);
-    return connection.whenClosed?.() || (closed instanceof Promise ? closed : Promise.resolve());
+    return closed && typeof closed.then === 'function' ? closed :
+      (connection.whenClosed?.() || Promise.resolve());
   }
 
   function closeStreams() {
@@ -12030,7 +12046,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
   }
 
   const selectedTargetId = () => targetSelect.value;
-  const shouldRun = () => !disposed && !paused && !document.hidden && selectedTargetId();
+  const shouldRun = () => !disposed && !paused && pageFocused && !pageSuspended &&
+    !document.hidden && selectedTargetId();
 
   function diagnosticParameters() {
     const parameters = {
@@ -12208,32 +12225,36 @@ function tunerSpectrumPanel(snapPresetDocument) {
   }
 
   function openDiagnosticStream() {
-    if (!shouldRun()) return;
-    const epoch = ++streamEpoch;
-    let candidate = null;
+    if (!shouldRun() || stream) return streamRelease;
+    const openingEpoch = streamEpoch;
     setStatus(refining ? 'Refining' : 'Connecting');
     if (!stream && !refining) setOverlay('Waiting for tuner data…');
-    candidate = binaryFrameConnection('tuner_diagnostics', diagnosticParameters(), {
-      onOpen: () => {
-        if (disposed || candidate !== stream || epoch !== streamEpoch) return;
-        sequence = null;
-        clearSpectrumSmoothing();
-        setStatus(refining ? 'Refining' : 'Connected', refining ? 'state-stale' : 'state-current');
-      },
-      onFrame: (frame) => {
-        if (disposed || candidate !== stream || epoch !== streamEpoch ||
-            frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
-        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) acceptTunerState(frame);
-        else acceptTunerFrame(frame);
-      },
-      onError: (error) => {
-        if (disposed || epoch !== streamEpoch || candidate !== stream) return;
-        setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
-        setOverlay(error?.status === 429 ? 'Tuner spectrum viewer capacity is currently in use.' :
-          'Connection interrupted. Reconnecting…');
-      }
+    return streamRelease.then(() => {
+      if (!shouldRun() || stream || openingEpoch !== streamEpoch) return;
+      const epoch = ++streamEpoch;
+      let candidate = null;
+      candidate = binaryFrameConnection('tuner_diagnostics', diagnosticParameters(), {
+        onOpen: () => {
+          if (disposed || candidate !== stream || epoch !== streamEpoch) return;
+          sequence = null;
+          clearSpectrumSmoothing();
+          setStatus(refining ? 'Refining' : 'Connected', refining ? 'state-stale' : 'state-current');
+        },
+        onFrame: (frame) => {
+          if (disposed || candidate !== stream || epoch !== streamEpoch ||
+              frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
+          if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) acceptTunerState(frame);
+          else acceptTunerFrame(frame);
+        },
+        onError: (error) => {
+          if (disposed || epoch !== streamEpoch || candidate !== stream) return;
+          setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
+          setOverlay(error?.status === 429 ? 'Tuner spectrum viewer capacity is currently in use.' :
+            'Connection interrupted. Reconnecting…');
+        }
+      });
+      stream = candidate;
     });
-    stream = candidate;
   }
 
   function queueViewportUpdate(immediate = false) {
@@ -12264,19 +12285,20 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   function sync() {
     if (!shouldRun()) {
-      closeStreams();
+      const released = closeStreams();
       closeActiveChannels();
-      if (disposed) return;
+      if (disposed) return released;
       setRefining(false);
       if (paused) setStatus('Paused');
-      else if (document.hidden) setStatus('Hidden');
+      else if (pageSuspended || document.hidden) setStatus('Hidden');
+      else if (!pageFocused) setStatus('Unfocused');
       else setStatus('Waiting');
-      return;
+      return released;
     }
     connectActiveChannels();
     //A drag owns the client-side viewport until pointer release.  Reopening here would allow incoming frames to
     //replace that viewport and discard part of the user's pan before the refined request is sent.
-    if (!stream && !drag) openDiagnosticStream();
+    if (!stream && !drag) return openDiagnosticStream();
   }
 
   function transformCanvas(canvas, scratch, fromViewport, toViewport) {
@@ -12888,10 +12910,10 @@ function tunerSpectrumPanel(snapPresetDocument) {
     sync();
   });
   function applySelectedProfile() {
-    if (!shouldRun()) return;
     spectrumProfile = profileSelect.value;
-    storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
-    queueViewportUpdate(true);
+    storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
+      tunerPersistentSpectrumProfile(spectrumProfile));
+    if (shouldRun()) queueViewportUpdate(true);
   }
   profileSelect.addEventListener('change', applySelectedProfile);
   zoomIn.addEventListener('click', () => {
@@ -12973,7 +12995,38 @@ function tunerSpectrumPanel(snapPresetDocument) {
     renderActiveChannels();
   });
   [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
-  const onVisibilityChange = () => sync();
+  const onVisibilityChange = () => {
+    pageFocused = document.hasFocus();
+    sync();
+  };
+  const onBlur = () => {
+    pageFocused = false;
+    sync();
+  };
+  const onFocus = () => {
+    pageFocused = true;
+    pageSuspended = false;
+    sync();
+  };
+  const onPageHide = () => {
+    pageFocused = false;
+    pageSuspended = true;
+    sync();
+  };
+  const onPageShow = () => {
+    pageSuspended = false;
+    pageFocused = document.hasFocus();
+    sync();
+  };
+  const onFreeze = () => {
+    pageSuspended = true;
+    sync();
+  };
+  const onResume = () => {
+    pageSuspended = false;
+    pageFocused = document.hasFocus();
+    sync();
+  };
   const onResize = () => {
     renderActiveChannels();
     if (hoverFlag) positionCursorPopup(hoverFlag);
@@ -12981,6 +13034,12 @@ function tunerSpectrumPanel(snapPresetDocument) {
     if (!refining) scheduleDraw();
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('blur', onBlur);
+  window.addEventListener('focus', onFocus);
+  window.addEventListener('pagehide', onPageHide);
+  window.addEventListener('pageshow', onPageShow);
+  document.addEventListener('freeze', onFreeze);
+  document.addEventListener('resume', onResume);
   window.addEventListener('resize', onResize);
   resetPlots('Loading tuners…');
   renderFrequencyBands();

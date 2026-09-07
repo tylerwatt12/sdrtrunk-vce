@@ -20,8 +20,10 @@ package io.github.dsheirer.sample;
 
 import io.github.dsheirer.log.LoggingSuppressor;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BooleanSupplier;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -114,25 +116,61 @@ public class Broadcaster<T> implements Listener<T>
      */
     public void broadcast(T t)
     {
-        for(Listener<T> listener: mListeners)
+        broadcast(t, mListeners.iterator());
+    }
+
+    /**
+     * Captures the current listener set before testing the delivery guard.  This lets an asynchronous producer reject
+     * a stale generation without a stop/restart race delivering the old element to newly registered listeners.
+     *
+     * @return listener failures, or {@code -1} when the guard rejected delivery
+     */
+    public int broadcastIf(T t, BooleanSupplier deliveryGuard)
+    {
+        Iterator<Listener<T>> listeners = mListeners.iterator();
+
+        if(deliveryGuard == null || !deliveryGuard.getAsBoolean())
         {
+            return -1;
+        }
+
+        return broadcast(t, listeners);
+    }
+
+    private int broadcast(T t, Iterator<Listener<T>> listeners)
+    {
+        int failures = 0;
+
+        while(listeners.hasNext())
+        {
+            Listener<T> listener = listeners.next();
+
             try
             {
                 listener.receive(t);
             }
-            catch(Exception e)
+            catch(Throwable throwable)
             {
+                if(throwable instanceof Error error && !(error instanceof AssertionError))
+                {
+                    throw error;
+                }
+
+                failures++;
+
                 if(t != null)
                 {
                     sLoggingSuppressor.error(t.getClass().toGenericString(), 5,
-                    "Error while broadcasting [" + t.getClass() + "] to listeners", e);
+                    "Error while broadcasting [" + t.getClass() + "] to listeners", throwable);
                 }
                 else
                 {
                     sLoggingSuppressor.error("null broadcast object", 5, "Can't broadcast null " +
-                            "object to listener [" + listener.getClass() + "]", e);
+                            "object to listener [" + listener.getClass() + "]", throwable);
                 }
             }
         }
+
+        return failures;
     }
 }

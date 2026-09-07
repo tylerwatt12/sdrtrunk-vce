@@ -163,7 +163,7 @@ class TunerDiagnosticServiceTest
 
         assertEquals("maximum-detail", state.profile());
         assertEquals(32_768, state.fftSize());
-        assertEquals(20, state.framesPerSecond());
+        assertEquals(5, state.framesPerSecond());
         assertEquals(32, state.maximumDecimation());
         assertEquals(400, state.iqQueueDurationMilliseconds());
         assertEquals(8, state.quantizationBits());
@@ -180,6 +180,29 @@ class TunerDiagnosticServiceTest
 
         session.close();
         assertEquals(List.of(400L, 100L), queue.requests);
+        service.close();
+    }
+
+    @Test
+    void capsHighCostProfilesAndNeverReducesTheReceiverQueue()
+    {
+        assertEquals(10, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.framesPerSecond());
+        assertEquals(5, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.framesPerSecond());
+        assertEquals(20, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.analysisBudgetFps());
+        assertEquals(20, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.analysisBudgetFps());
+
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
+        FakeReceiverQueue queue = new FakeReceiverQueue(800, 0, 0);
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1, queue)), new FakeProcessorFactory());
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId()).session();
+
+        assertNotNull(session);
+        assertEquals(800, session.state().iqQueueDurationMilliseconds());
+        assertEquals(List.of(800L), queue.requests);
+
+        session.close();
+        assertEquals(List.of(800L, 800L), queue.requests);
         service.close();
     }
 
@@ -439,12 +462,17 @@ class TunerDiagnosticServiceTest
     @Test
     void spectrumProfilesBoundTheLensAndSampleBudget()
     {
-        TunerDiagnosticService.AnalysisPlan plan = TunerDiagnosticService.analysisPlan(100_000_000L,
+        TunerDiagnosticService.AnalysisPlan highDetail = TunerDiagnosticService.analysisPlan(100_000_000L,
+            10_000_000L, centered(100_000_000L, 100_000L),
+            TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL);
+        TunerDiagnosticService.AnalysisPlan maximumDetail = TunerDiagnosticService.analysisPlan(100_000_000L,
             10_000_000L, centered(100_000_000L, 100_000L),
             TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL);
 
-        assertEquals(8, plan.decimation());
-        assertEquals(1_250_000L, plan.sampleRateHz());
+        assertEquals(16, highDetail.decimation());
+        assertEquals(625_000L, highDetail.sampleRateHz());
+        assertEquals(8, maximumDetail.decimation());
+        assertEquals(1_250_000L, maximumDetail.sampleRateHz());
     }
 
     @Test

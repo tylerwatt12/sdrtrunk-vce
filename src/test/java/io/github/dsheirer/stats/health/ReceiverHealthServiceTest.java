@@ -12,10 +12,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
+import io.github.dsheirer.source.tuner.LoggingTunerErrorListener;
+import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.test.TestTuner;
+import io.github.dsheirer.source.tuner.usb.USBTunerController;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -160,6 +167,15 @@ class ReceiverHealthServiceTest
             assertTrue(String.valueOf(incident.get("likely_cause")).contains("saturated"));
             assertTrue(String.valueOf(incident.get("likely_cause")).contains("encoding failed"));
         }
+    }
+
+    @Test
+    void routesUsbIngressFailureCountersToTheirIntendedIncidents() throws Exception
+    {
+        assertEquals(Set.of("receiver-listener-failure"), usbIncidentCodes(0, 0, 0, 1));
+        assertEquals(Set.of("receiver-ingress-drop"), usbIncidentCodes(1, 0, 0, 0));
+        assertEquals(Set.of("usb-sample-loss"), usbIncidentCodes(0, 1, 0, 0));
+        assertEquals(Set.of("usb-sample-loss"), usbIncidentCodes(0, 0, 1, 0));
     }
 
     @Test
@@ -360,6 +376,50 @@ class ReceiverHealthServiceTest
     private static Map<String,Object> incident(String code, String severity)
     {
         return Map.of("code", code, "severity", severity);
+    }
+
+    private static Set<String> usbIncidentCodes(long saturationDrops, long copyFailures,
+                                                 long conversionFailures, long listenerFailures) throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 2_000L))
+        {
+            Field incidentsField = ReceiverHealthService.class.getDeclaredField("mIncidents");
+            incidentsField.setAccessible(true);
+            ReceiverHealthIncidentTracker incidents =
+                (ReceiverHealthIncidentTracker)incidentsField.get(service);
+            Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class,
+                String.class, String.class, Tuner.class, USBTunerController.UsbTransferHealthSnapshot.class,
+                List.class);
+            collectUsb.setAccessible(true);
+            List<Map<String,Object>> rows = new java.util.ArrayList<>();
+
+            incidents.beginSample();
+            collectUsb.invoke(service, 1_000L, "usb-test", "USB test tuner", tuner,
+                usbSnapshot(1_000L, 0, 0, 0, 0), rows);
+            incidents.endSample(1_000L);
+            incidents.beginSample();
+            collectUsb.invoke(service, 2_000L, "usb-test", "USB test tuner", tuner,
+                usbSnapshot(2_000L, saturationDrops, copyFailures, conversionFailures, listenerFailures), rows);
+            incidents.endSample(2_000L);
+            return incidents.active().stream().map(incident -> String.valueOf(incident.get("code")))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+    }
+
+    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
+                                                                             long copyFailures,
+                                                                             long conversionFailures,
+                                                                             long listenerFailures)
+    {
+        long deliveredBytes = now == 1_000L ? 0 : 2_400_000L;
+        return new USBTunerController.UsbTransferHealthSnapshot(true, 1, 1_024, 1, 0, "unknown",
+            8, 8, 0, 0, deliveredBytes > 0 ? 1 : 0, deliveredBytes > 0 ? 1 : 0,
+            0, 0, 0, 0, 0, deliveredBytes, deliveredBytes, deliveredBytes, 0, 0,
+            0, 0, 0, 0, 1_000L, now, now, 0, 0, 0, 0, 0,
+            16, 0, 0, saturationDrops, saturationDrops * 1_024, copyFailures, conversionFailures,
+            listenerFailures, 0, 0);
     }
 
     @SuppressWarnings("unchecked")

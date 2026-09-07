@@ -60,6 +60,9 @@ public final class ReceiverHealthService implements AutoCloseable
     private static final long STORAGE_SAMPLE_INTERVAL_MILLISECONDS = 30_000L;
     private static final long FAILURE_LOG_INTERVAL_MILLISECONDS = 60_000L;
     private static final long COUNTER_BASELINE_RETENTION_MILLISECONDS = 60_000L;
+    private static final long USB_STALE_DELIVERY_MILLISECONDS = 1_000L;
+    private static final double USB_LOW_DELIVERY_PERCENT = 90.0;
+    private static final double USB_WARNING_DELIVERY_PERCENT = 98.0;
     private static final Set<String> CURRENT_CONTROL_TAGS = Set.of("CURRENT_CONTROL");
     private final UserPreferences mUserPreferences;
     private final TunerManager mTunerManager;
@@ -73,7 +76,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
     private final Set<String> mConditionsEvaluatedThisSample = new HashSet<>();
-    private final Map<String,UsbRateBaseline> mUsbRateBaselines = new HashMap<>();
+    private final Map<String,UsbDeliveryClassifier> mUsbDeliveryClassifiers = new HashMap<>();
     private final Map<String,ControlContinuity> mControlContinuityByTable = new HashMap<>();
     private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -414,7 +417,7 @@ public final class ReceiverHealthService implements AutoCloseable
             }
         }
 
-        mUsbRateBaselines.keySet().retainAll(activeUsbScopes);
+        mUsbDeliveryClassifiers.keySet().retainAll(activeUsbScopes);
 
         if(mTunerManager != null)
         {
@@ -446,43 +449,48 @@ public final class ReceiverHealthService implements AutoCloseable
                             USBTunerController.UsbTransferHealthSnapshot usb,
                             List<Map<String,Object>> rows)
     {
-        UsbRateBaseline baseline = mUsbRateBaselines.get(scope);
-        boolean rateAvailable = baseline != null && baseline.sequence == usb.streamSequence() &&
-            now > baseline.timestampMs;
-        double callbackBytesPerSecond = 0;
-        double usableBytesPerSecond = 0;
-
-        if(rateAvailable)
-        {
-            double seconds = (now - baseline.timestampMs) / 1_000.0;
-            callbackBytesPerSecond = Math.max(0, usb.expectedBytes() - baseline.expectedBytes) / seconds;
-            usableBytesPerSecond = Math.max(0, usb.usableBytes() - baseline.usableBytes) / seconds;
-        }
-
-        mUsbRateBaselines.put(scope, new UsbRateBaseline(now, usb.streamSequence(), usb.expectedBytes(),
-            usb.usableBytes()));
         TunerController controller = tuner.getTunerController();
         double requiredBytesPerSecond = usb.streaming() && controller != null ?
             controller.getSampleRate() * usb.sampleFrameSizeBytes() : 0;
-        double deliveryPercent = rateAvailable && requiredBytesPerSecond > 0 ?
-            Math.min(100.0, 100.0 * usableBytesPerSecond / requiredBytesPerSecond) : 100.0;
         long transferStatusCount = usb.errorTransferCount() + usb.stalledTransferCount() +
             usb.timedOutTransferCount() + usb.cancelledTransferCount() + usb.unexpectedStatusTransferCount() +
             usb.submissionFailureCount();
-        long transferStatusDelta = delta(scope + ":usb-status", transferStatusCount, now);
+        long bufferFailureCount = usb.nativeIngressCopyFailures() + usb.nativeIngressConversionFailures();
         long integrityCount = usb.shortTransferCount() + usb.zeroLengthTransferCount() +
-            usb.malformedTransferCount() + transferStatusCount;
-        long integrityDelta = delta(scope + ":usb-integrity", integrityCount, now);
-        long gapDelta = delta(scope + ":usb-long-gaps", usb.longTransferGapCount(), now);
+            usb.malformedTransferCount() + transferStatusCount + bufferFailureCount;
+        long lastDelivery = usb.lastTransferTimestampMilliseconds() > 0 ?
+            usb.lastTransferTimestampMilliseconds() : usb.streamStartedTimestampMilliseconds();
+        long ingressLossCount = usb.nativeIngressSaturationDroppedBuffers();
+        long ingressLossDelta = delta(scope + ":receiver-ingress-loss", ingressLossCount, now);
+        long listenerFailureDelta = delta(scope + ":receiver-listener-failure",
+            usb.nativeIngressListenerFailures(), now);
+        UsbDeliveryAssessment assessment = mUsbDeliveryClassifiers.computeIfAbsent(scope,
+            ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(now, usb.streaming(),
+                usb.streamSequence(), usb.expectedBytes(), usb.usableBytes(), transferStatusCount, integrityCount,
+                usb.longTransferGapCount(), lastDelivery, requiredBytesPerSecond));
+        double seconds = assessment.windowMilliseconds() / 1_000.0;
+        double callbackBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
+            assessment.expectedBytesDelta() / seconds : 0;
+        double usableBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
+            assessment.usableBytesDelta() / seconds : 0;
+        double displayDeliveryPercent = assessment.rateAvailable() ?
+            Math.min(100.0, assessment.rawDeliveryPercent()) : 100.0;
+        String rateSeverity = assessment.rateCritical() ? "critical" :
+            assessment.rateMeasurementWarning() ? "warning" : "healthy";
+        String aggregateDetail = Double.isFinite(assessment.twoWindowDeliveryPercent()) ?
+            "; two_window_delivery=" + round(assessment.twoWindowDeliveryPercent()) + "%" : "";
         rows.add(row(scope, display + " delivered", round(usableBytesPerSecond / 1_000_000.0), "MB/s",
-            rateAvailable && deliveryPercent < 90.0 ? "critical" : rateAvailable && deliveryPercent < 98.0 ?
-                "warning" : "healthy", "required=" + round(requiredBytesPerSecond / 1_000_000.0) +
+            rateSeverity, "required=" + round(requiredBytesPerSecond / 1_000_000.0) +
                 " MB/s; callbacks=" + round(callbackBytesPerSecond / 1_000_000.0) + " MB/s; delivery=" +
-                (rateAvailable ? round(deliveryPercent) + "%" : "warming up") + "; streaming=" +
-                usb.streaming() + "; tuner_peak_payload=" +
+                (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" : "warming up") +
+                (assessment.rateAvailable() ? "; raw_window_delivery=" +
+                    round(assessment.rawDeliveryPercent()) + "%" : "") + aggregateDetail + "; window_ms=" +
+                assessment.windowMilliseconds() + "; nominal_bytes=" + round(assessment.nominalBytes()) +
+                "; expected_bytes=" + assessment.expectedBytesDelta() + "; usable_bytes=" +
+                assessment.usableBytesDelta() + "; streaming=" + usb.streaming() + "; tuner_peak_payload=" +
                 round(tuner.getMaximumUSBBitsPerSecond() / 1_000_000.0) + " Mbit/s"));
         rows.add(row(scope, display + " transfer status", usb.transferCount(), "transfers",
-            transferStatusDelta > 0 ? "warning" : transferStatusCount > 0 ? "info" : "healthy", "completed=" +
+            assessment.statusDelta() > 0 ? "warning" : transferStatusCount > 0 ? "info" : "healthy", "completed=" +
                 usb.completedTransferCount() + "; stall=" +
                 usb.stalledTransferCount() + "; timeout=" + usb.timedOutTransferCount() + "; error=" +
                 usb.errorTransferCount() + "; cancelled=" + usb.cancelledTransferCount() + "; unexpected=" +
@@ -495,33 +503,90 @@ public final class ReceiverHealthService implements AutoCloseable
             "info", "device_speed_code=" + usb.negotiatedDeviceSpeedCode() +
                 "; this is the tuner link speed, not the complete upstream hub/root-controller capacity"));
         rows.add(row(scope, display + " transfer integrity", usb.shortTransferCount(), "short transfers",
-            integrityDelta > 0 ? "critical" : integrityCount > 0 ? "info" : "healthy",
+            assessment.integrityDelta() > 0 ? "critical" : integrityCount > 0 ? "info" : "healthy",
             "zero=" + usb.zeroLengthTransferCount() +
                 "; malformed=" + usb.malformedTransferCount() + "; missing=" + usb.estimatedMissingBytes() +
-                " bytes; unreliable_payload=" + usb.unusableBytes() + " bytes"));
+                " bytes; unreliable_payload=" + usb.unusableBytes() + " bytes; copy_failures=" +
+                usb.nativeIngressCopyFailures() + "; conversion_failures=" +
+                usb.nativeIngressConversionFailures()));
         rows.add(row(scope, display + " transfer gap", usb.lastInterTransferGapMilliseconds(), "ms",
-            gapDelta > 0 ? "warning" : usb.longTransferGapCount() > 0 ? "info" : "healthy",
+            assessment.gapDelta() > 0 ? "warning" : usb.longTransferGapCount() > 0 ? "info" : "healthy",
             "worst=" + usb.worstInterTransferGapMilliseconds() + " ms; expected_transfer=" +
                 usb.expectedTransferLengthBytes() + " bytes; long_gaps=" + usb.longTransferGapCount()));
-        boolean rateFailure = usb.streaming() && rateAvailable && requiredBytesPerSecond > 0 &&
-            deliveryPercent < 90.0;
-        long lastDelivery = usb.lastTransferTimestampMilliseconds() > 0 ?
-            usb.lastTransferTimestampMilliseconds() : usb.streamStartedTimestampMilliseconds();
-        boolean stale = usb.streaming() && lastDelivery > 0 && now - lastDelivery > 1_000;
+        boolean ingressPressure = usb.nativeIngressCapacity() > 0 &&
+            usb.nativeIngressDepth() * 4 >= usb.nativeIngressCapacity() * 3;
+        rows.add(row(scope, display + " receiver handoff", usb.nativeIngressDepth(), "buffers",
+            ingressLossDelta > 0 ? "critical" : listenerFailureDelta > 0 || ingressPressure ? "warning" :
+                ingressLossCount > 0 || usb.nativeIngressListenerFailures() > 0 ? "info" : "healthy",
+            "capacity=" + usb.nativeIngressCapacity() + "; high_water=" +
+                usb.nativeIngressHighWaterDepth() + "; dropped=" +
+                usb.nativeIngressSaturationDroppedBuffers() + "; dropped_samples=" +
+                usb.nativeIngressSaturationDroppedSamples() + "; callback_to_resubmit_ms=" +
+                round(usb.lastCallbackToResubmitDurationNanoseconds() / 1_000_000.0) + "; worst_ms=" +
+                round(usb.worstCallbackToResubmitDurationNanoseconds() / 1_000_000.0) +
+                "; queue_delay_ms=" + round(usb.nativeIngressLastQueueDelayNanoseconds() / 1_000_000.0) +
+                "; worst_queue_ms=" +
+                round(usb.nativeIngressWorstQueueDelayNanoseconds() / 1_000_000.0) +
+                "; listener_failures=" + usb.nativeIngressListenerFailures()));
 
-        if(integrityDelta > 0 || rateFailure || stale)
+        if(ingressLossDelta > 0)
+        {
+            mIncidents.observe("receiver-ingress-drop", "critical",
+                "Receiver discarded samples at the USB handoff", display, now, ingressLossCount,
+                ingressLossDelta + " new dropped native buffers; dropped_samples=" +
+                    usb.nativeIngressSaturationDroppedSamples(),
+                "Downstream receiver listeners did not keep up with the bounded USB handoff",
+                "USB transfer processing remained responsive, but live IQ samples were discarded",
+                "Check receiver queue pressure and diagnostic load before increasing any queue limit");
+        }
+
+        if(listenerFailureDelta > 0)
+        {
+            mIncidents.observe("receiver-listener-failure", "warning",
+                "A receiver listener rejected tuner samples", display, now,
+                usb.nativeIngressListenerFailures(), listenerFailureDelta + " new failed listener delivery attempt(s)",
+                "A receiver or diagnostic consumer threw while accepting a native sample buffer",
+                "The failing consumer can miss a buffer; other registered consumers still receive it",
+                "Inspect the receiver log for the failing listener and its exception");
+        }
+
+        if(assessment.hardLoss())
         {
             mIncidents.observe("usb-sample-loss", "critical", "USB tuner sample delivery is incomplete", display,
-                now, integrityCount, integrityDelta + " new transfer integrity events; delivery=" +
-                    round(deliveryPercent) + "%; missing=" + usb.estimatedMissingBytes() + " bytes",
-                "USB bandwidth, hub/controller contention, cable/power trouble, or a device/driver transfer fault",
+                now, Math.max(1, integrityCount), assessment.integrityDelta() +
+                    " new transfer integrity events; status_events=" + assessment.statusDelta() +
+                    "; last_callback_age_ms=" + assessment.lastDeliveryAgeMilliseconds() + "; delivery=" +
+                    (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" : "warming up") +
+                    "; missing=" + usb.estimatedMissingBytes() + " bytes; copy_failures=" +
+                    usb.nativeIngressCopyFailures() + "; conversion_failures=" +
+                    usb.nativeIngressConversionFailures(),
+                "USB bandwidth or device trouble, callback starvation, buffer conversion, host scheduling, cable/power trouble, or a transfer fault",
                 "The tuner can keep showing signal power while every channel loses decode sync",
                 "Separate high-rate tuners across USB root controllers; then check cable, power, and negotiated speed");
         }
-        else if(gapDelta > 0)
+        else if(assessment.rateCritical() || assessment.rateWarning())
+        {
+            String severity = assessment.rateCritical() ? "critical" : "warning";
+            String title = assessment.gapCorrelated() ? "USB tuner delivery was interrupted" :
+                assessment.rateCritical() ? "USB tuner delivery rate stayed below expected" :
+                    "USB tuner delivery rate dipped below expected";
+            String aggregate = Double.isFinite(assessment.twoWindowDeliveryPercent()) ?
+                "; two_window_delivery=" + round(assessment.twoWindowDeliveryPercent()) + "%" : "";
+            mIncidents.observe("usb-delivery-rate-low", severity, title, display, now,
+                Math.max(1, assessment.lowRateWindowCount()), "window_delivery=" +
+                    round(assessment.rawDeliveryPercent()) + "%" + aggregate + "; window_ms=" +
+                    assessment.windowMilliseconds() + "; usable=" + assessment.usableBytesDelta() +
+                    " bytes; nominal=" + round(assessment.nominalBytes()) + " bytes; new_long_gaps=" +
+                    assessment.gapDelta(),
+                "A USB callback pause, host scheduling delay, or observer-window boundary can lower the measured rate",
+                assessment.rateCritical() ? "Delivery remained low long enough to threaten live decode continuity" :
+                    "One rate window alone does not prove that USB samples were lost",
+                "Correlate with transfer integrity, callback gaps, receiver IQ drops, and the following rate window");
+        }
+        else if(assessment.gapDelta() > 0)
         {
             mIncidents.observe("usb-transfer-gap", "warning", "USB tuner delivery paused", display, now,
-                usb.longTransferGapCount(), gapDelta + " new gap(s) of at least 200 ms; latest=" +
+                usb.longTransferGapCount(), assessment.gapDelta() + " new gap(s) of at least 200 ms; latest=" +
                     usb.lastInterTransferGapMilliseconds() + " ms; worst=" +
                     usb.worstInterTransferGapMilliseconds() + " ms",
                 "Temporary USB scheduling, host load, or device transfer delay",
@@ -1040,7 +1105,155 @@ public final class ReceiverHealthService implements AutoCloseable
         }
     }
 
-    private record UsbRateBaseline(long timestampMs, long sequence, long expectedBytes, long usableBytes)
+    static final class UsbDeliveryClassifier
+    {
+        private UsbDeliveryBaseline mBaseline;
+        private UsbRateWindow mPreviousRateWindow;
+        private boolean mPreviousRateWindowLow;
+        private boolean mPreviousWindowHadGap;
+        private long mLowRateWindowCount;
+
+        UsbDeliveryAssessment evaluate(UsbDeliveryObservation observation)
+        {
+            if(!observation.streaming())
+            {
+                reset();
+                return UsbDeliveryAssessment.warming(false, 0);
+            }
+
+            long lastDeliveryAge = observation.lastDeliveryTimestampMs() > 0 &&
+                observation.nowMs() >= observation.lastDeliveryTimestampMs() ?
+                observation.nowMs() - observation.lastDeliveryTimestampMs() : 0;
+            boolean stale = observation.lastDeliveryTimestampMs() > 0 &&
+                lastDeliveryAge > USB_STALE_DELIVERY_MILLISECONDS;
+            boolean baselineUsable = mBaseline != null && mBaseline.sequence() == observation.sequence() &&
+                observation.nowMs() > mBaseline.timestampMs() && observation.expectedBytes() >=
+                mBaseline.expectedBytes() && observation.usableBytes() >= mBaseline.usableBytes() &&
+                observation.statusCount() >= mBaseline.statusCount() && observation.integrityCount() >=
+                mBaseline.integrityCount() && observation.longGapCount() >= mBaseline.longGapCount();
+
+            if(!baselineUsable)
+            {
+                setBaseline(observation);
+                resetRateWindow();
+                return UsbDeliveryAssessment.warming(stale, lastDeliveryAge);
+            }
+
+            long windowMilliseconds = observation.nowMs() - mBaseline.timestampMs();
+            long expectedBytesDelta = observation.expectedBytes() - mBaseline.expectedBytes();
+            long usableBytesDelta = observation.usableBytes() - mBaseline.usableBytes();
+            long statusDelta = observation.statusCount() - mBaseline.statusCount();
+            long integrityDelta = observation.integrityCount() - mBaseline.integrityCount();
+            long gapDelta = observation.longGapCount() - mBaseline.longGapCount();
+            setBaseline(observation);
+            boolean rateAvailable = observation.requiredBytesPerSecond() > 0 && windowMilliseconds > 0;
+
+            if(!rateAvailable)
+            {
+                resetRateWindow();
+                return new UsbDeliveryAssessment(false, windowMilliseconds, expectedBytesDelta, usableBytesDelta,
+                    0, Double.NaN, Double.NaN, statusDelta, integrityDelta, gapDelta, stale, false, false,
+                    false, mLowRateWindowCount, lastDeliveryAge);
+            }
+
+            double nominalBytes = observation.requiredBytesPerSecond() * windowMilliseconds / 1_000.0;
+            double rawDeliveryPercent = nominalBytes > 0 ? 100.0 * usableBytesDelta / nominalBytes : 0;
+            boolean currentWindowLow = rawDeliveryPercent < USB_LOW_DELIVERY_PERCENT;
+            boolean gapCorrelated = (currentWindowLow && (gapDelta > 0 || mPreviousWindowHadGap)) ||
+                (gapDelta > 0 && mPreviousRateWindowLow);
+            double twoWindowDeliveryPercent = Double.NaN;
+            boolean aggregateLow = false;
+
+            if(mPreviousRateWindowLow && mPreviousRateWindow != null)
+            {
+                double aggregateNominalBytes = mPreviousRateWindow.nominalBytes() + nominalBytes;
+
+                if(aggregateNominalBytes > 0)
+                {
+                    twoWindowDeliveryPercent = 100.0 *
+                        (mPreviousRateWindow.usableBytes() + usableBytesDelta) / aggregateNominalBytes;
+                    aggregateLow = twoWindowDeliveryPercent < USB_LOW_DELIVERY_PERCENT;
+                }
+            }
+
+            boolean rateCritical = aggregateLow || gapCorrelated;
+            boolean rateWarning = currentWindowLow && !rateCritical;
+
+            if(currentWindowLow)
+            {
+                mLowRateWindowCount++;
+            }
+            else
+            {
+                mLowRateWindowCount = 0;
+            }
+
+            mPreviousRateWindow = new UsbRateWindow(nominalBytes, usableBytesDelta);
+            mPreviousRateWindowLow = currentWindowLow;
+            mPreviousWindowHadGap = gapDelta > 0;
+            return new UsbDeliveryAssessment(true, windowMilliseconds, expectedBytesDelta, usableBytesDelta,
+                nominalBytes, rawDeliveryPercent, twoWindowDeliveryPercent, statusDelta, integrityDelta, gapDelta,
+                stale, rateWarning, rateCritical, gapCorrelated, mLowRateWindowCount, lastDeliveryAge);
+        }
+
+        private void setBaseline(UsbDeliveryObservation observation)
+        {
+            mBaseline = new UsbDeliveryBaseline(observation.nowMs(), observation.sequence(),
+                observation.expectedBytes(), observation.usableBytes(), observation.statusCount(),
+                observation.integrityCount(), observation.longGapCount());
+        }
+
+        private void reset()
+        {
+            mBaseline = null;
+            resetRateWindow();
+        }
+
+        private void resetRateWindow()
+        {
+            mPreviousRateWindow = null;
+            mPreviousRateWindowLow = false;
+            mPreviousWindowHadGap = false;
+            mLowRateWindowCount = 0;
+        }
+    }
+
+    record UsbDeliveryObservation(long nowMs, boolean streaming, long sequence, long expectedBytes,
+                                  long usableBytes, long statusCount, long integrityCount, long longGapCount,
+                                  long lastDeliveryTimestampMs, double requiredBytesPerSecond)
+    {
+    }
+
+    record UsbDeliveryAssessment(boolean rateAvailable, long windowMilliseconds, long expectedBytesDelta,
+                                 long usableBytesDelta, double nominalBytes, double rawDeliveryPercent,
+                                 double twoWindowDeliveryPercent, long statusDelta, long integrityDelta,
+                                 long gapDelta, boolean stale, boolean rateWarning, boolean rateCritical,
+                                 boolean gapCorrelated, long lowRateWindowCount,
+                                 long lastDeliveryAgeMilliseconds)
+    {
+        private static UsbDeliveryAssessment warming(boolean stale, long lastDeliveryAgeMilliseconds)
+        {
+            return new UsbDeliveryAssessment(false, 0, 0, 0, 0, Double.NaN, Double.NaN, 0, 0, 0, stale,
+                false, false, false, 0, lastDeliveryAgeMilliseconds);
+        }
+
+        boolean hardLoss()
+        {
+            return integrityDelta > 0 || stale;
+        }
+
+        boolean rateMeasurementWarning()
+        {
+            return rateAvailable && rawDeliveryPercent < USB_WARNING_DELIVERY_PERCENT;
+        }
+    }
+
+    private record UsbDeliveryBaseline(long timestampMs, long sequence, long expectedBytes, long usableBytes,
+                                       long statusCount, long integrityCount, long longGapCount)
+    {
+    }
+
+    private record UsbRateWindow(double nominalBytes, long usableBytes)
     {
     }
 
