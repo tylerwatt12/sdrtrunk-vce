@@ -168,6 +168,18 @@
     .advanced-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 2px 13px 13px; }
     .advanced-grid .wide { grid-column: 1 / -1; }
 
+    .tuner-pool { display: grid; gap: 10px; }
+    .tuner-pool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .tuner-list { display: grid; gap: 10px; }
+    .tuner-card { display: grid; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(3, 13, 18, 0.35); }
+    .tuner-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tuner-card-title { display: flex; align-items: center; gap: 9px; min-width: 0; color: #dbecef; font-size: 0.83rem; font-weight: 760; }
+    .tuner-index { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid rgba(112, 220, 255, 0.35); border-radius: 8px; color: var(--cyan); background: rgba(112, 220, 255, 0.07); font: 700 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .tuner-actions { display: flex; gap: 6px; }
+    .tuner-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(118px, 0.62fr); gap: 9px; }
+    .tuner-spec { color: var(--muted); font: 0.69rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .custom-tuner-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding-top: 2px; }
+
     .actions { display: flex; gap: 10px; }
     .button {
       display: inline-flex;
@@ -187,6 +199,9 @@
     .button.primary { flex: 1; border-color: transparent; color: #031116; background: linear-gradient(135deg, #86e6ff, #38c7f3); }
     .button.primary:hover { background: linear-gradient(135deg, #a3edff, #52d3fa); }
     .button.small { min-height: 36px; padding: 0 11px; font-size: 0.78rem; }
+    .button.icon { min-height: 31px; padding: 0 8px; font-size: 0.7rem; }
+    .button.remove:hover { border-color: var(--red); color: #ffd0d4; background: rgba(255, 119, 130, 0.1); }
+    .button:disabled { cursor: not-allowed; opacity: 0.42; transform: none; }
 
     .results { min-width: 0; }
     .empty {
@@ -270,7 +285,7 @@
       .shell { padding: 14px; }
       .masthead { margin-bottom: 18px; }
       .compatibility { white-space: normal; }
-      .row, .advanced-grid { grid-template-columns: 1fr; }
+      .row, .advanced-grid, .tuner-fields, .custom-tuner-fields { grid-template-columns: 1fr; }
       .advanced-grid .wide { grid-column: auto; }
       .summary { grid-template-columns: 1fr 1fr; }
       .metric:nth-child(2) { border-right: 0; }
@@ -288,94 +303,85 @@
       <div>
         <div class="eyebrow">sdrtrunk RF planning tool</div>
         <h1>Center Frequency Planner</h1>
-        <p class="intro">Calculate simultaneous-coverage tuner centers with the same channel envelopes, device-specific edge guards, DC-spike exclusions, and polyphase grid used by sdrtrunk.</p>
+        <p class="intro">Configure your tuner pool, then calculate simultaneous coverage with each device’s real edge guards, DC-spike exclusion, and channelizer behavior.</p>
       </div>
-      <div class="compatibility" title="The shared center-placement implementation is equivalent in both codebases.">✓ VCE + upstream compatible</div>
+      <div class="compatibility" title="Select the center-placement behavior for either codebase.">✓ VCE + DSheirer modes</div>
     </header>
 
     <div class="layout">
       <section class="panel controls" aria-labelledby="input-heading">
         <header class="panel-head">
           <h2 id="input-heading">Receiver setup</h2>
-          <p>Choose the hardware profile actually configured in sdrtrunk.</p>
+          <p>Add the physical tuners available to this receiver.</p>
         </header>
 
         <form id="planner-form" class="form">
-          <div class="field">
-            <label for="profile">Tuner model</label>
-            <select id="profile"></select>
-          </div>
-
-          <div class="field">
-            <label for="sample-rate">Sample rate</label>
-            <select id="sample-rate"></select>
-          </div>
-
-          <div class="row">
-            <div class="field">
-              <label for="default-bandwidth">Default channel width</label>
-              <div class="input-unit">
-                <input id="default-bandwidth" type="number" min="0.001" max="10000" step="0.001" value="12.5" inputmode="decimal">
-                <span>kHz</span>
-              </div>
+          <div class="tuner-pool">
+            <div class="tuner-pool-head">
+              <span class="label">Available tuners</span>
+              <button class="button small" id="add-tuner" type="button">+ Add tuner</button>
             </div>
-            <div class="field">
-              <label for="frequency-unit">Bare-number unit</label>
-              <select id="frequency-unit">
-                <option value="mhz" selected>MHz</option>
-                <option value="khz">kHz</option>
-                <option value="hz">Hz</option>
-                <option value="auto">Auto-detect</option>
-              </select>
-            </div>
+            <div id="tuner-list" class="tuner-list"></div>
           </div>
 
           <div class="field">
-            <label for="frequencies">Channel frequencies</label>
+            <label for="placement-engine">sdrtrunk behavior</label>
+            <select id="placement-engine">
+              <option value="vce" selected>sdrtrunk-vce · current main</option>
+              <option value="upstream">DSheirer/sdrtrunk · master</option>
+            </select>
+            <div class="hint">Both modes use the same device guards and DC exclusions. They differ in how a fresh center is chosen.</div>
+          </div>
+
+          <div class="field">
+            <label for="frequencies">Channel frequencies · MHz</label>
             <textarea id="frequencies" spellcheck="false" placeholder="851.0125&#10;851.2625&#10;851.7750 @ 6.25k"></textarea>
-            <div class="hint">Separate values with spaces, commas, or new lines. Override one channel’s width with <code>@ 6.25k</code>. Explicit <code>Hz</code>, <code>kHz</code>, and <code>MHz</code> suffixes are accepted.</div>
+            <div class="hint">Frequency values are MHz only. Channels default to 12.5 kHz wide; override one with <code>851.7750 @ 6.25k</code>.</div>
           </div>
 
-          <details class="advanced" id="advanced-settings">
-            <summary>Calculated hardware limits</summary>
-            <div class="advanced-grid">
-              <div class="field wide">
-                <label for="custom-rate">Effective sample rate</label>
-                <div class="input-unit">
-                  <input id="custom-rate" type="number" min="50000" max="100000000" step="1" value="2400000" inputmode="numeric">
-                  <span>Hz</span>
+          <template id="tuner-template">
+            <section class="tuner-card">
+              <div class="tuner-card-head">
+                <div class="tuner-card-title"><span class="tuner-index"></span><span class="tuner-name"></span></div>
+                <div class="tuner-actions">
+                  <button class="button icon duplicate-tuner" type="button" title="Duplicate this tuner">Duplicate</button>
+                  <button class="button icon remove remove-tuner" type="button" title="Remove this tuner">Remove</button>
                 </div>
               </div>
-              <div class="field">
-                <label for="usable-percent">Usable bandwidth</label>
-                <div class="input-unit">
-                  <input id="usable-percent" type="number" min="1" max="100" step="0.001" value="98" inputmode="decimal">
-                  <span>%</span>
+              <div class="tuner-fields">
+                <div class="field">
+                  <label>Tuner model</label>
+                  <select class="tuner-profile"></select>
+                </div>
+                <div class="field">
+                  <label>Sample rate</label>
+                  <select class="tuner-rate"></select>
                 </div>
               </div>
-              <div class="field">
-                <label for="dc-half-width">DC half-width</label>
-                <div class="input-unit">
-                  <input id="dc-half-width" type="number" min="0" max="10000000" step="1" value="5000" inputmode="numeric">
-                  <span>Hz</span>
+              <div class="tuner-spec"></div>
+              <div class="custom-tuner-fields" hidden>
+                <div class="field">
+                  <label>Sample rate · Hz</label>
+                  <input class="custom-rate" type="number" min="50000" max="100000000" step="1" inputmode="numeric">
+                </div>
+                <div class="field">
+                  <label>Usable bandwidth · %</label>
+                  <input class="custom-usable" type="number" min="1" max="100" step="0.001" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label>DC half-width · Hz</label>
+                  <input class="custom-dc" type="number" min="0" max="10000000" step="1" inputmode="numeric">
+                </div>
+                <div class="field">
+                  <label>Tune range · MHz</label>
+                  <div class="row">
+                    <input class="custom-min" aria-label="Minimum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+                    <input class="custom-max" aria-label="Maximum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+                  </div>
                 </div>
               </div>
-              <div class="field">
-                <label for="min-frequency">Minimum tune</label>
-                <div class="input-unit">
-                  <input id="min-frequency" type="number" min="0" step="0.001" value="3.18" inputmode="decimal">
-                  <span>MHz</span>
-                </div>
-              </div>
-              <div class="field">
-                <label for="max-frequency">Maximum tune</label>
-                <div class="input-unit">
-                  <input id="max-frequency" type="number" min="0" step="0.001" value="1782.03" inputmode="decimal">
-                  <span>MHz</span>
-                </div>
-              </div>
-            </div>
-          </details>
+            </section>
+          </template>
 
           <div class="actions">
             <button class="button" id="example-button" type="button">Load example</button>
@@ -389,14 +395,14 @@
           <div>
             <div class="empty-mark" aria-hidden="true">⌁</div>
             <h2>Ready for a channel list</h2>
-            <p>The planner will find the fewest contiguous tuner groups it can, then validate every channel edge against sdrtrunk’s usable passband and center exclusion.</p>
+            <p>The planner will assign the most channels it can across the tuners you add, then validate every channel edge against each device’s usable passband and center exclusion.</p>
           </div>
         </div>
       </section>
     </div>
 
     <footer class="footer">
-      <span>Planning model verified against <code>sdrtrunk-vce main d7b81c501014</code> and <code>sdrtrunk master 00f9a500bef5</code>.</span>
+      <span>Planning model verified against <code>sdrtrunk-vce main d7b81c501014</code> and <code>DSheirer/sdrtrunk master 80360029efb0</code>.</span>
       <span id="self-test" class="self-test">Checking calculator…</span>
     </footer>
   </main>
@@ -429,20 +435,17 @@
       "custom": { label: "Custom sdrtrunk profile", rates: [2400000], defaultRate: 2400000, usable: 0.98, dc: 5000, min: 0, max: 6000000000, custom: true }
     };
 
+    const MAX_TUNERS = 10;
+    const DEFAULT_CHANNEL_BANDWIDTH = 12500;
     const form = document.querySelector("#planner-form");
-    const profileSelect = document.querySelector("#profile");
-    const rateSelect = document.querySelector("#sample-rate");
-    const customRateInput = document.querySelector("#custom-rate");
-    const usableInput = document.querySelector("#usable-percent");
-    const dcInput = document.querySelector("#dc-half-width");
-    const minInput = document.querySelector("#min-frequency");
-    const maxInput = document.querySelector("#max-frequency");
-    const defaultBandwidthInput = document.querySelector("#default-bandwidth");
-    const unitSelect = document.querySelector("#frequency-unit");
+    const tunerList = document.querySelector("#tuner-list");
+    const tunerTemplate = document.querySelector("#tuner-template");
+    const engineSelect = document.querySelector("#placement-engine");
     const frequenciesInput = document.querySelector("#frequencies");
     const results = document.querySelector("#results");
-    const advanced = document.querySelector("#advanced-settings");
     const selfTest = document.querySelector("#self-test");
+    let nextTunerId = 1;
+    let tunerConfigs = [createTuner("rtl-r8x")];
 
     function airspyUsable(rate) {
       if (rate === 2500000) return 0.60;
@@ -468,57 +471,76 @@
       return Math.round(value).toLocaleString("en-US");
     }
 
-    function populateProfiles() {
-      profileSelect.innerHTML = Object.entries(PROFILES)
-        .map(([key, profile]) => `<option value="${key}">${escapeHtml(profile.label)}</option>`)
-        .join("");
-      profileSelect.value = "rtl-r8x";
-      updateProfile();
-    }
-
-    function updateProfile() {
-      const profile = PROFILES[profileSelect.value];
-      rateSelect.innerHTML = profile.rates.map(rate => `<option value="${rate}">${formatRate(rate)}</option>`).join("");
-      rateSelect.value = String(profile.defaultRate);
-      rateSelect.disabled = profile.custom;
-      customRateInput.disabled = !profile.custom;
-      usableInput.disabled = !profile.custom;
-      dcInput.disabled = !profile.custom;
-      minInput.disabled = !profile.custom;
-      maxInput.disabled = !profile.custom;
-      advanced.open = profile.custom;
-      syncLimits();
-    }
-
-    function syncLimits() {
-      const profile = PROFILES[profileSelect.value];
-      const rate = Number(rateSelect.value || profile.defaultRate);
-      const usableHz = profile.usableHzForRate ? profile.usableHzForRate(rate) : rate * (profile.usableForRate ? profile.usableForRate(rate) : profile.usable);
-      customRateInput.value = String(rate);
-      usableInput.value = trimZeros((usableHz / rate * 100).toFixed(3));
-      dcInput.value = String(profile.dc);
-      minInput.value = trimZeros((profile.min / 1000000).toFixed(6));
-      maxInput.value = trimZeros((profile.max / 1000000).toFixed(6));
-    }
-
-    function currentHardware() {
-      const profile = PROFILES[profileSelect.value];
-      const rate = profile.custom ? Number(customRateInput.value) : Number(rateSelect.value);
-      const exactUsableBandwidth = !profile.custom && profile.usableHzForRate ? profile.usableHzForRate(rate) : null;
-      const usablePercent = exactUsableBandwidth ? exactUsableBandwidth / rate : Number(usableInput.value) / 100;
+    function createTuner(profileKey = "rtl-r8x", source = null) {
+      const profile = PROFILES[profileKey];
       return {
-        key: profileSelect.value,
+        id: nextTunerId++,
+        profileKey,
+        rate: source?.rate ?? profile.defaultRate,
+        customRate: source?.customRate ?? profile.defaultRate,
+        usablePercent: source?.usablePercent ?? (profile.usable * 100 || 98),
+        dcHalf: source?.dcHalf ?? profile.dc,
+        minMHz: source?.minMHz ?? profile.min / 1000000,
+        maxMHz: source?.maxMHz ?? profile.max / 1000000
+      };
+    }
+
+    function profileOptions(selectedKey) {
+      return Object.entries(PROFILES).map(([key, profile]) =>
+        `<option value="${key}"${key === selectedKey ? " selected" : ""}>${escapeHtml(profile.label)}</option>`
+      ).join("");
+    }
+
+    function renderTunerPool() {
+      tunerList.innerHTML = "";
+      tunerConfigs.forEach((tuner, index) => {
+        const profile = PROFILES[tuner.profileKey];
+        const fragment = tunerTemplate.content.cloneNode(true);
+        const card = fragment.querySelector(".tuner-card");
+        card.dataset.tunerId = String(tuner.id);
+        card.querySelector(".tuner-index").textContent = String(index + 1).padStart(2, "0");
+        card.querySelector(".tuner-name").textContent = `Tuner ${index + 1}`;
+        const profileSelect = card.querySelector(".tuner-profile");
+        profileSelect.innerHTML = profileOptions(tuner.profileKey);
+        const rateSelect = card.querySelector(".tuner-rate");
+        rateSelect.innerHTML = profile.rates.map(rate => `<option value="${rate}"${rate === tuner.rate ? " selected" : ""}>${formatRate(rate)}</option>`).join("");
+        rateSelect.disabled = profile.custom;
+        card.querySelector(".remove-tuner").disabled = tunerConfigs.length === 1;
+
+        const customFields = card.querySelector(".custom-tuner-fields");
+        customFields.hidden = !profile.custom;
+        card.querySelector(".custom-rate").value = String(tuner.customRate);
+        card.querySelector(".custom-usable").value = trimZeros(Number(tuner.usablePercent).toFixed(3));
+        card.querySelector(".custom-dc").value = String(tuner.dcHalf);
+        card.querySelector(".custom-min").value = trimZeros(Number(tuner.minMHz).toFixed(6));
+        card.querySelector(".custom-max").value = trimZeros(Number(tuner.maxMHz).toFixed(6));
+
+        const hardware = hardwareForTuner(tuner, index);
+        card.querySelector(".tuner-spec").textContent = `${formatRate(hardware.usableBandwidth)} usable · ${hardware.dcHalf > 0 ? `DC ±${formatRate(hardware.dcHalf)}` : "no DC exclusion"} · ${formatMHz(hardware.min)}–${formatMHz(hardware.max)} MHz`;
+        tunerList.appendChild(fragment);
+      });
+      document.querySelector("#add-tuner").disabled = tunerConfigs.length >= MAX_TUNERS;
+    }
+
+    function hardwareForTuner(tuner, index = 0) {
+      const profile = PROFILES[tuner.profileKey];
+      const rate = profile.custom ? Number(tuner.customRate) : Number(tuner.rate);
+      const exactUsableBandwidth = !profile.custom && profile.usableHzForRate ? profile.usableHzForRate(rate) : null;
+      const usablePercent = exactUsableBandwidth ? exactUsableBandwidth / rate : profile.custom ? Number(tuner.usablePercent) / 100 : (profile.usableForRate ? profile.usableForRate(rate) : profile.usable);
+      return {
+        tunerIndex: index,
+        key: tuner.profileKey,
         label: profile.label,
         rate,
         usablePercent,
         usableBandwidth: exactUsableBandwidth ?? Math.trunc(rate * usablePercent),
-        dcHalf: Math.max(0, Math.trunc(Number(dcInput.value))),
-        min: Math.round(Number(minInput.value) * 1000000),
-        max: Math.round(Number(maxInput.value) * 1000000)
+        dcHalf: Math.max(0, Math.trunc(profile.custom ? Number(tuner.dcHalf) : profile.dc)),
+        min: Math.round((profile.custom ? Number(tuner.minMHz) : profile.min / 1000000) * 1000000),
+        max: Math.round((profile.custom ? Number(tuner.maxMHz) : profile.max / 1000000) * 1000000)
       };
     }
 
-    function parseScaledNumber(raw, defaultUnit) {
+    function parseScaledNumber(raw, defaultUnit = "hz") {
       const match = String(raw).trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(mhz|khz|hz|m|k)?$/i);
       if (!match) return NaN;
       const value = Number(match[1]);
@@ -531,13 +553,18 @@
       return Math.round(value * scale);
     }
 
+    function parseFrequencyMHz(raw) {
+      const match = String(raw).trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(mhz)?$/i);
+      return match ? Math.round(Number(match[1]) * 1000000) : NaN;
+    }
+
     function parseBandwidth(raw, defaultBandwidth) {
       if (!raw || !raw.trim()) return defaultBandwidth;
       const value = parseScaledNumber(raw, "hz");
       return Number.isFinite(value) && value > 0 ? value : NaN;
     }
 
-    function parseChannels(text, defaultBandwidth, defaultUnit) {
+    function parseChannels(text, defaultBandwidth = DEFAULT_CHANNEL_BANDWIDTH) {
       const warnings = [];
       const byFrequency = new Map();
       const invalid = [];
@@ -558,7 +585,7 @@
         const tokens = parts[0].split(/[\s,;]+/).filter(Boolean);
         if (!tokens.length) return;
         tokens.forEach(token => {
-          const frequency = parseScaledNumber(token, defaultUnit);
+          const frequency = parseFrequencyMHz(token);
           if (!Number.isFinite(frequency) || frequency <= 0) {
             invalid.push(`Line ${lineIndex + 1}: “${token}” is not a frequency`);
             return;
@@ -662,7 +689,7 @@
       return Math.abs(channel.frequency - center) % gridStep === 0;
     }
 
-    function findCenter(channels, hardware, currentCenter = 0) {
+    function findVceCenter(channels, hardware, currentCenter = 0) {
       if (!channels.length || !canTuneSet(channels, hardware)) return null;
       const grid = channelizerGrid(hardware.rate);
       if (!grid) return null;
@@ -720,22 +747,95 @@
       return null;
     }
 
-    function planTuners(channels, hardware) {
-      const plans = [];
-      let index = 0;
-      while (index < channels.length) {
-        let best = null;
-        for (let end = index; end < channels.length; end++) {
-          const group = channels.slice(index, end + 1);
-          const placement = findCenter(group, hardware, 0);
-          if (!placement) break;
-          best = { channels: group, ...placement };
-        }
-        if (!best) return { plans, rejected: channels.slice(index) };
-        plans.push(best);
-        index += best.channels.length;
+    function findUpstreamCenter(channels, hardware, currentCenter = 0) {
+      if (!channels.length || !canTuneSet(channels, hardware)) return null;
+      const grid = channelizerGrid(hardware.rate);
+      if (!grid) return null;
+      const span = setBandwidth(channels);
+      if (span > hardware.usableBandwidth) return null;
+
+      if (currentCenter > 0 && isValidCenter(channels, currentCenter, hardware)) {
+        return { center: currentCenter, grid, strategy: "current" };
       }
-      return { plans, rejected: [] };
+
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+      const integral = integralFrequency(channels, grid.exactStep);
+      let start = channels[0].frequency - grid.step;
+      if (isValidCenter(channels, start, hardware)) return { center: start, grid, strategy: "upstream-step" };
+
+      while (start - channelMin(channels[0]) < usableHalf) {
+        start += grid.step;
+        if (isValidCenter(channels, start, hardware)) return { center: start, grid, strategy: "upstream-step" };
+      }
+
+      let startFrequency = channelMin(channels[0]) + usableHalf;
+      const adjustment = Math.abs(startFrequency - integral) % grid.exactStep;
+      startFrequency += adjustment;
+      const available = hardware.usableBandwidth - span;
+      const availableTestChannels = Math.trunc(available / grid.exactStep) + 1;
+      if (isValidCenter(channels, Math.trunc(startFrequency), hardware)) {
+        return { center: Math.trunc(startFrequency), grid, strategy: "upstream-grid" };
+      }
+      for (let channel = 1; channel <= availableTestChannels; channel++) {
+        const test = Math.trunc(startFrequency - channel * grid.exactStep);
+        if (isValidCenter(channels, test, hardware)) return { center: test, grid, strategy: "upstream-grid" };
+      }
+
+      let testFrequency = channelMin(channels[0]) + usableHalf;
+      const minimum = testFrequency - available;
+      if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+      while (testFrequency >= minimum) {
+        testFrequency--;
+        if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+      }
+      return null;
+    }
+
+    function findCenter(channels, hardware, currentCenter = 0, engine = "vce") {
+      return engine === "upstream"
+        ? findUpstreamCenter(channels, hardware, currentCenter)
+        : findVceCenter(channels, hardware, currentCenter);
+    }
+
+    function planTunerPool(channels, hardwares, engine = "vce") {
+      const placementCache = new Map();
+      const resultCache = new Map();
+
+      function placementFor(tunerIndex, start, end) {
+        const key = `${tunerIndex}:${start}:${end}:${engine}`;
+        if (!placementCache.has(key)) {
+          placementCache.set(key, findCenter(channels.slice(start, end + 1), hardwares[tunerIndex], 0, engine));
+        }
+        return placementCache.get(key);
+      }
+
+      function solve(start, usedMask) {
+        if (start >= channels.length) return { covered: 0, plans: [], rejected: [] };
+        const cacheKey = `${start}:${usedMask}`;
+        if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
+        const skippedTail = solve(start + 1, usedMask);
+        let best = { covered: skippedTail.covered, plans: skippedTail.plans, rejected: [channels[start], ...skippedTail.rejected] };
+
+        for (let tunerIndex = 0; tunerIndex < hardwares.length; tunerIndex++) {
+          if (usedMask & (1 << tunerIndex)) continue;
+          for (let end = start; end < channels.length; end++) {
+            const placement = placementFor(tunerIndex, start, end);
+            if (!placement) break;
+            const tail = solve(end + 1, usedMask | (1 << tunerIndex));
+            const plan = {
+              covered: end - start + 1 + tail.covered,
+              plans: [{ channels: channels.slice(start, end + 1), ...placement, hardware: hardwares[tunerIndex], tunerIndex }, ...tail.plans],
+              rejected: tail.rejected
+            };
+            if (plan.covered > best.covered || (plan.covered === best.covered && plan.plans.length < best.plans.length)) best = plan;
+          }
+        }
+        resultCache.set(cacheKey, best);
+        return best;
+      }
+
+      const best = solve(0, 0);
+      return { plans: best.plans, rejected: best.rejected };
     }
 
     function escapeHtml(value) {
@@ -794,15 +894,16 @@
         </div>`;
     }
 
-    function renderPlan(plan, index, hardware) {
+    function renderPlan(plan) {
+      const hardware = plan.hardware;
       const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
       const chips = plan.channels.map(channel => `<span class="chip">${formatMHz(channel.frequency)} <small>MHz · ${formatRate(channel.bandwidth)}</small></span>`).join("");
       return `
         <article class="panel tuner-result">
           <header class="result-head">
             <div class="result-title">
-              <span class="tuner-number">${String(index + 1).padStart(2, "0")}</span>
-              <div><h3>Tuner ${index + 1}</h3><p>${plan.channels.length} channel${plan.channels.length === 1 ? "" : "s"} · ${escapeHtml(hardware.label)}</p></div>
+              <span class="tuner-number">${String(plan.tunerIndex + 1).padStart(2, "0")}</span>
+              <div><h3>Tuner ${plan.tunerIndex + 1}</h3><p>${plan.channels.length} channel${plan.channels.length === 1 ? "" : "s"} · ${escapeHtml(hardware.label)} · ${formatRate(hardware.rate)}</p></div>
             </div>
             <button class="button small copy-center" type="button" data-center="${plan.center}">Copy center</button>
           </header>
@@ -820,38 +921,42 @@
         </article>`;
     }
 
-    function renderResults(parsed, hardware) {
+    function renderResults(parsed, hardwares, engine) {
       const errors = [...parsed.invalid];
       if (!parsed.channels.length) errors.push("Enter at least one valid channel frequency.");
-      if (!Number.isFinite(hardware.rate) || hardware.rate < 50000) errors.push("The effective sample rate must be at least 50 kHz.");
-      if (!(hardware.usablePercent > 0 && hardware.usablePercent <= 1)) errors.push("Usable bandwidth must be greater than 0% and no more than 100%.");
-      if (!(hardware.min >= 0 && hardware.max > hardware.min)) errors.push("The tuner frequency limits are invalid.");
-      if (!channelizerGrid(hardware.rate)) errors.push("This sample rate is too low for sdrtrunk’s polyphase channelizer.");
+      if (!hardwares.length) errors.push("Add at least one tuner.");
+      hardwares.forEach((hardware, index) => {
+        const prefix = `Tuner ${index + 1}:`;
+        if (!Number.isFinite(hardware.rate) || hardware.rate < 50000) errors.push(`${prefix} the effective sample rate must be at least 50 kHz.`);
+        if (!(hardware.usablePercent > 0 && hardware.usablePercent <= 1)) errors.push(`${prefix} usable bandwidth must be greater than 0% and no more than 100%.`);
+        if (!(hardware.min >= 0 && hardware.max > hardware.min)) errors.push(`${prefix} frequency limits are invalid.`);
+        if (!channelizerGrid(hardware.rate)) errors.push(`${prefix} sample rate is too low for sdrtrunk’s polyphase channelizer.`);
+      });
 
       if (errors.length) {
         results.innerHTML = `<div class="result-stack">${renderNotice(errors, "error")}</div>`;
         return;
       }
 
-      const { plans, rejected } = planTuners(parsed.channels, hardware);
+      const { plans, rejected } = planTunerPool(parsed.channels, hardwares, engine);
       const warnings = [...parsed.warnings];
       if (rejected.length) {
-        warnings.push(`${rejected.length} channel${rejected.length === 1 ? "" : "s"} cannot fit this tuner profile, even alone: ${rejected.map(channel => `${formatMHz(channel.frequency)} MHz`).join(", ")}.`);
+        warnings.push(`${rejected.length} channel${rejected.length === 1 ? "" : "s"} could not be assigned across the configured tuner pool: ${rejected.map(channel => `${formatMHz(channel.frequency)} MHz`).join(", ")}.`);
       }
-      if (plans.length > 1) warnings.push("The tuner count is a static contiguous-frequency plan. Live sdrtrunk allocation can differ when tuners already have active channels or valid center frequencies.");
-      else warnings.push("A running tuner may retain a different existing center when it already covers every requested channel. The center below is the fresh-retune planning target.");
+      warnings.push("This is a static simultaneous-coverage plan. Live sdrtrunk allocation can differ when tuners already have active channels or valid center frequencies.");
 
-      const grid = channelizerGrid(hardware.rate);
+      const assigned = parsed.channels.length - rejected.length;
+      const engineLabel = engine === "upstream" ? "DSheirer" : "VCE main";
       results.innerHTML = `
         <div class="result-stack">
           <section class="panel summary" aria-label="Plan summary">
             <div class="metric"><span class="metric-label">Channels</span><span class="metric-value">${parsed.channels.length}</span></div>
-            <div class="metric"><span class="metric-label">Tuners</span><span class="metric-value">${plans.length}${rejected.length ? "+" : ""}</span></div>
-            <div class="metric"><span class="metric-label">Usable bandwidth</span><span class="metric-value">${formatRate(hardware.usableBandwidth)}</span></div>
-            <div class="metric"><span class="metric-label">Channelizer grid</span><span class="metric-value">${formatRate(grid.step)}</span></div>
+            <div class="metric"><span class="metric-label">Assigned</span><span class="metric-value">${assigned}</span></div>
+            <div class="metric"><span class="metric-label">Tuners used</span><span class="metric-value">${plans.length}/${hardwares.length}</span></div>
+            <div class="metric"><span class="metric-label">Engine</span><span class="metric-value">${engineLabel}</span></div>
           </section>
           ${renderNotice(warnings)}
-          ${plans.map((plan, index) => renderPlan(plan, index, hardware)).join("")}
+          ${plans.map(plan => renderPlan(plan)).join("")}
           ${rejected.length ? renderNotice(["No complete plan is possible with the selected tuner limits and channel widths."], "error") : ""}
         </div>`;
 
@@ -884,25 +989,39 @@
     }
 
     function calculate() {
-      const defaultBandwidth = Math.round(Number(defaultBandwidthInput.value) * 1000);
-      const parsed = parseChannels(frequenciesInput.value, defaultBandwidth, unitSelect.value);
-      renderResults(parsed, currentHardware());
+      const parsed = parseChannels(frequenciesInput.value);
+      const hardwares = tunerConfigs.map((tuner, index) => hardwareForTuner(tuner, index));
+      renderResults(parsed, hardwares, engineSelect.value);
     }
 
     function runSelfTests() {
       const r8x = { rate: 2400000, usableBandwidth: 2352000, usablePercent: 0.98, dcHalf: 5000, min: 3180000, max: 1782030000 };
       const airspy = { rate: 10000000, usableBandwidth: 9000000, usablePercent: 0.90, dcHalf: 0, min: 24000000, max: 1800000000 };
       const one = [{ frequency: 851000000, bandwidth: 12500 }];
-      const r8xPlan = findCenter(one, r8x, 0);
-      const airspyPlan = findCenter(one, airspy, 0);
+      const r8xPlan = findCenter(one, r8x, 0, "vce");
+      const upstreamPlan = findCenter(one, r8x, 0, "upstream");
+      const airspyPlan = findCenter(one, airspy, 0, "vce");
       const edgeChannel = [{ frequency: 852169750, bandwidth: 12500 }];
-      const parsed = parseChannels("851.0125\n851.2625 @ 6.25k", 12500, "mhz");
+      const parsed = parseChannels("851.0125\n851.2625 @ 6.25k");
+      const invalidUnit = parseChannels("851012500Hz");
+      const mixedPool = planTunerPool([
+        { frequency: 851000000, bandwidth: 12500 },
+        { frequency: 854000000, bandwidth: 12500 }
+      ], [r8x, airspy], "vce");
+      const twoR8x = planTunerPool([
+        { frequency: 851000000, bandwidth: 12500 },
+        { frequency: 854000000, bandwidth: 12500 }
+      ], [r8x, { ...r8x }], "vce");
       const assertions = [
         r8xPlan?.center === 851025000,
+        upstreamPlan?.center === 850975000,
         airspyPlan?.center === 851000000,
         isValidCenter(one, 851000000, r8x) === false,
         isValidCenter(edgeChannel, 851000000, r8x) === true,
         parsed.channels.length === 2 && parsed.channels[1].bandwidth === 6250,
+        invalidUnit.channels.length === 0 && invalidUnit.invalid.length === 1,
+        mixedPool.plans.length === 1 && mixedPool.plans[0].tunerIndex === 1 && mixedPool.rejected.length === 0,
+        twoR8x.plans.length === 2 && twoR8x.rejected.length === 0,
         channelizerGrid(2048000)?.step === 25600
       ];
       if (assertions.every(Boolean)) {
@@ -917,25 +1036,79 @@
       }
     }
 
-    profileSelect.addEventListener("change", updateProfile);
-    rateSelect.addEventListener("change", syncLimits);
+    function tunerForCard(card) {
+      return tunerConfigs.find(tuner => tuner.id === Number(card?.dataset.tunerId));
+    }
+
+    function syncCustomTunerFromCard(card, tuner) {
+      tuner.customRate = Number(card.querySelector(".custom-rate").value);
+      tuner.usablePercent = Number(card.querySelector(".custom-usable").value);
+      tuner.dcHalf = Number(card.querySelector(".custom-dc").value);
+      tuner.minMHz = Number(card.querySelector(".custom-min").value);
+      tuner.maxMHz = Number(card.querySelector(".custom-max").value);
+    }
+
+    document.querySelector("#add-tuner").addEventListener("click", () => {
+      if (tunerConfigs.length >= MAX_TUNERS) return;
+      tunerConfigs.push(createTuner(tunerConfigs.at(-1)?.profileKey || "rtl-r8x"));
+      renderTunerPool();
+    });
+
+    tunerList.addEventListener("click", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner) return;
+      if (event.target.closest(".duplicate-tuner")) {
+        if (tunerConfigs.length >= MAX_TUNERS) return;
+        const duplicate = createTuner(tuner.profileKey, tuner);
+        const index = tunerConfigs.indexOf(tuner);
+        tunerConfigs.splice(index + 1, 0, duplicate);
+        renderTunerPool();
+      } else if (event.target.closest(".remove-tuner") && tunerConfigs.length > 1) {
+        tunerConfigs = tunerConfigs.filter(candidate => candidate !== tuner);
+        renderTunerPool();
+      }
+    });
+
+    tunerList.addEventListener("change", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner) return;
+      if (event.target.matches(".tuner-profile")) {
+        const replacement = createTuner(event.target.value);
+        replacement.id = tuner.id;
+        tunerConfigs[tunerConfigs.indexOf(tuner)] = replacement;
+      } else if (event.target.matches(".tuner-rate")) {
+        tuner.rate = Number(event.target.value);
+      } else if (PROFILES[tuner.profileKey].custom) {
+        syncCustomTunerFromCard(card, tuner);
+      }
+      renderTunerPool();
+    });
+
+    tunerList.addEventListener("input", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner || !PROFILES[tuner.profileKey].custom) return;
+      syncCustomTunerFromCard(card, tuner);
+      const hardware = hardwareForTuner(tuner, tunerConfigs.indexOf(tuner));
+      card.querySelector(".tuner-spec").textContent = `${formatRate(hardware.usableBandwidth)} usable · ${hardware.dcHalf > 0 ? `DC ±${formatRate(hardware.dcHalf)}` : "no DC exclusion"} · ${formatMHz(hardware.min)}–${formatMHz(hardware.max)} MHz`;
+    });
+
     form.addEventListener("submit", event => {
       event.preventDefault();
       calculate();
     });
 
     document.querySelector("#example-button").addEventListener("click", () => {
-      profileSelect.value = "rtl-r8x";
-      updateProfile();
-      rateSelect.value = "2400000";
-      syncLimits();
-      defaultBandwidthInput.value = "12.5";
-      unitSelect.value = "mhz";
-      frequenciesInput.value = "851.0125\n851.2625\n851.7750\n852.1250\n852.6125\n853.0875";
+      tunerConfigs = [createTuner("rtl-r8x"), createTuner("rtl-r8x")];
+      renderTunerPool();
+      engineSelect.value = "vce";
+      frequenciesInput.value = "851.0125\n851.2625\n851.7750 @ 6.25k\n852.1250\n852.6125\n854.0875";
       calculate();
     });
 
-    populateProfiles();
+    renderTunerPool();
     runSelfTests();
   </script>
 </body>
