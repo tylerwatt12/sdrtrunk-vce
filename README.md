@@ -195,7 +195,8 @@ These older or experimental features are not included:
 1. Choose a [numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) or the
    [current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly).
 2. Extract it into a new writable folder.
-3. Start `bin/sdrtrunk-vce` on macOS or Linux, or `bin\sdrtrunk-vce.bat` on Windows.
+3. Use the `Start SDRTrunk VCE` launcher in the extracted folder. Its extension identifies Windows (`.bat`), macOS
+   (`.command`), or Linux (`.sh`).
 4. Import XML, migrate a previous VCE setup, or start fresh.
 5. Review the imported channels and file locations before enabling auto-start.
 
