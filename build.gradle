@@ -466,6 +466,7 @@ def runtimeTargets = [
                 size: 145580094L,
                 sha256: '3f28b269a6e29a77187546da32eb2474fd4b8f4c8b73b7bb1c934d5f9b98bb8f',
                 releaseArchitecture: 'aarch64',
+                rootLauncher: 'Start SDRTrunk VCE.sh',
                 windows: false
         ],
         [
@@ -478,6 +479,7 @@ def runtimeTargets = [
                 size: 142411056L,
                 sha256: '5dd2f7ef72c66b095f3c29ba1c2944e3b651870d534f4745ef46936d3d3447c8',
                 releaseArchitecture: 'x86_64',
+                rootLauncher: 'Start SDRTrunk VCE.sh',
                 windows: false
         ],
         [
@@ -490,6 +492,7 @@ def runtimeTargets = [
                 size: 122063016L,
                 sha256: '72442fad43060b0e2f94b6559d5b375ccb45182b1b291d2e03c74eb7672c8383',
                 releaseArchitecture: 'aarch64',
+                rootLauncher: 'Start SDRTrunk VCE.command',
                 windows: false
         ],
         [
@@ -502,6 +505,7 @@ def runtimeTargets = [
                 size: 127114406L,
                 sha256: 'f928dd4a3d3b726645a03d2b987803b9163592c8a29a5e4cf0598136daa6a04e',
                 releaseArchitecture: 'x86_64',
+                rootLauncher: 'Start SDRTrunk VCE.command',
                 windows: false
         ],
         [
@@ -514,6 +518,7 @@ def runtimeTargets = [
                 size: 48590725L,
                 sha256: '2276f80f1a4dbbe531379a38cf00cb91ed79ce057dbc70f5cf2b53f5d24402ee',
                 releaseArchitecture: 'aarch64',
+                rootLauncher: 'Start SDRTrunk VCE.bat',
                 windows: true
         ],
         [
@@ -526,6 +531,7 @@ def runtimeTargets = [
                 size: 118973801L,
                 sha256: '0d855829d51b49dd7a54bf0be930408ebbff8bbd487fdac287237468f2cd33c0',
                 releaseArchitecture: 'x86_64',
+                rootLauncher: 'Start SDRTrunk VCE.bat',
                 windows: true
         ]
 ]
@@ -638,8 +644,18 @@ def verifyRuntimePackage = { Map target, File archive ->
             throw new GradleException("Package contains empty directories: ${emptyDirectories*.name}")
         }
 
+        def rootLaunchers = entries.findAll { entry ->
+            !entry.directory && entry.name.startsWith("${root}/Start SDRTrunk VCE.")
+        }*.name as Set
+        Set<String> expectedRootLaunchers = ["${root}/${target.rootLauncher}"] as Set
+
+        if(rootLaunchers != expectedRootLaunchers) {
+            throw new GradleException("Package ${archive.name} has unexpected root launchers: ${rootLaunchers}")
+        }
+
         [
                 runtimeLauncher,
+                "${root}/${target.rootLauncher}",
                 "${root}/bin/${packagedApplicationName}",
                 "${root}/bin/${packagedApplicationName}.bat",
                 applicationJar,
@@ -649,6 +665,18 @@ def verifyRuntimePackage = { Map target, File archive ->
                 "${root}/NOTICE",
                 "${root}/release"
         ].each { archiveEntryBytes(zip, it) }
+
+        String rootLauncherText = archiveEntryText(zip, "${root}/${target.rootLauncher}")
+
+        if(target.windows) {
+            if(!rootLauncherText.contains('@"%~dp0bin\\sdrtrunk-vce.bat" %*')) {
+                throw new GradleException("Root launcher does not forward to the Windows application launcher")
+            }
+        }
+        else if(!rootLauncherText.startsWith('#!/bin/sh\n') ||
+                !rootLauncherText.contains('exec "$launcher_root/bin/sdrtrunk-vce" "$@"')) {
+            throw new GradleException("Root launcher does not forward to the Unix application launcher")
+        }
 
         if(zip.getEntry("${root}/bin/javac") != null || zip.getEntry("${root}/bin/javac.exe") != null) {
             throw new GradleException("Package ${archive.name} contains a JDK instead of the smaller JRE")
@@ -924,6 +952,14 @@ runtimeTargets.each { target ->
         if(!target.windows) {
             from(target.materializedLegalDirectory) {
                 into(target.packageRoot)
+            }
+        }
+
+        from("packaging/launchers/${target.rootLauncher}") {
+            into(target.packageRoot)
+
+            if(!target.windows) {
+                filePermissions { unix('rwxr-xr-x') }
             }
         }
 
