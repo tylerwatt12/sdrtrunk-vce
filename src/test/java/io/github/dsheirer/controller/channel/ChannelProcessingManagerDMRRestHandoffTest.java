@@ -1246,9 +1246,13 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
-            assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
-                manager.getProcessingChain(parent) != null && manager.getProcessingChain(parent) != expectedOriginal &&
-                manager.getProcessingChain(parent).getSource().getFrequency() == FIRST_REST_FREQUENCY, 5),
+            assertTrue(awaitCondition(() ->
+            {
+                ProcessingChain current = manager.getProcessingChain(parent);
+                Source source = current != null ? current.getSource() : null;
+                return manager.getPendingDmrRestChannelAttemptCount() == 0 && current != expectedOriginal &&
+                    source != null && source.getFrequency() == FIRST_REST_FREQUENCY;
+            }, 5),
                 "manager rollback did not make the pooled channel reusable for a retry");
             assertEquals(2, tunerManager.getSourceRequests());
         }

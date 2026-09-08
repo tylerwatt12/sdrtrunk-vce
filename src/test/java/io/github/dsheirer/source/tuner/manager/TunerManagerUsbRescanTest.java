@@ -75,8 +75,11 @@ class TunerManagerUsbRescanTest
 
         try
         {
-            assertEquals(0, manager.requestUsbTunerRescan().get(5, TimeUnit.SECONDS));
-            assertEquals(0, manager.requestUsbTunerRescan().get(5, TimeUnit.SECONDS));
+            CompletableFuture<Integer> first = manager.requestUsbTunerRescan();
+            assertEquals(0, first.get(5, TimeUnit.SECONDS));
+            CompletableFuture<Integer> second = manager.requestUsbTunerRescan();
+            assertNotSame(first, second);
+            assertEquals(0, second.get(5, TimeUnit.SECONDS));
             assertEquals(2, scanCount.get());
         }
         finally
