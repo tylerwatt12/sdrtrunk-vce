@@ -144,7 +144,16 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: SDRTrunk VCE Nightly
           prerelease: true
-          body_path: docs/whats-new-nightly-2026-09-07.md
+          body: |
+            Rolling pre-release build from current `main`.
+
+            Nightly builds contain the newest completed features and fixes and may change frequently. Back up the
+            complete portable data folder before upgrading.
+
+            See the [README](https://github.com/tylerwatt12/sdrtrunk-vce#readme),
+            [release-channel guide](https://github.com/tylerwatt12/sdrtrunk-vce/blob/main/docs/release-channels.md), and
+            [database migration guide](https://github.com/tylerwatt12/sdrtrunk-vce/blob/main/docs/database-migration.md)
+            for current behavior and upgrade guidance.
           files: |
             build/image/*.zip
             build/image/build_info.txt

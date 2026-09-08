@@ -14,6 +14,10 @@ The [rolling Nightly release](https://github.com/tylerwatt12/sdrtrunk-vce/releas
 `main` after its automated checks pass. It contains the newest completed features and fixes, so its behavior can change
 more often than the numbered Alpha line.
 
+Because Nightly is a rolling release, it does not require a version-matched What's New document or a separate
+release-note approval. Its GitHub release body stays evergreen. Use the documentation bundled with the downloaded
+build and read the Application Migrator's preflight and completion reports before replacing existing data.
+
 ## Updates Stay On Their Channel
 
 New Alpha packages check only the Alpha update feed. New Nightly packages check only the Nightly feed. The updater can
@@ -29,7 +33,7 @@ Alpha and Nightly share one forward-only database-format history; channel names 
 rules. This lets a later build recognize supported earlier formats without creating separate Alpha and Nightly schema
 tracks.
 
-A channel switch is still a software upgrade or downgrade. Read the exact target build's release notes before using
-existing data. In particular, an Alpha whose database format is older than the Nightly you used must refuse that newer
-database. Keep separate installation and data folders when comparing channels, back up the complete source data
-folder, and never open newer data with an older build.
+A channel switch is still a software upgrade or downgrade. For a numbered Alpha, read its version-matched release
+notes; for a Nightly, use its bundled documentation and migration reports. In particular, an Alpha whose database
+format is older than the Nightly you used must refuse that newer database. Keep separate installation and data folders
+when comparing channels, back up the complete source data folder, and never open newer data with an older build.

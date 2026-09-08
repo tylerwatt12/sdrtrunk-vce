@@ -95,7 +95,8 @@ Numbered Alpha and Nightly builds can have different application features, but t
 format history. A channel name never selects a different schema or migration route.
 
 This source tree contains the Alpha 8+ format catalog, linear migration chain, and deterministic format fixtures.
-Older binaries retain the source formats and migration behavior documented by their version-matched release notes.
+Numbered Alpha builds document their migration behavior in version-matched release notes. Rolling Nightlies use their
+bundled current documentation and the migrator's preflight and completion reports.
 
 Global database format 3 resets receiver-derived activity before adding its P25 site projection fields. Global format
 4/P25 activity schema v28 resets receiver-derived activity again for direct format-3 sources, then stores one
@@ -158,9 +159,10 @@ and enter at the same baseline. Known-unpublished developer layouts are refused 
 
 Preflight validates the complete schema, expected metadata, and critical invariants; resolves the source format;
 and lists every step plus any declared reset or dropped retired state. Pre-Alpha 8, unknown, mixed, partially migrated,
-newer-than-the-app, and retired `webfirst` databases are refused without mutation. See
-[Database Migration Contract](database-migration.md) and the
-version-matched What's New document for the exact preservation and reset behavior supplied by a build.
+newer-than-the-app, and retired `webfirst` databases are refused without mutation. See the
+[Database Migration Contract](database-migration.md). Numbered Alpha builds also provide a version-matched What's New
+document; rolling Nightlies report exact preservation, repair, reset, and skip behavior in the migrator's preflight
+and completion reports.
 
 ### Format Change And Safe Execution Rule
 
@@ -174,9 +176,10 @@ timestamped backup under `data/database/backups`, migrates another staged copy t
 the exact target signature and complete database, and then replaces the current database atomically. If migration
 fails, the application does not start and the completed backup is retained.
 
-See the target build's version-matched release notes for its accepted sources and the exact data it preserves, resets,
-or retires. An Alpha with an older database format cannot open data already used by a newer Nightly. Keep separate
-installation and data folders when comparing channels, and never copy a newer database into an older build.
+For a numbered Alpha, see its version-matched release notes for accepted sources and migration behavior. For a rolling
+Nightly, use its bundled documentation and read the migrator's preflight and completion reports. An Alpha with an
+older database format cannot open data already used by a newer Nightly. Keep separate installation and data folders
+when comparing channels, and never copy a newer database into an older build.
 
 ## Recording Storage
 
@@ -229,9 +232,10 @@ the salted PBKDF2 verifier in the portable database. Existing installations are 
 step; copied profiles retain an already configured administrator.
 
 Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
-it atomically. Older binaries apply the source compatibility stated in their release notes. `--upgrade-data` is the
-non-graphical equivalent of choosing a verified Alpha 8-or-newer SQLite file or portable data source and authorizes
-the same bundled migration chain. A SQLite-file source contains no vault, JMBE library,
+it atomically. Older binaries apply the source compatibility stated in their bundled documentation and, for numbered
+Alpha builds, their version-matched release notes. `--upgrade-data` is the non-graphical equivalent of choosing a
+verified Alpha 8-or-newer SQLite file or portable data source and authorizes the same bundled migration chain. A
+SQLite-file source contains no vault, JMBE library,
 optional modules, or other external profile files, so the completion report will identify those items as not copied.
 
 For an existing older database already in the active data path, headless startup uses `--upgrade-current` as the

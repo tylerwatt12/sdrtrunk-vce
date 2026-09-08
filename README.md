@@ -153,14 +153,15 @@ Check the saved folder locations before deleting an old version.
 > installing skipped releases first. It refuses pre-Alpha 8, retired `webfirst`, known-unpublished developer,
 > unknown-schema, format-marker-mismatched, structurally mixed or partial, physically corrupt, and newer-than-the-app
 > databases without changing the source. A recognized older structure is migrated on a best-effort, per-component
-> basis and is installed only if the
-> result passes the exact current schema, integrity, configuration, and foreign-key checks. Older distributions retain
-> the compatibility documented by their own version-matched release notes. See the
+> basis and is installed only if the result passes the exact current schema, integrity, configuration, and foreign-key
+> checks. Numbered Alpha builds document compatibility in their version-matched release notes; rolling Nightlies use
+> the current bundled documentation and the migrator's preflight and completion reports. See the
 > [Database Migration Contract](docs/database-migration.md).
 
-Alpha and Nightly are different feature channels, not different database universes. Follow the exact version-matched
-upgrade notes for the build you install. Database changes are forward-only: never open or copy a database used by a
-newer build into an older build, including when switching from Nightly to Alpha.
+Alpha and Nightly are different feature channels, not different database universes. For a numbered Alpha, follow its
+version-matched upgrade notes. For a Nightly, use the documentation bundled with that build and read the migrator's
+preflight and completion reports. Database changes are forward-only: never open or copy a database used by a newer
+build into an older build, including when switching from Nightly to Alpha.
 
 ## Where VCE Stores Data
 

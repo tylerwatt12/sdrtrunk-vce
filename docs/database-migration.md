@@ -3,7 +3,8 @@
 This document is the implementation contract for the bundled Application Migrator. It supersedes the former
 immediately-previous-release, external-candidate, and sequential-upgrade design. This source contains the global
 format catalog, complete Alpha 8-to-current chain, deterministic format fixture factories, and safety integration
-described here. Older distributions keep the behavior documented by their own version-matched release notes.
+described here. Numbered Alpha distributions keep version-matched release notes; rolling Nightlies use the bundled
+current documentation and the migrator's preflight and completion reports.
 
 ## Support Boundary
 
@@ -301,8 +302,8 @@ Migration support does not mean every historical value must survive. Each step c
 | Invalid, over-capacity, or ambiguous row state | Default or skip that bounded component and report it. Refuse only when the database structure, integrity, final consistency, or promotion cannot be made safe. |
 
 Every possible reset or drop is named during preflight. Exact counts are determined by the one real staged migration
-and repeated in the completion report. Release notes summarize the user-visible preservation and loss policy for every
-format introduced by that release.
+and repeated in the completion report, so every build reports its exact preservation and loss behavior. Numbered
+release notes additionally summarize the user-visible policy for each format introduced by that release.
 
 ## Safe Execution
 
