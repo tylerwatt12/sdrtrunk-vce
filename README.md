@@ -213,18 +213,14 @@ Development builds require Java 25.
 Use an explicit non-public version such as `local-dev` for development packages. Numbered package tasks stop while
 their version-matched release notes are still marked as a draft.
 
-Package tasks:
+Build every supported package with one command:
 
 ```bash
-./gradlew runtimeZipCurrent -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
-./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
-./gradlew --no-configuration-cache clean runtimeZipOthers -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+./gradlew --no-configuration-cache clean runtimeZipAll -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 ```
 
-Each cross-platform package command starts from a clean build. If you are collecting every platform package, copy
-the first command's ZIP files outside `build/image` before running the second command, then restore them afterward.
-
-Build output is written under `build/image`.
+This creates all six OS and CPU archives under `build/image`. Target Java runtimes are downloaded once, verified, and
+kept in the Gradle user cache for later builds.
 
 ## More Information
 
