@@ -451,8 +451,8 @@ def runtimeCacheDirectory = file(System.getenv('SDRTRUNK_RUNTIME_CACHE') ?:
                 "caches/sdrtrunk-vce/liberica-jre-full-${libericaRuntimeVersion.replace('+', '_')}").absolutePath)
 
 /**
- * The six packages all use an unmodified BellSoft Liberica JRE Full archive. The downloads live outside build/ so
- * clean builds reuse them. SDRTRUNK_RUNTIME_CACHE can override the cache location.
+ * The six packages all use the pinned official BellSoft Liberica JRE Full contents. The downloads live outside
+ * build/ so clean builds reuse them. SDRTRUNK_RUNTIME_CACHE can override the cache location.
  */
 def libericaReleaseBase = "https://github.com/bell-sw/Liberica/releases/download/${libericaRuntimeVersion}"
 def runtimeTargets = [
@@ -532,6 +532,7 @@ def runtimeTargets = [
 
 runtimeTargets.each { target ->
     target.archiveFile = new File(runtimeCacheDirectory, target.archiveName as String)
+    target.packageRoot = "${packagedApplicationName}-${target.targetName}"
 }
 
 def fileDigest = { File source, String algorithm ->
@@ -562,6 +563,17 @@ def runtimeArchiveTree = { Map target ->
     target.archiveType == 'zip' ? zipTree(archive) : tarTree(resources.gzip(archive))
 }
 
+//Gradle expands TAR symlinks as empty files. Materialize BellSoft's legal-file links so every notice remains readable.
+def legalLinkSourceByName = [
+        'ADDITIONAL_LICENSE_INFO': 'legal/java.base/ADDITIONAL_LICENSE_INFO',
+        'ASSEMBLY_EXCEPTION': 'legal/java.base/ASSEMBLY_EXCEPTION',
+        'LICENSE': 'legal/java.base/LICENSE',
+        'cldr.md': 'legal/java.base/cldr.md',
+        'mesa3d.md': 'legal/java.desktop/mesa3d.md',
+        'pipewire.md': 'legal/java.desktop/pipewire.md'
+]
+def expectedMaterializedLegalLinks = 174
+
 
 def archiveEntryBytes = { ZipFile zip, String entryName ->
     def entry = zip.getEntry(entryName)
@@ -582,18 +594,48 @@ def verifyRuntimePackage = { Map target, File archive ->
         throw new GradleException("Runtime package is missing or empty: ${archive}")
     }
 
-    String root = target.targetName as String
+    String root = target.packageRoot as String
+
+    if(archive.name != "${root}.zip") {
+        throw new GradleException("Package root ${root} does not match archive ${archive.name}")
+    }
     String runtimeLauncher = "${root}/bin/java${target.windows ? '.exe' : ''}"
     String applicationJar = "${root}/lib/${packagedApplicationName}-${releaseVersion}.jar"
     ZipFile zip = new ZipFile(archive)
 
     try {
-        def outsideRoot = zip.entries().toList().findAll { entry ->
+        def entries = zip.entries().toList()
+        def outsideRoot = entries.findAll { entry ->
             entry.name != "${root}/" && !entry.name.startsWith("${root}/")
         }
 
         if(!outsideRoot.isEmpty()) {
             throw new GradleException("Package contains entries outside ${root}: ${outsideRoot*.name}")
+        }
+
+        def vendorRootEntries = entries.findAll { entry ->
+            entry.name.startsWith("${root}/${target.archiveRoot}/")
+        }
+
+        if(!vendorRootEntries.isEmpty()) {
+            throw new GradleException("Package retains the vendor archive root: ${vendorRootEntries*.name}")
+        }
+
+        def emptyLegalFiles = entries.findAll { entry ->
+            !entry.directory && entry.name.startsWith("${root}/legal/") && entry.size == 0
+        }
+
+        if(!emptyLegalFiles.isEmpty()) {
+            throw new GradleException("Package contains empty vendor legal files: ${emptyLegalFiles*.name}")
+        }
+
+        def packagedFileNames = entries.findAll { !it.directory }*.name
+        def emptyDirectories = entries.findAll { directory ->
+            directory.directory && !packagedFileNames.any { it.startsWith(directory.name) }
+        }
+
+        if(!emptyDirectories.isEmpty()) {
+            throw new GradleException("Package contains empty directories: ${emptyDirectories*.name}")
         }
 
         [
@@ -722,6 +764,75 @@ runtimeTargets.each { target ->
     target.downloadTask = downloadTask
 }
 
+runtimeTargets.findAll { !it.windows }.each { target ->
+    def materializedDirectory = layout.buildDirectory.dir("generated/runtime-legal/${target.id}")
+    def materializeTask = tasks.register("materializeRuntimeLegalLinks${target.id}") {
+        dependsOn(target.downloadTask)
+        inputs.file(target.archiveFile)
+        inputs.property('archiveRoot', target.archiveRoot)
+        inputs.property('legalLinkSources', legalLinkSourceByName)
+        inputs.property('expectedLegalLinks', expectedMaterializedLegalLinks)
+        outputs.dir(materializedDirectory)
+
+        doLast {
+            File outputDirectory = materializedDirectory.get().asFile
+
+            if(outputDirectory.exists()) {
+                Files.walk(outputDirectory.toPath()).withCloseable { paths ->
+                    paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+                }
+            }
+
+            Map<String, byte[]> sourceContents = [:]
+            List<String> linkPaths = []
+
+            runtimeArchiveTree(target).visit { details ->
+                if(details.directory) {
+                    return
+                }
+
+                String[] segments = details.relativePath.segments
+
+                if(segments.length < 2 || segments[0] != target.archiveRoot) {
+                    throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
+                }
+
+                String relativePath = segments.drop(1).join('/')
+
+                if(legalLinkSourceByName.values().contains(relativePath)) {
+                    sourceContents[relativePath] = Files.readAllBytes(details.file.toPath())
+                }
+
+                if(relativePath.startsWith('legal/') && details.file.length() == 0) {
+                    linkPaths.add(relativePath)
+                }
+            }
+
+            if(linkPaths.size() != expectedMaterializedLegalLinks) {
+                throw new GradleException("Expected ${expectedMaterializedLegalLinks} vendor legal links in " +
+                        "${target.archiveName}, found ${linkPaths.size()}")
+            }
+
+            linkPaths.each { linkPath ->
+                String fileName = linkPath.tokenize('/').last()
+                String sourcePath = legalLinkSourceByName[fileName]
+                byte[] contents = sourceContents[sourcePath]
+
+                if(sourcePath == null || contents == null || contents.length == 0) {
+                    throw new GradleException("Cannot materialize vendor legal link ${linkPath} in ${target.archiveName}")
+                }
+
+                File destination = new File(outputDirectory, linkPath)
+                Files.createDirectories(destination.parentFile.toPath())
+                Files.write(destination.toPath(), contents)
+            }
+        }
+    }
+
+    target.materializedLegalDirectory = materializedDirectory
+    target.materializeLegalTask = materializeTask
+}
+
 tasks.named('startScripts') { startScriptsTask ->
     doLast {
         File unixLauncher = new File(startScriptsTask.outputDir, packagedApplicationName)
@@ -754,21 +865,25 @@ runtimeTargets.each { target ->
         dependsOn('verifyBundledApplicationDatabaseMigrator')
         dependsOn('verifyUpdateChannelMetadata')
 
+        if(!target.windows) {
+            dependsOn(target.materializeLegalTask)
+        }
+
         archiveFileName = "${packagedApplicationName}-${target.targetName}.zip"
         destinationDirectory = layout.buildDirectory.dir('image')
         duplicatesStrategy = DuplicatesStrategy.FAIL
         preserveFileTimestamps = false
         reproducibleFileOrder = true
-        includeEmptyDirs = true
+        includeEmptyDirs = false
         zip64 = true
 
         from(runtimeArchiveTree(target)) {
-            into(target.targetName)
+            into(target.packageRoot)
 
             eachFile { details ->
                 String[] segments = details.relativePath.segments
 
-                if(segments.length < 2 || segments[0] != target.targetName ||
+                if(segments.length < 2 || segments[0] != target.packageRoot ||
                         segments[1] != target.archiveRoot) {
                     throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
                 }
@@ -780,12 +895,17 @@ runtimeTargets.each { target ->
 
                 String[] strippedSegments = segments.drop(2) as String[]
 
+                if(!target.windows && strippedSegments[0] == 'legal' && details.file.length() == 0) {
+                    details.exclude()
+                    return
+                }
+
                 //The package root keeps the project GPL; retain the runtime's separate license under a clear name.
                 if(strippedSegments.length == 1 && strippedSegments[0] == 'LICENSE') {
                     strippedSegments = ['RUNTIME-LICENSE'] as String[]
                 }
 
-                List<String> outputSegments = [target.targetName.toString()] + strippedSegments.toList()
+                List<String> outputSegments = [target.packageRoot.toString()] + strippedSegments.toList()
                 details.relativePath = new org.gradle.api.file.RelativePath(
                         details.relativePath.isFile(), outputSegments as String[])
 
@@ -801,8 +921,14 @@ runtimeTargets.each { target ->
             }
         }
 
+        if(!target.windows) {
+            from(target.materializedLegalDirectory) {
+                into(target.packageRoot)
+            }
+        }
+
         from(applicationInstallDirectory) {
-            into(target.targetName)
+            into(target.packageRoot)
 
             eachFile { details ->
                 if(details.relativePath.pathString.endsWith("/bin/${packagedApplicationName}")) {
