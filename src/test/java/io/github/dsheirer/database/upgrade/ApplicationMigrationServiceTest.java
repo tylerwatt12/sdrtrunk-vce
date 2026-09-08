@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
@@ -29,7 +29,10 @@ import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.web.auth.WebAccessService;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFileAttributeView;
@@ -95,7 +98,7 @@ class ApplicationMigrationServiceTest
             .anyMatch(effect -> "per-user idle FFT channel markers".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
-        SdrTrunkDatabaseStartup.createGlobalDatabase(currentDatabase);
+        SdrTrunkTestDatabase.create(currentDatabase);
         DatabaseMigrationChain.PreflightReport currentPlan =
             ApplicationMigrationService.readMigrationPlan(currentDatabase);
         assertFormat(currentPlan.source(), DatabaseFormatCatalog.CURRENT_VERSION,
@@ -137,7 +140,7 @@ class ApplicationMigrationServiceTest
         insertAlias(database, "Retained Format 1 Alias");
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
         assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
@@ -210,7 +213,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("invalid-optional-vault-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         Path sourceVault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
         Files.createDirectories(sourceVault.getParent());
         String secret = "DO-NOT-REPORT-vault-secret";
@@ -242,7 +245,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("unsupported-vault-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         Path sourceVault = createValidVault(sourceRoot);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + sourceVault);
             Statement statement = connection.createStatement())
@@ -269,7 +272,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("optional-symlink-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         Path privateFile = mTemporaryFolder.resolve("private-api-key-material.jar");
         String secret = "DO-NOT-REPORT-symlink-secret";
         Files.writeString(privateFile, secret);
@@ -310,7 +313,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("optional-unreadable-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         Path sourceJmbe = Files.createDirectories(sourceRoot.resolve("jmbe")).resolve("jmbe.jar");
         Files.writeString(sourceJmbe, "jmbe-content");
         Path unreadable = Files.createDirectories(sourceRoot.resolve("modules")).resolve("private-module.jar");
@@ -351,7 +354,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("mandatory-snapshot-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("mandatory-snapshot-target");
         AtomicBoolean helperRan = new AtomicBoolean();
@@ -385,7 +388,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("database-only-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Database Only Alias");
         byte[] sourceHash = sha256(sourceDatabase);
         Files.createDirectories(sourceRoot.resolve("jmbe"));
@@ -436,7 +439,7 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("active-replacement-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
         insertAlias(activeDatabase, "Previous Active Alias");
         Path retainedJmbe = Files.createDirectories(activeRoot.resolve("jmbe")).resolve("retained.jar");
         Files.writeString(retainedJmbe, "keep current external file");
@@ -482,13 +485,13 @@ class ApplicationMigrationServiceTest
         Path activeRoot = mTemporaryFolder.resolve("review-target");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
         Path sourceDatabase = mTemporaryFolder.resolve("review-source.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         new io.github.dsheirer.gui.setup.SetupProgress(true, false).save(sourceDatabase);
         insertAlias(activeDatabase, "Old destination");
         insertAlias(sourceDatabase, "Selected source");
         byte[] sourceHash = sha256(sourceDatabase);
-        var result = new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
+        var result = inProcessMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
         assertCurrentFormat(activeDatabase);
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         var review = io.github.dsheirer.gui.setup.SetupProgress.read(activeDatabase);
@@ -506,20 +509,20 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("active-plan-binding-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
         insertAlias(activeDatabase, "Keep Active");
         byte[] activeHash = sha256(activeDatabase);
 
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("selected-plan-binding-source"));
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         ApplicationMigrationService.ApprovedMigrationPlan approved =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
         Files.delete(sourceDatabase);
         Format14TestDatabase.create(sourceDatabase);
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, approved,
+            () -> inProcessMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, approved,
                 null));
 
         assertTrue(exception.getMessage().contains("SQLite database selected after confirmation"));
@@ -533,7 +536,7 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("active-admin-replacement-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
 
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("selected-admin-source"));
@@ -541,7 +544,7 @@ class ApplicationMigrationServiceTest
         char[] password = "retained alpha administrator".toCharArray();
         LegacyWebAccessTestData.storePrimaryAdmin(sourceDatabase, password);
 
-        new ApplicationMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
+        inProcessMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, null);
 
         assertEquals("complete", scalar(activeDatabase, """
             SELECT value FROM database_metadata WHERE key='initial_admin_setup'
@@ -554,7 +557,7 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("active-helper-failure-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
         insertAlias(activeDatabase, "Still Active");
         byte[] activeHash = sha256(activeDatabase);
 
@@ -600,10 +603,10 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("same-replacement-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().replaceCurrentDatabase(activeDatabase, activeRoot, null));
+            () -> inProcessMigrationService().replaceCurrentDatabase(activeDatabase, activeRoot, null));
 
         assertTrue(exception.getMessage().contains("paths are the same"));
         assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
@@ -614,7 +617,7 @@ class ApplicationMigrationServiceTest
     {
         Path activeRoot = mTemporaryFolder.resolve("hard-link-replacement-data");
         Path activeDatabase = SdrTrunkDatabasePath.getDatabasePath(activeRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(activeDatabase);
+        SdrTrunkTestDatabase.create(activeDatabase);
         Path hardLink = mTemporaryFolder.resolve("active-database-hard-link.sqlite");
         try
         {
@@ -626,7 +629,7 @@ class ApplicationMigrationServiceTest
         }
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().replaceCurrentDatabase(hardLink, activeRoot, null));
+            () -> inProcessMigrationService().replaceCurrentDatabase(hardLink, activeRoot, null));
 
         assertTrue(exception.getMessage().contains("same physical file"));
         assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
@@ -637,12 +640,12 @@ class ApplicationMigrationServiceTest
     {
         Path outerSource = mTemporaryFolder.resolve("outer-source");
         Path outerSourceDatabase = SdrTrunkDatabasePath.getDatabasePath(outerSource);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(outerSourceDatabase);
+        SdrTrunkTestDatabase.create(outerSourceDatabase);
         byte[] outerSourceHash = sha256(outerSourceDatabase);
         Path nestedTarget = outerSource.resolve("jmbe/imported-data");
 
         IOException nestedTargetException = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(outerSource, nestedTarget, null));
+            () -> inProcessMigrationService().importPrevious(outerSource, nestedTarget, null));
 
         assertTrue(nestedTargetException.getMessage().contains("overlap"));
         assertArrayEquals(outerSourceHash, sha256(outerSourceDatabase));
@@ -651,11 +654,11 @@ class ApplicationMigrationServiceTest
         Path outerTarget = mTemporaryFolder.resolve("outer-target");
         Path nestedSource = outerTarget.resolve("previous-data");
         Path nestedSourceDatabase = SdrTrunkDatabasePath.getDatabasePath(nestedSource);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(nestedSourceDatabase);
+        SdrTrunkTestDatabase.create(nestedSourceDatabase);
         byte[] nestedSourceHash = sha256(nestedSourceDatabase);
 
         IOException nestedSourceException = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(nestedSource, outerTarget, null));
+            () -> inProcessMigrationService().importPrevious(nestedSource, outerTarget, null));
 
         assertTrue(nestedSourceException.getMessage().contains("overlap"));
         assertArrayEquals(nestedSourceHash, sha256(nestedSourceDatabase));
@@ -667,7 +670,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("plan-change-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("plan-change-target");
         AtomicBoolean helperRan = new AtomicBoolean();
@@ -704,7 +707,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("approved-plan-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         ApplicationMigrationService.ApprovedMigrationPlan approvedPlan =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
 
@@ -716,7 +719,7 @@ class ApplicationMigrationServiceTest
             PreviousBuildLocator.InputScope.PORTABLE_PROFILE);
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(selection, targetRoot, approvedPlan, null));
+            () -> inProcessMigrationService().importPrevious(selection, targetRoot, approvedPlan, null));
 
         assertTrue(exception.getMessage().contains("source database selected after confirmation"));
         assertFalse(Files.exists(targetRoot));
@@ -726,7 +729,7 @@ class ApplicationMigrationServiceTest
     void refusesChangedSourceContentEvenWhenTheReviewedPlanIsUnchanged() throws Exception
     {
         Path sourceDatabase = mTemporaryFolder.resolve("same-plan-changed-source.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Approved Alias Name");
         ApplicationMigrationService.ApprovedMigrationPlan approved =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
@@ -744,7 +747,7 @@ class ApplicationMigrationServiceTest
             PreviousBuildLocator.InputScope.DATABASE_FILE);
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(selection, targetRoot, approved, null));
+            () -> inProcessMigrationService().importPrevious(selection, targetRoot, approved, null));
 
         assertTrue(exception.getMessage().contains("database content may have changed"));
         assertFalse(Files.exists(targetRoot));
@@ -754,7 +757,7 @@ class ApplicationMigrationServiceTest
     void approvalPreflightIncludesCommittedWalContent() throws Exception
     {
         Path sourceDatabase = mTemporaryFolder.resolve("approval-wal-source.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Alias With WAL Route");
 
         try(Connection writer = open(sourceDatabase); Statement statement = writer.createStatement())
@@ -785,7 +788,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("foreign-key-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
 
         try(Connection connection = open(sourceDatabase); Statement statement = connection.createStatement())
         {
@@ -799,7 +802,7 @@ class ApplicationMigrationServiceTest
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("foreign-key-target");
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+        ApplicationMigrationService.MigrationResult result = inProcessMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
@@ -818,7 +821,7 @@ class ApplicationMigrationServiceTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("markerless-current-foreign-key-source"));
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -862,7 +865,7 @@ class ApplicationMigrationServiceTest
         assertEquals(2, plan.source().version());
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("legacy-foreign-key-target"));
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+        ApplicationMigrationService.MigrationResult result = inProcessMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
@@ -898,7 +901,7 @@ class ApplicationMigrationServiceTest
 
         PreviousBuildLocator.Selection selection = new PreviousBuildLocator.Selection(sourceRoot,
             PreviousBuildLocator.InputScope.PORTABLE_PROFILE);
-        new ApplicationMigrationService().importPrevious(selection, targetRoot, approval, null);
+        inProcessMigrationService().importPrevious(selection, targetRoot, approval, null);
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertCurrentFormat(targetDatabase);
@@ -923,7 +926,7 @@ class ApplicationMigrationServiceTest
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("format14-exhausted-preference-target");
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+        ApplicationMigrationService.MigrationResult result = inProcessMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
@@ -943,7 +946,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("current-state");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
 
@@ -957,7 +960,7 @@ class ApplicationMigrationServiceTest
     void approvalUsesAndCleansTheCallerSelectedScratchVolume() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("approval-source"));
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Path scratch = mTemporaryFolder.resolve("destination-adjacent-scratch");
 
         ApplicationMigrationService.ApprovedMigrationPlan approval =
@@ -976,7 +979,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("repairable-current-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         try(Connection connection = open(sourceDatabase); Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA ignore_check_constraints=ON");
@@ -1004,7 +1007,7 @@ class ApplicationMigrationServiceTest
         ApplicationMigrationService.ApprovedMigrationPlan approval =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
         assertEquals(plan, approval.plan());
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService().importPrevious(
+        ApplicationMigrationService.MigrationResult result = inProcessMigrationService().importPrevious(
             new PreviousBuildLocator.Selection(sourceDatabase, PreviousBuildLocator.InputScope.DATABASE_FILE),
             targetRoot, approval, null);
 
@@ -1023,14 +1026,14 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-data");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Keep Me");
         insertCurrentProfileSentinels(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("target-data");
         Files.createDirectory(targetRoot);
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+        ApplicationMigrationService.MigrationResult result = inProcessMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
@@ -1057,11 +1060,11 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Retained");
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
         assertNotNull(result.safetyBackup());
@@ -1078,14 +1081,14 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("posix-current-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         PosixFileAttributeView view = Files.getFileAttributeView(database, PosixFileAttributeView.class);
         Assumptions.assumeTrue(view != null, "POSIX file attributes are unavailable");
         view.setPermissions(PosixFilePermissions.fromString("rw-------"));
         PosixFileAttributes before = view.readAttributes();
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, null);
 
         PosixFileAttributes after = Files.readAttributes(database, PosixFileAttributes.class);
         assertEquals(before.permissions(), after.permissions());
@@ -1101,14 +1104,14 @@ class ApplicationMigrationServiceTest
     void profileImportPreservesAnExistingEmptyTargetRootsPosixAccess() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("posix-import-source");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("posix-import-target"));
         PosixFileAttributeView view = Files.getFileAttributeView(targetRoot, PosixFileAttributeView.class);
         Assumptions.assumeTrue(view != null, "POSIX file attributes are unavailable");
         view.setPermissions(PosixFilePermissions.fromString("rwx------"));
         PosixFileAttributes before = view.readAttributes();
 
-        new ApplicationMigrationService().importPrevious(sourceRoot, targetRoot, null);
+        inProcessMigrationService().importPrevious(sourceRoot, targetRoot, null);
 
         PosixFileAttributes after = Files.readAttributes(targetRoot, PosixFileAttributes.class);
         assertEquals(before.permissions(), after.permissions());
@@ -1121,12 +1124,12 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("pre-release-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         removeDmrActivitySchema(database);
         byte[] before = sha256(database);
 
         SQLException exception = assertThrows(SQLException.class,
-            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
+            () -> inProcessMigrationService().migrateCurrent(dataRoot, null));
 
         assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertArrayEquals(before, sha256(database));
@@ -1138,7 +1141,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("current-recorded-call-source");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("CREATE TABLE recorded_call_private_payload(id INTEGER PRIMARY KEY)");
@@ -1147,13 +1150,13 @@ class ApplicationMigrationServiceTest
         Path targetRoot = mTemporaryFolder.resolve("current-recorded-call-target");
 
         SQLException importFailure = assertThrows(SQLException.class,
-            () -> new ApplicationMigrationService().importPrevious(dataRoot, targetRoot, null));
+            () -> inProcessMigrationService().importPrevious(dataRoot, targetRoot, null));
         assertTrue(importFailure.getMessage().contains("webfirst managed-recording"));
         assertFalse(Files.exists(targetRoot));
         assertArrayEquals(before, sha256(database));
 
         SQLException currentFailure = assertThrows(SQLException.class,
-            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
+            () -> inProcessMigrationService().migrateCurrent(dataRoot, null));
         assertTrue(currentFailure.getMessage().contains("webfirst managed-recording"));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertArrayEquals(before, sha256(database));
@@ -1164,7 +1167,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Do Not Lose");
         byte[] before = sha256(database);
         AtomicReference<Path> stagedDatabase = new AtomicReference<>();
@@ -1199,7 +1202,7 @@ class ApplicationMigrationServiceTest
         }
 
         ApplicationMigrationService.MigrationResult retry =
-            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, null);
         assertNotNull(retry.safetyBackup());
         assertCurrentFormat(database);
         assertEquals(1, count(database, "alias"));
@@ -1210,7 +1213,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("uncertain-live-database");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         insertAlias(database, "Retained Safety Backup Alias");
         Path sidecar = Path.of(database + "-wal");
         ApplicationMigrationService service = new ApplicationMigrationService(
@@ -1252,7 +1255,7 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationApproval(database);
         ApplicationMigrationService service = new ApplicationMigrationService(
             SqliteDatabaseSnapshot::create,
-            ApplicationMigratorLauncher::run,
+            ApplicationMigrationServiceTest::runMigratorInProcess,
             promoted ->
             {
                 throw new SQLException("forced post-promotion validation failure");
@@ -1279,7 +1282,7 @@ class ApplicationMigrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("snapshot-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         byte[] before = sha256(database);
         ApplicationMigrationService service = new ApplicationMigrationService(
             (source, destination) ->
@@ -1308,7 +1311,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-main-data");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("target-main-data");
         ApplicationMigrationService service = new ApplicationMigrationService(
@@ -1344,7 +1347,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("invalid-config-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         insertCurrentProfileSentinels(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("invalid-config-target");
@@ -1380,13 +1383,13 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("promotion-race-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("promotion-race-target"));
         Path competingFile = targetRoot.resolve("created-by-another-first-run.txt");
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(sourceRoot, targetRoot, progress ->
+            () -> inProcessMigrationService().importPrevious(sourceRoot, targetRoot, progress ->
             {
                 if("Finishing".equals(progress))
                 {
@@ -1416,11 +1419,11 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("atomic-promotion-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("atomic-promotion-target"));
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            ApplicationMigratorLauncher::run,
+            ApplicationMigrationServiceTest::runMigratorInProcess,
             (staged, target) ->
             {
                 assertFalse(Files.exists(target));
@@ -1449,7 +1452,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("physical-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path sourceLink = mTemporaryFolder.resolve("source-link");
         try
@@ -1463,7 +1466,7 @@ class ApplicationMigrationServiceTest
         Path apparentlySeparateTarget = sourceLink.resolve("jmbe/imported-data");
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(sourceRoot, apparentlySeparateTarget, null));
+            () -> inProcessMigrationService().importPrevious(sourceRoot, apparentlySeparateTarget, null));
 
         assertTrue(exception.getMessage().contains("overlap"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -1475,7 +1478,7 @@ class ApplicationMigrationServiceTest
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-with-target-link");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        SdrTrunkTestDatabase.create(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path installParent = Files.createDirectories(sourceRoot.resolve("jmbe"));
         Path externalEmptyDirectory = Files.createDirectories(mTemporaryFolder.resolve("external-empty"));
@@ -1490,11 +1493,40 @@ class ApplicationMigrationServiceTest
         }
 
         IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().importPrevious(sourceRoot, targetLink, null));
+            () -> inProcessMigrationService().importPrevious(sourceRoot, targetLink, null));
 
         assertTrue(exception.getMessage().contains("overlap"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertTrue(Files.isSymbolicLink(targetLink));
+    }
+
+    private static ApplicationMigrationService inProcessMigrationService()
+    {
+        return new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
+            ApplicationMigrationServiceTest::runMigratorInProcess);
+    }
+
+    private static String runMigratorInProcess(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
+        throws IOException
+    {
+        String[] arguments = sourceDataRoot == null ? new String[] {stagedDatabase.toString()} :
+            new String[] {stagedDatabase.toString(), sourceDataRoot.toString(), targetDataRoot.toString()};
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+
+        try(PrintStream output = new PrintStream(captured, true, StandardCharsets.UTF_8))
+        {
+            int exitCode = ApplicationDatabaseMigrator.run(arguments, output, output);
+            output.flush();
+            String report = captured.toString(StandardCharsets.UTF_8).trim();
+
+            if(exitCode != ApplicationDatabaseMigrator.EXIT_SUCCESS)
+            {
+                throw new IOException("The in-process Application Migrator failed with exit code " + exitCode +
+                    (report.isBlank() ? "." : ":\n" + report));
+            }
+
+            return report;
+        }
     }
 
     private static void insertAlias(Path database, String name) throws Exception
