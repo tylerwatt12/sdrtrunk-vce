@@ -30,7 +30,7 @@ import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ChannelAndBroadcastConfiguration;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -110,6 +110,9 @@ class ReceiverActivityServiceLifecycleTest
 {
     private static final String ACTIVITY_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
     private static final String LEARNED_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000902";
+    private static final ReceiverActivityService.WriterFactory IMMEDIATE_WRITER_FACTORY =
+        (databasePath, retentionDays, detailedHistory) ->
+            new ReceiverActivityWriter(databasePath, retentionDays, detailedHistory, 10_000, 1_250, 0);
 
     @TempDir
     Path mTemporaryFolder;
@@ -118,7 +121,7 @@ class ReceiverActivityServiceLifecycleTest
     void shutdownBarrierPersistsImmediatelyAcceptedLogicalCallAndOutputsOnce() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         persistChannels(database, p25TrunkedChannel(LEARNED_P25_CONFIGURATION_ID));
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
@@ -158,11 +161,11 @@ class ReceiverActivityServiceLifecycleTest
     void preferenceNotificationAfterDisposeCannotRestartTheWriter() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
 
         disposeAndAwait(service);
         service.preferenceUpdated(PreferenceType.APPLICATION);
@@ -175,11 +178,11 @@ class ReceiverActivityServiceLifecycleTest
     void blockedStatisticsProjectionNeverBlocksTheDecoderCallback() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         Channel channel = new Channel("Observer isolation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -235,7 +238,7 @@ class ReceiverActivityServiceLifecycleTest
     void queuedP25CallStartKeepsItsOriginalFactsWhenTheLiveTrackerChanges() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000311");
         Channel p25Channel = p25TrunkedChannel("00000000-0000-0000-0000-000000000312");
         p25Channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1));
@@ -243,7 +246,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -337,7 +340,7 @@ class ReceiverActivityServiceLifecycleTest
     void queuedSiteMetadataCannotReassignAReceiverAfterItsSavedSourceChanges() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String p25ConfigurationId = "00000000-0000-0000-0000-000000000321";
         String dmrConfigurationId = "00000000-0000-0000-0000-000000000322";
         Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000323");
@@ -351,7 +354,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long now = System.currentTimeMillis();
@@ -442,7 +445,7 @@ class ReceiverActivityServiceLifecycleTest
     void queuedP25GrantAndTrafficConfirmationKeepProducerTimeFactsWhenEverySourceChanges() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String p25ConfigurationId = "00000000-0000-0000-0000-000000000318";
         Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000319");
         Channel p25Channel = p25TrunkedChannel(p25ConfigurationId);
@@ -452,7 +455,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -553,7 +556,7 @@ class ReceiverActivityServiceLifecycleTest
     void queuedDmrAndNxdnCallFactsDoNotFollowMutableDecoderObjects() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String dmrConfigurationId = "00000000-0000-0000-0000-000000000313";
         String nxdnConfigurationId = "00000000-0000-0000-0000-000000000314";
         Channel blockerChannel = nbfmChannel("00000000-0000-0000-0000-000000000315");
@@ -563,7 +566,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -667,11 +670,11 @@ class ReceiverActivityServiceLifecycleTest
     void observationDrainBarrierHonorsTotalTimeoutWhenHandoffIsFull() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         Channel channel = new Channel("Drain barrier saturation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -708,11 +711,11 @@ class ReceiverActivityServiceLifecycleTest
     void interruptedObservationDrainPreservesCallerInterruptFlag() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         Channel channel = new Channel("Interrupted drain barrier", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -753,11 +756,11 @@ class ReceiverActivityServiceLifecycleTest
     void observationEpochChangeCannotFalselyCompleteRetiredDrainBarrier() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         Channel channel = new Channel("Retired drain epoch", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -805,8 +808,8 @@ class ReceiverActivityServiceLifecycleTest
         Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         Path secondRoot = mTemporaryFolder.resolve("monitor-held-writer-close");
         Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        SdrTrunkTestDatabase.create(firstDatabase);
+        SdrTrunkTestDatabase.create(secondDatabase);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
@@ -863,11 +866,11 @@ class ReceiverActivityServiceLifecycleTest
     void outputAfterDroppedResolvedNotificationCannotCreateOrphanTotals() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         Channel blockerChannel = new Channel("Logical output saturation", Channel.ChannelType.STANDARD);
         blockerChannel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -934,7 +937,7 @@ class ReceiverActivityServiceLifecycleTest
     void blockedProjectionDisposeLeavesQueuedCleanupToWorker() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
@@ -995,7 +998,7 @@ class ReceiverActivityServiceLifecycleTest
     void callbackPausedAcrossDisableAndReenableCannotEnterTheNewObservationEpoch() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000305");
         persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
@@ -1028,7 +1031,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot);
+            pauseAfterSnapshot, null, IMMEDIATE_WRITER_FACTORY);
         long oldTimestamp = System.currentTimeMillis();
         long disabledTimestamp = oldTimestamp + 5_000L;
         long newTimestamp = oldTimestamp + 10_000L;
@@ -1105,7 +1108,7 @@ class ReceiverActivityServiceLifecycleTest
     void completedCallPausedAcrossDisableAndReenableCannotWriteIntoTheNewEpoch() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000304");
         persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
@@ -1130,7 +1133,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot);
+            pauseAfterSnapshot, null, IMMEDIATE_WRITER_FACTORY);
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
         DecodeEvent context = DecodeEvent.builder(DecodeEventType.CALL, start)
@@ -1201,8 +1204,8 @@ class ReceiverActivityServiceLifecycleTest
         Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         Path secondRoot = mTemporaryFolder.resolve("replacement");
         Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        SdrTrunkTestDatabase.create(firstDatabase);
+        SdrTrunkTestDatabase.create(secondDatabase);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000306");
         persistChannels(firstDatabase, channel);
         persistChannels(secondDatabase, channel);
@@ -1248,7 +1251,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot, pauseBeforeActivation);
+            pauseAfterSnapshot, pauseBeforeActivation, IMMEDIATE_WRITER_FACTORY);
         long start = System.currentTimeMillis();
         DecodeEvent oldActive = conventionalEvent(start);
         DecodeEvent inactive = conventionalEvent(start + 5_000L);
@@ -1303,8 +1306,8 @@ class ReceiverActivityServiceLifecycleTest
         Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
         Path secondRoot = mTemporaryFolder.resolve("replacement-close-failure");
         Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        SdrTrunkTestDatabase.create(firstDatabase);
+        SdrTrunkTestDatabase.create(secondDatabase);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
@@ -1654,13 +1657,13 @@ class ReceiverActivityServiceLifecycleTest
     void countsOneConventionalP25StartNotItsMutableTrackerUpdates() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel channel = p25ConventionalChannel("00000000-0000-0000-0000-000000000302");
         persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -1695,7 +1698,7 @@ class ReceiverActivityServiceLifecycleTest
     void countsBackToBackNbfmCallsAndStoresOptionalHistory() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000301");
         persistChannels(database, channel);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
@@ -1739,7 +1742,7 @@ class ReceiverActivityServiceLifecycleTest
     void lowersRetentionAndRunsMaintenanceWhileCollectionIsDisabled() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String expiredDmr = "00000000-0000-0000-0000-000000000111";
         String currentDmr = "00000000-0000-0000-0000-000000000112";
         String expiredNxdn = "00000000-0000-0000-0000-000000000113";
@@ -1772,7 +1775,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
 
         try
         {
@@ -1836,7 +1839,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(mTemporaryFolder.resolve("missing-portable-data")));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
 
         try
         {
@@ -1861,14 +1864,14 @@ class ReceiverActivityServiceLifecycleTest
     void persistsExplicitTrunkedDmrQualityWithoutPromotingConventionalDmr() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel trunked = dmrChannel("00000000-0000-0000-0000-000000000201", DMRChannelMode.TRUNKED);
         Channel conventional = dmrChannel("00000000-0000-0000-0000-000000000202");
         persistChannels(database, trunked, conventional);
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = immediateWriterService(userPreferences);
 
         try
         {
@@ -2143,6 +2146,12 @@ class ReceiverActivityServiceLifecycleTest
                 new ChannelAndBroadcastConfiguration(List.of(channels), List.of()));
             SdrTrunkDatabase.commitWriteTransaction(connection);
         }
+    }
+
+    private static ReceiverActivityService immediateWriterService(UserPreferences userPreferences)
+    {
+        return new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS, null, null,
+            IMMEDIATE_WRITER_FACTORY);
     }
 
     private static class TestUserPreferences extends UserPreferences

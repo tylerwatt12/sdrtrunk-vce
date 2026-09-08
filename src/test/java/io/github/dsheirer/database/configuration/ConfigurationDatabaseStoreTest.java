@@ -22,7 +22,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
@@ -53,7 +53,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsChannelAndBroadcastConfiguration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
 
         Channel channel = new Channel("Control");
@@ -176,7 +176,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsRememberedControlFrequencyAsTheRestartPreference() throws Exception
     {
         Path database = mTemporaryFolder.resolve("remembered-control.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         long firstFrequency = 851_012_500L;
         long rememberedFrequency = 852_012_500L;
@@ -212,7 +212,7 @@ class ConfigurationDatabaseStoreTest
     void replacementDropsOpaqueRetiredChannelRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retired-configuration.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement pragma = connection.createStatement();
@@ -271,7 +271,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsAMConventionalChannel() throws Exception
     {
         Path database = mTemporaryFolder.resolve("am-conventional.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("Airport Ground");
         channel.setSystem("County Airport");
@@ -313,7 +313,7 @@ class ConfigurationDatabaseStoreTest
     void roundTripsP25ConventionalChannel() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-conventional.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("P25 Conventional");
         channel.setRadioResolveId("22222222-3333-4444-5555-666666666666");
@@ -349,7 +349,7 @@ class ConfigurationDatabaseStoreTest
     void stableChannelSaveKeepsItsDatabaseRowAcrossRenameAndRetune() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stable-channel-row.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel channel = conventionalChannel("Old Name", 155_250_000L);
         TestConfiguration state = new TestConfiguration();
         state.setChannels(List.of(channel));
@@ -385,7 +385,7 @@ class ConfigurationDatabaseStoreTest
     void decoderChangeReplacesOnlyTheChangedChannelRow() throws Exception
     {
         Path database = mTemporaryFolder.resolve("changed-channel-classification.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel changed = conventionalChannel("Changed", 155_250_000L);
         Channel retained = conventionalChannel("Retained", 155_500_000L);
         TestConfiguration state = new TestConfiguration();
@@ -405,7 +405,7 @@ class ConfigurationDatabaseStoreTest
     void radioResolveIdsCanSwapWithoutReplacingStableChannelRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("swapped-radioresolve-ids.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Channel first = conventionalChannel("First", 155_250_000L);
         Channel second = conventionalChannel("Second", 155_500_000L);
         String firstRadioResolveId = "11111111-1111-4111-8111-111111111111";
@@ -444,7 +444,7 @@ class ConfigurationDatabaseStoreTest
         {
             ProjectionTamper tamper = tampers.get(index);
             Path database = mTemporaryFolder.resolve("tampered-projection-" + index + ".sqlite");
-            SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+            SdrTrunkTestDatabase.create(database);
             ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
             Channel channel = new Channel("Airport Ground");
             channel.setDecodeConfiguration(new DecodeConfigAM());
@@ -471,7 +471,7 @@ class ConfigurationDatabaseStoreTest
     void currentFormatLoadRejectsEveryRowOwnedChannelFieldDuplicatedInJson() throws Exception
     {
         Path database = mTemporaryFolder.resolve("duplicated-row-owned-fields.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("Airport Ground");
         channel.setDecodeConfiguration(new DecodeConfigAM());
@@ -518,7 +518,7 @@ class ConfigurationDatabaseStoreTest
     void missingConventionalRadioResolveIdIsAssignedOnTheNextSaveWithoutChangingItsIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("missing-conventional-radioresolve.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("Airport Ground");
         channel.setDecodeConfiguration(new DecodeConfigAM());
@@ -579,7 +579,7 @@ class ConfigurationDatabaseStoreTest
     private void assertCurrentStreamRejectedAndPreserved(String filename, String rawJson) throws Exception
     {
         Path database = mTemporaryFolder.resolve(filename);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
 
         try(Connection connection = SdrTrunkDatabase.open(database);

@@ -720,9 +720,13 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
-            assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
-                manager.getProcessingChain(parent) != null &&
-                manager.getProcessingChain(parent).getSource().getFrequency() == FIRST_REST_FREQUENCY, 5),
+            assertTrue(awaitCondition(() ->
+            {
+                ProcessingChain current = manager.getProcessingChain(parent);
+                Source source = current != null ? current.getSource() : null;
+                return manager.getPendingDmrRestChannelAttemptCount() == 0 && source != null &&
+                    source.getFrequency() == FIRST_REST_FREQUENCY;
+            }, 5),
                 "the replacement rest channel did not start after reconciling teardown");
 
             parent.mReleaseTrafficDecision.countDown();

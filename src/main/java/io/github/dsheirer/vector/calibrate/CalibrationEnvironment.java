@@ -27,7 +27,7 @@ record CalibrationEnvironment(String osName, String osArchitecture, String osVer
                               String javaVmInfo, String javaRuntimeVersion, int preferredFloatBits,
                               int preferredShortBits)
 {
-    private static final int SIGNATURE_FORMAT_VERSION = 2;
+    private static final int SIGNATURE_FORMAT_VERSION = 3;
 
     CalibrationEnvironment
     {
@@ -66,7 +66,7 @@ record CalibrationEnvironment(String osName, String osArchitecture, String osVer
     /** Stable persisted signature for this environment. */
     String signature()
     {
-        return String.join("\u001F",
+        return String.join("\u241F",
             "format=" + SIGNATURE_FORMAT_VERSION,
             "os.name=" + osName,
             "os.arch=" + osArchitecture,

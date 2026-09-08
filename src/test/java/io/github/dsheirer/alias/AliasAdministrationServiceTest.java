@@ -31,7 +31,7 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
@@ -46,7 +46,6 @@ import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -77,8 +76,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("mixed-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -129,7 +127,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -138,8 +136,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("name-only-alias-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -158,7 +155,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -167,8 +164,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("large-bulk-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -196,7 +192,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -205,8 +201,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("conflict-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -252,7 +247,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -261,8 +256,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("same-revision-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
@@ -315,7 +309,7 @@ class AliasAdministrationServiceTest
         finally
         {
             executor.shutdownNow();
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -324,8 +318,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("unversioned-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
         int count = 12;
         ExecutorService executor = Executors.newFixedThreadPool(4);
@@ -368,7 +361,7 @@ class AliasAdministrationServiceTest
         finally
         {
             executor.shutdownNow();
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -377,8 +370,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("broadcast-bound-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -419,7 +411,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -428,8 +420,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("scan-list-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -575,7 +566,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -584,8 +575,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("atomic-alias-membership-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -615,7 +605,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -624,8 +614,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("central-defaults-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -682,7 +671,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -691,8 +680,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("factory-defaults-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -717,7 +705,7 @@ class AliasAdministrationServiceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -725,8 +713,7 @@ class AliasAdministrationServiceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         UserPreferences preferences = new TestUserPreferences(dataRoot);
         ConfigurationManager manager = new ConfigurationManager(preferences, null, new AliasModel(), null, null);
@@ -917,6 +904,18 @@ class AliasAdministrationServiceTest
             assertEquals(1, storedChannels.size());
             assertNull(storedChannels.getFirst().getAliasListName());
             assertTrue(storedChannels.getFirst().hasRadioResolveId());
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    private static void flushAndUnregister(ConfigurationManager manager)
+    {
+        try
+        {
+            manager.flushConfiguration();
         }
         finally
         {

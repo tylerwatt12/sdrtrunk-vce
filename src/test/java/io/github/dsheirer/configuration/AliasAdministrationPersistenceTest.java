@@ -29,7 +29,7 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
@@ -40,7 +40,6 @@ import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -63,8 +62,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("custom-list-default-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -81,7 +79,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -90,8 +88,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("publish-after-commit-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -145,7 +142,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -154,8 +151,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("membership-before-alias-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -188,7 +184,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -197,8 +193,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("late-channel-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         LateChannelConfigurationManager manager =
             new LateChannelConfigurationManager(new TestUserPreferences(dataRoot));
 
@@ -228,7 +223,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -237,8 +232,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("publication-channel-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -268,7 +262,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -277,8 +271,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("publication-recovery-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         RecoveringPublicationManager manager = new RecoveringPublicationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -298,7 +291,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -307,8 +300,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("fatal-publication-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         UnrecoverablePublicationManager manager =
             new UnrecoverablePublicationManager(new TestUserPreferences(dataRoot));
 
@@ -341,8 +333,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -384,7 +375,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -393,8 +384,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("mixed-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -437,7 +427,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -446,8 +436,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("broadcast-rename-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
             new AliasModel(), null, null);
 
@@ -493,7 +482,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -502,8 +491,7 @@ class AliasAdministrationPersistenceTest
     {
         Path dataRoot = mTemporaryFolder.resolve("scan-list-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Files.createDirectories(database.getParent());
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
@@ -563,7 +551,7 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+            flushAndUnregister(manager);
         }
     }
 
@@ -691,6 +679,18 @@ class AliasAdministrationPersistenceTest
             AliasConfigurationPublication publication)
         {
             throw new IllegalStateException("Injected unrecoverable publication failure");
+        }
+    }
+
+    private static void flushAndUnregister(ConfigurationManager manager)
+    {
+        try
+        {
+            manager.flushConfiguration();
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
         }
     }
 

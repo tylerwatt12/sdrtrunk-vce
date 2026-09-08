@@ -25,13 +25,17 @@ class CalibrationEnvironmentTest
     void signatureTracksHostJvmAndPreferredVectorWidths()
     {
         CalibrationEnvironment environment = environment("cpu-1", 4, "vm-1", 256, 128);
+        String signature = environment.signature();
 
-        assertEquals(environment.signature(), environment("cpu-1", 4, "vm-1", 256, 128).signature());
-        assertNotEquals(environment.signature(), environment("cpu-2", 4, "vm-1", 256, 128).signature());
-        assertNotEquals(environment.signature(), environment("cpu-1", 8, "vm-1", 256, 128).signature());
-        assertNotEquals(environment.signature(), environment("cpu-1", 4, "vm-2", 256, 128).signature());
-        assertNotEquals(environment.signature(), environment("cpu-1", 4, "vm-1", 128, 128).signature());
-        assertNotEquals(environment.signature(), environment("cpu-1", 4, "vm-1", 256, 64).signature());
+        assertEquals(signature, environment("cpu-1", 4, "vm-1", 256, 128).signature());
+        assertNotEquals(signature, environment("cpu-2", 4, "vm-1", 256, 128).signature());
+        assertNotEquals(signature, environment("cpu-1", 8, "vm-1", 256, 128).signature());
+        assertNotEquals(signature, environment("cpu-1", 4, "vm-2", 256, 128).signature());
+        assertNotEquals(signature, environment("cpu-1", 4, "vm-1", 128, 128).signature());
+        assertNotEquals(signature, environment("cpu-1", 4, "vm-1", 256, 64).signature());
+        assertTrue(signature.contains("\u241F"));
+        assertFalse(signature.chars().anyMatch(character ->
+            character < 0x20 && character != '\t' && character != '\n' && character != '\r'));
     }
 
     @Test
