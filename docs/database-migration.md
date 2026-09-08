@@ -203,8 +203,9 @@ spectrum or its administration form; both queries are primary-key lookups throug
 malformed, or unsupported country selections in format 14 are validation errors and are never repaired at startup.
 
 The format 14-to-15 step makes saved channel UUIDs, radio-system keys, Alias List IDs, and broadcast-provider UUIDs
-the durable internal identities. It preserves administrator-owned channels, Alias Lists, stream providers, routes,
-accounts, credentials, settings, icons, and decoder-specific channel maps stored with saved channels. Channel rows
+the durable internal identities. It preserves administrator-owned channels, Alias Lists, stream providers, valid
+routes, accounts, credentials, settings, icons, and decoder-specific channel maps stored with saved channels. Channel
+rows
 replace the duplicated Alias List name with a foreign key and rename the RadioResolve upload-correlation field so it
 is no longer mistaken for channel or system identity. As in the format-14 loader, the relational row is authoritative
 for channel display fields, Alias List name, RadioResolve ID, and auto-start settings; stale or missing JSON copies of
@@ -215,8 +216,10 @@ channel-to-frequency map, while an NXDN row is trunked. Broadcast providers rece
 existing canonical unique UUID is preserved and a missing one is generated deterministically. Site-bound
 Broadcastify providers keep only the Alias List ID, not a duplicate display name. Alias streaming routes are
 converted from provider names to provider UUIDs, so a later provider rename cannot break routing. Unresolved or
-ambiguous names, mismatched decoder/source projections, and malformed or duplicate authoritative identities are
-refused rather than guessed.
+missing legacy relationships are cleared or removed only when their referenced Alias, Alias List, scan list, or
+stream provider no longer exists; the preflight and completion reports identify the change and its exact row count.
+Ambiguous names, mismatched decoder/source projections, and malformed or duplicate authoritative identities are
+still refused rather than guessed.
 
 The same step removes the unused legacy named Channel Maps table and reports how many of those retired rows were
 dropped. These are not the decoder channel maps stored inside saved DMR or NXDN channel configuration, which remain

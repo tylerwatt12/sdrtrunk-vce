@@ -219,6 +219,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "activity metric boundaries", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Start fresh conventional-call, trunked-call, and radio-system measurement windows"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Clear or remove saved relationships whose referenced Alias, Alias List, scan list, or stream provider no longer exists"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
                 "Keep the one authoritative whole-database format version"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
@@ -261,11 +264,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         {
             validatePreservedCoreRows(connection);
             AliasAdminIndex aliases = inspectAliasesAndScanLists(connection);
-            List<ChannelRow> channels = inspectChannels(connection);
+            RelationshipInspection<ChannelRow> channels = inspectChannels(connection);
             List<BroadcastRow> broadcasts = inspectBroadcasts(connection);
             Map<String,List<BroadcastRow>> broadcastsByName = broadcastsByName(broadcasts);
-            List<AliasRoute> aliasRoutes = inspectAliasRoutes(connection, broadcastsByName, aliases.aliasIds());
-            List<UnmatchedRoute> unmatchedRoutes = inspectUnmatchedRoutes(connection, broadcastsByName,
+            RelationshipInspection<AliasRoute> aliasRoutes = inspectAliasRoutes(connection, broadcastsByName,
+                aliases.aliasIds());
+            RelationshipInspection<UnmatchedRoute> unmatchedRoutes = inspectUnmatchedRoutes(connection,
+                broadcastsByName,
                 aliases.aliasListIds());
             List<PreferenceRow> preferences = inspectPreferences(connection);
             PolicyInput policy = inspectPolicy(connection);
@@ -281,9 +286,14 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "alias_scan_list_membership", "alias_list_unmatched_talkgroup_scan_list_membership",
                 "configuration_channel", "configuration_broadcast_stream",
                 "application_settings", "application_icons", "web_user", "web_access_policy"));
-            return new MigrationInput(channels, broadcasts, aliasRoutes, unmatchedRoutes, preferences, policy,
+            preservedRows = Math.subtractExact(preservedRows, aliases.orphanedRows());
+            long orphanedRelationships = Math.addExact(channels.orphanedRows(), aliases.orphanedRows());
+            orphanedRelationships = Math.addExact(orphanedRelationships, aliasRoutes.orphanedRows());
+            orphanedRelationships = Math.addExact(orphanedRelationships, unmatchedRoutes.orphanedRows());
+            return new MigrationInput(channels.rows(), broadcasts, aliasRoutes.rows(), unmatchedRoutes.rows(),
+                preferences, policy,
                 portablePreferences, sequences, callHistoryRows, siteRows, qualityRows, identityRows,
-                metricBoundaryRows, retiredNamedChannelMapRows, preservedRows);
+                metricBoundaryRows, retiredNamedChannelMapRows, orphanedRelationships, preservedRows);
         }
         catch(IOException | IllegalArgumentException exception)
         {
@@ -330,6 +340,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "activity metric boundaries", input.metricBoundaryRows(),
                 "Start fresh conventional-call, trunked-call, and radio-system measurement windows"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships", input.orphanedRelationshipRows(),
+                "Clear or remove saved relationships whose referenced Alias, Alias List, scan list, or stream provider no longer exists"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
                 "Keep the one authoritative whole-database format version"),
@@ -548,11 +561,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             }
         }
 
-        validateScanListMemberships(connection, "alias_scan_list_membership", "alias_id", aliases, scanLists,
+        long orphanedRows = countOrphanedScanListMemberships(connection, "alias_scan_list_membership", "alias_id",
+            aliases, scanLists,
             "Alias scan-list membership");
-        validateScanListMemberships(connection, "alias_list_unmatched_talkgroup_scan_list_membership",
-            "alias_list_id", aliasLists.keySet(), scanLists, "Alias List scan-list membership");
-        return new AliasAdminIndex(Set.copyOf(aliasLists.keySet()), Set.copyOf(aliases));
+        orphanedRows = Math.addExact(orphanedRows, countOrphanedScanListMemberships(connection,
+            "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id", aliasLists.keySet(), scanLists,
+            "Alias List scan-list membership"));
+        return new AliasAdminIndex(Set.copyOf(aliasLists.keySet()), Set.copyOf(aliases), orphanedRows);
     }
 
     private static void validateAliasMatcher(ResultSet rows, AliasListFamily family, String label)
@@ -719,10 +734,11 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void validateScanListMemberships(Connection connection, String table, String ownerColumn,
-                                                     Set<Long> owners, Set<Long> scanLists, String description)
+    private static long countOrphanedScanListMemberships(Connection connection, String table, String ownerColumn,
+                                                          Set<Long> owners, Set<Long> scanLists, String description)
         throws SQLException, IOException
     {
+        long orphanedRows = 0;
         String sql = "SELECT " + identifier(ownerColumn) + ", scan_list_id FROM " + identifier(table) +
             " ORDER BY " + identifier(ownerColumn) + ", scan_list_id";
         try(PreparedStatement statement = connection.prepareStatement(sql); ResultSet rows = statement.executeQuery())
@@ -731,23 +747,22 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             {
                 long ownerId = positiveId(rows, ownerColumn, description);
                 long scanListId = positiveId(rows, "scan_list_id", description);
-                if(!owners.contains(ownerId))
+                if(!owners.contains(ownerId) || !scanLists.contains(scanListId))
                 {
-                    throw new IOException(description + " refers to missing owner database row " + ownerId);
-                }
-                if(!scanLists.contains(scanListId))
-                {
-                    throw new IOException(description + " refers to missing scan list database row " + scanListId);
+                    orphanedRows++;
                 }
             }
         }
+        return orphanedRows;
     }
 
-    private static List<ChannelRow> inspectChannels(Connection connection) throws SQLException, IOException
+    private static RelationshipInspection<ChannelRow> inspectChannels(Connection connection)
+        throws SQLException, IOException
     {
         List<ChannelRow> channels = new ArrayList<>();
         Map<String,String> configurationIds = new HashMap<>();
         Map<String,String> radioResolveIds = new HashMap<>();
+        long orphanedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
                    radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
@@ -783,6 +798,11 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 Integer autoStartOrder = nullableInteger(rows, "auto_start_order", label);
                 String aliasListName = normalizeBlank(nullableText(rows, "alias_list_name"));
                 Long aliasListId = resolveAliasList(connection, aliasListName, label);
+                if(aliasListName != null && aliasListId == null)
+                {
+                    aliasListName = null;
+                    orphanedRows++;
+                }
                 String radioResolveId = normalizeBlank(nullableText(rows, "radres_guid"));
                 if(radioResolveId != null)
                 {
@@ -848,7 +868,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     MAPPER.writeValueAsString(payload)));
             }
         }
-        return List.copyOf(channels);
+        return new RelationshipInspection<>(List.copyOf(channels), orphanedRows);
     }
 
     private static void requireOldProjectionMatches(ResultSet rows, Channel channel,
@@ -908,7 +928,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
         if(matches.isEmpty())
         {
-            throw new IOException(label + " names missing Alias List [" + name + "]");
+            return null;
         }
         if(matches.size() != 1)
         {
@@ -1006,12 +1026,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         return Map.copyOf(byName);
     }
 
-    private static List<AliasRoute> inspectAliasRoutes(Connection connection,
-                                                        Map<String,List<BroadcastRow>> broadcastsByName,
-                                                        Set<Long> aliasIds)
+    private static RelationshipInspection<AliasRoute> inspectAliasRoutes(Connection connection,
+                                                                          Map<String,List<BroadcastRow>> broadcastsByName,
+                                                                          Set<Long> aliasIds)
         throws SQLException, IOException
     {
         List<AliasRoute> routes = new ArrayList<>();
+        long orphanedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT id, alias_id, channel_name FROM alias_broadcast_channel ORDER BY id
             """); ResultSet rows = statement.executeQuery())
@@ -1023,23 +1044,31 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 long aliasId = positiveId(rows, "alias_id", "Alias broadcast route");
                 if(!aliasIds.contains(aliasId))
                 {
-                    throw new IOException("Alias broadcast route database row " + id +
-                        " refers to missing Alias database row " + aliasId);
+                    orphanedRows++;
+                    continue;
                 }
-                routes.add(new AliasRoute(id, aliasId,
-                    resolveBroadcast(name, broadcastsByName,
-                        "Alias stream route for " + displayName(name) + " (database row " + id + ")")));
+                String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName,
+                    "Alias stream route for " + displayName(name) + " (database row " + id + ")");
+                if(broadcastConfigurationId == null)
+                {
+                    orphanedRows++;
+                }
+                else
+                {
+                    routes.add(new AliasRoute(id, aliasId, broadcastConfigurationId));
+                }
             }
         }
-        return List.copyOf(routes);
+        return new RelationshipInspection<>(List.copyOf(routes), orphanedRows);
     }
 
-    private static List<UnmatchedRoute> inspectUnmatchedRoutes(Connection connection,
-                                                                Map<String,List<BroadcastRow>> broadcastsByName,
-                                                                Set<Long> aliasListIds)
+    private static RelationshipInspection<UnmatchedRoute> inspectUnmatchedRoutes(Connection connection,
+                                                                                  Map<String,List<BroadcastRow>> broadcastsByName,
+                                                                                  Set<Long> aliasListIds)
         throws SQLException, IOException
     {
         List<UnmatchedRoute> routes = new ArrayList<>();
+        long orphanedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT id, alias_list_id, channel_name FROM alias_list_unmatched_talkgroup_stream ORDER BY id
             """); ResultSet rows = statement.executeQuery())
@@ -1051,16 +1080,23 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 long aliasListId = positiveId(rows, "alias_list_id", "unmatched-talkgroup broadcast route");
                 if(!aliasListIds.contains(aliasListId))
                 {
-                    throw new IOException("Unmatched-talkgroup broadcast route database row " + id +
-                        " refers to missing Alias List database row " + aliasListId);
+                    orphanedRows++;
+                    continue;
                 }
-                routes.add(new UnmatchedRoute(id, aliasListId,
-                    resolveBroadcast(name, broadcastsByName,
-                        "Unmatched-talkgroup stream route for " + displayName(name) +
-                            " (database row " + id + ")")));
+                String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName,
+                    "Unmatched-talkgroup stream route for " + displayName(name) +
+                        " (database row " + id + ")");
+                if(broadcastConfigurationId == null)
+                {
+                    orphanedRows++;
+                }
+                else
+                {
+                    routes.add(new UnmatchedRoute(id, aliasListId, broadcastConfigurationId));
+                }
             }
         }
-        return List.copyOf(routes);
+        return new RelationshipInspection<>(List.copyOf(routes), orphanedRows);
     }
 
     private static String resolveBroadcast(String name, Map<String,List<BroadcastRow>> broadcastsByName,
@@ -1069,7 +1105,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         List<BroadcastRow> matches = broadcastsByName.getOrDefault(name, List.of());
         if(matches.isEmpty())
         {
-            throw new IOException(label + " refers to a missing broadcast provider");
+            return null;
         }
         if(matches.size() != 1)
         {
@@ -1539,12 +1575,17 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_scan_list_membership (alias_id, scan_list_id)
-                SELECT alias_id, scan_list_id FROM format14_alias_scan_list_membership
+                SELECT membership.alias_id, membership.scan_list_id
+                FROM format14_alias_scan_list_membership membership
+                JOIN format14_alias owner ON owner.id=membership.alias_id
+                JOIN format14_scan_list scan_list ON scan_list.id=membership.scan_list_id
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership (alias_list_id, scan_list_id)
-                SELECT alias_list_id, scan_list_id
-                FROM format14_alias_list_unmatched_talkgroup_scan_list_membership
+                SELECT membership.alias_list_id, membership.scan_list_id
+                FROM format14_alias_list_unmatched_talkgroup_scan_list_membership membership
+                JOIN format14_alias_list owner ON owner.id=membership.alias_list_id
+                JOIN format14_scan_list scan_list ON scan_list.id=membership.scan_list_id
                 """);
             statement.executeUpdate("""
                 INSERT INTO web_user (
@@ -2247,6 +2288,10 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
     }
 
+    private record RelationshipInspection<T>(List<T> rows, long orphanedRows)
+    {
+    }
+
     private record PreferenceRow(long id, String payload, long revision, long updatedAtMs)
     {
     }
@@ -2263,7 +2308,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
     }
 
-    private record AliasAdminIndex(Set<Long> aliasListIds, Set<Long> aliasIds)
+    private record AliasAdminIndex(Set<Long> aliasListIds, Set<Long> aliasIds, long orphanedRows)
     {
     }
 
@@ -2273,7 +2318,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                                   PortablePreferencesUpdate portablePreferences, Map<String,Long> sequences,
                                   long callHistoryRows,
                                   long siteRows, long qualityRows, long identityRows, long metricBoundaryRows,
-                                  long retiredNamedChannelMapRows, long preservedRows)
+                                  long retiredNamedChannelMapRows, long orphanedRelationshipRows,
+                                  long preservedRows)
     {
     }
 }

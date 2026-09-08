@@ -502,17 +502,6 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesUnresolvedAliasListNamesWithoutWriting() throws Exception
-    {
-        assertRefused("unresolved-alias.sqlite", """
-            UPDATE configuration_channel
-            SET alias_list_name='Missing Alias',
-                config_json=json_set(config_json, '$.aliasListName', 'Missing Alias')
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "missing Alias List");
-    }
-
-    @Test
     void preservesRowAutoStartWhenLegacyJsonOmitsTheBoolean() throws Exception
     {
         Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-json-auto-start.sqlite"));
@@ -860,11 +849,113 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesUnresolvedOrAmbiguousNameBasedBroadcastRoutesWithoutWriting() throws Exception
+    void dropsAndReportsBroadcastRoutesWhoseProvidersNoLongerExist() throws Exception
     {
-        assertRefused("missing-provider.sqlite", """
-            UPDATE alias_broadcast_channel SET channel_name='Missing Provider'
-            """, "missing broadcast provider");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-provider.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE alias_broadcast_channel SET channel_name='Missing Provider'
+                """);
+            execute(connection, """
+                UPDATE alias_list_unmatched_talkgroup_stream SET channel_name='Missing Provider'
+                """);
+
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(2, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void clearsAndReportsSavedChannelRelationshipToMissingAliasList() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-channel-alias-list.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET alias_list_name='Removed Alias List',
+                    config_json=json_set(config_json, '$.aliasListName', 'Removed Alias List')
+                WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL));
+
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertNull(nullableScalar(connection, """
+                SELECT alias_list_id FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void dropsAndReportsRelationshipsWhoseOwnerRowsNoLongerExist() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-relationship-owners.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, "PRAGMA foreign_keys=OFF");
+            execute(connection, """
+                INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
+                SELECT 999999, id FROM scan_list ORDER BY id LIMIT 1
+                """);
+            execute(connection, """
+                INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership(alias_list_id, scan_list_id)
+                SELECT 999999, id FROM scan_list ORDER BY id LIMIT 1
+                """);
+            execute(connection, """
+                INSERT INTO alias_broadcast_channel(alias_id, channel_name)
+                VALUES (999999, 'Primary Migration Feed')
+                """);
+            execute(connection, """
+                INSERT INTO alias_list_unmatched_talkgroup_stream(alias_list_id, channel_name)
+                VALUES (999999, 'Primary Migration Feed')
+                """);
+        }
+
+        try(Connection connection = open(database))
+        {
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(4, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=999999"));
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership
+                WHERE alias_list_id=999999
+                """));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM alias_broadcast_channel WHERE alias_id=999999"));
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream WHERE alias_list_id=999999
+                """));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void refusesAmbiguousNameBasedBroadcastRoutesWithoutWriting() throws Exception
+    {
         assertRefused("ambiguous-provider.sqlite", """
             UPDATE configuration_broadcast_stream
             SET name='Primary Migration Feed',
