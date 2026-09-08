@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
+import io.github.dsheirer.database.upgrade.ApplicationMigrationServiceTestSupport;
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.database.upgrade.Format1TestDatabase;
 import io.github.dsheirer.database.upgrade.Format3TestDatabase;
@@ -91,7 +92,8 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
             SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--admin-password-file",
-                passwordFile.toString()}, dataRoot, true);
+                passwordFile.toString()}, dataRoot, true,
+                ApplicationMigrationServiceTestSupport.createInProcess());
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
@@ -120,7 +122,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceRoot.toString(), "--admin-password-file", passwordFile.toString()},
-            targetRoot, true);
+            targetRoot, true, ApplicationMigrationServiceTestSupport.createInProcess());
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
@@ -151,7 +153,8 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceDatabase.toString(), "--admin-password-file",
-                passwordFile.toString()}, targetRoot, true);
+                passwordFile.toString()}, targetRoot, true,
+                ApplicationMigrationServiceTestSupport.createInProcess());
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
@@ -170,7 +173,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     {
         Path dataRoot = mTemporaryFolder.resolve("current");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         removeInitialSetupMarker(database);
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
@@ -192,7 +195,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
             Path dataRoot = mTemporaryFolder.resolve(markerPresent ?
                 "reset-invalid-admin-with-marker" : "reset-invalid-admin-without-marker");
             Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-            SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+            SdrTrunkTestDatabase.create(database);
             new WebAccessService(database).provisionOrResetPrimaryAdmin("old unusable password".toCharArray());
             try(Connection connection = open(database); Statement statement = connection.createStatement())
             {
@@ -208,7 +211,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 
             SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
                 new String[]{"--upgrade-current", "--admin-password-file", passwordFile.toString()},
-                dataRoot, true);
+                dataRoot, true, ApplicationMigrationServiceTestSupport.createInProcess());
 
             assertTrue(result.startApplication());
             assertEquals("complete", scalar(database, """

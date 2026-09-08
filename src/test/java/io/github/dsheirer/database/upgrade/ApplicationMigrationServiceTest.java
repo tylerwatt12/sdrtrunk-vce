@@ -29,10 +29,7 @@ import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.web.auth.WebAccessService;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFileAttributeView;
@@ -1255,7 +1252,7 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationApproval(database);
         ApplicationMigrationService service = new ApplicationMigrationService(
             SqliteDatabaseSnapshot::create,
-            ApplicationMigrationServiceTest::runMigratorInProcess,
+            ApplicationMigrationServiceTestSupport::runMigratorInProcess,
             promoted ->
             {
                 throw new SQLException("forced post-promotion validation failure");
@@ -1423,7 +1420,7 @@ class ApplicationMigrationServiceTest
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("atomic-promotion-target"));
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            ApplicationMigrationServiceTest::runMigratorInProcess,
+            ApplicationMigrationServiceTestSupport::runMigratorInProcess,
             (staged, target) ->
             {
                 assertFalse(Files.exists(target));
@@ -1502,30 +1499,7 @@ class ApplicationMigrationServiceTest
 
     private static ApplicationMigrationService inProcessMigrationService()
     {
-        return new ApplicationMigrationService(ApplicationMigrationServiceTest::runMigratorInProcess);
-    }
-
-    private static String runMigratorInProcess(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
-        throws IOException
-    {
-        String[] arguments = sourceDataRoot == null ? new String[] {stagedDatabase.toString()} :
-            new String[] {stagedDatabase.toString(), sourceDataRoot.toString(), targetDataRoot.toString()};
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
-
-        try(PrintStream output = new PrintStream(captured, true, StandardCharsets.UTF_8))
-        {
-            int exitCode = ApplicationDatabaseMigrator.run(arguments, output, output);
-            output.flush();
-            String report = captured.toString(StandardCharsets.UTF_8).trim();
-
-            if(exitCode != ApplicationDatabaseMigrator.EXIT_SUCCESS)
-            {
-                throw new IOException("The in-process Application Migrator failed with exit code " + exitCode +
-                    (report.isBlank() ? "." : ":\n" + report));
-            }
-
-            return report;
-        }
+        return ApplicationMigrationServiceTestSupport.createInProcess();
     }
 
     private static void insertAlias(Path database, String name) throws Exception
