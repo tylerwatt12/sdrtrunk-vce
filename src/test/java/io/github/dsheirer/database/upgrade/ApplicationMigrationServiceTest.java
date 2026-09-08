@@ -1502,8 +1502,7 @@ class ApplicationMigrationServiceTest
 
     private static ApplicationMigrationService inProcessMigrationService()
     {
-        return new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            ApplicationMigrationServiceTest::runMigratorInProcess);
+        return new ApplicationMigrationService(ApplicationMigrationServiceTest::runMigratorInProcess);
     }
 
     private static String runMigratorInProcess(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
