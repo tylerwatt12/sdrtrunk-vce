@@ -11,6 +11,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
+import * as rfPlanner from './features/rf-planner.js';
 import { WebCallPlayer } from './web-call-player.js';
 
 let route = new URLSearchParams(window.location.search);
@@ -17814,8 +17815,15 @@ async function renderConfiguration() {
 
 function renderHardware() {
   const renderContext = captureRenderContext();
-  beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
-    comingSoonPanel('Tuners'));
+  const availableTabs = [
+    { id: 'tuners', label: 'Tuners' },
+    { id: 'rf-planner', label: 'RF Planner' }
+  ];
+  const requested = route.get('tab') || 'tuners';
+  const active = availableTabs.some((item) => item.id === requested) ? requested : 'tuners';
+  if (!beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
+    tabs(availableTabs.map((item) => ({ ...item, href: href('hardware', { tab: item.id }) })), active))) return;
+  content.append(active === 'rf-planner' ? rfPlanner.createPlanner() : comingSoonPanel('Tuners'));
 }
 
 function adminSystemStatusSection() {
