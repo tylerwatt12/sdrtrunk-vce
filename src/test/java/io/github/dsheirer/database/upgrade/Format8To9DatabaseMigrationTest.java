@@ -6,7 +6,6 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,9 +41,9 @@ class Format8To9DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 8, preflight.steps().size());
             assertEquals("format-8-to-9", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
-                "per-user Live presentation settings", 3);
+                "per-user Live presentation settings", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DROP,
-                "obsolete shared Live presentation settings", 2);
+                "obsolete shared Live presentation settings", DatabaseMigrationEffect.UNKNOWN_COUNT);
 
             connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report;
@@ -125,7 +124,7 @@ class Format8To9DatabaseMigrationTest
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DROP,
-                "obsolete shared Live presentation settings", 0);
+                "obsolete shared Live presentation settings", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
 
             assertEquals("3", scalar(connection, """
@@ -185,7 +184,7 @@ class Format8To9DatabaseMigrationTest
     }
 
     @Test
-    void refusesAnExhaustedUserRevisionWithoutChangingTheSource() throws Exception
+    void defaultsOnlyTheUserWithAnExhaustedRevision() throws Exception
     {
         Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("exhausted.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -193,13 +192,55 @@ class Format8To9DatabaseMigrationTest
             statement.execute("PRAGMA ignore_check_constraints=ON");
             statement.executeUpdate("UPDATE web_user SET preferences_revision=9223372036854775807 WHERE id=1");
             statement.execute("PRAGMA ignore_check_constraints=OFF");
-            String before = preferenceDigest(connection);
-            SQLException rejection = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.migrate(connection));
-            assertTrue(rejection.getMessage().contains("preference revision must be positive and incrementable"),
-                rejection.getMessage());
-            assertEquals(before, preferenceDigest(connection));
-            assertEquals("8", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", 1);
+            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+                metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            assertEquals("6", scalar(connection,
+                "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE id=1"));
+        }
+    }
+
+    @Test
+    void defaultsOversizedUserAndPortableDocumentsWithoutTouchingValidUsers() throws Exception
+    {
+        Path database = Format8TestDatabase.create(mTemporaryFolder.resolve("oversized.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String siblingTheme = scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2");
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            try
+            {
+                statement.executeUpdate("""
+                    UPDATE web_user
+                    SET preferences_json='{"padding":"' || hex(zeroblob(65537)) || '"}'
+                    WHERE id=1
+                    """);
+                statement.executeUpdate("""
+                    UPDATE application_settings
+                    SET settings_json='{"padding":"' || hex(zeroblob(2097153)) || '"}'
+                    WHERE key='portable_java_preferences_v1'
+                    """);
+            }
+            finally
+            {
+                statement.execute("PRAGMA ignore_check_constraints=OFF");
+            }
+
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", 1);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
+                "unusable portable browser preferences", 1);
+            assertEquals(siblingTheme, scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2"));
+            assertEquals("{}", scalar(connection, """
+                SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

@@ -50,7 +50,7 @@ class Format7WebUserPreferencesCodecTest
     }
 
     @Test
-    void refusesAFormatSixSelectionThatFormatSevenCannotRepresent() throws Exception
+    void bestEffortMigrationDefaultsOnlyASelectionThatCannotFitFormatSeven() throws Exception
     {
         String historicalMaximum = withSelectedScanLists(128);
         Format6WebUserPreferencesCodec.validate(historicalMaximum);
@@ -60,6 +60,17 @@ class Format7WebUserPreferencesCodecTest
             () -> Format7WebUserPreferencesCodec.migrateFromFormat6(historicalMaximum));
         assertEquals(128, rejection.selected());
         assertEquals(16, rejection.maximum());
+
+        Format7WebUserPreferencesCodec.MigrationResult recovered =
+            Format7WebUserPreferencesCodec.migrateFromFormat6BestEffort(historicalMaximum);
+        JsonNode document = MAPPER.readTree(recovered.json());
+        assertTrue(recovered.defaultedSelectedScanLists());
+        assertEquals(0, document.path("playback").path("selected_scan_list_ids").size());
+        assertEquals("dark", document.path("appearance").path("theme").asText());
+        assertEquals(0.4, document.path("playback").path("volume").asDouble());
+        assertEquals("high-detail", document.path("tuner").path("profile").asText());
+        assertEquals(240,
+            document.path("tables").path("scanner.calls").path("column_widths").path("alias").asInt());
     }
 
     @Test

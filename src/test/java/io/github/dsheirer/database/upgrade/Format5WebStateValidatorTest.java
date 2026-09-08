@@ -146,6 +146,43 @@ class Format5WebStateValidatorTest
     }
 
     @Test
+    void rejectsOversizedWebPayloadsThroughSqlBoundedColumns() throws Exception
+    {
+        Path account = fresh(mTemporaryFolder.resolve("oversized-account.sqlite"));
+        try(Connection connection = open(account); Statement statement = connection.createStatement())
+        {
+            insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("UPDATE web_user SET username=hex(zeroblob(65537)) WHERE id=1");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+        assertRejectedByBothPaths(account, "invalid username or tier");
+
+        Path preferences = fresh(mTemporaryFolder.resolve("oversized-preferences.sqlite"));
+        try(Connection connection = open(preferences); Statement statement = connection.createStatement())
+        {
+            insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("UPDATE web_user SET preferences_json=hex(zeroblob(65537)) WHERE id=1");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+        assertRejectedByBothPaths(preferences, "preference document is missing or exceeds its storage bound");
+
+        Path policy = fresh(mTemporaryFolder.resolve("oversized-policy.sqlite"));
+        try(Connection connection = open(policy); Statement statement = connection.createStatement())
+        {
+            insertUser(connection, 1, "admin", "ADMIN", true);
+            insertPolicy(connection, "dashboard", "USER");
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                UPDATE web_access_policy SET capability_id=hex(zeroblob(65537))
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+        assertRejectedByBothPaths(policy, "unknown access-policy capability");
+    }
+
+    @Test
     void rejectsNonpositiveRevisionAndTimestampValuesWhenChecksWereBypassed() throws Exception
     {
         assertUserPositiveValueRejected("zero-preference-revision.sqlite", "preferences_revision",

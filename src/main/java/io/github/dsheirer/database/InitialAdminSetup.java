@@ -55,23 +55,42 @@ public final class InitialAdminSetup
     }
 
     /**
-     * A schema migrator builds a replacement database with current creation defaults. Preserve the setup-marker state
-     * of the existing installation so an upgrade is not mistaken for a new install.
+     * Keeps the grandfathered marker absence of an existing installation during an in-place staged migration.
+     * Imports deliberately do not call this method because they create a new destination profile.
      */
-    static void restoreExistingProfileState(Path databasePath, String state) throws IOException, SQLException
+    public static void preserveGrandfatheredAbsence(Path existingDatabase, Path stagedDatabase)
+        throws IOException, SQLException
     {
-        if(state != null)
+        if(readState(existingDatabase) == null && !hasStoredWebAccounts(existingDatabase))
         {
-            writeState(databasePath, state);
-            return;
+            try(Connection connection = SdrTrunkDatabase.open(stagedDatabase);
+                PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM database_metadata WHERE key = ?"))
+            {
+                statement.setString(1, METADATA_KEY);
+                statement.executeUpdate();
+            }
         }
+    }
 
+    private static boolean hasStoredWebAccounts(Path databasePath) throws IOException, SQLException
+    {
         try(Connection connection = SdrTrunkDatabase.open(databasePath);
-            PreparedStatement statement = connection.prepareStatement(
-                "DELETE FROM database_metadata WHERE key = ?"))
+            PreparedStatement table = connection.prepareStatement(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='web_user'"))
         {
-            statement.setString(1, METADATA_KEY);
-            statement.executeUpdate();
+            try(ResultSet rows = table.executeQuery())
+            {
+                if(!rows.next() || rows.getLong(1) == 0)
+                {
+                    return false;
+                }
+            }
+            try(PreparedStatement users = connection.prepareStatement("SELECT COUNT(*) FROM web_user");
+                ResultSet rows = users.executeQuery())
+            {
+                return rows.next() && rows.getLong(1) > 0;
+            }
         }
     }
 

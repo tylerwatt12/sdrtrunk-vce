@@ -26,6 +26,66 @@ final class FactoryAliasListCollisionRepair
     {
     }
 
+    /** Counts channels whose relational Alias List projection is unusable but whose JSON selects an existing list. */
+    static long jsonOwnedChannelProjectionRecoveryCount(Connection connection) throws SQLException
+    {
+        try(var statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+            SELECT COUNT(*)
+            FROM configuration_channel AS channel
+            WHERE NOT EXISTS (
+                      SELECT 1 FROM alias_list AS current_list
+                      WHERE typeof(channel.alias_list_name)='text'
+                        AND current_list.name=trim(channel.alias_list_name) COLLATE NOCASE
+                  )
+              AND EXISTS (
+                      SELECT 1 FROM alias_list AS recovered_list
+                      WHERE recovered_list.name=(
+                          CASE WHEN json_valid(channel.config_json)=1 THEN
+                              CASE WHEN json_type(channel.config_json, '$.aliasListName')='text'
+                                  THEN nullif(trim(json_extract(channel.config_json, '$.aliasListName')), '') END
+                          END
+                      ) COLLATE NOCASE
+                  )
+            """))
+        {
+            return rows.next() ? rows.getLong(1) : 0;
+        }
+    }
+
+    /** Restores the persisted list spelling from a usable JSON selection before factory collision/default handling. */
+    static void recoverJsonOwnedChannelProjections(Connection connection) throws SQLException
+    {
+        try(var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH recovery(channel_id, alias_list_name) AS (
+                    SELECT channel.id, recovered_list.name
+                    FROM configuration_channel AS channel
+                    JOIN alias_list AS recovered_list
+                      ON recovered_list.name=(
+                          CASE WHEN json_valid(channel.config_json)=1 THEN
+                              CASE WHEN json_type(channel.config_json, '$.aliasListName')='text'
+                                  THEN nullif(trim(json_extract(channel.config_json, '$.aliasListName')), '') END
+                          END
+                      ) COLLATE NOCASE
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM alias_list AS current_list
+                        WHERE typeof(channel.alias_list_name)='text'
+                          AND current_list.name=trim(channel.alias_list_name) COLLATE NOCASE
+                    )
+                )
+                UPDATE configuration_channel
+                SET alias_list_name=(
+                        SELECT recovery.alias_list_name FROM recovery WHERE recovery.channel_id=configuration_channel.id
+                    ),
+                    config_json=json_set(config_json, '$.aliasListName', (
+                        SELECT recovery.alias_list_name FROM recovery WHERE recovery.channel_id=configuration_channel.id
+                    ))
+                WHERE id IN (SELECT channel_id FROM recovery)
+                """);
+        }
+    }
+
     static List<Collision> plan(Connection connection, List<Target> targets) throws SQLException
     {
         Set<String> names = new HashSet<>();
@@ -80,14 +140,22 @@ final class FactoryAliasListCollisionRepair
             }
 
             try(PreparedStatement update = connection.prepareStatement("""
-                UPDATE configuration_channel
-                SET alias_list_name=?, config_json=json_set(config_json, '$.aliasListName', ?)
+                UPDATE configuration_channel SET alias_list_name=?
                 WHERE alias_list_name=? COLLATE NOCASE
                 """))
             {
                 update.setString(1, collision.targetName());
+                update.setString(2, collision.sourceName());
+                update.executeUpdate();
+            }
+
+            try(PreparedStatement update = connection.prepareStatement("""
+                UPDATE configuration_channel SET config_json=json_set(config_json, '$.aliasListName', ?)
+                WHERE alias_list_name=? COLLATE NOCASE AND json_valid(config_json)=1
+                """))
+            {
+                update.setString(1, collision.targetName());
                 update.setString(2, collision.targetName());
-                update.setString(3, collision.sourceName());
                 update.executeUpdate();
             }
 
@@ -109,9 +177,35 @@ final class FactoryAliasListCollisionRepair
         return collisions.stream().mapToLong(Collision::referenceCount).sum();
     }
 
+    /** Counts each channel once when either legacy projection selects the supplied Alias List name. */
+    static long channelReferenceCount(Connection connection, String name) throws SQLException
+    {
+        try(PreparedStatement query = connection.prepareStatement("""
+            SELECT COUNT(*) FROM configuration_channel AS channel
+            WHERE channel.alias_list_name=? COLLATE NOCASE
+               OR (NOT EXISTS (
+                       SELECT 1 FROM alias_list AS current_list
+                       WHERE typeof(channel.alias_list_name)='text'
+                         AND current_list.name=trim(channel.alias_list_name) COLLATE NOCASE
+                   )
+                   AND (CASE WHEN json_valid(channel.config_json)=1 THEN
+                           CASE WHEN json_type(channel.config_json, '$.aliasListName')='text'
+                               THEN nullif(trim(json_extract(channel.config_json, '$.aliasListName')), '') END
+                       END)=? COLLATE NOCASE)
+            """))
+        {
+            query.setString(1, name);
+            query.setString(2, name);
+            try(ResultSet row = query.executeQuery())
+            {
+                return row.next() ? row.getLong(1) : 0;
+            }
+        }
+    }
+
     private static long referenceCount(Connection connection, String name) throws SQLException
     {
-        long count = count(connection, "configuration_channel", name);
+        long count = channelReferenceCount(connection, name);
         for(String table: HISTORICAL_REFERENCE_TABLES)
         {
             count += count(connection, table, name);

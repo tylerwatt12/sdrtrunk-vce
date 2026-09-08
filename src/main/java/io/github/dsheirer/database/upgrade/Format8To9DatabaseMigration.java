@@ -57,14 +57,16 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
+        long unknown = DatabaseMigrationEffect.UNKNOWN_COUNT;
+        return effects(unknown, unknown, unknown, unknown);
     }
 
     @Override
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
-        return effects(input.users().size(), input.portablePreferences().removedSettings());
+        return effects(input.users().size(), input.defaultedUsers(),
+            input.portablePreferences().removedSettings(), input.portablePreferences().resetRows());
     }
 
     @Override
@@ -76,7 +78,7 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE web_user
             SET preferences_json = ?, preferences_revision = ?, updated_at_ms = ?
-            WHERE id = ? AND preferences_json = ? AND preferences_revision = ?
+            WHERE id = ?
             """))
         {
             for(UserPreferenceUpdate user: input.users())
@@ -85,34 +87,31 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
                 statement.setLong(2, user.targetRevision());
                 statement.setLong(3, updatedAt);
                 statement.setLong(4, user.id());
-                statement.setString(5, user.sourceJson());
-                statement.setLong(6, user.sourceRevision());
 
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Web user preferences changed after format-8-to-9 preflight: user " +
+                    throw new SQLException("Unable to update web user preferences during format-8-to-9: user " +
                         user.id());
                 }
             }
         }
 
         PortablePreferenceUpdate portable = input.portablePreferences();
-        if(portable.removedSettings() > 0)
+        if(portable.targetJson() != null && !portable.targetJson().equals(portable.sourceJson()))
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 UPDATE application_settings
                 SET settings_json = ?, updated_at_ms = ?
-                WHERE key = ? AND settings_json = ?
+                WHERE key = ?
                 """))
             {
                 statement.setString(1, portable.targetJson());
                 statement.setLong(2, updatedAt);
                 statement.setString(3, PORTABLE_PREFERENCES_KEY);
-                statement.setString(4, portable.sourceJson());
 
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Portable preferences changed after format-8-to-9 preflight");
+                    throw new SQLException("Unable to update portable preferences during format-8-to-9");
                 }
             }
         }
@@ -123,9 +122,14 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
         requireSourceFormat(connection);
         PortablePreferenceUpdate portable = inspectPortablePreferences(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
+        int defaultedUsers = 0;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, preferences_json, preferences_revision
+            SELECT id,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision
             FROM web_user
             ORDER BY id
             """); ResultSet resultSet = statement.executeQuery())
@@ -135,40 +139,38 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
                 long id = resultSet.getLong("id");
                 String sourceJson = resultSet.getString("preferences_json");
                 long sourceRevision = resultSet.getLong("preferences_revision");
-                long targetRevision;
+                boolean revisionRecovered = sourceRevision <= 0 || sourceRevision == Long.MAX_VALUE;
+                long targetRevision = revisionRecovered ? 1 : sourceRevision + 1;
+                String targetJson;
+                boolean defaulted = revisionRecovered;
 
                 try
                 {
-                    targetRevision = Math.incrementExact(sourceRevision);
+                    targetJson = Format9WebUserPreferencesCodec.migrateFromFormat8(sourceJson,
+                        portable.retainLastCallOnIdleRows(), portable.clearVoiceQualityWhenIdle());
                 }
-                catch(ArithmeticException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new SQLException("Refusing format-8-to-9 migration because web user " + id +
-                        " has an exhausted preference revision", exception);
+                    targetJson = defaultPreferences();
+                    defaulted = true;
                 }
-
-                try
+                if(defaulted)
                 {
-                    users.add(new UserPreferenceUpdate(id, sourceJson, sourceRevision,
-                        Format9WebUserPreferencesCodec.migrateFromFormat8(sourceJson,
-                            portable.retainLastCallOnIdleRows(), portable.clearVoiceQualityWhenIdle()),
-                        targetRevision));
+                    defaultedUsers++;
                 }
-                catch(IOException exception)
-                {
-                    throw new SQLException("Refusing format-8-to-9 migration because web user " + id +
-                        " does not have an exact version-3 preference document", exception);
-                }
+                users.add(new UserPreferenceUpdate(id, targetJson, targetRevision));
             }
         }
 
-        return new MigrationInput(List.copyOf(users), portable);
+        return new MigrationInput(List.copyOf(users), defaultedUsers, portable);
     }
 
     private static PortablePreferenceUpdate inspectPortablePreferences(Connection connection) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT settings_json
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json
             FROM application_settings
             WHERE key = ?
             """))
@@ -178,7 +180,7 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
             {
                 if(!resultSet.next())
                 {
-                    return new PortablePreferenceUpdate(null, null, false, false, 0);
+                    return new PortablePreferenceUpdate(null, null, false, false, 0, 0);
                 }
 
                 String sourceJson = resultSet.getString("settings_json");
@@ -191,34 +193,58 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
                     }
 
                     JsonNode node = root.get(NOW_PLAYING_NODE);
-                    if(node != null && !(node instanceof ObjectNode))
+                    int reset = 0;
+                    ObjectNode nowPlaying = null;
+                    if(node instanceof ObjectNode object)
                     {
-                        throw new IOException("Now-playing portable preferences must be an object");
+                        nowPlaying = object;
+                    }
+                    else if(node != null)
+                    {
+                        root.remove(NOW_PLAYING_NODE);
+                        reset++;
                     }
 
-                    ObjectNode nowPlaying = (ObjectNode)node;
-                    boolean retain = readBoolean(nowPlaying, RETAIN_IDLE_CALL_DETAILS_KEY);
-                    boolean clear = readBoolean(nowPlaying, CLEAR_VOICE_QUALITY_KEY);
+                    boolean retain = false;
+                    boolean clear = false;
                     int removed = 0;
                     if(nowPlaying != null)
                     {
-                        if(nowPlaying.remove(RETAIN_IDLE_CALL_DETAILS_KEY) != null)
+                        if(nowPlaying.has(RETAIN_IDLE_CALL_DETAILS_KEY))
                         {
                             removed++;
+                            try
+                            {
+                                retain = readBoolean(nowPlaying, RETAIN_IDLE_CALL_DETAILS_KEY);
+                            }
+                            catch(IOException | RuntimeException ignored)
+                            {
+                                reset++;
+                            }
+                            nowPlaying.remove(RETAIN_IDLE_CALL_DETAILS_KEY);
                         }
-                        if(nowPlaying.remove(CLEAR_VOICE_QUALITY_KEY) != null)
+                        if(nowPlaying.has(CLEAR_VOICE_QUALITY_KEY))
                         {
                             removed++;
+                            try
+                            {
+                                clear = readBoolean(nowPlaying, CLEAR_VOICE_QUALITY_KEY);
+                            }
+                            catch(IOException | RuntimeException ignored)
+                            {
+                                reset++;
+                            }
+                            nowPlaying.remove(CLEAR_VOICE_QUALITY_KEY);
                         }
                     }
 
-                    String targetJson = removed == 0 ? sourceJson : STRICT_MAPPER.writeValueAsString(root);
-                    return new PortablePreferenceUpdate(sourceJson, targetJson, retain, clear, removed);
+                    String targetJson = removed == 0 && reset == 0 ? sourceJson :
+                        STRICT_MAPPER.writeValueAsString(root);
+                    return new PortablePreferenceUpdate(sourceJson, targetJson, retain, clear, removed, reset);
                 }
-                catch(IOException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new SQLException("Refusing format-8-to-9 migration because portable preferences are invalid",
-                        exception);
+                    return new PortablePreferenceUpdate(sourceJson, "{}", false, false, 0, 1);
                 }
             }
         }
@@ -243,7 +269,20 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
         throw new IOException("Portable preference is not a canonical boolean: " + key);
     }
 
-    private static List<DatabaseMigrationEffect> effects(long userCount, long removedSettingCount)
+    private static String defaultPreferences() throws SQLException
+    {
+        try
+        {
+            return Format9WebUserPreferencesCodec.defaults();
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            throw new SQLException("Unable to create default version-4 browser preferences", exception);
+        }
+    }
+
+    private static List<DatabaseMigrationEffect> effects(long userCount, long defaultedUserCount,
+                                                          long removedSettingCount, long resetPortableRows)
     {
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
@@ -251,15 +290,22 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
                 "Upgrade each exact version-3 browser preference document to version 4, default active-channel " +
                     "filtering off, copy the two former shared Live display choices to every account, and increment " +
                     "each preference revision"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", defaultedUserCount,
+                "Replace only malformed or oversized user preference documents with version-4 defaults"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "obsolete shared Live presentation settings", removedSettingCount,
                 "Remove retain-idle-call-details and clear-voice-quality settings from portable Java preferences " +
-                    "while preserving traffic-grant age-out, the site-settings revision, and every unrelated value"));
+                    "while preserving traffic-grant age-out, the site-settings revision, and every unrelated value"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "unusable portable browser preferences", resetPortableRows,
+                "Discard malformed shared-presentation preferences; replace only a wholly unreadable portable " +
+                    "document with an empty bounded document"));
     }
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
         if(detected.version() != 8)
         {
             throw new SQLException("Migration step format-8-to-9 requires exact source format 8; found " +
@@ -267,19 +313,18 @@ final class Format8To9DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private record MigrationInput(List<UserPreferenceUpdate> users,
+    private record MigrationInput(List<UserPreferenceUpdate> users, int defaultedUsers,
                                   PortablePreferenceUpdate portablePreferences)
     {
     }
 
-    private record UserPreferenceUpdate(long id, String sourceJson, long sourceRevision,
-                                        String targetJson, long targetRevision)
+    private record UserPreferenceUpdate(long id, String targetJson, long targetRevision)
     {
     }
 
     private record PortablePreferenceUpdate(String sourceJson, String targetJson,
                                             boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle,
-                                            int removedSettings)
+                                            int removedSettings, int resetRows)
     {
     }
 }

@@ -7,7 +7,6 @@
 package io.github.dsheirer.gui.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.awt.Color;
 import java.awt.Font;
@@ -36,13 +35,15 @@ class SqliteDatabaseImportDialogTest
     }
 
     @Test
-    void wizardOwnsTheAfterSetupDatabaseImportAndRestartPrecedesReception() throws Exception
+    void fileMenuStartsTheWizardOwnedDatabaseImportBeforeReception() throws Exception
     {
         String application = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java"));
 
-        assertFalse(application.contains("new JMenuItem(\"Import SQLite Database...\")"));
+        assertTrue(application.contains("new JMenuItem(\"Import SQLite Database…\")"));
+        assertTrue(application.contains("\"--setup-wizard\", \"--import-sqlite\""));
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(wizard.contains("SqliteDatabaseImportDialog.choose(this, database, root)"));
+        assertTrue(wizard.contains("SwingUtilities.invokeLater(wizard::promptForDatabaseReplacement)"));
         assertTrue(application.contains("replaceCurrentDatabase(prepared.sourceDatabase()"));
         assertTrue(application.contains("ApplicationRelauncher.relaunch()"));
         assertTrue(application.contains("processShutdown(false)"));
@@ -61,6 +62,8 @@ class SqliteDatabaseImportDialogTest
         assertTrue(dialog.contains("timestamped safety backup"));
         assertTrue(dialog.contains("Only data inside the selected SQLite file will be imported"));
         assertTrue(dialog.contains("neighboring vault, JMBE library"));
+        assertTrue(dialog.contains("Reproducible activity or statistics data may be reset"));
+        assertTrue(dialog.contains("no usable administrator credential can be preserved"));
         assertTrue(dialog.contains("restart automatically"));
     }
 }

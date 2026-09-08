@@ -68,14 +68,16 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
+        long unknown = DatabaseMigrationEffect.UNKNOWN_COUNT;
+        return effects(unknown, unknown, unknown, unknown);
     }
 
     @Override
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         MigrationInput input = inspect(connection);
-        return effects(input.users().size(), input.portablePreferences().removedSettings());
+        return effects(input.users().size(), input.defaultedUsers(),
+            input.portablePreferences().removedSettings(), input.portablePreferences().resetRows());
     }
 
     @Override
@@ -87,7 +89,7 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE web_user
             SET preferences_json = ?, preferences_revision = ?, updated_at_ms = ?
-            WHERE id = ? AND preferences_json = ? AND preferences_revision = ?
+            WHERE id = ?
             """))
         {
             for(UserPreferenceUpdate user: input.users())
@@ -96,34 +98,31 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
                 statement.setLong(2, user.targetRevision());
                 statement.setLong(3, updatedAt);
                 statement.setLong(4, user.id());
-                statement.setString(5, user.sourceJson());
-                statement.setLong(6, user.sourceRevision());
 
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Web user preferences changed after format-6-to-7 preflight: user " +
+                    throw new SQLException("Unable to update web user preferences during format-6-to-7: user " +
                         user.id());
                 }
             }
         }
 
         PortablePreferenceUpdate portable = input.portablePreferences();
-        if(portable.removedSettings() > 0)
+        if(portable.targetJson() != null && !portable.targetJson().equals(portable.sourceJson()))
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 UPDATE application_settings
                 SET settings_json = ?, updated_at_ms = ?
-                WHERE key = ? AND settings_json = ?
+                WHERE key = ?
                 """))
             {
                 statement.setString(1, portable.targetJson());
                 statement.setLong(2, updatedAt);
                 statement.setString(3, PORTABLE_PREFERENCES_KEY);
-                statement.setString(4, portable.sourceJson());
 
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Portable preferences changed after format-6-to-7 preflight");
+                    throw new SQLException("Unable to update portable preferences during format-6-to-7");
                 }
             }
         }
@@ -133,9 +132,14 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
     {
         requireSourceFormat(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
+        int defaultedUsers = 0;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, preferences_json, preferences_revision
+            SELECT id,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision
             FROM web_user
             ORDER BY id
             """); ResultSet resultSet = statement.executeQuery())
@@ -145,45 +149,40 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
                 long id = resultSet.getLong("id");
                 String sourceJson = resultSet.getString("preferences_json");
                 long sourceRevision = resultSet.getLong("preferences_revision");
-                long targetRevision;
+                boolean revisionRecovered = sourceRevision <= 0 || sourceRevision == Long.MAX_VALUE;
+                long targetRevision = revisionRecovered ? 1 : sourceRevision + 1;
+                String targetJson;
+                boolean defaulted = revisionRecovered;
 
                 try
                 {
-                    targetRevision = Math.incrementExact(sourceRevision);
+                    Format7WebUserPreferencesCodec.MigrationResult migration =
+                        Format7WebUserPreferencesCodec.migrateFromFormat6BestEffort(sourceJson);
+                    targetJson = migration.json();
+                    defaulted |= migration.defaultedSelectedScanLists();
                 }
-                catch(ArithmeticException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new SQLException("Refusing format-6-to-7 migration because web user " + id +
-                        " has an exhausted preference revision", exception);
+                    targetJson = defaultPreferences();
+                    defaulted = true;
                 }
-
-                try
+                if(defaulted)
                 {
-                    users.add(new UserPreferenceUpdate(id, sourceJson, sourceRevision,
-                        Format7WebUserPreferencesCodec.migrateFromFormat6(sourceJson), targetRevision));
+                    defaultedUsers++;
                 }
-                catch(Format7WebUserPreferencesCodec.SelectedScanListLimitException exception)
-                {
-                    throw new SQLException("Refusing format-6-to-7 migration because web user " + id +
-                        " selected " + exception.selected() + " scan lists; format 7 supports at most " +
-                        exception.maximum() + ". Reduce that user's selections in the previous build before " +
-                        "migrating.", exception);
-                }
-                catch(IOException exception)
-                {
-                    throw new SQLException("Refusing format-6-to-7 migration because web user " + id +
-                        " does not have an exact version-1 preference document", exception);
-                }
+                users.add(new UserPreferenceUpdate(id, targetJson, targetRevision));
             }
         }
 
-        return new MigrationInput(List.copyOf(users), inspectPortablePreferences(connection));
+        return new MigrationInput(List.copyOf(users), defaultedUsers, inspectPortablePreferences(connection));
     }
 
     private static PortablePreferenceUpdate inspectPortablePreferences(Connection connection) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT settings_json
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json
             FROM application_settings
             WHERE key = ?
             """))
@@ -193,7 +192,7 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
             {
                 if(!resultSet.next())
                 {
-                    return new PortablePreferenceUpdate(null, null, 0);
+                    return new PortablePreferenceUpdate(null, null, 0, 0);
                 }
 
                 String sourceJson = resultSet.getString("settings_json");
@@ -206,14 +205,18 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
                     }
 
                     int removed = 0;
+                    int reset = 0;
                     List<String> emptiedNodes = new ArrayList<>();
+                    List<String> malformedNodes = new ArrayList<>();
                     Iterator<Map.Entry<String,JsonNode>> nodes = root.fields();
                     while(nodes.hasNext())
                     {
                         Map.Entry<String,JsonNode> entry = nodes.next();
                         if(!(entry.getValue() instanceof ObjectNode preferences))
                         {
-                            throw new IOException("Portable preference node must be an object: " + entry.getKey());
+                            malformedNodes.add(entry.getKey());
+                            reset++;
+                            continue;
                         }
 
                         int removedFromNode = 0;
@@ -232,35 +235,55 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
                         }
                     }
                     root.remove(emptiedNodes);
-                    String targetJson = removed == 0 ? sourceJson : STRICT_MAPPER.writeValueAsString(root);
-                    return new PortablePreferenceUpdate(sourceJson, targetJson, removed);
+                    root.remove(malformedNodes);
+                    String targetJson = removed == 0 && reset == 0 ? sourceJson :
+                        STRICT_MAPPER.writeValueAsString(root);
+                    return new PortablePreferenceUpdate(sourceJson, targetJson, removed, reset);
                 }
-                catch(IOException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new SQLException("Refusing format-6-to-7 migration because portable preferences are invalid",
-                        exception);
+                    return new PortablePreferenceUpdate(sourceJson, "{}", 0, 1);
                 }
             }
         }
     }
 
-    private static List<DatabaseMigrationEffect> effects(long userCount, long retiredSettingCount)
+    private static String defaultPreferences() throws SQLException
+    {
+        try
+        {
+            return Format7WebUserPreferencesCodec.defaults();
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            throw new SQLException("Unable to create default version-2 browser preferences", exception);
+        }
+    }
+
+    private static List<DatabaseMigrationEffect> effects(long userCount, long defaultedUserCount,
+                                                          long retiredSettingCount, long resetPortableRows)
     {
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "per-user browser preference documents", userCount,
                 "Upgrade exact version-1 documents to version 2 with conversation grouping enabled and a " +
-                    "four-call burst limit, incrementing each preference revision; refuse user-owned selections " +
-                    "that exceed the version-2 limit of 16 scan lists"),
+                    "four-call burst limit and increment each usable preference revision"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", defaultedUserCount,
+                "Replace only malformed, oversized, or unrepresentable user preference documents with version-2 defaults"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "retired global browser-audio settings", retiredSettingCount,
                 "Remove the five obsolete capacity keys from portable Java preferences while preserving every " +
-                    "unrelated node and value"));
+                    "unrelated node and value"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "unusable portable browser preferences", resetPortableRows,
+                "Discard malformed portable preference nodes; replace only a wholly unreadable document with an " +
+                    "empty bounded document"));
     }
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
         if(detected.version() != 6)
         {
             throw new SQLException("Migration step format-6-to-7 requires exact source format 6; found " +
@@ -268,17 +291,16 @@ final class Format6To7DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private record MigrationInput(List<UserPreferenceUpdate> users,
+    private record MigrationInput(List<UserPreferenceUpdate> users, int defaultedUsers,
                                   PortablePreferenceUpdate portablePreferences)
     {
     }
 
-    private record UserPreferenceUpdate(long id, String sourceJson, long sourceRevision,
-                                        String targetJson, long targetRevision)
+    private record UserPreferenceUpdate(long id, String targetJson, long targetRevision)
     {
     }
 
-    private record PortablePreferenceUpdate(String sourceJson, String targetJson, int removedSettings)
+    private record PortablePreferenceUpdate(String sourceJson, String targetJson, int removedSettings, int resetRows)
     {
     }
 }

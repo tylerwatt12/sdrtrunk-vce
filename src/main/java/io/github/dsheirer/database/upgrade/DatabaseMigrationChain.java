@@ -12,6 +12,8 @@
 package io.github.dsheirer.database.upgrade;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +21,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Strict linear runner for the complete adjacent migration chain. */
+/** Linear staged runner for the complete adjacent migration chain. */
 public final class DatabaseMigrationChain
 {
     private static final List<DatabaseMigrationStep> ORDERED_STEPS = List.of(
@@ -37,14 +39,11 @@ public final class DatabaseMigrationChain
     {
     }
 
-    /**
-     * Re-inspects and validates the selected source without writing it. This is suitable for parent-process
-     * preflight before the staged child process is launched.
-     */
+    /** Re-inspects the selected source and returns the immutable declared plan without modifying it. */
     public static PreflightReport validateSource(Connection connection,
                                                  DatabaseFormatCatalog.DetectedFormat expected) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat actual = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat actual = DatabaseFormatCatalog.inspectForMigration(connection);
 
         if(actual.version() != expected.version() || !actual.id().equals(expected.id()) ||
             actual.markerPresent() != expected.markerPresent())
@@ -54,28 +53,130 @@ public final class DatabaseMigrationChain
                 actual.markerPresent() + "]");
         }
 
+        return plan(actual);
+    }
+
+    /** Builds the ordered plan from the checked catalog identity without scanning every source subsystem. */
+    static PreflightReport plan(DatabaseFormatCatalog.DetectedFormat source) throws SQLException
+    {
         List<StepPreflight> steps = new ArrayList<>();
-        int version = actual.version();
-        boolean sourceLayoutAvailable = true;
+        int version = source.version();
 
         while(version < DatabaseFormatCatalog.CURRENT_VERSION)
         {
             DatabaseMigrationStep step = requireStep(version);
             requireAdjacent(step);
-            List<DatabaseMigrationEffect> effects = sourceLayoutAvailable ? step.validateSource(connection) :
-                step.declaredEffects();
             steps.add(new StepPreflight(step.id(), step.description(), step.sourceVersion(), step.targetVersion(),
-                List.copyOf(effects)));
+                List.copyOf(step.declaredEffects())));
             version = step.targetVersion();
-            sourceLayoutAvailable = false;
         }
 
-        if(!actual.markerPresent() && actual.version() == DatabaseFormatCatalog.CURRENT_VERSION)
+        if(!source.markerPresent() && source.version() == DatabaseFormatCatalog.CURRENT_VERSION)
         {
-            steps.add(markerAdoptionPreflight(actual.version()));
+            steps.add(markerAdoptionPreflight(source.version()));
         }
 
-        return new PreflightReport(actual, DatabaseFormatCatalog.current(), List.copyOf(steps));
+        return new PreflightReport(source, DatabaseFormatCatalog.current(), List.copyOf(steps));
+    }
+
+    /** Adds the bounded, same-schema preference sanitizer run by the Application Migrator when it may be needed. */
+    static PreflightReport planForApplicationMigration(Connection connection,
+                                                        DatabaseFormatCatalog.DetectedFormat source)
+        throws SQLException
+    {
+        PreflightReport schemaPlan = plan(source);
+        List<StepPreflight> steps = new ArrayList<>();
+        StepPreflight preferenceRepair = new StepPreflight("repair-portable-preferences",
+            "Validate and independently repair portable preference components",
+            DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.CURRENT_VERSION,
+            List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "unusable portable preference components", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Preserve usable entries and remove or reset only malformed, obsolete, or invalid components")));
+
+        SqliteIdentityRepair.Inspection identityRepair = SqliteIdentityRepair.inspect(connection);
+        if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION && identityRepair.requiresRepair())
+        {
+            //Allocator damage must be repaired before historical steps create factory rows.
+            steps.add(SqliteIdentityRepair.preflight(identityRepair, source.version()));
+        }
+
+        if(source.version() == DatabaseFormatCatalog.CURRENT_VERSION && currentPortablePreferencesNeedRepair(connection))
+        {
+            //Current-format preference repair runs before strict marker adoption.
+            steps.add(preferenceRepair);
+        }
+        if(source.version() == DatabaseFormatCatalog.CURRENT_VERSION)
+        {
+            CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair =
+                CurrentDatabaseAdministrativeRepair.inspect(connection);
+            if(administrativeRepair.requiresRepair())
+            {
+                steps.add(CurrentDatabaseAdministrativeRepair.preflight(administrativeRepair));
+            }
+            CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
+            CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair =
+                CurrentDatabaseDerivedStateRepair.inspect(connection);
+            if(derivedStateRepair.requiresRepair())
+            {
+                steps.add(CurrentDatabaseDerivedStateRepair.preflight(derivedStateRepair));
+            }
+            CurrentDatabaseBestEffortRepair.Inspection currentRepair =
+                CurrentDatabaseBestEffortRepair.inspect(connection);
+            if(currentRepair.requiresRepair())
+            {
+                steps.add(CurrentDatabaseBestEffortRepair.preflight(currentRepair));
+            }
+            if(identityRepair.requiresRepair())
+            {
+                //Current component repair first isolates JSON-unsafe owners; allocator repair then uses the retained
+                //maximum. Keep the displayed plan in the same order as execution.
+                steps.add(SqliteIdentityRepair.preflight(identityRepair, source.version()));
+            }
+        }
+        steps.addAll(schemaPlan.steps());
+        if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+        {
+            //Historical preference layouts reach current semantics through the chain before this final sanitizer.
+            steps.add(preferenceRepair);
+        }
+        return new PreflightReport(schemaPlan.source(), schemaPlan.target(), List.copyOf(steps));
+    }
+
+    private static boolean currentPortablePreferencesNeedRepair(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            """
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json,
+                   updated_at_ms, typeof(settings_json), typeof(updated_at_ms),
+                   length(CAST(settings_json AS BLOB)) AS settings_json_bytes
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """);
+            ResultSet resultSet = statement.executeQuery())
+        {
+            if(!resultSet.next())
+            {
+                return false;
+            }
+
+            String json = resultSet.getString(1);
+            if(!"text".equals(resultSet.getString(3)) || !"integer".equals(resultSet.getString(4)) ||
+                resultSet.getLong(2) <= 0 || resultSet.getLong("settings_json_bytes") > 4_194_304)
+            {
+                return true;
+            }
+            try
+            {
+                Format5WebStateValidator.validateCurrentPortablePreferences(json);
+                return false;
+            }
+            catch(SQLException ignored)
+            {
+                //The reason may contain a preference key, so expose only the value-free declared repair action.
+                return true;
+            }
+        }
     }
 
     /** Ordered immutable adjacent-step manifest. */
@@ -88,7 +189,7 @@ public final class DatabaseMigrationChain
     /** Runs every required adjacent step on the caller-provided staged connection. */
     public static MigrationReport migrate(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
         List<StepReport> reports = new ArrayList<>();
         DatabaseFormatCatalog.DetectedFormat detected = source;
 
@@ -96,10 +197,10 @@ public final class DatabaseMigrationChain
         {
             DatabaseMigrationStep step = requireStep(detected.version());
             requireAdjacent(step);
-            List<DatabaseMigrationEffect> effects = List.copyOf(step.validateSource(connection));
-            step.migrate(connection);
-            DatabaseFormatCatalog.stamp(connection, step.targetVersion());
-            DatabaseFormatCatalog.DetectedFormat target = DatabaseFormatCatalog.inspect(connection);
+            List<DatabaseMigrationEffect> effects = List.copyOf(step.migrateAndReport(connection));
+            requireObservedCounts(step, effects);
+            DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
+            DatabaseFormatCatalog.DetectedFormat target = DatabaseFormatCatalog.inspectForMigration(connection);
 
             if(target.version() != step.targetVersion() || !target.markerPresent())
             {
@@ -114,7 +215,7 @@ public final class DatabaseMigrationChain
 
         if(!detected.markerPresent())
         {
-            DatabaseFormatCatalog.stamp(connection, detected.version());
+            DatabaseFormatCatalog.stampForMigration(connection, detected.version());
             detected = DatabaseFormatCatalog.requireCurrent(connection);
             StepPreflight adoption = markerAdoptionPreflight(detected.version());
             reports.add(new StepReport(adoption.id(), adoption.description(), adoption.sourceVersion(),
@@ -123,22 +224,6 @@ public final class DatabaseMigrationChain
 
         DatabaseFormatCatalog.requireCurrent(connection);
         return new MigrationReport(source, detected, List.copyOf(reports));
-    }
-
-    /** Runs the complete chain on a caller-owned disposable copy and returns its exact, data-aware plan. */
-    static PreflightReport simulate(Connection connection,
-                                    DatabaseFormatCatalog.DetectedFormat expected) throws SQLException
-    {
-        DatabaseFormatCatalog.DetectedFormat actual = DatabaseFormatCatalog.inspect(connection);
-        if(actual.version() != expected.version() || !actual.id().equals(expected.id()) ||
-            actual.markerPresent() != expected.markerPresent())
-        {
-            throw new SQLException("SQLite database changed while creating its migration preview");
-        }
-        MigrationReport report = migrate(connection);
-        List<StepPreflight> steps = report.steps().stream().map(step -> new StepPreflight(step.id(),
-            step.description(), step.sourceVersion(), step.targetVersion(), step.effects())).toList();
-        return new PreflightReport(report.source(), DatabaseFormatCatalog.current(), steps);
     }
 
     private static DatabaseMigrationStep requireStep(int sourceVersion) throws SQLException
@@ -162,6 +247,19 @@ public final class DatabaseMigrationChain
         }
     }
 
+    private static void requireObservedCounts(DatabaseMigrationStep step, List<DatabaseMigrationEffect> effects)
+        throws SQLException
+    {
+        for(DatabaseMigrationEffect effect: effects)
+        {
+            if(effect.affectedRows() < 0)
+            {
+                throw new SQLException("Migration step [" + step.id() + "] did not report an exact completion " +
+                    "count for " + effect.subject());
+            }
+        }
+    }
+
     private static StepPreflight markerAdoptionPreflight(int version)
     {
         return new StepPreflight("adopt-global-format-marker", "Adopt the authoritative whole-file format marker",
@@ -173,6 +271,10 @@ public final class DatabaseMigrationChain
     public record PreflightReport(DatabaseFormatCatalog.DetectedFormat source,
                                   DatabaseFormatCatalog.FormatDescriptor target, List<StepPreflight> steps)
     {
+        public boolean requiresMigration()
+        {
+            return source.requiresMigration() || !steps.isEmpty();
+        }
     }
 
     public record StepPreflight(String id, String description, int sourceVersion, int targetVersion,
@@ -190,20 +292,9 @@ public final class DatabaseMigrationChain
                 return "Database is already at current format " + target.version() + ".";
             }
 
-            long transformed = effectCount(DatabaseMigrationEffect.Kind.TRANSFORM) +
-                effectCount(DatabaseMigrationEffect.Kind.DEFAULT);
-            long reset = effectCount(DatabaseMigrationEffect.Kind.RESET);
-            long dropped = effectCount(DatabaseMigrationEffect.Kind.DROP);
             return "Migrated database format " + source.version() + " [" + source.id() + "] to " +
                 target.version() + " [" + target.id() + "] through " + steps.size() +
-                " step(s): transformed/defaulted " + transformed + ", reset " + reset + ", and dropped " +
-                dropped + " counted row(s).";
-        }
-
-        private long effectCount(DatabaseMigrationEffect.Kind kind)
-        {
-            return steps.stream().flatMap(step -> step.effects().stream()).filter(effect -> effect.kind() == kind)
-                .mapToLong(DatabaseMigrationEffect::affectedRows).sum();
+                " step(s). See the itemized completion counts above.";
         }
     }
 

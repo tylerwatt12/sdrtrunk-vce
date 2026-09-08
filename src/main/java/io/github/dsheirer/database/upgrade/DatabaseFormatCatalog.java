@@ -24,9 +24,14 @@ import java.util.Map;
 /**
  * Authoritative catalog for every supported whole-file SQLite database format.
  *
- * <p>The complete schema fingerprint is the structural identity.  Subsystem metadata and the critical invariants
- * below prevent a structurally plausible mixed or partially migrated database from being admitted.  Release-channel
- * names and file names are deliberately not inputs.</p>
+ * <p>The complete schema fingerprint is the structural identity. Strict inspection also validates subsystem metadata
+ * and critical row invariants. Migration inspection uses an authoritative legacy whole-file marker plus that exact
+ * fingerprint so adjacent steps can repair recoverable metadata and row damage; uniquely fingerprinted markerless
+ * historical formats still require their subsystem metadata, and shared markerless layouts remain strict and
+ * ambiguity-safe. Current-format migration inspection relaxes recoverable row/content invariants and retired
+ * metadata so the staged migrator can repair those components independently; structural identity and the storage of
+ * any authoritative format marker remain strict.
+ * Release-channel names and file names are deliberately not inputs.</p>
  */
 public final class DatabaseFormatCatalog
 {
@@ -107,7 +112,7 @@ public final class DatabaseFormatCatalog
             "Preserve exact password verifiers, roles, access policy, and shared receiver preferences",
             "Move personal browser settings into each account's bounded preference document",
             "Drop known retired channel rows, web policy overrides, and superseded personal-setting storage",
-            "Require exact saved-channel UUID, channel-kind, and nonblank RadioResolve GUID identities"));
+            "Recover missing, invalid, or duplicate saved-channel identities and skip only unclassifiable channels"));
     private static final FormatDescriptor FORMAT_6 = descriptor(6, "conventional-context-identity-v29",
         "Canonical configured conventional receiver-context identity format",
         FORMAT_6_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
@@ -125,7 +130,7 @@ public final class DatabaseFormatCatalog
         List.of(
             "Preserve every account, credential, role, access policy, and unrelated browser preference",
             "Add conversation grouping and its bounded burst limit to each complete user preference document",
-            "Refuse version-1 selections above the version-2 limit of 16 scan lists instead of truncating them",
+            "Default only a malformed or unrepresentable per-user preference document",
             "Drop the five retired global browser-audio capacity settings"));
     private static final FormatDescriptor FORMAT_8 = descriptor(8, "web-user-health-alert-preferences-v3",
         "Per-user receiver-health alert visibility preference format",
@@ -177,7 +182,7 @@ public final class DatabaseFormatCatalog
         List.of(
             "Preserve all existing browser preferences, accounts, credentials, roles, and receiver configuration",
             "Add disabled-by-default idle FFT channel markers to each user preference document",
-            "Increment each preference revision; refuse malformed documents and exhausted revisions"));
+            "Increment usable preference revisions and default only malformed documents or exhausted revisions"));
 
     private static final FormatDescriptor FORMAT_13 = descriptor(13, "resumable-setup-wizard",
         "Bounded setup wizard progress", FORMAT_12_FINGERPRINT, new SubsystemVersions(6, 3, 3, 2, 29, 2, 1),
@@ -236,6 +241,25 @@ public final class DatabaseFormatCatalog
     /** Inspects without modifying the database. */
     public static DetectedFormat inspect(Connection connection) throws SQLException
     {
+        return inspect(connection, false);
+    }
+
+    /**
+     * Inspects a source that the Application Migrator can repair.  An authoritative historical marker and its exact
+     * schema fingerprint select the adjacent chain; redundant subsystem markers and recoverable row invariants are
+     * left to those steps.  A uniquely fingerprinted markerless historical layout still has to match its subsystem
+     * metadata, while shared markerless layouts remain strict. Current-format sources relax recoverable row/content
+     * invariants and retired metadata only for bounded staged repair; structural identity and the storage of any
+     * authoritative format marker remain strict.
+     */
+    static DetectedFormat inspectForMigration(Connection connection) throws SQLException
+    {
+        return inspect(connection, true);
+    }
+
+    private static DetectedFormat inspect(Connection connection, boolean allowRecoverableLegacyData)
+        throws SQLException
+    {
         String fingerprint = SqliteSchemaValidator.fingerprint(connection);
         List<FormatDescriptor> candidates = BY_FINGERPRINT.get(fingerprint);
 
@@ -252,7 +276,8 @@ public final class DatabaseFormatCatalog
             throw new FormatRejectionException("Unrecognized SQLite database schema fingerprint (" + fingerprint + ")");
         }
 
-        String marker = metadata(connection, FORMAT_VERSION_KEY);
+        String marker = allowRecoverableLegacyData ? metadataForMigration(connection, FORMAT_VERSION_KEY) :
+            metadata(connection, FORMAT_VERSION_KEY);
         boolean markerPresent = marker != null;
 
         if(markerPresent)
@@ -280,9 +305,29 @@ public final class DatabaseFormatCatalog
                     "; the database is mixed or partially migrated");
             }
 
-            validateMetadata(connection, descriptor);
-            validateInvariants(connection, descriptor);
+            if(!allowRecoverableLegacyData)
+            {
+                validateMetadata(connection, descriptor);
+            }
+            if(!allowRecoverableLegacyData || descriptor.version() == CURRENT_VERSION)
+            {
+                validateInvariants(connection, descriptor, allowRecoverableLegacyData);
+            }
             return new DetectedFormat(descriptor, true);
+        }
+
+        if(allowRecoverableLegacyData && candidates.size() == 1)
+        {
+            FormatDescriptor descriptor = candidates.getFirst();
+
+            if(descriptor.version() < CURRENT_VERSION)
+            {
+                //Historical metadata remains part of the exact markerless format signature. The current schema is
+                //unique, and its redundant retired metadata is instead removed by staged administrative repair.
+                validateMetadata(connection, descriptor);
+            }
+            validateInvariants(connection, descriptor, true);
+            return new DetectedFormat(descriptor, false);
         }
 
         List<FormatDescriptor> matches = new ArrayList<>();
@@ -293,7 +338,7 @@ public final class DatabaseFormatCatalog
             try
             {
                 validateMetadata(connection, candidate);
-                validateInvariants(connection, candidate);
+                validateInvariants(connection, candidate, allowRecoverableLegacyData);
                 matches.add(candidate);
             }
             catch(FormatRejectionException e)
@@ -353,6 +398,21 @@ public final class DatabaseFormatCatalog
     /** Writes only the whole-file format marker. Existing schema mutation remains the migrator's responsibility. */
     public static void stamp(Connection connection, int version) throws SQLException
     {
+        stamp(connection, version, false);
+    }
+
+    /**
+     * Stamps an intermediate migration result after its exact schema has been verified.  Redundant subsystem markers
+     * and recoverable data invariants may remain until a later step; the current target is always checked fully.
+     */
+    static void stampForMigration(Connection connection, int version) throws SQLException
+    {
+        stamp(connection, version, true);
+    }
+
+    private static void stamp(Connection connection, int version, boolean allowRecoverableLegacyData)
+        throws SQLException
+    {
         FormatDescriptor descriptor = BY_VERSION.get(version);
 
         if(descriptor == null)
@@ -368,9 +428,16 @@ public final class DatabaseFormatCatalog
                 "]: schema fingerprint is " + fingerprint + "; expected " + descriptor.fingerprint());
         }
 
-        validateMetadata(connection, descriptor);
-        validateInvariants(connection, descriptor);
-        String existing = metadata(connection, FORMAT_VERSION_KEY);
+        if(!allowRecoverableLegacyData || version == CURRENT_VERSION)
+        {
+            validateMetadata(connection, descriptor);
+        }
+        if(!allowRecoverableLegacyData || version == CURRENT_VERSION)
+        {
+            validateInvariants(connection, descriptor, false);
+        }
+        String existing = allowRecoverableLegacyData ? metadataForMigration(connection, FORMAT_VERSION_KEY) :
+            metadata(connection, FORMAT_VERSION_KEY);
 
         if(existing != null)
         {
@@ -448,7 +515,7 @@ public final class DatabaseFormatCatalog
             if(!expected.getValue().equals(actual))
             {
                 throw new FormatRejectionException("SQLite schema format [" + descriptor.id() + "] metadata [" +
-                    expected.getKey() + "] is " + actual + "; expected " + expected.getValue() +
+                    expected.getKey() + "] does not match expected version " + expected.getValue() +
                     "; the database is mixed or partially migrated");
             }
         }
@@ -473,8 +540,16 @@ public final class DatabaseFormatCatalog
         return List.copyOf(keys);
     }
 
-    private static void validateInvariants(Connection connection, FormatDescriptor descriptor) throws SQLException
+    private static void validateInvariants(Connection connection, FormatDescriptor descriptor,
+                                           boolean allowRecoverableCurrentData) throws SQLException
     {
+        if(allowRecoverableCurrentData && descriptor.version() == CURRENT_VERSION)
+        {
+            //Only the staged Application Migrator uses this admission. It repairs each bounded current component
+            //before the normal strict current-format validator is allowed to accept the result.
+            return;
+        }
+
         if(descriptor.version() >= 13)
         {
             try { io.github.dsheirer.gui.setup.SetupProgress.read(connection); }
@@ -576,20 +651,57 @@ public final class DatabaseFormatCatalog
         catch(NumberFormatException e)
         {
             throw new FormatRejectionException("SQLite database metadata [" + FORMAT_VERSION_KEY + "] is not a canonical " +
-                "positive integer: " + marker, e);
+                "positive integer", e);
         }
     }
 
     private static String metadata(Connection connection, String key) throws SQLException
     {
+        return metadata(connection, key, false);
+    }
+
+    /** Allows only the replaceable update timestamp to be repaired after value/type/uniqueness identify the format. */
+    private static String metadataForMigration(Connection connection, String key) throws SQLException
+    {
+        return metadata(connection, key, true);
+    }
+
+    private static String metadata(Connection connection, String key, boolean allowTimestampRepair)
+        throws SQLException
+    {
         try(PreparedStatement statement =
-                connection.prepareStatement("SELECT value FROM database_metadata WHERE key=?"))
+                connection.prepareStatement("""
+                    SELECT CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB)) <= 128
+                                THEN value END AS value,
+                           updated_at_ms, typeof(key), typeof(value), typeof(updated_at_ms)
+                    FROM database_metadata
+                    WHERE key=? OR (typeof(key)<>'text' AND CAST(key AS TEXT)=?)
+                    """))
         {
             statement.setString(1, key);
+            statement.setString(2, key);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return resultSet.next() ? resultSet.getString(1) : null;
+                if(!resultSet.next())
+                {
+                    return null;
+                }
+                String value = resultSet.getString(1);
+                boolean invalidTimestamp = !"integer".equals(resultSet.getString(5)) ||
+                    resultSet.getLong(2) <= 0;
+                if(value == null || !"text".equals(resultSet.getString(3)) ||
+                    !"text".equals(resultSet.getString(4)) || invalidTimestamp && !allowTimestampRepair)
+                {
+                    throw new FormatRejectionException("SQLite database metadata [" + key +
+                        "] has invalid storage or update time");
+                }
+                if(resultSet.next())
+                {
+                    throw new FormatRejectionException("SQLite database metadata [" + key +
+                        "] is duplicated across incompatible storage types");
+                }
+                return value;
             }
         }
     }

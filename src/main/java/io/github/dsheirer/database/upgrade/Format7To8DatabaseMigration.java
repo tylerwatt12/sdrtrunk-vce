@@ -48,25 +48,26 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT);
+        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
     }
 
     @Override
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
-        return effects(inspect(connection).size());
+        UserInspection inspection = inspect(connection);
+        return effects(inspection.users().size(), inspection.defaultedUsers());
     }
 
     @Override
     public void migrate(Connection connection) throws SQLException
     {
-        List<UserPreferenceUpdate> users = inspect(connection);
+        List<UserPreferenceUpdate> users = inspect(connection).users();
         long updatedAt = System.currentTimeMillis();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE web_user
             SET preferences_json = ?, preferences_revision = ?, updated_at_ms = ?
-            WHERE id = ? AND preferences_json = ? AND preferences_revision = ?
+            WHERE id = ?
             """))
         {
             for(UserPreferenceUpdate user: users)
@@ -75,25 +76,28 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
                 statement.setLong(2, user.targetRevision());
                 statement.setLong(3, updatedAt);
                 statement.setLong(4, user.id());
-                statement.setString(5, user.sourceJson());
-                statement.setLong(6, user.sourceRevision());
 
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Web user preferences changed after format-7-to-8 preflight: user " +
+                    throw new SQLException("Unable to update web user preferences during format-7-to-8: user " +
                         user.id());
                 }
             }
         }
     }
 
-    private static List<UserPreferenceUpdate> inspect(Connection connection) throws SQLException
+    private static UserInspection inspect(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
         List<UserPreferenceUpdate> users = new ArrayList<>();
+        int defaultedUsers = 0;
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, preferences_json, preferences_revision
+            SELECT id,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision
             FROM web_user
             ORDER BY id
             """); ResultSet resultSet = statement.executeQuery())
@@ -103,45 +107,58 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
                 long id = resultSet.getLong("id");
                 String sourceJson = resultSet.getString("preferences_json");
                 long sourceRevision = resultSet.getLong("preferences_revision");
-                long targetRevision;
+                boolean revisionRecovered = sourceRevision <= 0 || sourceRevision == Long.MAX_VALUE;
+                long targetRevision = revisionRecovered ? 1 : sourceRevision + 1;
+                String targetJson;
+                boolean defaulted = revisionRecovered;
 
                 try
                 {
-                    targetRevision = Math.incrementExact(sourceRevision);
+                    targetJson = Format8WebUserPreferencesCodec.migrateFromFormat7(sourceJson);
                 }
-                catch(ArithmeticException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new SQLException("Refusing format-7-to-8 migration because web user " + id +
-                        " has an exhausted preference revision", exception);
+                    targetJson = defaultPreferences();
+                    defaulted = true;
                 }
-
-                try
+                if(defaulted)
                 {
-                    users.add(new UserPreferenceUpdate(id, sourceJson, sourceRevision,
-                        Format8WebUserPreferencesCodec.migrateFromFormat7(sourceJson), targetRevision));
+                    defaultedUsers++;
                 }
-                catch(IOException exception)
-                {
-                    throw new SQLException("Refusing format-7-to-8 migration because web user " + id +
-                        " does not have an exact version-2 preference document", exception);
-                }
+                users.add(new UserPreferenceUpdate(id, targetJson, targetRevision));
             }
         }
 
-        return List.copyOf(users);
+        return new UserInspection(List.copyOf(users), defaultedUsers);
     }
 
-    private static List<DatabaseMigrationEffect> effects(long userCount)
+    private static String defaultPreferences() throws SQLException
     {
-        return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
-            "per-user receiver-health alert settings", userCount,
-            "Upgrade each exact version-2 browser preference document to version 3 with every receiver-health " +
-                "alert enabled, preserving all existing preferences and incrementing each preference revision"));
+        try
+        {
+            return Format8WebUserPreferencesCodec.defaults();
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            throw new SQLException("Unable to create default version-3 browser preferences", exception);
+        }
+    }
+
+    private static List<DatabaseMigrationEffect> effects(long userCount, long defaultedUserCount)
+    {
+        return List.of(
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "per-user receiver-health alert settings", userCount,
+                "Upgrade each usable version-2 browser preference document to version 3 with every receiver-health " +
+                    "alert enabled and increment its preference revision"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", defaultedUserCount,
+                "Replace only malformed or oversized user preference documents with version-3 defaults"));
     }
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
         if(detected.version() != 7)
         {
             throw new SQLException("Migration step format-7-to-8 requires exact source format 7; found " +
@@ -149,8 +166,11 @@ final class Format7To8DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private record UserPreferenceUpdate(long id, String sourceJson, long sourceRevision,
-                                        String targetJson, long targetRevision)
+    private record UserPreferenceUpdate(long id, String targetJson, long targetRevision)
+    {
+    }
+
+    private record UserInspection(List<UserPreferenceUpdate> users, int defaultedUsers)
     {
     }
 }

@@ -20,7 +20,6 @@ import java.util.List;
 final class Format5To6DatabaseMigration implements DatabaseMigrationStep
 {
     private static final String P25_SCHEMA_VERSION_KEY = "p25_activity_schema_version";
-    private static final String SOURCE_P25_SCHEMA_VERSION = "28";
     private static final String TARGET_P25_SCHEMA_VERSION = "29";
 
     @Override
@@ -67,21 +66,17 @@ final class Format5To6DatabaseMigration implements DatabaseMigrationStep
         LegacyActivityReset.clear(connection, LegacyActivityReset.LOGICAL_CALL_TABLES);
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE database_metadata
-            SET value = ?, updated_at_ms = ?
-            WHERE key = ? AND value = ?
+            INSERT INTO database_metadata(key, value, updated_at_ms)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at_ms = excluded.updated_at_ms
             """))
         {
-            statement.setString(1, TARGET_P25_SCHEMA_VERSION);
-            statement.setLong(2, System.currentTimeMillis());
-            statement.setString(3, P25_SCHEMA_VERSION_KEY);
-            statement.setString(4, SOURCE_P25_SCHEMA_VERSION);
-
-            if(statement.executeUpdate() != 1)
-            {
-                throw new SQLException("Required format-5 metadata changed after preflight: " +
-                    P25_SCHEMA_VERSION_KEY);
-            }
+            statement.setString(1, P25_SCHEMA_VERSION_KEY);
+            statement.setString(2, TARGET_P25_SCHEMA_VERSION);
+            statement.setLong(3, System.currentTimeMillis());
+            statement.executeUpdate();
         }
     }
 
@@ -95,7 +90,7 @@ final class Format5To6DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
 
         if(detected.version() != 5)
         {

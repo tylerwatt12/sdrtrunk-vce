@@ -145,28 +145,34 @@ class ApplicationMigrationSuccessDialogTest
         String helper = "Detected format 1.\nRESULT: migrated and validated.";
         ApplicationMigrationService.MigrationResult current = new ApplicationMigrationService.MigrationResult(
             false, backup, null, helper, PreviousBuildLocator.InputScope.DATABASE_FILE);
-        assertEquals("Your database was migrated successfully.\n\n" + helper +
+        assertEquals("Your database was migrated successfully without row-level repairs, resets, or skipped " +
+            "items.\n\n" + helper +
             "\n\nSafety backup:\n" + backup,
             ApplicationMigrationSuccessDialog.currentDatabaseReport(current));
 
         ApplicationMigrationService.MigrationResult portable = new ApplicationMigrationService.MigrationResult(
             true, null, null, helper, PreviousBuildLocator.InputScope.PORTABLE_PROFILE);
-        assertEquals("Migration complete. The portable profile was copied and its stored paths were remapped. Your " +
-            "previous installation and its data were left unchanged.\n\n" + helper,
+        assertEquals("Migration completed without row-level repairs, resets, or skipped items. The database was " +
+            "migrated and each usable optional profile item was " +
+            "imported separately. Eligible stored paths were checked and remapped where applicable. Your previous " +
+            "installation and its data were left unchanged. Review the " +
+            "itemized optional-profile results below.\n\n" + helper,
             ApplicationMigrationSuccessDialog.previousImportReport(portable));
 
         ApplicationMigrationService.MigrationResult databaseOnly = new ApplicationMigrationService.MigrationResult(
             false, null, null, helper, PreviousBuildLocator.InputScope.DATABASE_FILE);
-        assertEquals("Migration complete. Only the selected SQLite database was imported. The source database and " +
+        assertEquals("Migration completed without row-level repairs, resets, or skipped items. Only the selected " +
+            "SQLite database was imported. The source database and " +
             "its neighboring files were left unchanged.\n\n" + helper,
             ApplicationMigrationSuccessDialog.previousImportReport(databaseOnly));
 
         Path source = Path.of("/old/profile.sqlite");
         String replacement = ApplicationMigrationSuccessDialog.replacementImportReport(current, source);
-        assertEquals("SQLite database import complete. The selected database replaced the active database after " +
+        assertEquals("SQLite database import completed without row-level repairs, resets, or skipped items. The " +
+            "selected database replaced the active database after " +
             "staged migration and validation. The selected source file and its neighboring files were left " +
-            "unchanged.\n\nStored portable paths were not remapped. If the imported database did not contain " +
-            "an administrator, setup will request a new administrator password after restart.\n\n" + helper +
+            "unchanged.\n\nStored portable paths were not remapped. If no usable administrator credential " +
+            "could be preserved, setup will request a new administrator password after restart.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + backup +
             "\n\nSDRTrunk will restart automatically into setup. Review the imported settings and output folders " +
@@ -179,6 +185,7 @@ class ApplicationMigrationSuccessDialogTest
         String bootstrap = Files.readString(Path.of(
             "src/main/java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java"));
         assertFalse(bootstrap.contains("JOptionPane"));
+        assertTrue(bootstrap.contains("System.out.println(\"Safety backup: \""));
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.currentDatabaseReport"));
         assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.previousImportReport"));

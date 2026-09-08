@@ -49,10 +49,11 @@ class Format11To12DatabaseMigrationTest
             var effect = plan.steps().getFirst().effects().getFirst();
             assertEquals(DatabaseMigrationEffect.Kind.DEFAULT, effect.kind());
             assertEquals("per-user idle FFT channel markers", effect.subject());
-            assertEquals(3, effect.affectedRows());
+            assertEquals(DatabaseMigrationEffect.UNKNOWN_COUNT, effect.affectedRows());
             assertEquals(before, preferences(connection), "Preflight must not write");
 
-            assertEquals(List.of(effect), migrateToFormat12(connection));
+            List<DatabaseMigrationEffect> completed = migrateToFormat12(connection);
+            assertEquals(3, completed.getFirst().affectedRows());
 
             Map<Long, UserPreferences> after = preferences(connection);
             assertEquals(before.keySet(), after.keySet());
@@ -102,7 +103,7 @@ class Format11To12DatabaseMigrationTest
     }
 
     @Test
-    void rejectsIncompleteMalformedNewerAndExhaustedSourcesWithoutChangingOtherUsers() throws Exception
+    void defaultsOnlyIncompleteMalformedNewerAndExhaustedUserPreferences() throws Exception
     {
         List<String> changes = List.of(
             "preferences_json=json_remove(preferences_json, '$.tuner.smooth_fft')",
@@ -115,15 +116,59 @@ class Format11To12DatabaseMigrationTest
             try(Connection connection = open(database); var statement = connection.createStatement())
             {
                 statement.executeUpdate("UPDATE web_user SET " + changes.get(index) + " WHERE id=3");
-                Map<Long, UserPreferences> before = preferences(connection);
                 String preserved = preservedDigest(connection);
-                assertThrows(SQLException.class, () -> new Format11To12DatabaseMigration().validateSource(connection));
-                assertThrows(SQLException.class, () -> new Format11To12DatabaseMigration().migrate(connection));
-                assertEquals(before, preferences(connection));
+                long sourceRevision = Long.parseLong(scalar(connection,
+                    "SELECT preferences_revision FROM web_user WHERE id=3"));
+                long expectedRevision = sourceRevision > 0 && sourceRevision < Long.MAX_VALUE ?
+                    sourceRevision + 1 : 1;
+                List<DatabaseMigrationEffect> effects = migrateToFormat12(connection);
+                DatabaseMigrationEffect reset = effects.stream()
+                    .filter(effect -> effect.subject().equals("unusable per-user browser preferences"))
+                    .findFirst().orElseThrow();
+                assertEquals(1, reset.affectedRows());
                 assertEquals(preserved, preservedDigest(connection));
-                assertEquals("11", scalar(connection,
+                assertEquals("12", scalar(connection,
                     "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+                assertEquals("5:" + expectedRevision, scalar(connection, """
+                    SELECT json_extract(preferences_json, '$.version') || ':' || preferences_revision
+                    FROM web_user WHERE id=3
+                    """));
             }
+        }
+    }
+
+    @Test
+    void defaultsOnlyAnOversizedUserPreferenceDocument() throws Exception
+    {
+        Path database = Format11TestDatabase.create(mTemporaryFolder.resolve("oversized.sqlite"));
+        try(Connection connection = open(database); var statement = connection.createStatement())
+        {
+            String siblingTheme = scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2");
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            try
+            {
+                statement.executeUpdate("""
+                    UPDATE web_user
+                    SET preferences_json='{"padding":"' || hex(zeroblob(65537)) || '"}'
+                    WHERE id=3
+                    """);
+            }
+            finally
+            {
+                statement.execute("PRAGMA ignore_check_constraints=OFF");
+            }
+
+            List<DatabaseMigrationEffect> effects = migrateToFormat12(connection);
+            DatabaseMigrationEffect reset = effects.stream()
+                .filter(effect -> effect.subject().equals("unusable per-user browser preferences"))
+                .findFirst().orElseThrow();
+            assertEquals(1, reset.affectedRows());
+            assertEquals(siblingTheme, scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2"));
+            assertEquals("5", scalar(connection,
+                "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE id=3"));
+            assertEquals(12, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 

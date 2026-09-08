@@ -65,6 +65,16 @@ public final class EncryptionKeyVaultSchema
     {
         validateTable(connection, "vault_metadata", "key", "value");
         validateTable(connection, "vault_payload", "id", "nonce", "ciphertext", "updated_at_ms");
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT value FROM vault_metadata WHERE key = 'schema_version'
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            String expected = Integer.toString(SCHEMA_VERSION);
+            if(!resultSet.next() || !expected.equals(resultSet.getString(1)))
+            {
+                throw new SQLException("Unsupported or missing encryption vault schema version.");
+            }
+        }
     }
 
     private static void validateTable(Connection connection, String table, String... columns) throws SQLException

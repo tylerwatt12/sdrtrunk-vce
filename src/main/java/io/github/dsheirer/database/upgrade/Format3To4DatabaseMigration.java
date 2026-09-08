@@ -142,7 +142,7 @@ final class Format3To4DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
 
         if(detected.version() != 3)
         {

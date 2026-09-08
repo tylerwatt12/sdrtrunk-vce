@@ -60,6 +60,12 @@ final class Format6WebUserPreferencesCodec
     }
 
     /** Creates the exact version-1 default document required by the format-4-to-5 migration boundary. */
+    static String defaults() throws IOException
+    {
+        return defaults(true, true, true, "percentage", 200);
+    }
+
+    /** Creates the exact version-1 document while retaining the bounded legacy presentation choices. */
     static String defaults(boolean showEncryptionDetails, boolean showControlDecodeQuality,
                            boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
                            int liveDetailRowLimit) throws IOException

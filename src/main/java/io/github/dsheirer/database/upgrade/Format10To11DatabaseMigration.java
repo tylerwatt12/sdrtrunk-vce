@@ -51,7 +51,7 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(-1, -1, -1, -1, -1, -1, -1);
+        return effects(-1, -1, -1, -1, -1, -1, -1, -1);
     }
 
     @Override
@@ -76,21 +76,33 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
                 unassigned += count(connection, """
                     SELECT COUNT(*) FROM configuration_channel
                     WHERE decoder_type = ? AND (alias_list_name IS NULL OR trim(alias_list_name) = '')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM alias_list AS recovered_list
+                          WHERE recovered_list.name=(
+                              CASE WHEN json_valid(configuration_channel.config_json)=1 THEN
+                                  CASE WHEN json_type(configuration_channel.config_json, '$.aliasListName')='text'
+                                      THEN nullif(trim(json_extract(configuration_channel.config_json,
+                                          '$.aliasListName')), '') END
+                              END
+                          ) COLLATE NOCASE
+                      )
                     """, decoder);
             }
         }
         long projectionRepairs = channelAliasListProjectionRepairCount(connection);
-        long references = rename == null ? 0 : count(connection, """
-            SELECT COUNT(*) FROM configuration_channel WHERE alias_list_name = ? COLLATE NOCASE
-            """, rename.name());
+        long references = rename == null ? 0 :
+            FactoryAliasListCollisionRepair.channelReferenceCount(connection, rename.name());
         return effects(rename == null ? 0 : 1, references, collisions.size(),
-            FactoryAliasListCollisionRepair.referenceCount(collisions), projectionRepairs, missing, unassigned);
+            FactoryAliasListCollisionRepair.referenceCount(collisions), projectionRepairs,
+            LegacyDefaultScanListRepair.repairCount(connection), missing, unassigned);
     }
 
     @Override
     public void migrate(Connection connection) throws SQLException
     {
         validateSource(connection);
+        LegacyDefaultScanListRepair.ensureOneDefault(connection);
+        FactoryAliasListCollisionRepair.recoverJsonOwnedChannelProjections(connection);
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
         FactoryAliasListCollisionRepair.apply(connection, collisions);
@@ -106,7 +118,8 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
             }
             try(var update = connection.prepareStatement("""
                 UPDATE configuration_channel
-                SET alias_list_name = ?, config_json = json_set(config_json, '$.aliasListName', ?)
+                SET alias_list_name = ?, config_json = CASE WHEN json_valid(config_json)=1
+                    THEN json_set(config_json, '$.aliasListName', ?) ELSE config_json END
                 WHERE alias_list_name = ? COLLATE NOCASE
                 """))
             {
@@ -142,7 +155,8 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
             // Existing/renamed lists keep their exact routing and recording policy.
             try(var assign = connection.prepareStatement("""
                 UPDATE configuration_channel
-                SET alias_list_name = ?, config_json = json_set(config_json, '$.aliasListName', ?)
+                SET alias_list_name = ?, config_json = CASE WHEN json_valid(config_json)=1
+                    THEN json_set(config_json, '$.aliasListName', ?) ELSE config_json END
                 WHERE decoder_type = ? AND (alias_list_name IS NULL OR trim(alias_list_name) = '')
                 """))
             {
@@ -172,7 +186,7 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
     {
         try(var statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
             SELECT COUNT(*) FROM configuration_channel
-            WHERE coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
+            WHERE json_valid(config_json)=1 AND coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
                   coalesce(trim(json_extract(config_json, '$.aliasListName')), '')
             """))
         {
@@ -191,7 +205,7 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
                         THEN json_remove(config_json, '$.aliasListName')
                     ELSE json_set(config_json, '$.aliasListName', alias_list_name)
                 END
-                WHERE coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
+                WHERE json_valid(config_json)=1 AND coalesce(trim(alias_list_name), '') COLLATE NOCASE <>
                       coalesce(trim(json_extract(config_json, '$.aliasListName')), '')
                 """);
         }
@@ -223,7 +237,7 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspect(connection).version() != 10)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 10)
         {
             throw new SQLException("Migration step format-10-to-11 requires exact source format 10");
         }
@@ -231,31 +245,33 @@ final class Format10To11DatabaseMigration implements DatabaseMigrationStep
 
     private static List<DatabaseMigrationEffect> effects(long renamed, long references, long collisionLists,
                                                           long collisionReferences, long projectionRepairs,
-                                                          long created, long assigned)
+                                                          long defaultScanListRepair, long created, long assigned)
     {
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "custom Alias Lists using factory names", collisionLists,
-                "Move wrong-family custom lists to unique names and preserve " + collisionReferences +
-                    " saved reference(s)"),
+                "Move wrong-family custom lists to unique names and preserve " +
+                    (collisionReferences == DatabaseMigrationEffect.UNKNOWN_COUNT ? "their saved references" :
+                        collisionReferences + " saved reference(s)")),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "saved channel Alias List projections", projectionRepairs,
-                "Make each channel JSON document match the Alias List used by the previous runtime"),
+                "Recover an existing JSON-selected list when the relational projection is unusable, then make both " +
+                    "saved projections agree"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "factory analog Alias List name",
                 renamed, "Rename same-family Default NBFM to Default Analog only when the target name is free; " +
                     "preserve both lists if Default Analog already exists"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM, "renamed Alias List channel references",
                 references, "Update saved channel references while preserving their other configuration"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "Default scan list",
+                defaultScanListRepair,
+                "Restore one deterministic published Default selection before adding factory-list routes"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "missing factory Alias Lists",
                 created, "Restore missing Default P25, Default DMR, Default NXDN, and Default Analog lists, " +
                     "including previously deleted factory names"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "new factory list browser routes",
                 created, "Route only newly created lists to the Default scan list, with recording disabled"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "unassigned channel Alias Lists",
-                assigned, "Assign compatible factory lists only to channels with no selected Alias List"),
-            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE, "existing administrator configuration",
-                DatabaseMigrationEffect.UNKNOWN_COUNT, "Preserve list and alias IDs, custom names, existing routes, " +
-                    "recording settings, streams, credentials, and already assigned channels"));
+                assigned, "Assign compatible factory lists only to channels with no selected Alias List"));
     }
 
     private record FactoryList(String name, String family, List<String> decoders) {}

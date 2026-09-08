@@ -177,7 +177,8 @@ public final class ConfigurationRepository
         return mIdentityAllocator.nextScanListIds(candidateIds, count);
     }
 
-    private ConfigurationSnapshot load(Connection connection) throws IOException, SQLException
+    /** Loads a complete snapshot from a caller-owned connection and its current transaction. */
+    public ConfigurationSnapshot load(Connection connection) throws IOException, SQLException
     {
         AliasConfigurationSnapshot aliases = loadAliasConfiguration(connection);
         ChannelAndBroadcastConfiguration channels = mChannelAndBroadcastStore.load(connection);

@@ -59,6 +59,49 @@ class Format10To11DatabaseMigrationTest
     }
 
     @Test
+    void restoresMissingDefaultScanListBeforeAddingFactoryRoutes() throws Exception
+    {
+        try(Connection connection = fixture("missing-default-scan-list"))
+        {
+            execute(connection, "DELETE FROM scan_list");
+            assertEquals(1, new Format10To11DatabaseMigration().validateSource(connection).stream()
+                .filter(effect -> effect.subject().equals("Default scan list"))
+                .findFirst().orElseThrow().affectedRows());
+
+            migrate(connection);
+
+            assertEquals("1", scalar(connection,
+                "SELECT COUNT(*) FROM scan_list WHERE is_default=1 AND published=1"));
+            assertEquals("4", scalar(connection, """
+                SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership membership
+                JOIN scan_list target ON target.id=membership.scan_list_id AND target.is_default=1
+                """));
+        }
+    }
+
+    @Test
+    void selectsOneDefaultWhenLegacySelectionFlagsAreMalformed() throws Exception
+    {
+        try(Connection connection = fixture("malformed-default-scan-lists"))
+        {
+            execute(connection, "INSERT INTO scan_list(sort_order, name, published, is_default) " +
+                "VALUES (1, 'Secondary', 1, 0)");
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, "UPDATE scan_list SET is_default=2");
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+            assertEquals(1, new Format10To11DatabaseMigration().validateSource(connection).stream()
+                .filter(effect -> effect.subject().equals("Default scan list"))
+                .findFirst().orElseThrow().affectedRows());
+
+            migrate(connection);
+
+            assertEquals("1", scalar(connection, "SELECT COUNT(*) FROM scan_list WHERE is_default=1"));
+            assertEquals("Default", scalar(connection, "SELECT name FROM scan_list WHERE is_default=1"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM scan_list WHERE is_default NOT IN (0, 1)"));
+        }
+    }
+
+    @Test
     void renamesCaseInsensitiveOldNameInPlaceAndPreservesAliasesAndRouting() throws Exception
     {
         try(Connection connection = fixture())
@@ -268,6 +311,31 @@ class Format10To11DatabaseMigrationTest
                 "SELECT alias_list_name FROM configuration_channel WHERE id=2"));
             assertEquals("Local Analog", scalar(connection,
                 "SELECT json_extract(config_json, '$.aliasListName') FROM configuration_channel WHERE id=2"));
+        }
+    }
+
+    @Test
+    void recoversMatchingJsonAliasListWhenRelationalProjectionIsMissing() throws Exception
+    {
+        try(Connection connection = fixture("json-owned-alias-list"))
+        {
+            addList(connection, "Local P25", "P25");
+            execute(connection, """
+                UPDATE configuration_channel
+                SET alias_list_name=NULL,
+                    config_json=json_set(config_json, '$.aliasListName', 'Local P25')
+                WHERE id=1
+                """);
+            assertEquals(1, new Format10To11DatabaseMigration().validateSource(connection).stream()
+                .filter(effect -> effect.subject().equals("saved channel Alias List projections"))
+                .findFirst().orElseThrow().affectedRows());
+
+            migrate(connection);
+
+            assertEquals("Local P25", scalar(connection,
+                "SELECT alias_list_name FROM configuration_channel WHERE id=1"));
+            assertEquals("Local P25", scalar(connection,
+                "SELECT json_extract(config_json, '$.aliasListName') FROM configuration_channel WHERE id=1"));
         }
     }
 

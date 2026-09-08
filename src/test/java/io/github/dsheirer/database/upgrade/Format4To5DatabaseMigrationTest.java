@@ -7,7 +7,6 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SqliteSchemaValidator;
@@ -46,14 +45,21 @@ class Format4To5DatabaseMigrationTest
                 DatabaseFormatCatalog.inspect(connection));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 4, preflight.steps().size());
             assertEquals("format-4-to-5", preflight.steps().getFirst().id());
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars", 2);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations", 2);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "web accounts", 3);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "web access policy overrides", 2);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.DEFAULT, "per-user browser preferences", 3);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "saved channel identity scalars",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired channel configurations",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "web accounts",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.TRANSFORM, "web access policy overrides",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DEFAULT, "per-user browser preferences",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight, DatabaseMigrationEffect.Kind.DEFAULT, "site-settings revision", 1);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired web policy overrides", 2);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "superseded settings storage", 6);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "retired web policy overrides",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "superseded settings storage",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
 
             connection.setAutoCommit(false);
             try
@@ -200,7 +206,7 @@ class Format4To5DatabaseMigrationTest
     }
 
     @Test
-    void refusesAmbiguousFormat4WithoutChangingIt() throws Exception
+    void replacesDuplicateSavedChannelIdentityWithoutDroppingEitherChannel() throws Exception
     {
         Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("ambiguous.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -211,17 +217,66 @@ class Format4To5DatabaseMigrationTest
                     '11111111-2222-4333-8444-555555555555')
                 WHERE id=(SELECT max(id) FROM configuration_channel)
                 """);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-            assertTrue(exception.getMessage().contains("Duplicate saved channel configurationId"));
-            assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertFalse(tableExists(connection, "web_user"));
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
             assertEquals("2", scalar(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals("2", scalar(connection,
+                "SELECT COUNT(DISTINCT configuration_id) FROM configuration_channel"));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE configuration_id <> json_extract(config_json, '$.configurationId')
+                """));
         }
     }
 
     @Test
-    void refusesTrunkedChannelWithoutCanonicalSiteGuid() throws Exception
+    void canonicalizesRecoverableLegacyChannelIdentifiersWithoutReplacingThem() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("recoverable-channel-identifiers.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String expectedConfigurationId = scalar(connection, """
+                SELECT json_extract(config_json, '$.configurationId') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+            String expectedRadioResolveId = scalar(connection, """
+                SELECT radres_guid FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET config_json=json_set(
+                        json_remove(config_json, '$.radresGuid', '$.radioResolveId', '$.radres_guid'),
+                        '$.configurationId',
+                        '  ' || upper(json_extract(config_json, '$.configurationId')) || '  '),
+                    radres_guid='  ' || upper(radres_guid) || '  '
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+
+            assertEquals(expectedConfigurationId, scalar(connection, """
+                SELECT configuration_id FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedConfigurationId, scalar(connection, """
+                SELECT json_extract(config_json, '$.configurationId') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedRadioResolveId, scalar(connection, """
+                SELECT radres_guid FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedRadioResolveId, scalar(connection, """
+                SELECT json_extract(config_json, '$.radresGuid') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+        }
+    }
+
+    @Test
+    void preservesJsonIdentityForTrunkedChannelWithoutCanonicalSiteGuidProjection() throws Exception
     {
         Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("missing-site-guid.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -230,16 +285,18 @@ class Format4To5DatabaseMigrationTest
                 UPDATE configuration_channel SET radres_guid=NULL
                 WHERE id=(SELECT min(id) FROM configuration_channel)
                 """);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-            assertTrue(exception.getMessage().contains("trunked but has no RadioReference site GUID"));
-            assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertFalse(tableExists(connection, "web_user"));
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+            assertEquals("1", scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE channel_kind='TRUNKED' AND radres_guid IS NOT NULL
+                  AND radres_guid=json_extract(config_json, '$.radresGuid')
+                """));
         }
     }
 
     @Test
-    void refusesRetiredJsonWhenExactScalarsDoNotMarkTheRowForRemoval() throws Exception
+    void dropsRetiredJsonEvenWhenLegacyScalarsDoNotIdentifyIt() throws Exception
     {
         Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("retired-json-active-scalars.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -250,11 +307,11 @@ class Format4To5DatabaseMigrationTest
                     config_json=json_set(config_json, '$.decodeConfiguration.type', 'decodeConfigMPT1327')
                 WHERE id=(SELECT min(id) FROM configuration_channel)
                 """);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-            assertTrue(exception.getMessage().contains("is not an active supported channel"), exception::getMessage);
-            assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertFalse(tableExists(connection, "web_user"));
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+            assertEquals("1", scalar(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals("0", scalar(connection,
+                "SELECT COUNT(*) FROM configuration_channel WHERE decoder_type='MPT1327'"));
         }
     }
 
@@ -279,6 +336,72 @@ class Format4To5DatabaseMigrationTest
         }
     }
 
+    @Test
+    void preservesJsonOwnedChannelValuesWhenLegacyProjectionsAreUnusable() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("channel-row-owned-fallback.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String expectedSystem = scalar(connection, """
+                SELECT json_extract(config_json, '$.system') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+            String expectedSite = scalar(connection, """
+                SELECT json_extract(config_json, '$.site') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+            String expectedName = scalar(connection, """
+                SELECT json_extract(config_json, '$.name') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+            String expectedRadioResolveId = scalar(connection, """
+                SELECT json_extract(config_json, '$.radresGuid') FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET system_name=x'0102', site_name=zeroblob(1), name='   ', alias_list_name=zeroblob(2),
+                    radres_guid='not-a-uuid', decoder_type='MPT1327', source_type='MIXER',
+                    config_json=json_set(config_json, '$.aliasListName', 'Default P25')
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """);
+
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+
+            assertEquals("2", scalar(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals(expectedSystem, scalar(connection, """
+                SELECT system_name FROM configuration_channel WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedSite, scalar(connection, """
+                SELECT site_name FROM configuration_channel WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedName, scalar(connection, """
+                SELECT name FROM configuration_channel WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals("Default P25", scalar(connection, """
+                SELECT alias_list_name FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals(expectedRadioResolveId, scalar(connection, """
+                SELECT radres_guid FROM configuration_channel WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals("P25_PHASE1:TUNER", scalar(connection, """
+                SELECT decoder_type || ':' || source_type FROM configuration_channel
+                WHERE id=(SELECT min(id) FROM configuration_channel)
+                """));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE system_name <> json_extract(config_json, '$.system')
+                   OR site_name <> json_extract(config_json, '$.site')
+                   OR name <> json_extract(config_json, '$.name')
+                   OR alias_list_name <> json_extract(config_json, '$.aliasListName')
+                   OR radres_guid <> json_extract(config_json, '$.radresGuid')
+                """));
+        }
+    }
+
     private static void migrateToFormat5(Connection connection) throws Exception
     {
         connection.setAutoCommit(false);
@@ -300,7 +423,7 @@ class Format4To5DatabaseMigrationTest
     }
 
     @Test
-    void refusesInvalidAutoStartScalarsBeforeMutation() throws Exception
+    void rebuildsInvalidAutoStartScalarsFromChannelJson() throws Exception
     {
         String[] assignments = {
             "auto_start=2",
@@ -317,17 +440,19 @@ class Format4To5DatabaseMigrationTest
             {
                 statement.executeUpdate("UPDATE configuration_channel SET " + assignments[index] +
                     " WHERE id=(SELECT min(id) FROM configuration_channel)");
-                SQLException exception = assertThrows(SQLException.class,
-                    () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-                assertTrue(exception.getMessage().contains("auto_start"), exception::getMessage);
-                assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-                assertFalse(tableExists(connection, "web_user"));
+                DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+                migrateToFormat5(connection);
+                assertEquals("5", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+                assertEquals("0:0", scalar(connection, """
+                    SELECT auto_start || ':' || auto_start_order
+                    FROM configuration_channel WHERE id=(SELECT min(id) FROM configuration_channel)
+                    """));
             }
         }
     }
 
     @Test
-    void refusesLegacyUsersOrPoliciesWithoutPrimaryAdministrator() throws Exception
+    void resetsOnlyLegacyWebStateWhenUsersOrPoliciesHaveNoPrimaryAdministrator() throws Exception
     {
         Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("users-without-primary.sqlite"));
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -337,12 +462,34 @@ class Format4To5DatabaseMigrationTest
                 SET settings_json=json_set(settings_json, '$.primaryAdmin', NULL)
                 WHERE key='web.access.v1'
                 """);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection)));
-            assertTrue(exception.getMessage().contains(
-                "Legacy users or policies exist without the primary administrator"), exception::getMessage);
-            assertEquals("4", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertFalse(tableExists(connection, "web_user"));
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM web_access_policy"));
+            assertEquals("2", scalar(connection, "SELECT COUNT(*) FROM configuration_channel"));
+        }
+    }
+
+    @Test
+    void preservesLegacyAccountsWhenOnlyAccessFormatVersionIsMissing() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("access-without-format-version.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            Map<String,CredentialSnapshot> credentialsBefore = legacyCredentials(connection);
+            statement.executeUpdate("""
+                UPDATE application_settings
+                SET settings_json=json_remove(settings_json, '$.formatVersion')
+                WHERE key='web.access.v1'
+                """);
+
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+            migrateToFormat5(connection);
+
+            assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals("2", scalar(connection, "SELECT COUNT(*) FROM web_access_policy"));
+            assertEquals(credentialsBefore, normalizedCredentials(connection));
+            assertTrue(authenticates(connection, "admin", "fixture primary password"));
         }
     }
 
@@ -360,8 +507,9 @@ class Format4To5DatabaseMigrationTest
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
             assertEffect(preflight, DatabaseMigrationEffect.Kind.PRESERVE,
-                "initial administrator browser preferences", 5);
-            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "superseded settings storage", 1);
+                "initial administrator browser preferences", DatabaseMigrationEffect.UNKNOWN_COUNT);
+            assertEffect(preflight, DatabaseMigrationEffect.Kind.DROP, "superseded settings storage",
+                DatabaseMigrationEffect.UNKNOWN_COUNT);
 
             connection.setAutoCommit(false);
             try

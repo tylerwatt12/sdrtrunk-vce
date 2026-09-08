@@ -68,6 +68,14 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "broadcast routes attached to retired fully-qualified aliases", unknown,
                 "Drop stream routes whose unsupported fully-qualified Alias owner is removed"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "legacy P25 qualifier values", unknown,
+                "Discard qualifier columns attached to matcher types that never supported those values"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "orphaned Alias rows and routes", unknown,
+                "Skip aliases without an owning Alias List and broadcast routes without a retained Alias"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "Default scan list", 1,
+                "Create the initial Default scan list for the legacy profile"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "trunked-identity evidence", unknown,
                 "Reset reproducible compact identity evidence; live trunked traffic rebuilds it"),
@@ -80,7 +88,6 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
-        validateAliasSource(connection);
         long convertedCatchalls = eligibleCatchallCount(connection);
         long priorityValues = scalarLong(connection, "SELECT COUNT(*) FROM alias WHERE priority IS NOT NULL");
         long removedTalkgroups = matcherCount(connection, FULLY_QUALIFIED_TALKGROUP);
@@ -92,6 +99,21 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
             WHERE owner.matcher_type IN (
                 'P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'
             )
+            """);
+        long discardedQualifierRows = scalarLong(connection, """
+            SELECT COUNT(*) FROM alias
+            WHERE matcher_type NOT IN (
+                'P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'
+            ) AND (wacn IS NOT NULL OR p25_system_id IS NOT NULL)
+            """);
+        long orphanedRows = scalarLong(connection, """
+            SELECT (SELECT COUNT(*) FROM alias AS item
+                    LEFT JOIN alias_list AS owner ON owner.id=item.alias_list_id
+                    WHERE owner.id IS NULL) +
+                   (SELECT COUNT(*) FROM alias_broadcast_channel AS route
+                    LEFT JOIN alias AS owner ON owner.id=route.alias_id
+                    LEFT JOIN alias_list AS owning_list ON owning_list.id=owner.alias_list_id
+                    WHERE owner.id IS NULL OR owning_list.id IS NULL)
             """);
         long resetIdentityRows = scalarLong(connection, """
             SELECT (SELECT COUNT(*) FROM trunked_identity_scope) +
@@ -120,6 +142,14 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "broadcast routes attached to retired fully-qualified aliases", removedRoutes,
                 "Drop stream routes whose unsupported fully-qualified Alias owner is removed"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "legacy P25 qualifier values", discardedQualifierRows,
+                "Discard qualifier columns attached to matcher types that never supported those values"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "orphaned Alias rows and routes", orphanedRows,
+                "Skip aliases without an owning Alias List and broadcast routes without a retained Alias"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "Default scan list", 1,
+                "Create the initial Default scan list for the legacy profile"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "trunked-identity evidence", resetIdentityRows,
                 "Reset reproducible compact identity evidence; live trunked traffic rebuilds it"),
@@ -132,7 +162,6 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     public void migrate(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
-        validateAliasSource(connection);
         migrateAliases(connection);
         resetTrunkedIdentityHistory(connection);
         validateTrunkedIdentityResetTarget(connection);
@@ -140,31 +169,13 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
 
         if(detected.version() != 1)
         {
             throw new SQLException("Migration step format-1-to-2 requires exact source format 1; found " +
                 detected.version() + " [" + detected.id() + "]");
         }
-    }
-
-    private static void validateAliasSource(Connection connection) throws SQLException
-    {
-        //Format 1 allowed qualifier columns on every Alias row even though format 2 can represent them only through
-        //the fully-qualified matcher types that are deliberately retired. Refuse nonsensical-but-legal rows instead
-        //of silently discarding administrator-owned qualifier values.
-        requireZero(connection, """
-            SELECT COUNT(*)
-            FROM alias
-            WHERE matcher_type NOT IN (
-                'P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'
-            )
-              AND (wacn IS NOT NULL OR p25_system_id IS NOT NULL)
-            """, "non-fully-qualified aliases with legacy P25 qualifier values that the current Alias schema " +
-                "cannot represent");
-        requireZero(connection, "SELECT COUNT(*) FROM configuration_channel WHERE json_valid(config_json) = 0",
-            "configuration channels with invalid JSON that a later adjacent step cannot update safely");
     }
 
     private static void migrateAliases(Connection connection) throws SQLException
@@ -227,9 +238,14 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
                 """);
             statement.executeUpdate("""
                 INSERT INTO format1_alias_sequence(name, seq)
-                SELECT name, seq FROM sqlite_sequence
-                WHERE name IN ('alias_list', 'alias', 'alias_broadcast_channel')
-                """);
+                SELECT name, max(seq) FROM sqlite_sequence
+                WHERE typeof(name)='text'
+                  AND name IN ('alias_list', 'alias', 'alias_broadcast_channel')
+                  AND typeof(seq)='integer'
+                  AND seq >= 0
+                  AND seq < %d
+                GROUP BY name
+                """.formatted(SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM));
             statement.executeUpdate("DROP VIEW alias_talkgroup");
             statement.executeUpdate("DROP VIEW alias_radio");
             statement.executeUpdate("DROP INDEX idx_alias_talkgroup_value");
@@ -250,7 +266,7 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
                 SELECT source.id,
                        source.name,
                        source.family,
-                       COALESCE(candidate.record_enabled, 0)
+                       CASE candidate.record_enabled WHEN 1 THEN 1 ELSE 0 END
                 FROM format1_alias_list AS source
                 LEFT JOIN format1_alias_conversion_candidate AS conversion
                        ON conversion.alias_list_id = source.id
@@ -275,6 +291,7 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
                        source.matcher_type, source.protocol, source.value, source.min_value,
                        source.max_value, source.text_value, source.numeric_value, source.tone_sequence
                 FROM format1_alias AS source
+                JOIN alias_list AS owning_list ON owning_list.id = source.alias_list_id
                 LEFT JOIN format1_alias_conversion_candidate AS conversion ON conversion.alias_id = source.id
                 WHERE conversion.alias_id IS NULL
                   AND source.matcher_type NOT IN (
@@ -344,6 +361,9 @@ final class Format1To2DatabaseMigration implements DatabaseMigrationStep
     {
         try(Statement statement = connection.createStatement())
         {
+            //The staged chain deliberately disables FK enforcement so legacy orphans can be repaired.  Clear every
+            //derived child explicitly instead of relying on ON DELETE CASCADE from the identity-scope deletion.
+            statement.executeUpdate("DELETE FROM trunked_identity_scope_context");
             statement.executeUpdate("DELETE FROM trunked_identity_scope");
             statement.executeUpdate("DROP TABLE trunked_identity_summary");
             statement.executeUpdate("DROP TABLE trunked_radio_talkgroup_summary");

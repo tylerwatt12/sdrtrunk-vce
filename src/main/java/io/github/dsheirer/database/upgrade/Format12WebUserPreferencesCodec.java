@@ -46,6 +46,11 @@ final class Format12WebUserPreferencesCodec
         Format9WebUserPreferencesCodec.validate(MAPPER.writeValueAsString(prior));
     }
 
+    static String defaults() throws IOException
+    {
+        return migrateFromFormat11(Format9WebUserPreferencesCodec.defaults());
+    }
+
     static String migrateFromFormat11(String json) throws IOException
     {
         Format9WebUserPreferencesCodec.validate(json);

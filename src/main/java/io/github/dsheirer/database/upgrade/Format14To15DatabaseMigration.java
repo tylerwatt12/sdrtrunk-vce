@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormat;
@@ -26,17 +27,19 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
+import io.github.dsheirer.gui.setup.SetupProgress;
+import io.github.dsheirer.icon.IconSet;
 import io.github.dsheirer.identifier.tone.AmbeTone;
-import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
-import io.github.dsheirer.record.config.RecordConfiguration;
-import io.github.dsheirer.source.config.SourceConfigRecording;
-import io.github.dsheirer.source.config.SourceConfigTuner;
-import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.web.settings.SpectrumSnapSettings;
+import io.github.dsheirer.web.settings.WebUserPreferences;
+import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -46,13 +49,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -61,21 +64,33 @@ import java.util.UUID;
 
 /**
  * Replaces the overloaded format-14 channel/site identity model with the stable format-15 radio-system and saved
- * channel model. Administrator-owned configuration is preserved. Receiver observations are deliberately reset
- * because their former GUID, context, and scope keys cannot be converted without guessing.
+ * channel model. Independently usable administrator-owned rows are preserved while malformed rows and their
+ * dependent relationships are isolated. Receiver observations are deliberately reset because their former GUID,
+ * context, and scope keys cannot be converted without guessing.
  */
 final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 {
     private static final int MAXIMUM_CONFIGURATION_JSON_BYTES = 4_194_304;
+    private static final int MAXIMUM_RECOVERED_BROADCAST_NAME_CODE_POINTS = 256;
+    private static final int MAXIMUM_ALIAS_TEXT_BYTES = 4_194_304;
+    private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
     private static final int MAXIMUM_WEB_PREFERENCES_CHARACTERS = 131_072;
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
+    private static final String DEFAULT_ICONS_KEY = "default";
+    private static final String ICONS_INITIALIZED_KEY = "icon_config_initialized";
+    private static final String INITIAL_ADMIN_SETUP_KEY = "initial_admin_setup";
     private static final String NOW_PLAYING_NODE = "user/io/github/dsheirer/preference/nowplaying";
     private static final String SITE_SETTINGS_REVISION_KEY = "site.settings.revision";
     private static final String RECEIVER_SETTINGS_REVISION_KEY = "receiver.settings.revision";
+    private static final Set<String> RECEIVER_PREFERENCE_KEYS = Set.of(SITE_SETTINGS_REVISION_KEY,
+        RECEIVER_SETTINGS_REVISION_KEY, "retain.idle.call.details", "clear.voice.decode.quality.on.call.end",
+        "traffic.grant.age.out.milliseconds");
     private static final String SITE_ACCESS_POLICY_ID = "site-access";
     private static final String WEB_ACCESS_POLICY_ID = "web-access";
     private static final String SYSTEMS_POLICY_ID = "systems";
     private static final String CONVENTIONAL_POLICY_ID = "conventional";
+    private static final Set<String> LEGACY_POLICY_IDS = Set.of(SITE_ACCESS_POLICY_ID, SYSTEMS_POLICY_ID,
+        CONVENTIONAL_POLICY_ID);
     private static final String RADIO_POLICY_ID = "radio";
     private static final String OLD_IDENTITY_BOUNDARY =
         DatabaseFormatCatalog.RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY;
@@ -88,8 +103,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     /**
      * Legacy JSON copies of fields whose format-14 load contract took from the relational channel row.  They must be
      * removed before decoding so an absent, stale, or malformed duplicate cannot override the administrator-owned row
-     * value while crossing the one-owner format boundary.  The configuration UUID is intentionally excluded: format
-     * 14 required that identity to be present, canonical, and identical in both representations.
+     * value while crossing the one-owner format boundary. The configuration UUID is intentionally excluded so it can
+     * be recovered or repaired separately before decoding and then removed from the target JSON.
      */
     private static final List<String> LEGACY_CHANNEL_ROW_OWNED_JSON_FIELDS = List.of(
         "system", "site", "name", "aliasListName", "aliasListId", "radioResolveId", "radresGuid",
@@ -156,6 +171,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
+    private static final ObjectMapper LENIENT_PREFERENCE_MAPPER = new ObjectMapper()
+        .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT);
 
     @Override
     public String id()
@@ -203,6 +220,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "receiver-settings revision", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Rename the shared receiver-settings revision without changing its value"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "scan-list memberships recovered into Default", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Keep routing intent for surviving Aliases and Alias Lists when every saved scan list is unusable"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "receiver activity and call history", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Restart derived event, call, affiliation, presence, and identity summaries at a clean boundary"),
@@ -222,6 +242,45 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "orphaned legacy relationships", DatabaseMigrationEffect.UNKNOWN_COUNT,
                 "Clear or remove saved relationships whose referenced Alias, Alias List, scan list, or stream provider no longer exists"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable application settings, icons, and metadata", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Skip only malformed administrative rows in this component"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable Alias, Alias List, and scan-list rows", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Skip malformed Alias data while preserving independent usable lists, Aliases, and memberships"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable saved channel rows", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Skip only channel documents that cannot be loaded safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable broadcast provider rows", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Skip only streamer configuration documents that cannot be loaded safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable web accounts and access policies", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Skip only unusable accounts and policy overrides while preserving independent credentials"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable application settings and metadata", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Default only unusable optional application values"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable Alias List and scan-list values", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Repair names, optional policies, and the required Default scan-list selection"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Keep each usable Alias and default only malformed display or action fields"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable saved channel values", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Repair only replaceable channel identities or projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable broadcast provider values", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Repair only replaceable provider identities or names"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Default unusable browser preferences or setup state without discarding usable credentials"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "SQLite identity high-water marks", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Normalize allocator state to retained safe row identities"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "web authentication", DatabaseMigrationEffect.UNKNOWN_COUNT,
+                "Require administrator password setup only when the saved primary credential cannot be used safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
                 "Keep the one authoritative whole-database format version"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
@@ -240,6 +299,20 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
         MigrationInput input = inspect(connection);
 
+        migrate(connection, input);
+    }
+
+    @Override
+    public List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    {
+        MigrationInput input = inspect(connection);
+        migrate(connection, input);
+        return effects(input);
+    }
+
+    private static void migrate(Connection connection, MigrationInput input) throws SQLException
+    {
+
         dropActivitySchema(connection);
         dropRetiredNamedChannelMaps(connection);
         rebuildApplicationSchema(connection, input);
@@ -247,13 +320,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
-        seedMetricBoundaries(connection);
+        seedMetricBoundaries(connection, input.newMetricBoundary());
     }
 
     private static MigrationInput inspect(Connection connection) throws SQLException
     {
         Objects.requireNonNull(connection, "Connection cannot be null");
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
         if(detected.version() != 14)
         {
             throw new SQLException("Migration step format-14-to-15 requires exact source format 14; found " +
@@ -262,42 +335,50 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
         try
         {
-            validatePreservedCoreRows(connection);
+            CoreInspection core = inspectCoreRows(connection);
             AliasAdminIndex aliases = inspectAliasesAndScanLists(connection);
-            RelationshipInspection<ChannelRow> channels = inspectChannels(connection);
-            List<BroadcastRow> broadcasts = inspectBroadcasts(connection);
+            RowInspection<ChannelRow> channels = inspectChannels(connection, aliases.aliasListsByExactName(),
+                aliases.aliasListsByName(), aliases.aliasListFamilies());
+            RowInspection<BroadcastRow> broadcastInspection = inspectBroadcasts(connection);
+            List<BroadcastRow> broadcasts = broadcastInspection.rows();
             Map<String,List<BroadcastRow>> broadcastsByName = broadcastsByName(broadcasts);
             RelationshipInspection<AliasRoute> aliasRoutes = inspectAliasRoutes(connection, broadcastsByName,
                 aliases.aliasIds());
             RelationshipInspection<UnmatchedRoute> unmatchedRoutes = inspectUnmatchedRoutes(connection,
                 broadcastsByName,
                 aliases.aliasListIds());
-            List<PreferenceRow> preferences = inspectPreferences(connection);
+            UserInspection users = inspectUsers(connection);
             PolicyInput policy = inspectPolicy(connection);
-            PortablePreferencesUpdate portablePreferences = inspectPortablePreferences(connection);
-            Map<String,Long> sequences = inspectPreservedSequences(connection);
+            if(users.authenticationReset())
+            {
+                users = users.withAdditionalAuthenticationResetRows(policy.sourceRows());
+                policy = new PolicyInput(List.of(), 0, 0, policy.sourceRows(), 0);
+            }
+            SequenceInspection sequences = inspectSequences(connection, retainedSequenceMaximums(aliases,
+                channels.rows(), broadcasts, aliasRoutes.rows(), unmatchedRoutes.rows(), users.rows()));
             long callHistoryRows = countRows(connection, CALL_HISTORY_TABLES);
             long siteRows = countRows(connection, SITE_TABLES);
             long qualityRows = countRows(connection, QUALITY_TABLES);
             long identityRows = countRows(connection, IDENTITY_TABLES);
             long metricBoundaryRows = countMetadataRows(connection, REPLACED_METRIC_BOUNDARIES);
+            long newMetricBoundary = deriveMetricBoundary(connection);
             long retiredNamedChannelMapRows = countRows(connection, List.of(RETIRED_NAMED_CHANNEL_MAP_TABLE));
-            long preservedRows = countRows(connection, List.of("alias_list", "alias", "scan_list",
-                "alias_scan_list_membership", "alias_list_unmatched_talkgroup_scan_list_membership",
-                "configuration_channel", "configuration_broadcast_stream",
-                "application_settings", "application_icons", "web_user", "web_access_policy"));
-            preservedRows = Math.subtractExact(preservedRows, aliases.orphanedRows());
-            long orphanedRelationships = Math.addExact(channels.orphanedRows(), aliases.orphanedRows());
+            long preservedRows = sumCounts(core.preservedRows(), aliases.preservedRows(), channels.rows().size(),
+                broadcasts.size(), users.rows().size(), policy.rows().size(), aliasRoutes.rows().size(),
+                unmatchedRoutes.rows().size());
+            long orphanedRelationships = Math.addExact(channels.relationshipsDropped(), aliases.orphanedRows());
             orphanedRelationships = Math.addExact(orphanedRelationships, aliasRoutes.orphanedRows());
             orphanedRelationships = Math.addExact(orphanedRelationships, unmatchedRoutes.orphanedRows());
-            return new MigrationInput(channels.rows(), broadcasts, aliasRoutes.rows(), unmatchedRoutes.rows(),
-                preferences, policy,
-                portablePreferences, sequences, callHistoryRows, siteRows, qualityRows, identityRows,
-                metricBoundaryRows, retiredNamedChannelMapRows, orphanedRelationships, preservedRows);
+            return new MigrationInput(core, aliases, channels.rows(), broadcasts, aliasRoutes.rows(),
+                unmatchedRoutes.rows(), users, policy, sequences.values(), callHistoryRows, siteRows, qualityRows, identityRows,
+                metricBoundaryRows, newMetricBoundary, retiredNamedChannelMapRows, orphanedRelationships,
+                channels.droppedRows(), channels.defaultedRows(), broadcastInspection.droppedRows(),
+                broadcastInspection.defaultedRows(), sequences.defaultedRows(), preservedRows,
+                countMetadataRows(connection, SUBSYSTEM_VERSION_KEYS));
         }
-        catch(IOException | IllegalArgumentException exception)
+        catch(IllegalArgumentException | ArithmeticException exception)
         {
-            throw new SQLException("Format-14 configuration cannot be migrated exactly: " +
+            throw new SQLException("Format-14 configuration inventory could not be counted: " +
                 exception.getMessage(), exception);
         }
     }
@@ -306,6 +387,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
         long broadcastRelationships = Math.addExact(input.broadcasts().size(),
             Math.addExact(input.aliasRoutes().size(), input.unmatchedRoutes().size()));
+        boolean authenticationMarkerDefaulted = input.users().authenticationReset() && input.core().metadata().stream()
+            .noneMatch(row -> INITIAL_ADMIN_SETUP_KEY.equals(row.key()) && "required".equals(row.value()));
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
                 "administrator-owned configuration", input.preservedRows(),
@@ -317,14 +400,19 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "broadcast provider relationships", broadcastRelationships,
                 "Assign each provider a stable UUID, replace name-based Alias routes, and keep site selections ID-only"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
-                "browser playback preferences", input.preferences().size(),
+                "browser playback preferences", input.users().transformedPreferences(),
                 "Rename conversation playback fields for stable targets and increment each user preference revision"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "web access policy names", input.policy().transformedRows(),
                 "Preserve access levels while combining Systems and Conventional under Radio and renaming whole-site access"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
-                "receiver-settings revision", input.portablePreferences().transformed() ? 1 : 0,
+                "receiver-settings revision", input.core().portablePreferencesTransformed(),
                 "Rename the shared receiver-settings revision without changing its value"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "scan-list memberships recovered into Default",
+                input.aliases().recoveredDefaultMemberships().sourceRows(),
+                "Keep routing intent for surviving Aliases and Alias Lists when a referenced scan list is unusable; " +
+                    "coalesce duplicate owner routes onto the selected Default"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "receiver activity and call history", input.callHistoryRows(),
                 "Restart derived event, call, affiliation, presence, and identity summaries at a clean boundary"),
@@ -342,235 +430,807 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 "Start fresh conventional-call, trunked-call, and radio-system measurement windows"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "orphaned legacy relationships", input.orphanedRelationshipRows(),
-                "Clear or remove saved relationships whose referenced Alias, Alias List, scan list, or stream provider no longer exists"),
+                "Clear or remove saved relationships whose target no longer exists, is ambiguous, or duplicates a " +
+                    "relationship already retained for the same owner"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
-                "redundant subsystem version markers", SUBSYSTEM_VERSION_KEYS.size(),
+                "unusable application settings, icons, and metadata", input.core().droppedRows(),
+                "Skip only malformed administrative rows in this component"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable Alias, Alias List, and scan-list rows", input.aliases().droppedRows(),
+                "Skip malformed Alias data while preserving independent usable lists, Aliases, and memberships"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable saved channel rows", input.droppedChannelRows(),
+                "Skip only channel documents that cannot be loaded safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable broadcast provider rows", input.droppedBroadcastRows(),
+                "Skip only streamer configuration documents that cannot be loaded safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "unusable web accounts and access policies",
+                Math.addExact(input.users().droppedRows(), input.policy().droppedRows()),
+                "Skip only unusable accounts and policy overrides while preserving independent credentials"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable application settings and metadata", input.core().defaultedRows(),
+                "Default only unusable optional application values"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable Alias List and scan-list values", input.aliases().defaultedRows(),
+                "Repair names, optional policies, and the required Default scan-list selection"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields", input.aliases().defaultedAliasRows(),
+                "Keep each usable Alias and default only malformed description, group, color, icon, stream-as, " +
+                    "or recording fields"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable saved channel values", input.defaultedChannelRows(),
+                "Repair only replaceable channel identities or projections"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable broadcast provider values", input.defaultedBroadcastRows(),
+                "Repair only replaceable provider identities or names"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values",
+                sumCounts(input.users().defaultedRows(), input.policy().defaultedRows(),
+                    authenticationMarkerDefaulted ? 1 : 0),
+                "Default unusable browser preferences, policy timestamps, or setup state without discarding " +
+                    "usable credentials and restrictions"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "SQLite identity high-water marks", input.defaultedSequenceRows(),
+                "Normalize allocator state to retained safe row identities"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
+                "web authentication", input.users().authenticationResetRows(),
+                "Require administrator password setup only when the saved primary credential cannot be used safely"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
+                "redundant subsystem version markers", input.redundantMetadataRows(),
                 "Keep the one authoritative whole-database format version"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP,
                 "retired named Channel Maps", input.retiredNamedChannelMapRows(),
                 "Remove unused legacy named Channel Maps; decoder channel maps saved inside channels are preserved"));
     }
 
-    /** Validates every unchanged core row against the format-15 storage contract before any schema is renamed. */
-    private static void validatePreservedCoreRows(Connection connection) throws SQLException, IOException
+    /** Builds a row-by-row copy plan. Optional corrupt documents are omitted instead of blocking unrelated data. */
+    private static CoreInspection inspectCoreRows(Connection connection) throws SQLException
     {
+        List<MetadataRow> metadata = new ArrayList<>();
+        List<SettingRow> settings = new ArrayList<>();
+        List<IconRow> icons = new ArrayList<>();
+        long dropped = 0;
+        long defaulted = 0;
+        long portableTransformed = 0;
+        long preserved = 0;
+        boolean setupProgressPresent = false;
+        boolean spectrumSnapPresent = false;
+
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT key, value, updated_at_ms
-            FROM database_metadata
-            ORDER BY key
+            SELECT CASE WHEN typeof(key)='text' AND length(CAST(key AS BLOB)) <= 256
+                        THEN key END AS key,
+                   CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB)) <= 65536
+                        THEN value END AS value,
+                   updated_at_ms
+            FROM database_metadata ORDER BY key
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                Object keyValue = rows.getObject("key");
-                if(keyValue instanceof String key && REPLACED_METADATA_KEYS.contains(key))
+                String key = safeText(rows, "key");
+                if(key != null && REPLACED_METADATA_KEYS.contains(key))
                 {
                     continue;
                 }
-
-                String key = requiredStoredText(rows, "key", "Database metadata key");
-                String label = "Database metadata " + displayName(key);
-                if(key.isBlank())
+                String value = safeText(rows, "value");
+                Long storedUpdatedAt = safePositiveLong(rows, "updated_at_ms");
+                if(key == null || key.isBlank() || value == null ||
+                    (INITIAL_ADMIN_SETUP_KEY.equals(key) && !Set.of("complete", "required").contains(value)))
                 {
-                    throw new IOException(label + " has a blank key");
+                    dropped++;
                 }
-                requiredStoredText(rows, "value", label + " value");
-                requirePositiveInteger(rows, "updated_at_ms", label + " update time");
+                else
+                {
+                    long updatedAt = storedUpdatedAt != null ? storedUpdatedAt : 1;
+                    defaulted += storedUpdatedAt == null ? 1 : 0;
+                    metadata.add(new MetadataRow(key, value, updatedAt));
+                    preserved++;
+                }
             }
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT key, settings_json, updated_at_ms, json_valid(settings_json) AS valid_json
-            FROM application_settings
-            ORDER BY key
+            SELECT CASE WHEN typeof(key)='text' AND length(CAST(key AS BLOB)) <= 256
+                        THEN key END AS key,
+                   CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json,
+                   updated_at_ms
+            FROM application_settings ORDER BY key
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                String key = requiredStoredText(rows, "key", "Application setting key");
-                String label = "Application setting " + displayName(key);
-                if(key.isBlank())
+                String key = safeText(rows, "key");
+                String json = safeText(rows, "settings_json");
+                Long storedUpdatedAt = safePositiveLong(rows, "updated_at_ms");
+                if(key == null || key.isBlank() || json == null)
                 {
-                    throw new IOException(label + " has a blank key");
+                    dropped++;
+                    continue;
                 }
-                requiredStoredText(rows, "settings_json", label + " document");
-                if(integer(rows, "valid_json", label) != 1)
+                if(PORTABLE_PREFERENCES_KEY.equals(key) &&
+                    json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_PORTABLE_PREFERENCES_BYTES)
                 {
-                    throw new IOException(label + " is not valid JSON");
+                    dropped++;
+                    continue;
                 }
-                requirePositiveInteger(rows, "updated_at_ms", label + " update time");
+                try
+                {
+                    boolean rowDefaulted = storedUpdatedAt == null;
+                    JsonNode parsed;
+                    boolean canonicalizePortablePreferences = false;
+                    try
+                    {
+                        parsed = MAPPER.readTree(json);
+                    }
+                    catch(IOException strictFailure)
+                    {
+                        if(!PORTABLE_PREFERENCES_KEY.equals(key))
+                        {
+                            throw strictFailure;
+                        }
+                        parsed = LENIENT_PREFERENCE_MAPPER.readTree(json);
+                        canonicalizePortablePreferences = true;
+                    }
+                    if(parsed == null)
+                    {
+                        throw new IOException("empty JSON");
+                    }
+                    String payload = json;
+                    if(PORTABLE_PREFERENCES_KEY.equals(key))
+                    {
+                        PortablePreferenceRepair repair = repairPortablePreferences(parsed, json,
+                            canonicalizePortablePreferences);
+                        if(repair.drop())
+                        {
+                            dropped++;
+                            continue;
+                        }
+                        payload = repair.payload();
+                        portableTransformed += repair.transformed() ? 1 : 0;
+                        rowDefaulted |= repair.defaulted();
+                    }
+                    else if(SetupProgress.KEY.equals(key))
+                    {
+                        try
+                        {
+                            SetupProgress.decode(json);
+                        }
+                        catch(SQLException exception)
+                        {
+                            throw new IOException("invalid setup progress");
+                        }
+                        setupProgressPresent = true;
+                    }
+                    else if(SpectrumSnapSettings.KEY.equals(key))
+                    {
+                        try
+                        {
+                            SpectrumSnapSettings.decode(json);
+                        }
+                        catch(SQLException exception)
+                        {
+                            throw new IOException("invalid spectrum-snap setting");
+                        }
+                        spectrumSnapPresent = true;
+                    }
+                    settings.add(new SettingRow(key, payload, storedUpdatedAt != null ? storedUpdatedAt : 1));
+                    defaulted += rowDefaulted ? 1 : 0;
+                    preserved++;
+                }
+                catch(IOException | RuntimeException exception)
+                {
+                    dropped++;
+                }
             }
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT key, icons_json, updated_at_ms, json_valid(icons_json) AS valid_json,
-                   CASE WHEN json_valid(icons_json) THEN json_type(icons_json, '$') END AS json_root_type
-            FROM application_icons
-            ORDER BY key
+            SELECT CASE WHEN typeof(key)='text' AND length(CAST(key AS BLOB)) <= 256
+                        THEN key END AS key,
+                   CASE WHEN typeof(icons_json)='text'
+                              AND length(CAST(icons_json AS BLOB)) <= 4194304
+                        THEN icons_json END AS icons_json,
+                   updated_at_ms
+            FROM application_icons ORDER BY key
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                String key = requiredStoredText(rows, "key", "Icon-set key");
-                String label = "Icon set " + displayName(key);
-                if(key.isBlank())
+                String key = safeText(rows, "key");
+                String json = safeText(rows, "icons_json");
+                Long storedUpdatedAt = safePositiveLong(rows, "updated_at_ms");
+                try
                 {
-                    throw new IOException(label + " has a blank key");
+                    JsonNode parsed = json != null ? MAPPER.readTree(json) : null;
+                    if(key == null || key.isBlank() || !(parsed instanceof ObjectNode))
+                    {
+                        dropped++;
+                    }
+                    else
+                    {
+                        if(DEFAULT_ICONS_KEY.equals(key))
+                        {
+                            MAPPER.treeToValue(parsed, IconSet.class);
+                        }
+                        icons.add(new IconRow(key, json, storedUpdatedAt != null ? storedUpdatedAt : 1));
+                        defaulted += storedUpdatedAt == null ? 1 : 0;
+                        preserved++;
+                    }
                 }
-                requiredStoredText(rows, "icons_json", label + " document");
-                if(integer(rows, "valid_json", label) != 1 ||
-                    !"object".equals(optionalStoredText(rows, "json_root_type", label + " JSON type")))
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " must be a JSON object");
+                    dropped++;
                 }
-                requirePositiveInteger(rows, "updated_at_ms", label + " update time");
             }
+        }
+
+        boolean defaultIconsPreserved = icons.stream().anyMatch(row -> DEFAULT_ICONS_KEY.equals(row.key()));
+        if(!defaultIconsPreserved && metadata.removeIf(row -> ICONS_INITIALIZED_KEY.equals(row.key()) &&
+            "true".equalsIgnoreCase(row.value())))
+        {
+            preserved = Math.subtractExact(preserved, 1);
+            dropped++;
+        }
+
+        if(!setupProgressPresent)
+        {
+            settings.add(new SettingRow(SetupProgress.KEY, SetupProgress.replacementReview().encode(), 1));
+            defaulted++;
+        }
+        if(!spectrumSnapPresent)
+        {
+            settings.add(new SettingRow(SpectrumSnapSettings.KEY, SpectrumSnapSettings.defaults().encode(), 1));
+            defaulted++;
+        }
+        return new CoreInspection(List.copyOf(metadata), List.copyOf(settings), List.copyOf(icons), dropped,
+            defaulted, portableTransformed, preserved);
+    }
+
+    private static PortablePreferenceRepair repairPortablePreferences(JsonNode parsed, String original,
+                                                                       boolean canonicalize)
+        throws IOException
+    {
+        if(!(parsed instanceof ObjectNode root))
+        {
+            return new PortablePreferenceRepair(null, false, false, true);
+        }
+        boolean defaulted = canonicalize;
+        var nodes = root.fields();
+        while(nodes.hasNext())
+        {
+            Map.Entry<String,JsonNode> node = nodes.next();
+            if(!(node.getValue() instanceof ObjectNode preferences))
+            {
+                nodes.remove();
+                defaulted = true;
+                continue;
+            }
+            var values = preferences.fields();
+            while(values.hasNext())
+            {
+                Map.Entry<String,JsonNode> value = values.next();
+                if(!value.getValue().isTextual() ||
+                    Format6To7DatabaseMigration.RETIRED_WEB_AUDIO_KEYS.contains(value.getKey()))
+                {
+                    values.remove();
+                    defaulted = true;
+                }
+            }
+        }
+
+        JsonNode node = root.get(NOW_PLAYING_NODE);
+        if(!(node instanceof ObjectNode nowPlaying))
+        {
+            String payload = defaulted ? MAPPER.writeValueAsString(root) : original;
+            return new PortablePreferenceRepair(payload, false, defaulted, false);
+        }
+
+        JsonNode oldRevision = nowPlaying.remove(SITE_SETTINGS_REVISION_KEY);
+        JsonNode newRevision = nowPlaying.get(RECEIVER_SETTINGS_REVISION_KEY);
+        boolean validNew = positiveCanonicalRevision(newRevision);
+        boolean validOld = positiveCanonicalRevision(oldRevision);
+        boolean transformed = false;
+        if(validNew)
+        {
+            transformed = oldRevision != null;
+        }
+        else if(validOld)
+        {
+            nowPlaying.set(RECEIVER_SETTINGS_REVISION_KEY, oldRevision);
+            transformed = true;
+            defaulted |= newRevision != null;
+        }
+        else
+        {
+            if(newRevision != null)
+            {
+                nowPlaying.remove(RECEIVER_SETTINGS_REVISION_KEY);
+            }
+            defaulted |= oldRevision != null || newRevision != null;
+        }
+
+        defaulted |= nowPlaying.remove("retain.idle.call.details") != null;
+        defaulted |= nowPlaying.remove("clear.voice.decode.quality.on.call.end") != null;
+        if(!targetPortablePreferencesUsable(root))
+        {
+            for(String key: RECEIVER_PREFERENCE_KEYS)
+            {
+                defaulted |= nowPlaying.remove(key) != null;
+            }
+        }
+        if(!targetPortablePreferencesUsable(root))
+        {
+            throw new IOException("portable preference repair did not produce current semantics");
+        }
+        String payload = transformed || defaulted || canonicalize ? MAPPER.writeValueAsString(root) : original;
+        return new PortablePreferenceRepair(payload, transformed, defaulted, false);
+    }
+
+    private static boolean targetPortablePreferencesUsable(ObjectNode root)
+    {
+        var nodes = root.fields();
+        while(nodes.hasNext())
+        {
+            var node = nodes.next();
+            if(!(node.getValue() instanceof ObjectNode preferences))
+            {
+                return false;
+            }
+            var values = preferences.fields();
+            while(values.hasNext())
+            {
+                var value = values.next();
+                if(!value.getValue().isTextual() ||
+                    Format6To7DatabaseMigration.RETIRED_WEB_AUDIO_KEYS.contains(value.getKey()))
+                {
+                    return false;
+                }
+            }
+        }
+
+        if(!(root.get(NOW_PLAYING_NODE) instanceof ObjectNode nowPlaying))
+        {
+            return true;
+        }
+        if(nowPlaying.has(SITE_SETTINGS_REVISION_KEY) ||
+            nowPlaying.has("retain.idle.call.details") ||
+            nowPlaying.has("clear.voice.decode.quality.on.call.end"))
+        {
+            return false;
+        }
+        JsonNode revision = nowPlaying.get(RECEIVER_SETTINGS_REVISION_KEY);
+        JsonNode ageOut = nowPlaying.get("traffic.grant.age.out.milliseconds");
+        if(revision == null && ageOut == null)
+        {
+            return true;
+        }
+        if(!positiveCanonicalRevision(revision))
+        {
+            return false;
+        }
+        if(ageOut != null)
+        {
+            if(!ageOut.isTextual())
+            {
+                return false;
+            }
+            try
+            {
+                long value = Long.parseLong(ageOut.textValue());
+                if(value < 100 || value > 15_000 || !Long.toString(value).equals(ageOut.textValue()))
+                {
+                    return false;
+                }
+            }
+            catch(NumberFormatException exception)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean positiveCanonicalRevision(JsonNode revision)
+    {
+        if(revision == null || !revision.isTextual())
+        {
+            return false;
+        }
+        try
+        {
+            long value = Long.parseLong(revision.textValue());
+            return value > 0 && value < Long.MAX_VALUE - 1 &&
+                Long.toString(value).equals(revision.textValue());
+        }
+        catch(NumberFormatException exception)
+        {
+            return false;
         }
     }
 
-    /**
-     * Validates the format-14 Alias and scan-list rows which are copied byte-for-byte into stricter format-15
-     * tables. Matcher semantics are frozen here so a malformed administrator row is refused by name instead of
-     * surfacing a raw SQLite constraint error after the migration has begun.
-     */
-    private static AliasAdminIndex inspectAliasesAndScanLists(Connection connection) throws SQLException, IOException
+    /** Selects independently usable Alias objects and repairs the required Default scan-list invariant. */
+    private static AliasAdminIndex inspectAliasesAndScanLists(Connection connection) throws SQLException
     {
         Map<Long,AliasListFamily> aliasLists = new LinkedHashMap<>();
+        Map<String,List<Long>> aliasListsByExactName = new LinkedHashMap<>();
+        Map<String,List<Long>> aliasListsByName = new LinkedHashMap<>();
+        List<ConfigurationNameRepair.Candidate> aliasListNameCandidates = new ArrayList<>();
+        Map<Long,String> originalAliasListNames = new LinkedHashMap<>();
+        Map<Long,Boolean> aliasListRecordPolicies = new LinkedHashMap<>();
+        long defaultedAliasListPolicies = 0;
+        long droppedRows = 0;
+        Set<Long> defaultedScanListIds = new HashSet<>();
+        long generatedDefaultRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, family, unmatched_talkgroup_record_enabled,
-                   length(trim(name)) AS trimmed_name_length
+            SELECT id, typeof(name) AS name_type, length(CAST(name AS BLOB)) AS name_bytes,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4096
+                        THEN name END AS safe_name,
+                   typeof(family) AS family_type,
+                   CASE WHEN typeof(family)='text' AND length(CAST(family AS BLOB))<=32
+                        THEN family END AS safe_family,
+                   unmatched_talkgroup_record_enabled,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4096
+                        THEN length(trim(name)) END AS trimmed_name_length
             FROM alias_list
             ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "Alias List");
-                String name = requiredStoredText(rows, "name", "Alias List database row " + id);
-                String label = "Alias List " + displayName(name) + " (database row " + id + ")";
-                int trimmedNameLength = integer(rows, "trimmed_name_length", label);
-                if(trimmedNameLength < 1 || trimmedNameLength > 25)
-                {
-                    throw new IOException(label + " has a name outside 1 through 25 characters");
-                }
-                AliasListFamily family;
                 try
                 {
-                    family = AliasListFamily.valueOf(requiredStoredText(rows, "family", label + " family"));
+                    long id = positiveId(rows, "id", "Alias List");
+                    String sourceName = "text".equals(rows.getString("name_type")) &&
+                        rows.getLong("name_bytes") <= 4096 ? safeText(rows, "safe_name") : null;
+                    String name = sourceName == null || sourceName.isBlank() ?
+                        "Recovered Alias List " + id : sourceName;
+                    String label = "Alias List " + displayName(name) + " (database row " + id + ")";
+                    String preparedName = name.trim();
+                    if(!"text".equals(rows.getString("family_type")))
+                    {
+                        throw new IOException(label + " has an invalid family");
+                    }
+                    AliasListFamily family = AliasListFamily.valueOf(
+                        requiredStoredText(rows, "safe_family", label + " family"));
+                    Integer recordPolicy = safeInteger(rows, "unmatched_talkgroup_record_enabled");
+                    boolean validRecordPolicy = recordPolicy != null &&
+                        (recordPolicy == 0 || recordPolicy == 1);
+                    aliasListRecordPolicies.put(id, validRecordPolicy && recordPolicy == 1);
+                    if(!validRecordPolicy)
+                    {
+                        defaultedAliasListPolicies++;
+                    }
+                    aliasLists.put(id, family);
+                    aliasListNameCandidates.add(new ConfigurationNameRepair.Candidate(id, name));
+                    originalAliasListNames.put(id, sourceName);
+                    aliasListsByExactName.computeIfAbsent(ConfigurationNameRepair.normalize(name),
+                            ignored -> new ArrayList<>())
+                        .add(id);
+                    aliasListsByName.computeIfAbsent(ConfigurationNameRepair.normalize(preparedName),
+                            ignored -> new ArrayList<>())
+                        .add(id);
                 }
-                catch(IllegalArgumentException exception)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " has an unknown protocol family");
+                    droppedRows++;
                 }
-                booleanFlag(rows, "unmatched_talkgroup_record_enabled", label);
-                aliasLists.put(id, family);
             }
         }
+        Map<Long,String> aliasListNames = ConfigurationNameRepair.plan(aliasListNameCandidates, 25, false);
+        long normalizedAliasListNames = aliasListNames.entrySet().stream()
+            .filter(entry -> !entry.getValue().equals(originalAliasListNames.get(entry.getKey()))).count();
 
-        Set<Long> scanLists = new LinkedHashSet<>();
-        int defaultScanLists = 0;
+        List<ScanListRow> scanListRows = new ArrayList<>();
+        List<ConfigurationNameRepair.Candidate> scanListNameCandidates = new ArrayList<>();
+        Map<Long,String> originalScanListNames = new LinkedHashMap<>();
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, sort_order, name, description, published, is_default,
-                   length(trim(name)) AS trimmed_name_length,
-                   CASE WHEN description IS NULL THEN NULL ELSE length(trim(description)) END
-                       AS trimmed_description_length
+            SELECT id, sort_order,
+                   typeof(name) AS name_type, length(CAST(name AS BLOB)) AS name_bytes,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4096
+                        THEN name END AS safe_name,
+                   typeof(description) AS description_type,
+                   length(CAST(description AS BLOB)) AS description_bytes,
+                   CASE WHEN typeof(description)='text' AND length(CAST(description AS BLOB))<=8192
+                        THEN description END AS safe_description,
+                   published, is_default,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4096
+                        THEN length(trim(name)) END AS trimmed_name_length,
+                   CASE WHEN typeof(description)='text' AND length(CAST(description AS BLOB))<=8192
+                        THEN length(trim(description)) END AS trimmed_description_length
             FROM scan_list
             ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "Scan list");
-                String name = requiredStoredText(rows, "name", "Scan list database row " + id);
-                String label = "Scan list " + displayName(name) + " (database row " + id + ")";
-                int sortOrder = integer(rows, "sort_order", label);
-                if(sortOrder < 0)
+                try
                 {
-                    throw new IOException(label + " has a negative sort order");
+                    long id = positiveId(rows, "id", "Scan list");
+                    String sourceName = "text".equals(rows.getString("name_type")) &&
+                        rows.getLong("name_bytes") <= 4096 ? safeText(rows, "safe_name") : null;
+                    String name = sourceName == null || sourceName.strip().isBlank() ?
+                        "Recovered Scan List " + id : sourceName;
+                    String label = "Scan list " + displayName(name) + " (database row " + id + ")";
+                    Integer storedOrder = safeInteger(rows, "sort_order");
+                    int sortOrder = storedOrder != null && storedOrder >= 0 ? storedOrder : scanListRows.size();
+                    boolean repaired = sourceName == null || sourceName.strip().isBlank() ||
+                        storedOrder == null || storedOrder < 0;
+                    String description = safeText(rows, "safe_description");
+                    Integer descriptionLength = safeInteger(rows, "trimmed_description_length");
+                    String descriptionType = rows.getString("description_type");
+                    long descriptionBytes = rows.getLong("description_bytes");
+                    if(!"null".equals(descriptionType) &&
+                        (!"text".equals(descriptionType) || descriptionBytes > 8192 || description == null ||
+                            descriptionLength == null || descriptionLength < 1 || descriptionLength > 1000 ||
+                            ConfigurationNameRepair.codePointLength(description.strip()) > 1000))
+                    {
+                        description = null;
+                        repaired = true;
+                    }
+                    Integer publishedValue = safeInteger(rows, "published");
+                    Integer defaultValue = safeInteger(rows, "is_default");
+                    boolean validPublished = publishedValue != null &&
+                        (publishedValue == 0 || publishedValue == 1);
+                    boolean validDefault = defaultValue != null && (defaultValue == 0 || defaultValue == 1);
+                    boolean published = !validPublished || publishedValue == 1;
+                    boolean isDefault = validDefault && defaultValue == 1;
+                    repaired |= !validPublished || !validDefault;
+                    if(isDefault && !published)
+                    {
+                        published = true;
+                        repaired = true;
+                    }
+                    scanListRows.add(new ScanListRow(id, sortOrder, name, description, published, isDefault));
+                    scanListNameCandidates.add(new ConfigurationNameRepair.Candidate(id, name));
+                    originalScanListNames.put(id, sourceName);
+                    if(repaired)
+                    {
+                        defaultedScanListIds.add(id);
+                    }
                 }
-                int trimmedNameLength = integer(rows, "trimmed_name_length", label);
-                if(trimmedNameLength < 1 || trimmedNameLength > 100)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " has an invalid name length");
+                    droppedRows++;
                 }
-                String description = optionalStoredText(rows, "description", label + " description");
-                Integer trimmedDescriptionLength = nullableInteger(rows, "trimmed_description_length", label);
-                if(description != null && (trimmedDescriptionLength == null || trimmedDescriptionLength < 1 ||
-                    trimmedDescriptionLength > 1000))
-                {
-                    throw new IOException(label + " has an invalid description length");
-                }
-                boolean published = booleanFlag(rows, "published", label);
-                boolean isDefault = booleanFlag(rows, "is_default", label);
-                if(isDefault && !published)
-                {
-                    throw new IOException(label + " is the Default list but is not published");
-                }
-                if(isDefault)
-                {
-                    defaultScanLists++;
-                }
-                scanLists.add(id);
             }
         }
-        if(defaultScanLists != 1)
+
+        Map<Long,String> scanListNames = ConfigurationNameRepair.plan(scanListNameCandidates, 100, true);
+        for(int index = 0; index < scanListRows.size(); index++)
         {
-            throw new IOException("Saved scan lists must contain exactly one published Default list; found " +
-                defaultScanLists);
+            ScanListRow row = scanListRows.get(index);
+            String preparedName = scanListNames.get(row.id());
+            if(!preparedName.equals(originalScanListNames.get(row.id())))
+            {
+                defaultedScanListIds.add(row.id());
+            }
+            scanListRows.set(index, row.withName(preparedName));
         }
 
+        List<Integer> defaults = new ArrayList<>();
+        for(int index = 0; index < scanListRows.size(); index++)
+        {
+            if(scanListRows.get(index).isDefault())
+            {
+                defaults.add(index);
+            }
+        }
+        if(defaults.isEmpty())
+        {
+            int namedDefault = -1;
+            for(int index = 0; index < scanListRows.size(); index++)
+            {
+                if("Default".equalsIgnoreCase(scanListRows.get(index).name()))
+                {
+                    namedDefault = index;
+                    break;
+                }
+            }
+            if(namedDefault >= 0)
+            {
+                ScanListRow row = scanListRows.get(namedDefault);
+                scanListRows.set(namedDefault, row.withDefault());
+                defaultedScanListIds.add(row.id());
+            }
+            else
+            {
+                scanListRows.add(new ScanListRow(null, 0, uniqueDefaultScanListName(scanListRows), null, true, true));
+                generatedDefaultRows++;
+            }
+        }
+        else if(defaults.size() > 1)
+        {
+            int selectedDefault = defaults.stream()
+                .filter(index -> "Default".equalsIgnoreCase(scanListRows.get(index).name()))
+                .findFirst().orElse(defaults.getFirst());
+            for(int rowIndex: defaults)
+            {
+                if(rowIndex != selectedDefault)
+                {
+                    ScanListRow row = scanListRows.get(rowIndex);
+                    scanListRows.set(rowIndex, row.withoutDefault());
+                    defaultedScanListIds.add(row.id());
+                }
+            }
+        }
+
+        Set<Long> scanLists = scanListRows.stream().map(ScanListRow::id).filter(Objects::nonNull)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
         Set<Long> aliases = new LinkedHashSet<>();
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, alias_list_id, name, description, group_name, color, icon_name,
-                   stream_as_talkgroup, record_enabled, matcher_type, protocol, value, min_value,
-                   max_value, text_value, numeric_value, tone_sequence,
-                   length(trim(name)) AS trimmed_name_length,
-                   CASE WHEN text_value IS NULL THEN NULL ELSE length(trim(text_value)) END
-                       AS trimmed_text_value_length
+        Map<Long,String> aliasNames = new LinkedHashMap<>();
+        Map<Long,AliasMatcherFields> aliasMatchers = new LinkedHashMap<>();
+        Map<Long,AliasOptionalFields> aliasOptionalFields = new LinkedHashMap<>();
+        long defaultedAliasRows = 0;
+        String aliasQuery = """
+            SELECT id, alias_list_id,
+                   typeof(name) AS name_type, length(CAST(name AS BLOB)) AS name_bytes,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=%1$d
+                        THEN name END AS name,
+                   typeof(description) AS description_type,
+                   length(CAST(description AS BLOB)) AS description_bytes,
+                   CASE WHEN typeof(description)='text' AND length(CAST(description AS BLOB))<=%1$d
+                        THEN description END AS description,
+                   typeof(group_name) AS group_name_type,
+                   length(CAST(group_name AS BLOB)) AS group_name_bytes,
+                   CASE WHEN typeof(group_name)='text' AND length(CAST(group_name AS BLOB))<=%1$d
+                        THEN group_name END AS group_name,
+                   typeof(color) AS color_type,
+                   CASE WHEN typeof(color)='integer' THEN color END AS color,
+                   typeof(icon_name) AS icon_name_type,
+                   length(CAST(icon_name AS BLOB)) AS icon_name_bytes,
+                   CASE WHEN typeof(icon_name)='text' AND length(CAST(icon_name AS BLOB))<=%1$d
+                        THEN icon_name END AS icon_name,
+                   typeof(stream_as_talkgroup) AS stream_as_talkgroup_type,
+                   CASE WHEN typeof(stream_as_talkgroup)='integer' THEN stream_as_talkgroup END AS stream_as_talkgroup,
+                   typeof(record_enabled) AS record_enabled_type,
+                   CASE WHEN typeof(record_enabled)='integer' THEN record_enabled END AS record_enabled,
+                   CASE WHEN typeof(matcher_type)='text' AND length(CAST(matcher_type AS BLOB))<=64
+                        THEN matcher_type END AS matcher_type,
+                   typeof(protocol) AS protocol_type, length(CAST(protocol AS BLOB)) AS protocol_bytes,
+                   CASE WHEN typeof(protocol)='text' AND length(CAST(protocol AS BLOB))<=64
+                        THEN protocol END AS protocol,
+                   typeof(value) AS value_type,
+                   CASE WHEN typeof(value)='integer' THEN value END AS value,
+                   typeof(min_value) AS min_value_type,
+                   CASE WHEN typeof(min_value)='integer' THEN min_value END AS min_value,
+                   typeof(max_value) AS max_value_type,
+                   CASE WHEN typeof(max_value)='integer' THEN max_value END AS max_value,
+                   typeof(text_value) AS text_value_type,
+                   length(CAST(text_value AS BLOB)) AS text_value_bytes,
+                   CASE WHEN typeof(text_value)='text' AND length(CAST(text_value AS BLOB))<=%1$d
+                        THEN text_value END AS text_value,
+                   typeof(numeric_value) AS numeric_value_type,
+                   CASE WHEN typeof(numeric_value)='integer' THEN numeric_value END AS numeric_value,
+                   typeof(tone_sequence) AS tone_sequence_type,
+                   length(CAST(tone_sequence AS BLOB)) AS tone_sequence_bytes,
+                   CASE WHEN typeof(tone_sequence)='text' AND length(CAST(tone_sequence AS BLOB))<=%1$d
+                        THEN tone_sequence END AS tone_sequence,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=%1$d
+                        THEN length(trim(name)) END AS trimmed_name_length,
+                   CASE WHEN typeof(text_value)='text' AND length(CAST(text_value AS BLOB))<=%1$d
+                        THEN length(trim(text_value)) END AS trimmed_text_value_length
             FROM alias
             ORDER BY id
-            """); ResultSet rows = statement.executeQuery())
+            """.formatted(MAXIMUM_ALIAS_TEXT_BYTES);
+        try(PreparedStatement statement = connection.prepareStatement(aliasQuery);
+            ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "Alias");
-                String name = requiredStoredText(rows, "name", "Alias database row " + id);
-                String label = "Alias " + displayName(name) + " (database row " + id + ")";
-                if(integer(rows, "trimmed_name_length", label) < 1)
+                try
                 {
-                    throw new IOException(label + " has a blank name");
+                    long id = positiveId(rows, "id", "Alias");
+                    String name;
+                    boolean defaultedName = false;
+                    try
+                    {
+                        name = optionalBoundedStoredText(rows, "name", "Alias database row " + id,
+                            MAXIMUM_ALIAS_TEXT_BYTES);
+                    }
+                    catch(IOException exception)
+                    {
+                        name = null;
+                    }
+                    if(name == null || name.trim().isBlank())
+                    {
+                        name = "Recovered Alias " + id;
+                        defaultedName = true;
+                    }
+                    String label = "Alias " + displayName(name) + " (database row " + id + ")";
+                    long aliasListId = positiveId(rows, "alias_list_id", label);
+                    AliasListFamily family = aliasLists.get(aliasListId);
+                    if(family == null)
+                    {
+                        throw new IOException(label + " refers to an unusable Alias List");
+                    }
+                    AliasMatcherFields matcher = inspectAliasMatcher(rows, family, label);
+                    AliasOptionalFields optionalFields = inspectAliasOptionalFields(rows);
+                    aliasNames.put(id, name);
+                    aliasMatchers.put(id, matcher);
+                    aliasOptionalFields.put(id, optionalFields);
+                    if(defaultedName || matcher.defaultedFieldCount() > 0 ||
+                        optionalFields.defaultedFieldCount() > 0)
+                    {
+                        defaultedAliasRows = Math.addExact(defaultedAliasRows, 1);
+                    }
+                    aliases.add(id);
                 }
-                long aliasListId = positiveId(rows, "alias_list_id", label);
-                AliasListFamily family = aliasLists.get(aliasListId);
-                if(family == null)
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " refers to missing Alias List database row " + aliasListId);
+                    droppedRows++;
                 }
-                optionalStoredText(rows, "description", label + " description");
-                optionalStoredText(rows, "group_name", label + " group");
-                integer(rows, "color", label);
-                optionalStoredText(rows, "icon_name", label + " icon");
-                Integer streamAsTalkgroup = nullableInteger(rows, "stream_as_talkgroup", label);
-                if(streamAsTalkgroup != null && (streamAsTalkgroup < 1 || streamAsTalkgroup > 0xFFFFFF))
-                {
-                    throw new IOException(label + " has stream-as talkgroup outside 1 through 16,777,215");
-                }
-                booleanFlag(rows, "record_enabled", label);
-                validateAliasMatcher(rows, family, label);
-                aliases.add(id);
             }
         }
 
+        GeneratedDefaultMembershipRecovery recoveredDefaultMemberships =
+            inspectGeneratedDefaultMemberships(connection, aliases, aliasLists.keySet(), scanLists);
         long orphanedRows = countOrphanedScanListMemberships(connection, "alias_scan_list_membership", "alias_id",
             aliases, scanLists,
             "Alias scan-list membership");
         orphanedRows = Math.addExact(orphanedRows, countOrphanedScanListMemberships(connection,
             "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id", aliasLists.keySet(), scanLists,
             "Alias List scan-list membership"));
-        return new AliasAdminIndex(Set.copyOf(aliasLists.keySet()), Set.copyOf(aliases), orphanedRows);
+        orphanedRows = Math.subtractExact(orphanedRows, recoveredDefaultMemberships.sourceRows());
+        long preservedRows = Math.subtractExact(sumCounts(aliasLists.size(), scanLists.size(), aliases.size(),
+            countRows(connection, List.of("alias_scan_list_membership",
+                "alias_list_unmatched_talkgroup_scan_list_membership"))), orphanedRows);
+        aliasListsByExactName.replaceAll((ignored, ids) -> List.copyOf(ids));
+        aliasListsByName.replaceAll((ignored, ids) -> List.copyOf(ids));
+        long defaultedRows = sumCounts(defaultedScanListIds.size(), generatedDefaultRows,
+            normalizedAliasListNames, defaultedAliasListPolicies);
+        return new AliasAdminIndex(Set.copyOf(aliasLists.keySet()), Set.copyOf(aliases),
+            Map.copyOf(aliasListsByExactName), Map.copyOf(aliasListsByName), Map.copyOf(aliasLists),
+            Map.copyOf(aliasListNames),
+            Map.copyOf(aliasListRecordPolicies), Map.copyOf(aliasNames), Map.copyOf(aliasMatchers),
+            Map.copyOf(aliasOptionalFields), List.copyOf(scanListRows),
+            orphanedRows, droppedRows, defaultedRows, defaultedAliasRows, preservedRows,
+            recoveredDefaultMemberships);
     }
 
-    private static void validateAliasMatcher(ResultSet rows, AliasListFamily family, String label)
+    private static AliasOptionalFields inspectAliasOptionalFields(ResultSet rows) throws SQLException
+    {
+        boolean defaultDescription = storedInvalidBoundedText(rows, "description", MAXIMUM_ALIAS_TEXT_BYTES);
+        boolean defaultGroupName = storedInvalidBoundedText(rows, "group_name", MAXIMUM_ALIAS_TEXT_BYTES);
+        Integer storedColor = safeInteger(rows, "color");
+        boolean defaultColor = storedColor == null;
+        boolean defaultIconName = storedInvalidBoundedText(rows, "icon_name", MAXIMUM_ALIAS_TEXT_BYTES);
+        Integer streamAsTalkgroup = safeInteger(rows, "stream_as_talkgroup");
+        boolean defaultStreamAs = !"null".equals(rows.getString("stream_as_talkgroup_type")) &&
+            (streamAsTalkgroup == null ||
+            streamAsTalkgroup < 1 || streamAsTalkgroup > 0xFFFFFF);
+        Boolean storedRecordEnabled = safeBoolean(rows, "record_enabled");
+        boolean defaultRecordEnabled = storedRecordEnabled == null;
+        long defaultedFields = (defaultDescription ? 1 : 0) + (defaultGroupName ? 1 : 0) +
+            (defaultColor ? 1 : 0) + (defaultIconName ? 1 : 0) + (defaultStreamAs ? 1 : 0) +
+            (defaultRecordEnabled ? 1 : 0);
+        return new AliasOptionalFields(defaultDescription ? null : safeText(rows, "description"),
+            defaultGroupName ? null : safeText(rows, "group_name"), defaultColor ? 0 : storedColor,
+            defaultIconName ? null : safeText(rows, "icon_name"), defaultStreamAs ? null : streamAsTalkgroup,
+            !defaultRecordEnabled && storedRecordEnabled, defaultedFields);
+    }
+
+    private static String uniqueDefaultScanListName(List<ScanListRow> rows)
+    {
+        Set<String> names = rows.stream().map(ScanListRow::name).map(String::strip)
+            .map(ConfigurationNameRepair::normalize)
+            .collect(java.util.stream.Collectors.toSet());
+        if(!names.contains("default"))
+        {
+            return "Default";
+        }
+        int suffix = 2;
+        while(names.contains(("Default (" + suffix + ")").toLowerCase(Locale.ROOT)))
+        {
+            suffix++;
+        }
+        return "Default (" + suffix + ")";
+    }
+
+    static AliasMatcherFields inspectAliasMatcher(ResultSet rows, AliasListFamily family, String label)
         throws SQLException, IOException
     {
         AliasIDType type;
@@ -583,30 +1243,35 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             throw new IOException(label + " has an unknown matcher type");
         }
 
-        String protocolText = optionalStoredText(rows, "protocol", label + " protocol");
-        Integer value = nullableInteger(rows, "value", label);
-        Integer minimum = nullableInteger(rows, "min_value", label);
-        Integer maximum = nullableInteger(rows, "max_value", label);
-        String textValue = optionalStoredText(rows, "text_value", label + " text value");
-        Integer trimmedTextValueLength = nullableInteger(rows, "trimmed_text_value_length", label);
-        Integer numericValue = nullableInteger(rows, "numeric_value", label);
-        String toneSequence = optionalStoredText(rows, "tone_sequence", label + " tone sequence");
+        String protocolText = null;
+        Integer value = null;
+        Integer minimum = null;
+        Integer maximum = null;
+        String textValue = null;
+        Integer numericValue = null;
+        String toneSequence = null;
+        int retainedPayloadFields;
 
         switch(type)
         {
             case TALKGROUP, RADIO_ID -> {
-                requireAliasPayload(label, protocolText != null && value != null && minimum == null && maximum == null &&
-                    textValue == null && numericValue == null && toneSequence == null);
+                protocolText = requiredBoundedStoredText(rows, "protocol", label + " protocol", 64);
+                value = nullableInteger(rows, "value", label);
+                requireAliasPayload(label, value != null);
                 validateProtocolMatcher(family, type, protocolText, value, value, label);
+                retainedPayloadFields = 2;
             }
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> {
-                requireAliasPayload(label, protocolText != null && value == null && minimum != null && maximum != null &&
-                    minimum < maximum && textValue == null && numericValue == null && toneSequence == null);
+                protocolText = requiredBoundedStoredText(rows, "protocol", label + " protocol", 64);
+                minimum = nullableInteger(rows, "min_value", label);
+                maximum = nullableInteger(rows, "max_value", label);
+                requireAliasPayload(label, minimum != null && maximum != null && minimum < maximum);
                 validateProtocolMatcher(family, type, protocolText, minimum, maximum, label);
+                retainedPayloadFields = 3;
             }
             case STATUS, UNIT_STATUS -> {
-                requireAliasPayload(label, protocolText == null && value == null && minimum == null && maximum == null &&
-                    textValue == null && numericValue != null && toneSequence == null);
+                numericValue = nullableInteger(rows, "numeric_value", label);
+                requireAliasPayload(label, numericValue != null);
                 if(numericValue < 0 || numericValue > 255)
                 {
                     throw new IOException(label + " status value is outside 0 through 255");
@@ -618,19 +1283,22 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 {
                     throw new IOException(label + " matcher is not supported by its Alias List family");
                 }
+                retainedPayloadFields = 1;
             }
             case TONES -> {
-                requireAliasPayload(label, protocolText == null && value == null && minimum == null && maximum == null &&
-                    textValue == null && numericValue == null && toneSequence != null && !toneSequence.isEmpty());
+                toneSequence = requiredBoundedStoredText(rows, "tone_sequence", label + " tone sequence",
+                    MAXIMUM_ALIAS_TEXT_BYTES);
+                requireAliasPayload(label, !toneSequence.isEmpty());
                 if(family != AliasListFamily.P25 && family != AliasListFamily.DMR)
                 {
                     throw new IOException(label + " tone matcher is not supported by its Alias List family");
                 }
                 validateToneSequence(toneSequence, label);
+                retainedPayloadFields = 1;
             }
             case DCS -> {
-                requireAliasPayload(label, protocolText == null && value == null && minimum == null && maximum == null &&
-                    textValue != null && numericValue == null && toneSequence == null);
+                textValue = requiredBoundedStoredText(rows, "text_value", label + " text value",
+                    MAXIMUM_ALIAS_TEXT_BYTES);
                 if(family != AliasListFamily.NBFM)
                 {
                     throw new IOException(label + " DCS matcher is not supported by its Alias List family");
@@ -646,18 +1314,47 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 {
                     throw new IOException(label + " has an unknown DCS code");
                 }
+                retainedPayloadFields = 1;
             }
             case ESN -> {
-                requireAliasPayload(label, protocolText == null && value == null && minimum == null && maximum == null &&
-                    textValue != null && trimmedTextValueLength != null && trimmedTextValueLength > 0 &&
-                    numericValue == null && toneSequence == null);
+                textValue = requiredBoundedStoredText(rows, "text_value", label + " text value",
+                    MAXIMUM_ALIAS_TEXT_BYTES);
+                requireAliasPayload(label, !textValue.trim().isEmpty());
                 if(family != AliasListFamily.NBFM)
                 {
                     throw new IOException(label + " ESN matcher is not supported by its Alias List family");
                 }
+                retainedPayloadFields = 1;
             }
             default -> throw new IOException(label + " has a matcher type that format 15 does not support");
         }
+
+        long populatedPayloadFields = storedPayloadFieldCount(rows);
+        return new AliasMatcherFields(type.name(), protocolText, value, minimum, maximum, textValue, numericValue,
+            toneSequence, Math.max(0, populatedPayloadFields - retainedPayloadFields));
+    }
+
+    static void validateAliasMatcher(ResultSet rows, AliasListFamily family, String label)
+        throws SQLException, IOException
+    {
+        if(inspectAliasMatcher(rows, family, label).defaultedFieldCount() > 0)
+        {
+            throw new IOException(label + " has stale values outside its active matcher fields");
+        }
+    }
+
+    private static long storedPayloadFieldCount(ResultSet rows) throws SQLException
+    {
+        long populated = 0;
+        for(String column: List.of("protocol", "text_value", "tone_sequence"))
+        {
+            populated += "null".equals(rows.getString(column + "_type")) ? 0 : 1;
+        }
+        for(String column: List.of("value", "min_value", "max_value", "numeric_value"))
+        {
+            populated += "null".equals(rows.getString(column + "_type")) ? 0 : 1;
+        }
+        return populated;
     }
 
     private static void validateProtocolMatcher(AliasListFamily family, AliasIDType type, String protocolText,
@@ -734,9 +1431,57 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
+    private static GeneratedDefaultMembershipRecovery inspectGeneratedDefaultMemberships(Connection connection,
+                                                                                            Set<Long> aliases,
+                                                                                            Set<Long> aliasLists,
+                                                                                            Set<Long> retainedScanLists)
+        throws SQLException
+    {
+        Set<Long> aliasIds = new LinkedHashSet<>();
+        Set<Long> aliasListIds = new LinkedHashSet<>();
+        long sourceRows = collectGeneratedDefaultMembershipOwners(connection, "alias_scan_list_membership",
+            "alias_id", aliases, retainedScanLists, "Alias scan-list membership", aliasIds);
+        sourceRows = Math.addExact(sourceRows, collectGeneratedDefaultMembershipOwners(connection,
+            "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id", aliasLists,
+            retainedScanLists, "Alias List scan-list membership", aliasListIds));
+        return new GeneratedDefaultMembershipRecovery(Set.copyOf(aliasIds), Set.copyOf(aliasListIds), sourceRows);
+    }
+
+    private static long collectGeneratedDefaultMembershipOwners(Connection connection, String table,
+                                                                  String ownerColumn, Set<Long> validOwners,
+                                                                  Set<Long> retainedScanLists, String description,
+                                                                  Set<Long> recoveredOwners)
+        throws SQLException
+    {
+        long sourceRows = 0;
+        String sql = "SELECT " + identifier(ownerColumn) + ", scan_list_id FROM " + identifier(table) +
+            " ORDER BY " + identifier(ownerColumn) + ", scan_list_id";
+        try(PreparedStatement statement = connection.prepareStatement(sql); ResultSet rows = statement.executeQuery())
+        {
+            while(rows.next())
+            {
+                try
+                {
+                    long ownerId = positiveId(rows, ownerColumn, description);
+                    long scanListId = positiveId(rows, "scan_list_id", description);
+                    if(validOwners.contains(ownerId) && !retainedScanLists.contains(scanListId))
+                    {
+                        recoveredOwners.add(ownerId);
+                        sourceRows = Math.addExact(sourceRows, 1);
+                    }
+                }
+                catch(IOException | RuntimeException ignored)
+                {
+                    // A malformed owner or target carries no usable routing intent.
+                }
+            }
+        }
+        return sourceRows;
+    }
+
     private static long countOrphanedScanListMemberships(Connection connection, String table, String ownerColumn,
                                                           Set<Long> owners, Set<Long> scanLists, String description)
-        throws SQLException, IOException
+        throws SQLException
     {
         long orphanedRows = 0;
         String sql = "SELECT " + identifier(ownerColumn) + ", scan_list_id FROM " + identifier(table) +
@@ -745,9 +1490,16 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         {
             while(rows.next())
             {
-                long ownerId = positiveId(rows, ownerColumn, description);
-                long scanListId = positiveId(rows, "scan_list_id", description);
-                if(!owners.contains(ownerId) || !scanLists.contains(scanListId))
+                try
+                {
+                    long ownerId = positiveId(rows, ownerColumn, description);
+                    long scanListId = positiveId(rows, "scan_list_id", description);
+                    if(!owners.contains(ownerId) || !scanLists.contains(scanListId))
+                    {
+                        orphanedRows++;
+                    }
+                }
+                catch(IOException | RuntimeException exception)
                 {
                     orphanedRows++;
                 }
@@ -756,228 +1508,311 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         return orphanedRows;
     }
 
-    private static RelationshipInspection<ChannelRow> inspectChannels(Connection connection)
-        throws SQLException, IOException
+    private static RowInspection<ChannelRow> inspectChannels(Connection connection,
+                                                              Map<String,List<Long>> aliasListsByExactName,
+                                                              Map<String,List<Long>> aliasListsByName,
+                                                              Map<Long,AliasListFamily> aliasListFamilies)
+        throws SQLException
     {
         List<ChannelRow> channels = new ArrayList<>();
-        Map<String,String> configurationIds = new HashMap<>();
-        Map<String,String> radioResolveIds = new HashMap<>();
-        long orphanedRows = 0;
+        Set<String> configurationIds = new HashSet<>();
+        Set<String> radioResolveIds = new HashSet<>();
+        long relationshipsDropped = 0;
+        long droppedRows = 0;
+        long defaultedRows = 0;
+        int sourceOrder = 0;
+        Set<String> reservedRowIds = new HashSet<>();
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_name,
-                   radres_guid, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
-                   frequency_count, recording_enabled, event_logging_enabled, config_json
+            SELECT CASE WHEN typeof(configuration_id)='text'
+                              AND length(CAST(configuration_id AS BLOB))<=128
+                        THEN configuration_id END AS configuration_id
+            FROM configuration_channel
+            """); ResultSet rows = statement.executeQuery())
+        {
+            while(rows.next())
+            {
+                String id = tryCanonicalUuid(safeText(rows, "configuration_id"));
+                if(id != null)
+                {
+                    reservedRowIds.add(id);
+                }
+            }
+        }
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT id,
+                   CASE WHEN typeof(configuration_id)='text'
+                              AND length(CAST(configuration_id AS BLOB))<=128
+                        THEN configuration_id END AS configuration_id,
+                   sort_order,
+                   typeof(system_name) AS system_name_type,
+                   length(CAST(system_name AS BLOB)) AS system_name_bytes,
+                   CASE WHEN typeof(system_name)='text'
+                              AND length(CAST(system_name AS BLOB))<=4194304
+                        THEN system_name END AS system_name,
+                   typeof(site_name) AS site_name_type,
+                   length(CAST(site_name AS BLOB)) AS site_name_bytes,
+                   CASE WHEN typeof(site_name)='text'
+                              AND length(CAST(site_name AS BLOB))<=4194304
+                        THEN site_name END AS site_name,
+                   typeof(name) AS name_type,
+                   length(CAST(name AS BLOB)) AS name_bytes,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4194304
+                        THEN name END AS name,
+                   typeof(alias_list_name) AS alias_list_name_type,
+                   length(CAST(alias_list_name AS BLOB)) AS alias_list_name_bytes,
+                   CASE WHEN typeof(alias_list_name)='text'
+                              AND length(CAST(alias_list_name AS BLOB))<=4194304
+                        THEN alias_list_name END AS alias_list_name,
+                   typeof(radres_guid) AS radres_guid_type,
+                   length(CAST(radres_guid AS BLOB)) AS radres_guid_bytes,
+                   CASE WHEN typeof(radres_guid)='text' AND length(CAST(radres_guid AS BLOB))<=128
+                        THEN radres_guid END AS radres_guid,
+                   auto_start, auto_start_order,
+                   CASE WHEN typeof(decoder_type)='text' AND length(CAST(decoder_type AS BLOB))<=64
+                        THEN decoder_type END AS decoder_type,
+                   CASE WHEN typeof(config_json)='text'
+                              AND length(CAST(config_json AS BLOB)) <= 4194304
+                        THEN config_json END AS config_json
             FROM configuration_channel
             ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long rowId = positiveId(rows, "id", "saved channel");
-                String systemName = nullableText(rows, "system_name");
-                String siteName = nullableText(rows, "site_name");
-                String name = nullableText(rows, "name");
-                String label = savedChannelLabel(rowId, systemName, siteName, name);
-                String storedDecoderType = nullableText(rows, "decoder_type");
-                if(storedDecoderType == null || storedDecoderType.isBlank())
+                sourceOrder++;
+                try
                 {
-                    throw new IOException(label + " has no decoder type");
-                }
-                String configurationId = canonicalUuid(text(rows, "configuration_id"),
-                    label + " stable ID");
-                String priorChannel = configurationIds.putIfAbsent(configurationId, label);
-                if(priorChannel != null)
-                {
-                    throw new IOException(label + " and " + priorChannel + " use the same stable ID");
-                }
+                    long rowId = positiveId(rows, "id", "saved channel");
+                    String systemName = safeText(rows, "system_name");
+                    String siteName = safeText(rows, "site_name");
+                    String name = safeText(rows, "name");
+                    String label = savedChannelLabel(rowId, systemName, siteName, name);
+                    ObjectNode payload = parseObject(safeText(rows, "config_json"), label);
+                    requireTypedChannelComponent(payload, "decodeConfiguration", label);
+                    requireTypedChannelComponent(payload, "sourceConfiguration", label);
 
-                ObjectNode payload = parseObject(text(rows, "config_json"), label);
-                normalizeLegacyChannelMode(payload, storedDecoderType, label);
-                requireChannelConfigurationId(payload, configurationId, label);
-                boolean autoStart = booleanFlag(rows, "auto_start", label);
-                Integer autoStartOrder = nullableInteger(rows, "auto_start_order", label);
-                String aliasListName = normalizeBlank(nullableText(rows, "alias_list_name"));
-                Long aliasListId = resolveAliasList(connection, aliasListName, label);
-                if(aliasListName != null && aliasListId == null)
-                {
-                    aliasListName = null;
-                    orphanedRows++;
-                }
-                String radioResolveId = normalizeBlank(nullableText(rows, "radres_guid"));
-                if(radioResolveId != null)
-                {
-                    radioResolveId = canonicalUuid(radioResolveId, label + " RadioResolve ID");
-                    String priorChannelWithRadioResolveId = radioResolveIds.putIfAbsent(radioResolveId, label);
-                    if(priorChannelWithRadioResolveId != null)
+                    boolean repaired = storedInvalidBoundedText(rows, "system_name", 4_194_304) ||
+                        storedInvalidBoundedText(rows, "site_name", 4_194_304) ||
+                        storedInvalidBoundedText(rows, "name", 4_194_304) ||
+                        storedInvalidBoundedText(rows, "alias_list_name", 4_194_304) ||
+                        storedInvalidBoundedText(rows, "radres_guid", 128);
+                    long rowRelationshipsDropped = 0;
+                    String storedConfigurationId = safeText(rows, "configuration_id");
+                    String configurationId = tryCanonicalUuid(storedConfigurationId);
+                    repaired |= configurationId == null || !configurationId.equals(storedConfigurationId);
+                    if(configurationId == null || configurationIds.contains(configurationId))
                     {
-                        throw new IOException(label + " and " + priorChannelWithRadioResolveId +
-                            " use the same RadioResolve ID");
+                        String jsonId = tryCanonicalUuid(payload.get("configurationId"));
+                        if(jsonId != null && !reservedRowIds.contains(jsonId) && !configurationIds.contains(jsonId))
+                        {
+                            configurationId = jsonId;
+                        }
+                        else
+                        {
+                            Set<String> unavailable = new HashSet<>(reservedRowIds);
+                            unavailable.addAll(configurationIds);
+                            configurationId = deterministicChannelId(rowId, unavailable);
+                        }
+                        repaired = true;
                     }
-                }
+                    payload.put("configurationId", configurationId);
 
-                //Format 14 loaded these values from the relational row after decoding.  Remove legacy JSON copies
-                //before decoding and then apply the authoritative row exactly as that loader did.
-                payload.remove(LEGACY_CHANNEL_ROW_OWNED_JSON_FIELDS);
-                Channel channel = decodeChannel(payload, label);
-                if(channel.isConfigurationIdPersistenceRequired() || !configurationId.equals(channel.getConfigurationId()))
-                {
-                    throw new IOException(label + " changes its stable identity while decoding");
-                }
-                channel.setSystem(systemName);
-                channel.setSite(siteName);
-                channel.setName(name);
-                channel.setAliasListName(aliasListName);
-                channel.setAliasListId(aliasListId != null ? aliasListId : AliasListDefinition.UNASSIGNED_ID);
-                channel.setRadioResolveId(radioResolveId);
-                channel.setAutoStart(autoStart);
-                channel.setAutoStartOrder(autoStartOrder);
-                if(!ChannelConfigurationPolicy.isActive(channel))
-                {
-                    throw new IOException(label + " is not an active supported channel");
-                }
+                    String legacyDecoderType = inferLegacyDecoderType(payload, safeText(rows, "decoder_type"));
+                    normalizeLegacyChannelMode(payload, legacyDecoderType, label);
+                    Boolean storedAutoStart = safeBoolean(rows, "auto_start");
+                    boolean autoStart = storedAutoStart != null && storedAutoStart;
+                    if(storedAutoStart == null)
+                    {
+                        repaired = true;
+                    }
+                    Integer autoStartOrder = safeInteger(rows, "auto_start_order");
+                    if(rows.getObject("auto_start_order") != null && autoStartOrder == null)
+                    {
+                        repaired = true;
+                    }
+                    String aliasListName = normalizeBlank(safeText(rows, "alias_list_name"));
+                    Long aliasListId = resolveAliasList(aliasListName, aliasListsByExactName, aliasListsByName);
+                    if(aliasListName != null && aliasListId == null)
+                    {
+                        aliasListName = null;
+                        rowRelationshipsDropped++;
+                    }
 
-                String channelKind = text(rows, "channel_kind");
-                if(!ChannelConfigurationPolicy.requireChannelKind(channel).name().equals(channelKind))
-                {
-                    throw new IOException(label + " channel_kind does not match config_json");
-                }
+                    String storedRadioResolveId = normalizeBlank(safeText(rows, "radres_guid"));
+                    String radioResolveId = tryCanonicalUuid(storedRadioResolveId);
+                    if(storedRadioResolveId != null && !Objects.equals(storedRadioResolveId, radioResolveId))
+                    {
+                        repaired = true;
+                    }
+                    if(radioResolveId != null && radioResolveIds.contains(radioResolveId))
+                    {
+                        radioResolveId = null;
+                        rowRelationshipsDropped++;
+                        repaired = true;
+                    }
 
-                ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
-                requireOldProjectionMatches(rows, channel, projection, label);
+                    //Format 14 loaded these values from the relational row after decoding. Keep those values, but
+                    //derive every query projection and the channel kind from the decodable JSON itself.
+                    payload.remove(LEGACY_CHANNEL_ROW_OWNED_JSON_FIELDS);
+                    payload.put("configurationId", configurationId);
+                    ChannelConfigurationSalvage.Result channelSalvage =
+                        ChannelConfigurationSalvage.decode(MAPPER, payload, label);
+                    Channel channel = channelSalvage.channel();
+                    payload = channelSalvage.payload();
+                    repaired |= channelSalvage.defaultedComponents() > 0;
+                    channel.setSystem(systemName);
+                    channel.setSite(siteName);
+                    channel.setName(name);
+                    channel.setAliasListName(aliasListName);
+                    channel.setAliasListId(aliasListId != null ? aliasListId : AliasListDefinition.UNASSIGNED_ID);
+                    channel.setRadioResolveId(radioResolveId);
+                    channel.setAutoStart(autoStart);
+                    channel.setAutoStartOrder(autoStartOrder);
+                    if(!ChannelConfigurationPolicy.isActive(channel))
+                    {
+                        throw new IOException(label + " is not an active supported channel");
+                    }
+                    if(aliasListId != null && AliasMatchRegistry.familyFor(
+                        channel.getDecodeConfiguration().getDecoderType()) != aliasListFamilies.get(aliasListId))
+                    {
+                        aliasListId = null;
+                        aliasListName = null;
+                        channel.setAliasListName(null);
+                        channel.setAliasListId(AliasListDefinition.UNASSIGNED_ID);
+                        rowRelationshipsDropped++;
+                    }
 
-                int sortOrder = integer(rows, "sort_order", label);
-                if(sortOrder < 0)
-                {
-                    throw new IOException(label + " has a negative sort order");
-                }
-                String decoderType = projection.decoderType();
-                if(decoderType == null || decoderType.isBlank())
-                {
-                    throw new IOException(label + " has no decoder type");
-                }
-                Long primaryFrequency = projection.primaryFrequencyHz();
-                if(primaryFrequency != null && primaryFrequency <= 0)
-                {
-                    throw new IOException(label + " has a nonpositive primary frequency");
-                }
+                    String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
+                    ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
+                    Integer storedSortOrder = safeInteger(rows, "sort_order");
+                    int sortOrder = storedSortOrder != null && storedSortOrder >= 0 ? storedSortOrder : sourceOrder - 1;
+                    if(storedSortOrder == null || storedSortOrder < 0)
+                    {
+                        repaired = true;
+                    }
+                    String decoderType = projection.decoderType();
+                    if(decoderType == null || decoderType.isBlank())
+                    {
+                        throw new IOException(label + " has no decoder type");
+                    }
+                    Long primaryFrequency = projection.primaryFrequencyHz();
+                    if(primaryFrequency != null && primaryFrequency <= 0)
+                    {
+                        primaryFrequency = null;
+                        repaired = true;
+                    }
 
-                payload.remove("configurationId");
-                channels.add(new ChannelRow(rowId, configurationId, channelKind, sortOrder,
-                    systemName, siteName, name, aliasListId, radioResolveId, autoStart, autoStartOrder,
-                    decoderType, projection.addressDomainCode(), primaryFrequency,
-                    MAPPER.writeValueAsString(payload)));
+                    payload.remove("configurationId");
+                    configurationIds.add(configurationId);
+                    if(radioResolveId != null)
+                    {
+                        radioResolveIds.add(radioResolveId);
+                    }
+                    channels.add(new ChannelRow(rowId, configurationId, channelKind, sortOrder,
+                        systemName, siteName, name, aliasListId, radioResolveId, autoStart, autoStartOrder,
+                        decoderType, projection.addressDomainCode(), primaryFrequency,
+                        MAPPER.writeValueAsString(payload)));
+                    relationshipsDropped = Math.addExact(relationshipsDropped, rowRelationshipsDropped);
+                    defaultedRows += repaired ? 1 : 0;
+                }
+                catch(IOException | RuntimeException exception)
+                {
+                    droppedRows++;
+                }
             }
         }
-        return new RelationshipInspection<>(List.copyOf(channels), orphanedRows);
+        return new RowInspection<>(List.copyOf(channels), relationshipsDropped, droppedRows, defaultedRows);
     }
 
-    private static void requireOldProjectionMatches(ResultSet rows, Channel channel,
-                                                    ConfigurationChannelProjection projection, String label)
-        throws SQLException, IOException
-    {
-        SourceConfiguration source = channel.getSourceConfiguration();
-        String sourceType = source != null && source.getSourceType() != null ? source.getSourceType().name() : null;
-        int frequencyCount = channel.getFrequencyList() != null ? channel.getFrequencyList().size() : 0;
-        RecordConfiguration record = channel.getRecordConfiguration();
-        EventLogConfiguration eventLog = channel.getEventLogConfiguration();
-        boolean recording = record != null && record.getRecorders() != null && !record.getRecorders().isEmpty();
-        boolean logging = eventLog != null && eventLog.getLoggers() != null && !eventLog.getLoggers().isEmpty();
-        Long storedPrimaryFrequency = nullableLong(rows, "primary_frequency_hz", label);
-
-        // The frozen format-14 writer stored the primitive default frequency from single-tuner and recording sources
-        // as integer zero.  Its multiple-frequency source already converted an empty/default choice to NULL, so do
-        // not broaden this compatibility rule to that source type or to malformed rows.
-        if(storedPrimaryFrequency != null && storedPrimaryFrequency == 0 &&
-            (source instanceof SourceConfigTuner || source instanceof SourceConfigRecording))
-        {
-            storedPrimaryFrequency = null;
-        }
-
-        if(!Objects.equals(projection.decoderType(), nullableText(rows, "decoder_type")) ||
-            !Objects.equals(sourceType, nullableText(rows, "source_type")) ||
-            !Objects.equals(projection.primaryFrequencyHz(), storedPrimaryFrequency) ||
-            frequencyCount != integer(rows, "frequency_count", label) ||
-            recording != booleanFlag(rows, "recording_enabled", label) ||
-            logging != booleanFlag(rows, "event_logging_enabled", label))
-        {
-            throw new IOException(label + " query projection does not match config_json");
-        }
-    }
-
-    private static Long resolveAliasList(Connection connection, String name, String label)
-        throws SQLException, IOException
+    private static Long resolveAliasList(String name, Map<String,List<Long>> aliasListsByExactName,
+                                         Map<String,List<Long>> aliasListsByName)
     {
         if(name == null)
         {
             return null;
         }
 
-        List<Long> matches = new ArrayList<>(2);
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id FROM alias_list WHERE name = ? COLLATE NOCASE ORDER BY id LIMIT 2
-            """))
+        List<Long> exactMatches = aliasListsByExactName.getOrDefault(ConfigurationNameRepair.normalize(name),
+            List.of());
+        if(exactMatches.size() == 1)
         {
-            statement.setString(1, name);
-            try(ResultSet rows = statement.executeQuery())
-            {
-                while(rows.next())
-                {
-                    matches.add(rows.getLong(1));
-                }
-            }
+            return exactMatches.getFirst();
         }
-        if(matches.isEmpty())
-        {
-            return null;
-        }
-        if(matches.size() != 1)
-        {
-            throw new IOException(label + " names ambiguous Alias List [" + name + "]");
-        }
-        return matches.getFirst();
+
+        List<Long> matches = aliasListsByName.getOrDefault(ConfigurationNameRepair.normalize(name.trim()), List.of());
+        return matches.size() == 1 ? matches.getFirst() : null;
     }
 
-    private static List<BroadcastRow> inspectBroadcasts(Connection connection) throws SQLException, IOException
+    private static RowInspection<BroadcastRow> inspectBroadcasts(Connection connection) throws SQLException
     {
         List<BroadcastCandidate> candidates = new ArrayList<>();
+        long droppedRows = 0;
+        long defaultedRows = 0;
+        int sourceOrder = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, sort_order, name, server_type, enabled, host, port, delay_ms,
-                   maximum_recording_age_ms, config_json
+            SELECT id, sort_order,
+                   CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=4194304
+                        THEN name END AS name,
+                   CASE WHEN typeof(config_json)='text'
+                              AND length(CAST(config_json AS BLOB)) <= 4194304
+                        THEN config_json END AS config_json
             FROM configuration_broadcast_stream
             ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long rowId = positiveId(rows, "id", "broadcast provider");
-                String name = nullableText(rows, "name");
-                String label = broadcastProviderLabel(rowId, name);
-                int sortOrder = integer(rows, "sort_order", label);
-                if(sortOrder < 0)
+                sourceOrder++;
+                try
                 {
-                    throw new IOException(label + " has a negative sort_order");
+                    long rowId = positiveId(rows, "id", "broadcast provider");
+                    String storedName = safeText(rows, "name");
+                    String label = broadcastProviderLabel(rowId, storedName);
+                    ObjectNode payload = parseObject(safeText(rows, "config_json"), label);
+                    normalizeLegacyBroadcastType(payload);
+                    JsonNode storedPayloadName = payload.get("name");
+                    String payloadName = storedPayloadName != null && storedPayloadName.isTextual() ?
+                        normalizeBlank(storedPayloadName.textValue()) : null;
+                    boolean repairedName = payloadName == null;
+                    if(payloadName == null)
+                    {
+                        String recoveredName = normalizeBlank(storedName);
+                        if(recoveredName == null)
+                        {
+                            recoveredName = "Recovered Broadcast Provider " + rowId;
+                        }
+                        recoveredName = ConfigurationNameRepair.truncateToCodePoints(recoveredName,
+                            MAXIMUM_RECOVERED_BROADCAST_NAME_CODE_POINTS).strip();
+                        payload.put("name", recoveredName);
+                    }
+                    BroadcastConfiguration configuration = decodeBroadcast(payload, label);
+                    String name = normalizeBlank(configuration.getName());
+                    if(name == null)
+                    {
+                        throw new IOException(label + " has no recoverable name");
+                    }
+                    Integer storedSortOrder = safeInteger(rows, "sort_order");
+                    int sortOrder = storedSortOrder != null && storedSortOrder >= 0 ? storedSortOrder : sourceOrder - 1;
+                    boolean repaired = repairedName || storedSortOrder == null || storedSortOrder < 0;
+                    JsonNode storedId = payload.get("configurationId");
+                    String candidateId = tryCanonicalUuid(storedId);
+                    repaired |= storedId != null && (!storedId.isTextual() ||
+                        !Objects.equals(storedId.textValue(), candidateId));
+                    payload.remove(List.of("configurationId", "aliasListName"));
+                    Set<String> routeNames = new LinkedHashSet<>();
+                    routeNames.add(name);
+                    if(normalizeBlank(storedName) != null)
+                    {
+                        routeNames.add(storedName);
+                    }
+                    candidates.add(new BroadcastCandidate(rowId, candidateId, sortOrder, name,
+                        Set.copyOf(routeNames),
+                        MAPPER.writeValueAsString(payload), repaired));
                 }
-                ObjectNode payload = parseObject(text(rows, "config_json"), label);
-                normalizeLegacyBroadcastType(payload);
-                BroadcastConfiguration configuration = decodeBroadcast(payload, label);
-                String serverType = nullableText(rows, "server_type");
-                String expectedServerType = configuration.getBroadcastServerType() != null ?
-                    configuration.getBroadcastServerType().name() : null;
-                if(!Objects.equals(name, configuration.getName()) ||
-                    !Objects.equals(serverType, expectedServerType) ||
-                    booleanFlag(rows, "enabled", label) != configuration.isEnabled() ||
-                    !Objects.equals(nullableText(rows, "host"), configuration.getHost()) ||
-                    integer(rows, "port", label) != configuration.getPort() ||
-                    longInteger(rows, "delay_ms", label) != configuration.getDelay() ||
-                    longInteger(rows, "maximum_recording_age_ms", label) != configuration.getMaximumRecordingAge())
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " query projection does not match config_json");
+                    droppedRows++;
                 }
-
-                JsonNode storedId = payload.get("configurationId");
-                payload.remove(List.of("configurationId", "aliasListName"));
-                candidates.add(new BroadcastCandidate(rowId, tryCanonicalUuid(storedId), sortOrder, name,
-                    MAPPER.writeValueAsString(payload)));
             }
         }
 
@@ -1005,11 +1840,14 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             String candidateId = candidate.candidateConfigurationId();
             String configurationId = candidateId != null && occurrences.get(candidateId) == 1 ? candidateId :
                 deterministicBroadcastId(candidate.id(), unavailable);
+            boolean repaired = candidate.repaired() || candidateId == null ||
+                !Objects.equals(candidateId, configurationId);
             unavailable.add(configurationId);
             broadcasts.add(new BroadcastRow(candidate.id(), configurationId, candidate.sortOrder(), candidate.name(),
-                candidate.payload()));
+                candidate.routeNames(), candidate.payload()));
+            defaultedRows += repaired ? 1 : 0;
         }
-        return List.copyOf(broadcasts);
+        return new RowInspection<>(List.copyOf(broadcasts), 0, droppedRows, defaultedRows);
     }
 
     private static Map<String,List<BroadcastRow>> broadcastsByName(List<BroadcastRow> broadcasts)
@@ -1017,9 +1855,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         Map<String,List<BroadcastRow>> byName = new LinkedHashMap<>();
         for(BroadcastRow broadcast: broadcasts)
         {
-            if(broadcast.name() != null && !broadcast.name().isBlank())
+            for(String routeName: broadcast.routeNames())
             {
-                byName.computeIfAbsent(broadcast.name(), ignored -> new ArrayList<>()).add(broadcast);
+                List<BroadcastRow> matches = byName.computeIfAbsent(routeName, ignored -> new ArrayList<>());
+                if(matches.stream().noneMatch(match -> match.configurationId().equals(broadcast.configurationId())))
+                {
+                    matches.add(broadcast);
+                }
             }
         }
         byName.replaceAll((ignored, matches) -> List.copyOf(matches));
@@ -1029,33 +1871,40 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static RelationshipInspection<AliasRoute> inspectAliasRoutes(Connection connection,
                                                                           Map<String,List<BroadcastRow>> broadcastsByName,
                                                                           Set<Long> aliasIds)
-        throws SQLException, IOException
+        throws SQLException
     {
         List<AliasRoute> routes = new ArrayList<>();
+        Set<ResolvedRouteTarget> retainedTargets = new HashSet<>();
         long orphanedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, alias_id, channel_name FROM alias_broadcast_channel ORDER BY id
+            SELECT id, alias_id,
+                   CASE WHEN typeof(channel_name)='text'
+                              AND length(CAST(channel_name AS BLOB))<=4194304
+                        THEN channel_name END AS channel_name
+            FROM alias_broadcast_channel ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "Alias broadcast route");
-                String name = text(rows, "channel_name");
-                long aliasId = positiveId(rows, "alias_id", "Alias broadcast route");
-                if(!aliasIds.contains(aliasId))
+                try
+                {
+                    long id = positiveId(rows, "id", "Alias broadcast route");
+                    String name = safeText(rows, "channel_name");
+                    long aliasId = positiveId(rows, "alias_id", "Alias broadcast route");
+                    String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName);
+                    if(!aliasIds.contains(aliasId) || broadcastConfigurationId == null ||
+                        !retainedTargets.add(new ResolvedRouteTarget(aliasId, broadcastConfigurationId)))
+                    {
+                        orphanedRows++;
+                    }
+                    else
+                    {
+                        routes.add(new AliasRoute(id, aliasId, broadcastConfigurationId));
+                    }
+                }
+                catch(IOException | RuntimeException exception)
                 {
                     orphanedRows++;
-                    continue;
-                }
-                String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName,
-                    "Alias stream route for " + displayName(name) + " (database row " + id + ")");
-                if(broadcastConfigurationId == null)
-                {
-                    orphanedRows++;
-                }
-                else
-                {
-                    routes.add(new AliasRoute(id, aliasId, broadcastConfigurationId));
                 }
             }
         }
@@ -1065,251 +1914,255 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static RelationshipInspection<UnmatchedRoute> inspectUnmatchedRoutes(Connection connection,
                                                                                   Map<String,List<BroadcastRow>> broadcastsByName,
                                                                                   Set<Long> aliasListIds)
-        throws SQLException, IOException
+        throws SQLException
     {
         List<UnmatchedRoute> routes = new ArrayList<>();
+        Set<ResolvedRouteTarget> retainedTargets = new HashSet<>();
         long orphanedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, alias_list_id, channel_name FROM alias_list_unmatched_talkgroup_stream ORDER BY id
+            SELECT id, alias_list_id,
+                   CASE WHEN typeof(channel_name)='text'
+                              AND length(CAST(channel_name AS BLOB))<=4194304
+                        THEN channel_name END AS channel_name
+            FROM alias_list_unmatched_talkgroup_stream ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "unmatched-talkgroup broadcast route");
-                String name = text(rows, "channel_name");
-                long aliasListId = positiveId(rows, "alias_list_id", "unmatched-talkgroup broadcast route");
-                if(!aliasListIds.contains(aliasListId))
+                try
+                {
+                    long id = positiveId(rows, "id", "unmatched-talkgroup broadcast route");
+                    String name = safeText(rows, "channel_name");
+                    long aliasListId = positiveId(rows, "alias_list_id", "unmatched-talkgroup broadcast route");
+                    String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName);
+                    if(!aliasListIds.contains(aliasListId) || broadcastConfigurationId == null ||
+                        !retainedTargets.add(new ResolvedRouteTarget(aliasListId, broadcastConfigurationId)))
+                    {
+                        orphanedRows++;
+                    }
+                    else
+                    {
+                        routes.add(new UnmatchedRoute(id, aliasListId, broadcastConfigurationId));
+                    }
+                }
+                catch(IOException | RuntimeException exception)
                 {
                     orphanedRows++;
-                    continue;
-                }
-                String broadcastConfigurationId = resolveBroadcast(name, broadcastsByName,
-                    "Unmatched-talkgroup stream route for " + displayName(name) +
-                        " (database row " + id + ")");
-                if(broadcastConfigurationId == null)
-                {
-                    orphanedRows++;
-                }
-                else
-                {
-                    routes.add(new UnmatchedRoute(id, aliasListId, broadcastConfigurationId));
                 }
             }
         }
         return new RelationshipInspection<>(List.copyOf(routes), orphanedRows);
     }
 
-    private static String resolveBroadcast(String name, Map<String,List<BroadcastRow>> broadcastsByName,
-                                           String label) throws IOException
+    private static String resolveBroadcast(String name, Map<String,List<BroadcastRow>> broadcastsByName)
     {
+        if(name == null || name.isBlank())
+        {
+            return null;
+        }
         List<BroadcastRow> matches = broadcastsByName.getOrDefault(name, List.of());
         if(matches.isEmpty())
         {
             return null;
         }
-        if(matches.size() != 1)
-        {
-            throw new IOException(label + " has an ambiguous broadcast provider name because it matches more " +
-                "than one provider");
-        }
-        return matches.getFirst().configurationId();
+        return matches.size() == 1 ? matches.getFirst().configurationId() : null;
     }
 
-    private static List<PreferenceRow> inspectPreferences(Connection connection) throws SQLException, IOException
+    private static UserInspection inspectUsers(Connection connection) throws SQLException
     {
-        List<PreferenceRow> preferences = new ArrayList<>();
+        List<WebUserRow> users = new ArrayList<>();
+        long sourceRows = 0;
+        long droppedRows = 0;
+        boolean primaryPresent = false;
+        boolean intendedPrimaryUnusable = false;
+        int ordinaryUsers = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, username, tier, primary_admin, credential_version, password_algorithm,
-                   password_iterations, password_derived_key_bits, password_salt, password_hash,
-                   password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
-                   created_at_ms, updated_at_ms,
-                   CASE WHEN username=lower(username) THEN 1 ELSE 0 END AS canonical_username,
-                   length(preferences_json) AS preferences_length,
-                   CASE WHEN json_valid(preferences_json) THEN json_type(preferences_json, '$') END
-                       AS preferences_root_type
+            SELECT id,
+                   CASE WHEN typeof(username)='text' AND length(CAST(username AS BLOB)) <= 64
+                        THEN username END AS username,
+                   CASE WHEN typeof(tier)='text' AND length(CAST(tier AS BLOB)) <= 16
+                        THEN tier END AS tier,
+                   primary_admin, credential_version,
+                   CASE WHEN typeof(password_algorithm)='text'
+                              AND length(CAST(password_algorithm AS BLOB)) <= 64
+                        THEN password_algorithm END AS password_algorithm,
+                   password_iterations, password_derived_key_bits,
+                   CASE WHEN typeof(password_salt)='blob' AND length(password_salt) <= 64
+                        THEN password_salt END AS password_salt,
+                   CASE WHEN typeof(password_hash)='blob' AND length(password_hash) <= 32
+                        THEN password_hash END AS password_hash,
+                   password_changed_at_ms, auth_revision,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision,
+                   created_at_ms, updated_at_ms
             FROM web_user
             ORDER BY id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                long id = positiveId(rows, "id", "web user");
-                String username = requiredStoredText(rows, "username", "Web user database row " + id);
-                String label = "Web user " + displayName(username) + " (database row " + id + ")";
-                if(username.length() < 1 || username.length() > 64 ||
-                    integer(rows, "canonical_username", label) != 1 ||
-                    !username.substring(0, 1).matches("[a-z0-9]") ||
-                    !username.matches("[a-z0-9][a-z0-9._-]*"))
-                {
-                    throw new IOException(label + " has an invalid username");
-                }
-
-                String tier = requiredStoredText(rows, "tier", label + " access tier");
-                if(!Set.of("USER", "ADMIN").contains(tier))
-                {
-                    throw new IOException(label + " has an invalid access tier");
-                }
-                boolean primary = booleanFlag(rows, "primary_admin", label);
-                if((primary && (!"admin".equals(username) || !"ADMIN".equals(tier))) ||
-                    (!primary && "admin".equals(username)))
-                {
-                    throw new IOException(label + " has invalid primary-administrator settings");
-                }
-                if(longInteger(rows, "credential_version", label) != 1)
-                {
-                    throw new IOException(label + " has an unsupported credential version");
-                }
-                if(!"PBKDF2WithHmacSHA256".equals(requiredStoredText(rows, "password_algorithm", label)))
-                {
-                    throw new IOException(label + " has an unsupported password algorithm");
-                }
-                long iterations = longInteger(rows, "password_iterations", label);
-                if(iterations < 600_000 || iterations > 5_000_000)
-                {
-                    throw new IOException(label + " has a password work factor outside the supported range");
-                }
-                if(longInteger(rows, "password_derived_key_bits", label) != 256)
-                {
-                    throw new IOException(label + " has an unsupported password verifier size");
-                }
-                byte[] salt = requiredStoredBlob(rows, "password_salt", label + " password salt");
-                byte[] hash = requiredStoredBlob(rows, "password_hash", label + " password verifier");
+                sourceRows++;
+                String possibleUsername = safeText(rows, "username");
+                Integer possiblePrimary = safeInteger(rows, "primary_admin");
+                boolean intendedPrimary = "admin".equalsIgnoreCase(possibleUsername) ||
+                    (possiblePrimary != null && possiblePrimary == 1);
                 try
                 {
-                    if(salt.length < 16 || salt.length > 64)
+                    long id = positiveId(rows, "id", "web user");
+                    String username = requiredStoredText(rows, "username", "Web user database row " + id);
+                    String label = "Web user " + displayName(username) + " (database row " + id + ")";
+                    if(username.length() < 1 || username.length() > 64 ||
+                        !username.matches("[a-z0-9][a-z0-9._-]*"))
                     {
-                        throw new IOException(label + " has an invalid password salt size");
+                        throw new IOException(label + " has an invalid username");
                     }
-                    if(hash.length != 32)
+                    String tier = requiredStoredText(rows, "tier", label + " access tier");
+                    boolean primary = booleanFlag(rows, "primary_admin", label);
+                    if(!Set.of("USER", "ADMIN").contains(tier) ||
+                        (primary && (!"admin".equals(username) || !"ADMIN".equals(tier))) ||
+                        (!primary && "admin".equals(username)))
                     {
-                        throw new IOException(label + " has an invalid password verifier size");
+                        throw new IOException(label + " has invalid account identity");
+                    }
+                    Long credentialVersion = safeLong(rows, "credential_version");
+                    Long iterations = safeLong(rows, "password_iterations");
+                    Long keyBits = safeLong(rows, "password_derived_key_bits");
+                    byte[] salt = safeBlob(rows, "password_salt");
+                    byte[] hash = safeBlob(rows, "password_hash");
+                    Long storedPasswordChanged = safePositiveLong(rows, "password_changed_at_ms");
+                    Long storedAuthRevision = safePositiveLong(rows, "auth_revision");
+                    if(credentialVersion == null || credentialVersion != 1 ||
+                        !"PBKDF2WithHmacSHA256".equals(safeText(rows, "password_algorithm")) ||
+                        iterations == null || iterations < 600_000 || iterations > 5_000_000 ||
+                        keyBits == null || keyBits != 256 || salt == null || salt.length < 16 || salt.length > 64 ||
+                        hash == null || hash.length != 32)
+                    {
+                        throw new IOException(label + " has an unusable password credential");
+                    }
+                    boolean credentialBookkeepingDefaulted = storedPasswordChanged == null ||
+                        storedAuthRevision == null || storedAuthRevision >= Long.MAX_VALUE - 1;
+                    long passwordChanged = storedPasswordChanged != null ? storedPasswordChanged : 1;
+                    long authRevision = storedAuthRevision != null && storedAuthRevision < Long.MAX_VALUE - 1 ?
+                        storedAuthRevision : 1;
+
+                    String preferences;
+                    boolean preferenceTransformed = false;
+                    Long storedRevision = safeLong(rows, "preferences_revision");
+                    boolean revisionIncrementable = storedRevision != null && storedRevision > 0 &&
+                        storedRevision < Long.MAX_VALUE - 2;
+                    long revision = revisionIncrementable ? storedRevision + 1 : 1;
+                    boolean preferenceDefaulted = !revisionIncrementable || credentialBookkeepingDefaulted;
+                    try
+                    {
+                        String storedPreferences = safeText(rows, "preferences_json");
+                        if(storedPreferences == null ||
+                            storedPreferences.length() > MAXIMUM_WEB_PREFERENCES_CHARACTERS)
+                        {
+                            throw new IOException("invalid preferences");
+                        }
+                        preferences = Format14WebUserPreferencesCodec.migrate(storedPreferences);
+                        preferenceTransformed = true;
+                    }
+                    catch(IOException | RuntimeException exception)
+                    {
+                        preferences = WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
+                        preferenceDefaulted = true;
+                    }
+
+                    Long createdAtValue = safePositiveLong(rows, "created_at_ms");
+                    Long updatedAtValue = safePositiveLong(rows, "updated_at_ms");
+                    long createdAt = createdAtValue != null ? createdAtValue : passwordChanged;
+                    long updatedAt = updatedAtValue != null ? Math.max(updatedAtValue, createdAt) : createdAt;
+                    if(createdAtValue == null || updatedAtValue == null || updatedAtValue < createdAt)
+                    {
+                        preferenceDefaulted = true;
+                    }
+                    WebUserRow user = new WebUserRow(id, username, tier, primary, 1,
+                        "PBKDF2WithHmacSHA256", iterations.intValue(), 256, salt, hash, passwordChanged,
+                        authRevision, preferences, revision, createdAt, updatedAt, preferenceTransformed,
+                        preferenceDefaulted);
+                    if(primary || ordinaryUsers++ < WebAccessService.MAXIMUM_USERS)
+                    {
+                        users.add(user);
+                    }
+                    else
+                    {
+                        droppedRows++;
+                    }
+                    primaryPresent |= primary;
+                }
+                catch(IOException | RuntimeException exception)
+                {
+                    if(intendedPrimary)
+                    {
+                        intendedPrimaryUnusable = true;
+                    }
+                    else
+                    {
+                        droppedRows++;
                     }
                 }
-                finally
-                {
-                    Arrays.fill(salt, (byte)0);
-                    Arrays.fill(hash, (byte)0);
-                }
-                requirePositiveInteger(rows, "password_changed_at_ms", label + " password-change time");
-                requirePositiveInteger(rows, "auth_revision", label + " authentication revision");
-                String preferencesJson = requiredStoredText(rows, "preferences_json", label + " preferences");
-                if(integer(rows, "preferences_length", label) > MAXIMUM_WEB_PREFERENCES_CHARACTERS ||
-                    !"object".equals(optionalStoredText(rows, "preferences_root_type", label)))
-                {
-                    throw new IOException(label + " preferences must be a bounded JSON object");
-                }
-                long revision = longInteger(rows, "preferences_revision", label);
-                if(revision <= 0 || revision == Long.MAX_VALUE)
-                {
-                    throw new IOException(label + " has a preference revision outside the supported range");
-                }
-                requirePositiveInteger(rows, "created_at_ms", label + " creation time");
-                long updatedAt = requirePositiveInteger(rows, "updated_at_ms", label + " update time");
-                preferences.add(new PreferenceRow(id, Format14WebUserPreferencesCodec.migrate(preferencesJson),
-                    revision + 1, updatedAt));
             }
         }
-        return List.copyOf(preferences);
-    }
-
-    private static PortablePreferencesUpdate inspectPortablePreferences(Connection connection)
-        throws SQLException, IOException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT settings_json, updated_at_ms
-            FROM application_settings
-            WHERE key=?
-            """))
+        if(!primaryPresent || intendedPrimaryUnusable)
         {
-            statement.setString(1, PORTABLE_PREFERENCES_KEY);
-            try(ResultSet rows = statement.executeQuery())
-            {
-                if(!rows.next())
-                {
-                    return new PortablePreferencesUpdate(null, 0, false);
-                }
-
-                String json = requiredStoredText(rows, "settings_json", "Portable preferences");
-                long updatedAt = requirePositiveInteger(rows, "updated_at_ms", "Portable preference update time");
-                JsonNode parsed = MAPPER.readTree(json);
-                if(!(parsed instanceof ObjectNode root))
-                {
-                    throw new IOException("Portable preferences must be a JSON object");
-                }
-
-                JsonNode node = root.get(NOW_PLAYING_NODE);
-                if(node == null)
-                {
-                    return new PortablePreferencesUpdate(null, updatedAt, false);
-                }
-                if(!(node instanceof ObjectNode nowPlaying))
-                {
-                    throw new IOException("Receiver preferences must be a JSON object");
-                }
-                if(nowPlaying.has(RECEIVER_SETTINGS_REVISION_KEY))
-                {
-                    throw new IOException("Receiver preferences already contain the future receiver-settings " +
-                        "revision and are not an exact format-14 state");
-                }
-
-                JsonNode revision = nowPlaying.get(SITE_SETTINGS_REVISION_KEY);
-                if(revision == null)
-                {
-                    return new PortablePreferencesUpdate(null, updatedAt, false);
-                }
-                if(!revision.isTextual())
-                {
-                    throw new IOException("The saved site-settings revision is not text");
-                }
-                long value;
-                try
-                {
-                    value = Long.parseLong(revision.textValue());
-                }
-                catch(NumberFormatException exception)
-                {
-                    throw new IOException("The saved site-settings revision is not a positive whole number", exception);
-                }
-                if(value <= 0 || value == Long.MAX_VALUE || !Long.toString(value).equals(revision.textValue()))
-                {
-                    throw new IOException("The saved site-settings revision is not a positive whole number");
-                }
-
-                nowPlaying.remove(SITE_SETTINGS_REVISION_KEY);
-                nowPlaying.set(RECEIVER_SETTINGS_REVISION_KEY, revision);
-                return new PortablePreferencesUpdate(MAPPER.writeValueAsString(root), updatedAt, true);
-            }
+            return new UserInspection(List.of(), 0, 0, 0, sourceRows, true);
         }
+        long defaultedRows = users.stream().filter(WebUserRow::preferenceDefaulted).count();
+        long transformedPreferences = users.stream().filter(WebUserRow::preferenceTransformed).count();
+        return new UserInspection(List.copyOf(users), droppedRows, defaultedRows, transformedPreferences, 0, false);
     }
 
-    private static PolicyInput inspectPolicy(Connection connection) throws SQLException, IOException
+    private static PolicyInput inspectPolicy(Connection connection) throws SQLException
     {
         Map<String,PolicyRow> source = new LinkedHashMap<>();
+        long droppedRows = 0;
+        long sourceRows = 0;
+        long defaultedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT capability_id, required_tier, updated_at_ms
+            SELECT CASE WHEN typeof(capability_id)='text'
+                              AND length(CAST(capability_id AS BLOB)) <= 64
+                        THEN capability_id END AS capability_id,
+                   CASE WHEN typeof(required_tier)='text'
+                              AND length(CAST(required_tier AS BLOB)) <= 16
+                        THEN required_tier END AS required_tier,
+                   CASE WHEN typeof(updated_at_ms)='integer' THEN updated_at_ms END AS updated_at_ms
             FROM web_access_policy
             ORDER BY capability_id
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                String id = requiredStoredText(rows, "capability_id", "Web access policy capability");
-                String label = "Web access policy " + displayName(id);
-                if(id.length() < 1 || id.length() > 64 || !id.equals(id.toLowerCase(java.util.Locale.ROOT)))
+                sourceRows++;
+                try
                 {
-                    throw new IOException(label + " has an invalid capability name");
+                    String id = requiredStoredText(rows, "capability_id", "Web access policy capability");
+                    String label = "Web access policy " + displayName(id);
+                    if(id.length() < 1 || id.length() > 64 || !id.equals(id.toLowerCase(Locale.ROOT)))
+                    {
+                        throw new IOException(label + " has an invalid capability name");
+                    }
+                    String tier = requiredStoredText(rows, "required_tier", label + " tier");
+                    if(!Set.of("PUBLIC", "USER", "ADMIN").contains(tier))
+                    {
+                        throw new IOException(label + " has an invalid access tier");
+                    }
+                    Long storedUpdatedAt = safePositiveLong(rows, "updated_at_ms");
+                    long updatedAt = storedUpdatedAt != null ? storedUpdatedAt : 1;
+                    defaultedRows += storedUpdatedAt == null ? 1 : 0;
+                    if(!LEGACY_POLICY_IDS.contains(id) && WebCapability.fromId(id).isEmpty())
+                    {
+                        droppedRows++;
+                        continue;
+                    }
+                    source.put(id, new PolicyRow(id, tier, updatedAt));
                 }
-                String tier = requiredStoredText(rows, "required_tier", label + " tier");
-                if(!Set.of("PUBLIC", "USER", "ADMIN").contains(tier))
+                catch(IOException | RuntimeException exception)
                 {
-                    throw new IOException(label + " has an invalid access tier");
+                    droppedRows++;
                 }
-                long updatedAt = requirePositiveInteger(rows, "updated_at_ms", label + " update time");
-                if("PUBLIC".equals(tier))
-                {
-                    throw new IOException(label + " redundantly stores its default PUBLIC access tier");
-                }
-                source.put(id, new PolicyRow(id, tier, updatedAt));
             }
         }
 
@@ -1321,19 +2174,50 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             conventional != null ? conventional.updatedAtMs() : 0);
         PolicyRow siteAccess = source.remove(SITE_ACCESS_POLICY_ID);
 
-        List<PolicyRow> target = new ArrayList<>(source.values());
+        Map<String,PolicyRow> target = new LinkedHashMap<>();
+        for(PolicyRow row: source.values())
+        {
+            WebCapability capability = WebCapability.fromId(row.capabilityId()).orElse(null);
+            if(capability == null || !capability.configurable() ||
+                capability.defaultTier().name().equals(row.tier()))
+            {
+                droppedRows++;
+            }
+            else
+            {
+                mergePolicy(target, row);
+            }
+        }
         if(siteAccess != null)
         {
-            target.add(new PolicyRow(WEB_ACCESS_POLICY_ID, siteAccess.tier(), siteAccess.updatedAtMs()));
+            mergeNonDefaultPolicy(target,
+                new PolicyRow(WEB_ACCESS_POLICY_ID, siteAccess.tier(), siteAccess.updatedAtMs()));
         }
         if(!"PUBLIC".equals(tier))
         {
-            target.add(new PolicyRow(RADIO_POLICY_ID, tier, updatedAt));
+            mergeNonDefaultPolicy(target, new PolicyRow(RADIO_POLICY_ID, tier, updatedAt));
         }
-        target.sort(java.util.Comparator.comparing(PolicyRow::capabilityId));
+        List<PolicyRow> rows = new ArrayList<>(target.values());
+        rows.sort(java.util.Comparator.comparing(PolicyRow::capabilityId));
         int transformed = (systems != null ? 1 : 0) + (conventional != null ? 1 : 0) +
             (siteAccess != null ? 1 : 0);
-        return new PolicyInput(List.copyOf(target), transformed);
+        return new PolicyInput(List.copyOf(rows), transformed, droppedRows, sourceRows, defaultedRows);
+    }
+
+    private static void mergeNonDefaultPolicy(Map<String,PolicyRow> target, PolicyRow row)
+    {
+        WebCapability capability = WebCapability.fromId(row.capabilityId()).orElse(null);
+        if(capability != null && capability.configurable() &&
+            !capability.defaultTier().name().equals(row.tier()))
+        {
+            mergePolicy(target, row);
+        }
+    }
+
+    private static void mergePolicy(Map<String,PolicyRow> target, PolicyRow row)
+    {
+        target.merge(row.capabilityId(), row, (first, second) -> new PolicyRow(first.capabilityId(),
+            moreRestrictive(first.tier(), second.tier()), Math.max(first.updatedAtMs(), second.updatedAtMs())));
     }
 
     private static String moreRestrictive(String first, String second)
@@ -1449,14 +2333,12 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
 
         SdrTrunkDatabaseSchema.create(connection);
-        copyUnchangedApplicationRows(connection);
+        copyUnchangedApplicationRows(connection, input);
         insertChannels(connection, input.channels());
         insertBroadcasts(connection, input.broadcasts());
         insertAliasRoutes(connection, input.aliasRoutes());
         insertUnmatchedRoutes(connection, input.unmatchedRoutes());
         insertPolicies(connection, input.policy());
-        applyPortablePreferencesUpdate(connection, input.portablePreferences());
-        migratePreferences(connection, input.preferences());
 
         try(Statement statement = connection.createStatement())
         {
@@ -1478,35 +2360,110 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         restorePreservedSequences(connection, input.sequences());
     }
 
-    private static Map<String,Long> inspectPreservedSequences(Connection connection) throws SQLException, IOException
+    private static long smallestUnusedScanListId(List<ScanListRow> rows) throws SQLException
     {
-        Map<String,Long> sequences = new LinkedHashMap<>();
+        Set<Long> used = new HashSet<>();
+        for(ScanListRow row: rows)
+        {
+            if(row.id() != null && row.id() > 0 &&
+                row.id() < SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM)
+            {
+                used.add(row.id());
+            }
+        }
+        for(long candidate = 1; candidate < SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM; candidate++)
+        {
+            if(!used.contains(candidate))
+            {
+                return candidate;
+            }
+        }
+        throw new SQLException("No JSON-safe identifier remains for the repaired Default scan list");
+    }
+
+    private static Map<String,Long> retainedSequenceMaximums(AliasAdminIndex aliases, List<ChannelRow> channels,
+                                                              List<BroadcastRow> broadcasts,
+                                                              List<AliasRoute> aliasRoutes,
+                                                              List<UnmatchedRoute> unmatchedRoutes,
+                                                              List<WebUserRow> users)
+    {
+        Map<String,Long> values = new LinkedHashMap<>();
+        values.put("alias_list", maximumId(aliases.aliasListIds()));
+        values.put("alias", maximumId(aliases.aliasIds()));
+        values.put("scan_list", aliases.scanLists().stream().map(ScanListRow::id).filter(Objects::nonNull)
+            .mapToLong(Long::longValue).max().orElse(0));
+        values.put("alias_broadcast_channel", aliasRoutes.stream().mapToLong(AliasRoute::id).max().orElse(0));
+        values.put("alias_list_unmatched_talkgroup_stream",
+            unmatchedRoutes.stream().mapToLong(UnmatchedRoute::id).max().orElse(0));
+        values.put("configuration_channel", channels.stream().mapToLong(ChannelRow::id).max().orElse(0));
+        values.put("configuration_broadcast_stream",
+            broadcasts.stream().mapToLong(BroadcastRow::id).max().orElse(0));
+        values.put("web_user", users.stream().mapToLong(WebUserRow::id).max().orElse(0));
+        return Map.copyOf(values);
+    }
+
+    private static long maximumId(Collection<Long> ids)
+    {
+        return ids.stream().mapToLong(Long::longValue).max().orElse(0);
+    }
+
+    private static SequenceInspection inspectSequences(Connection connection, Map<String,Long> retainedMaximums)
+        throws SQLException
+    {
+        Map<String,Long> values = new LinkedHashMap<>();
+        Set<String> observed = new HashSet<>();
+        long defaultedRows = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT name, seq FROM sqlite_sequence ORDER BY name
+            SELECT CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB))<=128 THEN name END AS name,
+                   seq
+            FROM sqlite_sequence
+            WHERE typeof(name)='text' AND length(CAST(name AS BLOB))<=128
+            ORDER BY name, seq
             """); ResultSet rows = statement.executeQuery())
         {
             while(rows.next())
             {
-                String name = requiredStoredText(rows, "name", "SQLite sequence table name");
-                if(!PRESERVED_AUTOINCREMENT_TABLES.contains(name))
+                String name = safeText(rows, "name");
+                if(name == null || !PRESERVED_AUTOINCREMENT_TABLES.contains(name))
                 {
                     continue;
                 }
-                long sequence = longInteger(rows, "seq", "SQLite sequence for " + displayName(name));
-                if(sequence < 0)
+                observed.add(name);
+                Long sequence = safeLong(rows, "seq");
+                if(sequence == null || sequence < 0 ||
+                    sequence >= SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM)
                 {
-                    throw new IOException("SQLite sequence for " + displayName(name) + " is negative");
+                    defaultedRows++;
+                    continue;
                 }
-                if(sequences.putIfAbsent(name, sequence) != null)
+                Long prior = values.put(name, Math.max(sequence, values.getOrDefault(name, 0L)));
+                if(prior != null)
                 {
-                    throw new IOException("SQLite has duplicate sequence state for " + displayName(name));
+                    defaultedRows++;
                 }
             }
         }
-        return Map.copyOf(sequences);
+        for(String table: PRESERVED_AUTOINCREMENT_TABLES)
+        {
+            long retainedMaximum = retainedMaximums.getOrDefault(table, 0L);
+            Long sourceSequence = values.get(table);
+            boolean exhausted = sourceSequence != null &&
+                sourceSequence >= SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM - 1 &&
+                retainedMaximum < SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM - 1;
+            if((sourceSequence != null && sourceSequence < retainedMaximum) || exhausted ||
+                (sourceSequence == null && !observed.contains(table) && retainedMaximum > 0))
+            {
+                defaultedRows++;
+            }
+            if(exhausted)
+            {
+                values.remove(table);
+            }
+        }
+        return new SequenceInspection(Map.copyOf(values), defaultedRows);
     }
 
-    private static void restorePreservedSequences(Connection connection, Map<String,Long> sequences)
+    private static void restorePreservedSequences(Connection connection, Map<String,Long> sourceSequences)
         throws SQLException
     {
         try(PreparedStatement delete = connection.prepareStatement("DELETE FROM sqlite_sequence WHERE name=?");
@@ -1524,9 +2481,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     }
                     maximumId = rows.getLong(1);
                 }
-                long sequence = Math.max(maximumId, sequences.getOrDefault(table, 0L));
                 delete.setString(1, table);
                 delete.executeUpdate();
+                long sequence = Math.max(maximumId, sourceSequences.getOrDefault(table, 0L));
                 if(sequence > 0)
                 {
                     insert.setString(1, table);
@@ -1539,67 +2496,200 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
     /** Copies rows whose meaning is unchanged. Transformed channel, provider, and route rows are populated
      * separately from the preflight snapshot. */
-    private static void copyUnchangedApplicationRows(Connection connection) throws SQLException
+    private static void copyUnchangedApplicationRows(Connection connection, MigrationInput input) throws SQLException
     {
-        copyPreservedMetadata(connection);
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO application_settings (key, settings_json, updated_at_ms)
-                SELECT key, settings_json, updated_at_ms FROM format14_application_settings
+        try(PreparedStatement metadata = connection.prepareStatement("""
+                INSERT INTO database_metadata (key, value, updated_at_ms) VALUES (?, ?, ?)
                 """);
-            statement.executeUpdate("""
-                INSERT INTO application_icons (key, icons_json, updated_at_ms)
-                SELECT key, icons_json, updated_at_ms FROM format14_application_icons
+            PreparedStatement setting = connection.prepareStatement("""
+                INSERT INTO application_settings (key, settings_json, updated_at_ms) VALUES (?, ?, ?)
                 """);
-            //Fresh creation seeds a Default scan list. The exact preserved format-14 rows replace that seed.
-            statement.executeUpdate("DELETE FROM scan_list");
-            statement.executeUpdate("""
+            PreparedStatement icon = connection.prepareStatement("""
+                INSERT INTO application_icons (key, icons_json, updated_at_ms) VALUES (?, ?, ?)
+                """);
+            PreparedStatement aliasList = connection.prepareStatement("""
                 INSERT INTO alias_list (id, name, family, unmatched_talkgroup_record_enabled)
-                SELECT id, name, family, unmatched_talkgroup_record_enabled FROM format14_alias_list
+                SELECT id, ?, family, ?
+                FROM format14_alias_list WHERE id=?
                 """);
-            statement.executeUpdate("""
+            PreparedStatement scanList = connection.prepareStatement("""
                 INSERT INTO scan_list (id, sort_order, name, description, published, is_default)
-                SELECT id, sort_order, name, description, published, is_default FROM format14_scan_list
+                VALUES (?, ?, ?, ?, ?, ?)
                 """);
-            statement.executeUpdate("""
+            PreparedStatement alias = connection.prepareStatement("""
                 INSERT INTO alias (
                     id, alias_list_id, name, description, group_name, color, icon_name,
                     stream_as_talkgroup, record_enabled, matcher_type, protocol, value, min_value,
                     max_value, text_value, numeric_value, tone_sequence
                 )
-                SELECT id, alias_list_id, name, description, group_name, color, icon_name,
-                       stream_as_talkgroup, record_enabled, matcher_type, protocol, value, min_value,
-                       max_value, text_value, numeric_value, tone_sequence
-                FROM format14_alias
+                SELECT id, alias_list_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                FROM format14_alias WHERE id=?
                 """);
-            statement.executeUpdate("""
-                INSERT INTO alias_scan_list_membership (alias_id, scan_list_id)
-                SELECT membership.alias_id, membership.scan_list_id
-                FROM format14_alias_scan_list_membership membership
-                JOIN format14_alias owner ON owner.id=membership.alias_id
-                JOIN format14_scan_list scan_list ON scan_list.id=membership.scan_list_id
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership (alias_list_id, scan_list_id)
-                SELECT membership.alias_list_id, membership.scan_list_id
-                FROM format14_alias_list_unmatched_talkgroup_scan_list_membership membership
-                JOIN format14_alias_list owner ON owner.id=membership.alias_list_id
-                JOIN format14_scan_list scan_list ON scan_list.id=membership.scan_list_id
-                """);
-            statement.executeUpdate("""
+            PreparedStatement user = connection.prepareStatement("""
                 INSERT INTO web_user (
                     id, username, tier, primary_admin, credential_version, password_algorithm,
                     password_iterations, password_derived_key_bits, password_salt, password_hash,
                     password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
                     created_at_ms, updated_at_ms
-                )
-                SELECT id, username, tier, primary_admin, credential_version, password_algorithm,
-                       password_iterations, password_derived_key_bits, password_salt, password_hash,
-                       password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
-                       created_at_ms, updated_at_ms
-                FROM format14_web_user
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """))
+        {
+            for(MetadataRow row: input.core().metadata())
+            {
+                metadata.setString(1, row.key());
+                metadata.setString(2, row.value());
+                metadata.setLong(3, row.updatedAtMs());
+                metadata.executeUpdate();
+            }
+            for(SettingRow row: input.core().settings())
+            {
+                setting.setString(1, row.key());
+                setting.setString(2, row.payload());
+                setting.setLong(3, row.updatedAtMs());
+                setting.executeUpdate();
+            }
+            for(IconRow row: input.core().icons())
+            {
+                icon.setString(1, row.key());
+                icon.setString(2, row.payload());
+                icon.setLong(3, row.updatedAtMs());
+                icon.executeUpdate();
+            }
+            try(Statement clearSeed = connection.createStatement())
+            {
+                clearSeed.executeUpdate("DELETE FROM scan_list");
+            }
+            for(long id: input.aliases().aliasListIds())
+            {
+                aliasList.setString(1, input.aliases().aliasListNames().get(id));
+                aliasList.setInt(2, input.aliases().aliasListRecordPolicies().getOrDefault(id, false) ? 1 : 0);
+                aliasList.setLong(3, id);
+                if(aliasList.executeUpdate() != 1)
+                {
+                    throw new SQLException("Accepted Alias List changed during migration");
+                }
+            }
+            Long generatedScanListId = null;
+            Long defaultScanListId = null;
+            for(ScanListRow row: input.aliases().scanLists())
+            {
+                long targetId;
+                if(row.id() != null)
+                {
+                    targetId = row.id();
+                }
+                else
+                {
+                    if(generatedScanListId == null)
+                    {
+                        long retainedMaximum = input.aliases().scanLists().stream().map(ScanListRow::id)
+                            .filter(Objects::nonNull).mapToLong(Long::longValue).max().orElse(0);
+                        long sourceHighWater = input.sequences().getOrDefault("scan_list", 0L);
+                        long highWater = Math.max(retainedMaximum, sourceHighWater);
+                        generatedScanListId = highWater < SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM - 1 ?
+                            highWater + 1 : smallestUnusedScanListId(input.aliases().scanLists());
+                    }
+                    targetId = generatedScanListId;
+                }
+                scanList.setLong(1, targetId);
+                scanList.setInt(2, row.sortOrder());
+                scanList.setString(3, row.name());
+                scanList.setString(4, row.description());
+                scanList.setInt(5, row.published() ? 1 : 0);
+                scanList.setInt(6, row.isDefault() ? 1 : 0);
+                scanList.executeUpdate();
+                if(row.isDefault())
+                {
+                    defaultScanListId = targetId;
+                }
+            }
+            for(long id: input.aliases().aliasIds())
+            {
+                AliasOptionalFields fields = input.aliases().aliasOptionalFields().get(id);
+                if(fields == null)
+                {
+                    throw new SQLException("Accepted Alias optional-field plan is missing");
+                }
+                AliasMatcherFields matcher = input.aliases().aliasMatchers().get(id);
+                if(matcher == null)
+                {
+                    throw new SQLException("Accepted Alias matcher plan is missing");
+                }
+                alias.setString(1, input.aliases().aliasNames().get(id));
+                alias.setString(2, fields.description());
+                alias.setString(3, fields.groupName());
+                alias.setInt(4, fields.color());
+                alias.setString(5, fields.iconName());
+                setInteger(alias, 6, fields.streamAsTalkgroup());
+                alias.setInt(7, fields.recordEnabled() ? 1 : 0);
+                alias.setString(8, matcher.matcherType());
+                alias.setString(9, matcher.protocol());
+                setInteger(alias, 10, matcher.value());
+                setInteger(alias, 11, matcher.minimum());
+                setInteger(alias, 12, matcher.maximum());
+                alias.setString(13, matcher.textValue());
+                setInteger(alias, 14, matcher.numericValue());
+                alias.setString(15, matcher.toneSequence());
+                alias.setLong(16, id);
+                if(alias.executeUpdate() != 1)
+                {
+                    throw new SQLException("Accepted Alias changed during migration");
+                }
+            }
+            try(Statement memberships = connection.createStatement())
+            {
+                memberships.executeUpdate("""
+                INSERT INTO alias_scan_list_membership (alias_id, scan_list_id)
+                SELECT owner.id, scan_list.id
+                FROM format14_alias_scan_list_membership membership
+                JOIN alias owner ON owner.id=membership.alias_id
+                JOIN scan_list scan_list ON scan_list.id=membership.scan_list_id
                 """);
+                memberships.executeUpdate("""
+                INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership (alias_list_id, scan_list_id)
+                SELECT owner.id, scan_list.id
+                FROM format14_alias_list_unmatched_talkgroup_scan_list_membership membership
+                JOIN alias_list owner ON owner.id=membership.alias_list_id
+                JOIN scan_list scan_list ON scan_list.id=membership.scan_list_id
+                """);
+            }
+            insertRecoveredDefaultMemberships(connection, defaultScanListId,
+                input.aliases().recoveredDefaultMemberships());
+            for(WebUserRow row: input.users().rows())
+            {
+                user.setLong(1, row.id());
+                user.setString(2, row.username());
+                user.setString(3, row.tier());
+                user.setInt(4, row.primary() ? 1 : 0);
+                user.setInt(5, row.credentialVersion());
+                user.setString(6, row.passwordAlgorithm());
+                user.setInt(7, row.passwordIterations());
+                user.setInt(8, row.passwordDerivedKeyBits());
+                user.setBytes(9, row.passwordSalt());
+                user.setBytes(10, row.passwordHash());
+                user.setLong(11, row.passwordChangedAtMs());
+                user.setLong(12, row.authRevision());
+                user.setString(13, row.preferences());
+                user.setLong(14, row.preferencesRevision());
+                user.setLong(15, row.createdAtMs());
+                user.setLong(16, row.updatedAtMs());
+                user.executeUpdate();
+            }
+        }
+
+        if(input.users().authenticationReset())
+        {
+            long updateTime = input.core().metadata().stream()
+                .filter(row -> INITIAL_ADMIN_SETUP_KEY.equals(row.key()))
+                .mapToLong(MetadataRow::updatedAtMs).findFirst().orElse(1);
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO database_metadata(key, value, updated_at_ms) VALUES ('initial_admin_setup', 'required', ?)
+                ON CONFLICT(key) DO UPDATE SET value='required', updated_at_ms=excluded.updated_at_ms
+                """))
+            {
+                statement.setLong(1, updateTime);
+                statement.executeUpdate();
+            }
         }
     }
 
@@ -1621,44 +2711,39 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void applyPortablePreferencesUpdate(Connection connection, PortablePreferencesUpdate update)
+    private static void insertRecoveredDefaultMemberships(Connection connection, Long defaultScanListId,
+                                                           GeneratedDefaultMembershipRecovery recovery)
         throws SQLException
     {
-        if(!update.transformed())
+        if(recovery.sourceRows() == 0)
         {
             return;
         }
-        try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE application_settings
-            SET settings_json=?, updated_at_ms=?
-            WHERE key=?
-            """))
+        if(defaultScanListId == null)
         {
-            statement.setString(1, update.payload());
-            statement.setLong(2, update.updatedAtMs());
-            statement.setString(3, PORTABLE_PREFERENCES_KEY);
-            if(statement.executeUpdate() != 1)
-            {
-                throw new SQLException("Portable preferences changed after format-15 preflight");
-            }
+            throw new SQLException("Recovered scan-list memberships require a Default scan list");
         }
+        insertGeneratedDefaultMemberships(connection, "alias_scan_list_membership", "alias_id",
+            recovery.aliasIds(), defaultScanListId);
+        insertGeneratedDefaultMemberships(connection, "alias_list_unmatched_talkgroup_scan_list_membership",
+            "alias_list_id", recovery.aliasListIds(), defaultScanListId);
     }
 
-    private static void copyPreservedMetadata(Connection connection) throws SQLException
+    private static void insertGeneratedDefaultMemberships(Connection connection, String table, String ownerColumn,
+                                                            Set<Long> ownerIds, long generatedScanListId)
+        throws SQLException
     {
-        String placeholders = String.join(",", java.util.Collections.nCopies(REPLACED_METADATA_KEYS.size(), "?"));
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO database_metadata (key, value, updated_at_ms)
-            SELECT key, value, updated_at_ms
-            FROM format14_database_metadata
-            WHERE key NOT IN (%s)
-            """.formatted(placeholders)))
+        try(PreparedStatement insert = connection.prepareStatement(
+            "INSERT OR IGNORE INTO " + identifier(table) + "(" + identifier(ownerColumn) +
+                ", scan_list_id) VALUES (?, ?)"))
         {
-            for(int x = 0; x < REPLACED_METADATA_KEYS.size(); x++)
+            for(long ownerId: ownerIds)
             {
-                statement.setString(x + 1, REPLACED_METADATA_KEYS.get(x));
+                insert.setLong(1, ownerId);
+                insert.setLong(2, generatedScanListId);
+                insert.addBatch();
             }
-            statement.executeUpdate();
+            insert.executeBatch();
         }
     }
 
@@ -1751,33 +2836,53 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static void migratePreferences(Connection connection, List<PreferenceRow> preferences)
-        throws SQLException
+    private static long deriveMetricBoundary(Connection connection) throws SQLException
     {
-        long now = Math.max(1, System.currentTimeMillis());
+        long latest = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE web_user
-            SET preferences_json=?, preferences_revision=?, updated_at_ms=?
-            WHERE id=?
+            SELECT CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB))<=64
+                        THEN value END AS value,
+                   CASE WHEN typeof(updated_at_ms)='integer' THEN updated_at_ms END AS updated_at_ms
+            FROM database_metadata WHERE key=?
             """))
         {
-            for(PreferenceRow preference: preferences)
+            for(String key: REPLACED_METRIC_BOUNDARIES)
             {
-                statement.setString(1, preference.payload());
-                statement.setLong(2, preference.revision());
-                statement.setLong(3, Math.max(now, preference.updatedAtMs()));
-                statement.setLong(4, preference.id());
-                if(statement.executeUpdate() != 1)
+                statement.setString(1, key);
+                try(ResultSet rows = statement.executeQuery())
                 {
-                    throw new SQLException("Web user changed after format-15 preflight: " + preference.id());
+                    while(rows.next())
+                    {
+                        Long updatedAt = safePositiveLong(rows, "updated_at_ms");
+                        if(updatedAt != null && updatedAt < Long.MAX_VALUE - 1)
+                        {
+                            latest = Math.max(latest, updatedAt);
+                        }
+                        String value = safeText(rows, "value");
+                        if(value != null)
+                        {
+                            try
+                            {
+                                long parsed = Long.parseLong(value);
+                                if(parsed > 0 && parsed < Long.MAX_VALUE - 1)
+                                {
+                                    latest = Math.max(latest, parsed);
+                                }
+                            }
+                            catch(NumberFormatException exception)
+                            {
+                                //A corrupt retired boundary does not block the deterministic replacement boundary.
+                            }
+                        }
+                    }
                 }
             }
         }
+        return latest > 0 ? latest + 1 : 1;
     }
 
-    private static void seedMetricBoundaries(Connection connection) throws SQLException
+    private static void seedMetricBoundaries(Connection connection, long boundary) throws SQLException
     {
-        long now = Math.max(1, System.currentTimeMillis());
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO database_metadata (key, value, updated_at_ms) VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms
@@ -1786,8 +2891,8 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             for(String key: List.of(CONVENTIONAL_CALL_BOUNDARY, TRUNKED_CALL_BOUNDARY, RADIO_SYSTEM_BOUNDARY))
             {
                 statement.setString(1, key);
-                statement.setString(2, Long.toString(now));
-                statement.setLong(3, now);
+                statement.setString(2, Long.toString(boundary));
+                statement.setLong(3, boundary);
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -1818,6 +2923,20 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     total = Math.addExact(total, rows.getLong(1));
                 }
             }
+        }
+        return total;
+    }
+
+    private static long sumCounts(long... counts)
+    {
+        long total = 0;
+        for(long count: counts)
+        {
+            if(count < 0)
+            {
+                throw new IllegalArgumentException("Migration effect count cannot be negative");
+            }
+            total = Math.addExact(total, count);
         }
         return total;
     }
@@ -1978,6 +3097,17 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
+    private static void requireTypedChannelComponent(ObjectNode payload, String property, String label)
+        throws IOException
+    {
+        JsonNode component = payload.get(property);
+        if(component == null || !component.isObject() || !component.hasNonNull("type") ||
+            !component.get("type").isTextual() || component.get("type").textValue().isBlank())
+        {
+            throw new IOException(label + " has no supported " + property);
+        }
+    }
+
     private static BroadcastConfiguration decodeBroadcast(ObjectNode payload, String label) throws IOException
     {
         try
@@ -1998,20 +3128,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         if(type != null && type.isTextual() && "RADIORESOLVE".equals(type.textValue()))
         {
             payload.put("type", "RadioResolveConfiguration");
-        }
-    }
-
-    private static void requireChannelConfigurationId(ObjectNode payload, String expected, String label)
-        throws IOException
-    {
-        JsonNode node = payload.get("configurationId");
-        if(node == null)
-        {
-            throw new IOException(label + " is missing JSON field configurationId");
-        }
-        if(!node.isTextual() || !expected.equals(node.textValue()))
-        {
-            throw new IOException(label + " JSON field configurationId does not match its scalar value");
         }
     }
 
@@ -2044,6 +3160,97 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         return "\"" + normalized + "\"";
     }
 
+    private static String safeText(ResultSet rows, String column) throws SQLException
+    {
+        Object value = rows.getObject(column);
+        return value instanceof String text ? text : null;
+    }
+
+    private static boolean storedInvalidBoundedText(ResultSet rows, String column, int maximumBytes)
+        throws SQLException
+    {
+        String type = rows.getString(column + "_type");
+        if("null".equals(type))
+        {
+            return false;
+        }
+        if(!"text".equals(type))
+        {
+            return true;
+        }
+        long bytes = rows.getLong(column + "_bytes");
+        return rows.wasNull() || bytes > maximumBytes;
+    }
+
+    private static Long safeLong(ResultSet rows, String column) throws SQLException
+    {
+        Object value = rows.getObject(column);
+        if(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
+        {
+            return ((Number)value).longValue();
+        }
+        return null;
+    }
+
+    private static Long safePositiveLong(ResultSet rows, String column) throws SQLException
+    {
+        Long value = safeLong(rows, column);
+        return value != null && value > 0 ? value : null;
+    }
+
+    private static Integer safeInteger(ResultSet rows, String column) throws SQLException
+    {
+        Long value = safeLong(rows, column);
+        return value != null && value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? value.intValue() : null;
+    }
+
+    private static Boolean safeBoolean(ResultSet rows, String column) throws SQLException
+    {
+        Integer value = safeInteger(rows, column);
+        return value != null && (value == 0 || value == 1) ? value == 1 : null;
+    }
+
+    private static byte[] safeBlob(ResultSet rows, String column) throws SQLException
+    {
+        Object value = rows.getObject(column);
+        return value instanceof byte[] bytes ? bytes.clone() : null;
+    }
+
+    private static String inferLegacyDecoderType(ObjectNode payload, String storedDecoderType)
+    {
+        JsonNode decoder = payload.get("decodeConfiguration");
+        JsonNode discriminator = decoder != null && decoder.isObject() ? decoder.get("type") : null;
+        if(discriminator != null && discriminator.isTextual())
+        {
+            String type = discriminator.textValue().toUpperCase(Locale.ROOT);
+            if(type.contains("NXDN"))
+            {
+                return "NXDN";
+            }
+            if(type.contains("DMR"))
+            {
+                return "DMR";
+            }
+        }
+        return storedDecoderType;
+    }
+
+    private static String tryCanonicalUuid(String value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+        try
+        {
+            return UUID.fromString(value.strip()).toString();
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+    }
+
     private static String tryCanonicalUuid(JsonNode value)
     {
         if(value == null || !value.isTextual())
@@ -2052,8 +3259,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
         try
         {
-            String parsed = UUID.fromString(value.textValue()).toString();
-            return parsed.equals(value.textValue()) ? parsed : null;
+            return UUID.fromString(value.textValue().strip()).toString();
         }
         catch(IllegalArgumentException | NullPointerException exception)
         {
@@ -2061,7 +3267,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         }
     }
 
-    private static String deterministicBroadcastId(long rowId, Set<String> unavailable) throws IOException
+    private static String deterministicBroadcastId(long rowId, Set<String> unavailable)
     {
         for(int attempt = 0; attempt < Integer.MAX_VALUE; attempt++)
         {
@@ -2073,24 +3279,24 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                 return candidate;
             }
         }
-        throw new IOException("Unable to allocate a unique stable ID for broadcast provider database row " + rowId);
+        throw new IllegalArgumentException(
+            "Unable to allocate a unique stable ID for broadcast provider database row " + rowId);
     }
 
-    private static String canonicalUuid(String value, String label) throws IOException
+    private static String deterministicChannelId(long rowId, Set<String> unavailable)
     {
-        try
+        for(int attempt = 0; attempt < Integer.MAX_VALUE; attempt++)
         {
-            String canonical = UUID.fromString(value).toString();
-            if(!canonical.equals(value))
+            String seed = "sdrtrunk-vce:format-14:saved-channel:" + rowId +
+                (attempt == 0 ? "" : ":" + attempt);
+            String candidate = UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+            if(!unavailable.contains(candidate))
             {
-                throw new IllegalArgumentException("not canonical");
+                return candidate;
             }
-            return canonical;
         }
-        catch(IllegalArgumentException | NullPointerException exception)
-        {
-            throw new IOException(label + " must be a canonical lowercase UUID", exception);
-        }
+        throw new IllegalArgumentException("Unable to allocate a unique stable ID for saved channel database row " +
+            rowId);
     }
 
     private static String identifier(String value) throws SQLException
@@ -2105,9 +3311,9 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     private static long positiveId(ResultSet rows, String column, String label) throws SQLException, IOException
     {
         long value = longInteger(rows, column, label);
-        if(value <= 0)
+        if(value <= 0 || value >= SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM)
         {
-            throw new IOException(label + " has a nonpositive " + column);
+            throw new IOException(label + " has an unusable " + column);
         }
         return value;
     }
@@ -2176,26 +3382,6 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         throw new IOException(label + " " + column + " is not a boolean flag");
     }
 
-    private static String text(ResultSet rows, String column) throws SQLException, IOException
-    {
-        String value = nullableText(rows, column);
-        if(value == null)
-        {
-            throw new IOException(column + " cannot be null");
-        }
-        return value;
-    }
-
-    private static String nullableText(ResultSet rows, String column) throws SQLException, IOException
-    {
-        Object value = rows.getObject(column);
-        if(value == null || value instanceof String)
-        {
-            return (String)value;
-        }
-        throw new IOException(column + " is not stored as text");
-    }
-
     private static String requiredStoredText(ResultSet rows, String column, String label)
         throws SQLException, IOException
     {
@@ -2218,15 +3404,33 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         throw new IOException(label + " is not stored as text");
     }
 
-    private static byte[] requiredStoredBlob(ResultSet rows, String column, String label)
+    private static String requiredBoundedStoredText(ResultSet rows, String column, String label, int maximumBytes)
         throws SQLException, IOException
     {
-        Object value = rows.getObject(column);
-        if(value instanceof byte[] bytes)
+        String value = optionalBoundedStoredText(rows, column, label, maximumBytes);
+        if(value == null)
         {
-            return bytes;
+            throw new IOException(label + " cannot be null");
         }
-        throw new IOException(label + " is not stored as binary data");
+        return value;
+    }
+
+    private static String optionalBoundedStoredText(ResultSet rows, String column, String label, int maximumBytes)
+        throws SQLException, IOException
+    {
+        String type = rows.getString(column + "_type");
+        if("null".equals(type))
+        {
+            return null;
+        }
+        long bytes = rows.getLong(column + "_bytes");
+        boolean bytesMissing = rows.wasNull();
+        Object value = rows.getObject(column);
+        if(!"text".equals(type) || bytesMissing || bytes > maximumBytes || !(value instanceof String text))
+        {
+            throw new IOException(label + " exceeds its supported text storage bound");
+        }
+        return text;
     }
 
     private static long requirePositiveInteger(ResultSet rows, String column, String label)
@@ -2271,12 +3475,13 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
     }
 
-    private record BroadcastRow(long id, String configurationId, int sortOrder, String name, String payload)
+    private record BroadcastRow(long id, String configurationId, int sortOrder, String name,
+                                Set<String> routeNames, String payload)
     {
     }
 
     private record BroadcastCandidate(long id, String candidateConfigurationId, int sortOrder, String name,
-                                      String payload)
+                                      Set<String> routeNames, String payload, boolean repaired)
     {
     }
 
@@ -2288,11 +3493,15 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
     }
 
+    private record ResolvedRouteTarget(long ownerId, String broadcastConfigurationId)
+    {
+    }
+
     private record RelationshipInspection<T>(List<T> rows, long orphanedRows)
     {
     }
 
-    private record PreferenceRow(long id, String payload, long revision, long updatedAtMs)
+    private record RowInspection<T>(List<T> rows, long relationshipsDropped, long droppedRows, long defaultedRows)
     {
     }
 
@@ -2300,26 +3509,120 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
     {
     }
 
-    private record PolicyInput(List<PolicyRow> rows, int transformedRows)
+    private record PolicyInput(List<PolicyRow> rows, int transformedRows, long droppedRows, long sourceRows,
+                               long defaultedRows)
     {
     }
 
-    private record PortablePreferencesUpdate(String payload, long updatedAtMs, boolean transformed)
+    private record MetadataRow(String key, String value, long updatedAtMs)
     {
     }
 
-    private record AliasAdminIndex(Set<Long> aliasListIds, Set<Long> aliasIds, long orphanedRows)
+    private record SettingRow(String key, String payload, long updatedAtMs)
     {
     }
 
-    private record MigrationInput(List<ChannelRow> channels, List<BroadcastRow> broadcasts,
+    private record IconRow(String key, String payload, long updatedAtMs)
+    {
+    }
+
+    private record PortablePreferenceRepair(String payload, boolean transformed, boolean defaulted, boolean drop)
+    {
+    }
+
+    private record CoreInspection(List<MetadataRow> metadata, List<SettingRow> settings, List<IconRow> icons,
+                                  long droppedRows, long defaultedRows, long portablePreferencesTransformed,
+                                  long preservedRows)
+    {
+    }
+
+    private record ScanListRow(Long id, int sortOrder, String name, String description, boolean published,
+                               boolean isDefault)
+    {
+        private ScanListRow withName(String preparedName)
+        {
+            return new ScanListRow(id, sortOrder, preparedName, description, published, isDefault);
+        }
+
+        private ScanListRow withDefault()
+        {
+            return new ScanListRow(id, sortOrder, name, description, true, true);
+        }
+
+        private ScanListRow withoutDefault()
+        {
+            return new ScanListRow(id, sortOrder, name, description, published, false);
+        }
+    }
+
+    private record AliasAdminIndex(Set<Long> aliasListIds, Set<Long> aliasIds,
+                                   Map<String,List<Long>> aliasListsByExactName,
+                                   Map<String,List<Long>> aliasListsByName,
+                                   Map<Long,AliasListFamily> aliasListFamilies,
+                                   Map<Long,String> aliasListNames, Map<Long,Boolean> aliasListRecordPolicies,
+                                   Map<Long,String> aliasNames, Map<Long,AliasMatcherFields> aliasMatchers,
+                                   Map<Long,AliasOptionalFields> aliasOptionalFields, List<ScanListRow> scanLists,
+                                   long orphanedRows, long droppedRows, long defaultedRows,
+                                   long defaultedAliasRows, long preservedRows,
+                                   GeneratedDefaultMembershipRecovery recoveredDefaultMemberships)
+    {
+    }
+
+    private record AliasOptionalFields(String description, String groupName, int color, String iconName,
+                                       Integer streamAsTalkgroup, boolean recordEnabled, long defaultedFieldCount)
+    {
+    }
+
+    record AliasMatcherFields(String matcherType, String protocol, Integer value, Integer minimum,
+                              Integer maximum, String textValue, Integer numericValue, String toneSequence,
+                              long defaultedFieldCount)
+    {
+    }
+
+    private record GeneratedDefaultMembershipRecovery(Set<Long> aliasIds, Set<Long> aliasListIds, long sourceRows)
+    {
+        private static GeneratedDefaultMembershipRecovery none()
+        {
+            return new GeneratedDefaultMembershipRecovery(Set.of(), Set.of(), 0);
+        }
+    }
+
+    private record WebUserRow(long id, String username, String tier, boolean primary, int credentialVersion,
+                              String passwordAlgorithm, int passwordIterations, int passwordDerivedKeyBits,
+                              byte[] passwordSalt, byte[] passwordHash, long passwordChangedAtMs,
+                              long authRevision, String preferences, long preferencesRevision,
+                              long createdAtMs, long updatedAtMs, boolean preferenceTransformed,
+                              boolean preferenceDefaulted)
+    {
+    }
+
+    private record UserInspection(List<WebUserRow> rows, long droppedRows, long defaultedRows,
+                                  long transformedPreferences, long authenticationResetRows,
+                                  boolean authenticationReset)
+    {
+        private UserInspection withAdditionalAuthenticationResetRows(long rows)
+        {
+            return new UserInspection(this.rows, droppedRows, defaultedRows, transformedPreferences,
+                Math.addExact(authenticationResetRows, rows), authenticationReset);
+        }
+    }
+
+    private record SequenceInspection(Map<String,Long> values, long defaultedRows)
+    {
+    }
+
+    private record MigrationInput(CoreInspection core, AliasAdminIndex aliases,
+                                  List<ChannelRow> channels, List<BroadcastRow> broadcasts,
                                   List<AliasRoute> aliasRoutes, List<UnmatchedRoute> unmatchedRoutes,
-                                  List<PreferenceRow> preferences, PolicyInput policy,
-                                  PortablePreferencesUpdate portablePreferences, Map<String,Long> sequences,
+                                  UserInspection users, PolicyInput policy, Map<String,Long> sequences,
                                   long callHistoryRows,
                                   long siteRows, long qualityRows, long identityRows, long metricBoundaryRows,
+                                  long newMetricBoundary,
                                   long retiredNamedChannelMapRows, long orphanedRelationshipRows,
-                                  long preservedRows)
+                                  long droppedChannelRows, long defaultedChannelRows,
+                                  long droppedBroadcastRows, long defaultedBroadcastRows,
+                                  long defaultedSequenceRows, long preservedRows,
+                                  long redundantMetadataRows)
     {
     }
 }

@@ -71,7 +71,7 @@ final class Format9To10DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
         if(detected.version() != 9)
         {
             throw new SQLException("Migration step format-9-to-10 requires exact source format 9; found " +

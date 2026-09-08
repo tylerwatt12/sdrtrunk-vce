@@ -25,6 +25,7 @@ import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
@@ -61,7 +62,10 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("already current and valid"));
+        assertTrue(result.output().contains("Database is already at current format"));
+        assertFalse(result.output().contains("Updating the staged database"));
+        assertTrue(result.output().contains("Portable preference components repaired or reset: 0"));
+        assertFalse(result.output().contains(database.toString()), result::output);
         assertTrue(result.error().isEmpty());
 
         try(Connection connection = open(database))
@@ -75,6 +79,577 @@ class ApplicationDatabaseMigratorTest
             assertNull(metadata(connection, "dmr_activity_schema_version"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
         }
+    }
+
+    @Test
+    void repairsWrongShapePortablePreferencesInCurrentStagedDatabase() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1', '[]', 1)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "RESET unusable portable preference components: 1 preference component(s)"), result::output);
+        assertEquals("{}", scalar(database, """
+            SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
+    }
+
+    @Test
+    void normalizesCurrentPortablePreferenceStorageMetadata() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1', '{"valid/node":{"keep":"yes"}}', 0)
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "RESET unusable portable preference components: 1 preference component(s)"), result::output);
+        assertEquals("yes", scalar(database, """
+            SELECT json_extract(settings_json, '$."valid/node".keep')
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("1", scalar(database, """
+            SELECT typeof(settings_json)='text' AND typeof(updated_at_ms)='integer' AND updated_at_ms > 0
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+    }
+
+    @Test
+    void repairsPortablePreferenceComponentsIndependently() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1',
+                    '{"user/io/github/dsheirer/preference/nowplaying":{"sentinel":"keep",' ||
+                    '"receiver.settings.revision":"0","traffic.grant.age.out.milliseconds":"99999",' ||
+                    '"retain.idle.call.details":"true"},' ||
+                    '"valid/node":{"keep":"yes","bad":7,' ||
+                    '"stats.web.call.maximum.listeners":"12"},"bad/node":[]}', 1)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
+        assertTrue(result.output().contains(
+            "RESET unusable portable preference components: 6 preference component(s)"), result::output);
+        assertEquals("keep", scalar(database, """
+            SELECT json_extract(settings_json,
+                '$."user/io/github/dsheirer/preference/nowplaying".sentinel')
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("yes", scalar(database, """
+            SELECT json_extract(settings_json, '$."valid/node".keep')
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("0", scalar(database, """
+            SELECT json_type(settings_json, '$."bad/node"') IS NOT NULL OR
+                   json_type(settings_json, '$."valid/node".bad') IS NOT NULL OR
+                   json_type(settings_json,
+                       '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"') IS NOT NULL
+            FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+        }
+    }
+
+    @Test
+    void repairsPreferencesBeforeAdoptingAMissingCurrentMarker() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1', '[]', 1)
+                """);
+            statement.executeUpdate("""
+                UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'
+                """);
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        int completedRepair = result.output().indexOf(
+            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]");
+        int completedAdministrative = result.output().indexOf(
+            "COMPLETED STEP: 15 -> 15 [repair-current-administrative-state]");
+        int completedAdoption = result.output().indexOf(
+            "COMPLETED STEP: 15 -> 15 [adopt-global-format-marker]");
+        assertTrue(completedRepair >= 0 && completedAdministrative > completedRepair &&
+            completedAdoption > completedAdministrative, result::output);
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+        assertEquals("{}", scalar(database, """
+            SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+    }
+
+    @Test
+    void repairsDamagedCurrentAdministrativeComponentsIndependently() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                UPDATE application_settings SET settings_json='{}', updated_at_ms=0
+                WHERE key='setup_wizard'
+                """);
+            statement.executeUpdate("""
+                UPDATE application_settings SET settings_json='{}'
+                WHERE key='spectrum_snap_country'
+                """);
+            statement.executeUpdate("""
+                UPDATE database_metadata SET value='0'
+                WHERE key='conventional_call_output_metrics_started_at_ms'
+                """);
+            statement.executeUpdate("""
+                DELETE FROM database_metadata WHERE key='trunked_logical_call_metrics_started_at_ms'
+                """);
+            statement.executeUpdate("""
+                UPDATE database_metadata SET value='not-a-time'
+                WHERE key='radio_system_metrics_started_at_ms'
+                """);
+            statement.executeUpdate("UPDATE scan_list SET is_default=0");
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('broken-opaque-setting', 'not-json', 0)
+                """);
+            statement.executeUpdate("""
+                INSERT OR REPLACE INTO application_icons(key, icons_json, updated_at_ms)
+                VALUES ('default', '[]', 0)
+                """);
+            statement.executeUpdate("""
+                INSERT OR REPLACE INTO database_metadata(key, value, updated_at_ms)
+                VALUES ('icon_config_initialized', 'true', 1),
+                       ('broken-opaque-metadata', x'00', 0)
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 15 -> 15 [repair-current-administrative-state]"), result::output);
+        assertTrue(result.output().contains("DEFAULT unusable setup progress: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DEFAULT unusable spectrum-snap settings: 1 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DEFAULT receiver metric collection boundaries: 3 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DEFAULT Default scan-list selection after configuration repair: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DROP malformed opaque application settings: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DROP malformed application icon sets: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DROP malformed non-structural metadata: 1 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DEFAULT icon initialization marker after unusable default icons: 1 row(s)"), result::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM scan_list WHERE is_default=1"));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM application_settings WHERE key='broken-opaque-setting'
+            """));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM application_icons WHERE key='default'"));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM database_metadata
+            WHERE key IN ('icon_config_initialized', 'broken-opaque-metadata')
+            """));
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+        }
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
+    }
+
+    @Test
+    void defaultsBrokenWebPreferencesWithoutDiscardingTheCredential() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        char[] password = "preserve this verifier".toCharArray();
+        new WebAccessService(database).provisionOrResetPrimaryAdmin(password);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                UPDATE web_user SET preferences_json='{}', preferences_revision=0, updated_at_ms=0
+                WHERE username='admin'
+                """);
+            statement.executeUpdate("""
+                INSERT INTO web_access_policy(capability_id, required_tier, updated_at_ms)
+                VALUES ('unknown-current-capability', 'USER', 1)
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("DEFAULT recoverable web-user state: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DROP unusable web access policy overrides: 1 row(s)"), result::output);
+        assertTrue(new WebAccessService(database).authenticate("admin", password).isPresent());
+        assertEquals("6", scalar(database, """
+            SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE username='admin'
+            """));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM web_access_policy"));
+    }
+
+    @Test
+    void resetsOnlyTheWebAccessComponentWhenThePrimaryCredentialIsUnusable() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        new WebAccessService(database).provisionOrResetPrimaryAdmin("broken verifier".toCharArray());
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("UPDATE web_user SET password_hash=x'01' WHERE username='admin'");
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "RESET web accounts with no usable primary administrator: 1 row(s)"), result::output);
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM web_user"));
+        assertEquals("required", scalar(database, """
+            SELECT value FROM database_metadata WHERE key='initial_admin_setup'
+            """));
+        assertEquals("0", scalar(database, """
+            SELECT json_extract(settings_json, '$.complete')
+            FROM application_settings WHERE key='setup_wizard'
+            """));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
+    }
+
+    @Test
+    void dropsOnlyCurrentAliasRoutesWhoseBroadcastProviderIsMissing() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String providerId;
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            long aliasListId = Long.parseLong(scalar(connection,
+                "SELECT id FROM alias_list ORDER BY id LIMIT 1"));
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (16478, %d, 'New Configuration(2)', 'TALKGROUP', 'APCO25', 4321)
+                """.formatted(aliasListId));
+
+            RdioScannerConfiguration provider = new RdioScannerConfiguration();
+            provider.setName("Preserved Provider");
+            provider.setHost("http://127.0.0.1");
+            provider.setPort(3000);
+            provider.setEnabled(true);
+            provider.setApiKey("current-route-fixture");
+            provider.setSystemID(1);
+            providerId = provider.getConfigurationId();
+            ObjectNode payload = OBJECT_MAPPER.valueToTree(provider);
+            payload.remove("configurationId");
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO configuration_broadcast_stream(configuration_id, sort_order, config_json)
+                VALUES (?, 0, ?)
+                """))
+            {
+                insert.setString(1, providerId);
+                insert.setString(2, OBJECT_MAPPER.writeValueAsString(payload));
+                insert.executeUpdate();
+            }
+
+            statement.execute("PRAGMA foreign_keys=OFF");
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO alias_broadcast_channel(id, alias_id, broadcast_configuration_id)
+                VALUES (16478, 16478, ?),
+                       (16479, 16478, '00000000-0000-0000-0000-000000000001')
+                """))
+            {
+                insert.setString(1, providerId);
+                insert.executeUpdate();
+            }
+            statement.execute("PRAGMA foreign_keys=ON");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 15 -> 15 [repair-current-configuration-relationships]"), result::output);
+        assertTrue(result.output().contains(
+            "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias WHERE id=16478"));
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM configuration_broadcast_stream WHERE " +
+            "configuration_id='" + providerId + "'"));
+        assertEquals(providerId, scalar(database, """
+            SELECT broadcast_configuration_id FROM alias_broadcast_channel WHERE id=16478
+            """));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM alias_broadcast_channel WHERE id=16479"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+        }
+    }
+
+    @Test
+    void resetsDamagedCurrentDerivedStateWithoutDiscardingAdministratorAliases() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String missingConfiguration = UUID.randomUUID().toString();
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            long aliasListId = Long.parseLong(scalar(connection,
+                "SELECT id FROM alias_list WHERE family='P25' ORDER BY id LIMIT 1"));
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (18400, %d, 'Preserve this Alias', 'TALKGROUP', 'APCO25', 18400)
+                """.formatted(aliasListId));
+
+            statement.execute("PRAGMA foreign_keys=OFF");
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
+                VALUES ('%s', 1, 1)
+                """.formatted(missingConfiguration));
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                INSERT INTO statistics_status(key, value, updated_at_ms)
+                VALUES ('damaged-derived-status', 'discard', 0)
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+            statement.execute("PRAGMA foreign_keys=ON");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 15 -> 15 [reset-damaged-current-derived-state]"), result::output);
+        assertTrue(result.output().contains(
+            "RESET bounded receiver activity and statistics rows: 2 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DEFAULT receiver metric collection boundaries: 3 row(s)"), result::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias WHERE id=18400"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM receiver_channel"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM statistics_status"));
+        assertEquals("3", scalar(database, """
+            SELECT COUNT(*) FROM database_metadata
+            WHERE key IN (
+                'conventional_call_output_metrics_started_at_ms',
+                'trunked_logical_call_metrics_started_at_ms',
+                'radio_system_metrics_started_at_ms')
+              AND CAST(value AS INTEGER) > 0 AND updated_at_ms > 0
+            """));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
+        try(Connection connection = open(database))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+        }
+    }
+
+    @Test
+    void skipsMalformedCurrentChannelsAndProvidersWithoutLosingUsableConfiguration() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String validProviderId;
+        String invalidProviderId = "00000000-0000-4000-8000-000000017501";
+        String invalidChannelId = "00000000-0000-4000-8000-000000017502";
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            long aliasListId = Long.parseLong(scalar(connection,
+                "SELECT id FROM alias_list ORDER BY id LIMIT 1"));
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (17500, %d, 'Keep this Alias', 'TALKGROUP', 'APCO25', 17500)
+                """.formatted(aliasListId));
+
+            RdioScannerConfiguration validProvider = new RdioScannerConfiguration();
+            validProvider.setName("Keep this provider");
+            validProvider.setHost("http://127.0.0.1");
+            validProvider.setPort(3000);
+            validProvider.setEnabled(true);
+            validProvider.setApiKey("must-not-appear-in-migration-output");
+            validProvider.setSystemID(1);
+            validProviderId = validProvider.getConfigurationId();
+            ObjectNode validPayload = OBJECT_MAPPER.valueToTree(validProvider);
+            validPayload.remove("configurationId");
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO configuration_broadcast_stream(id, configuration_id, sort_order, config_json)
+                VALUES (17500, ?, 0, ?), (17501, ?, 1, '{}')
+                """))
+            {
+                insert.setString(1, validProviderId);
+                insert.setString(2, OBJECT_MAPPER.writeValueAsString(validPayload));
+                insert.setString(3, invalidProviderId);
+                insert.executeUpdate();
+            }
+            statement.executeUpdate("""
+                INSERT INTO alias_broadcast_channel(id, alias_id, broadcast_configuration_id) VALUES
+                    (17500, 17500, '%s'),
+                    (17501, 17500, '%s')
+                """.formatted(validProviderId, invalidProviderId));
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    id, configuration_id, channel_kind, sort_order, name, auto_start, decoder_type,
+                    address_domain_code, config_json
+                ) VALUES (17502, '%s', 'TRUNKED', 0, 'Broken saved channel', 0, 'P25_PHASE1', 0, '{}')
+                """.formatted(invalidChannelId));
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
+                VALUES ('%s', 1, 1)
+                """.formatted(invalidChannelId));
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                UPDATE receiver_channel SET first_seen_ms=0 WHERE configuration_id='%s'
+                """.formatted(invalidChannelId));
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("DROP unusable saved channel rows: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DROP unusable broadcast provider rows: 1 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
+        int completedDerived = result.output().indexOf(
+            "COMPLETED STEP: 15 -> 15 [reset-damaged-current-derived-state]");
+        int completedConfiguration = result.output().indexOf(
+            "COMPLETED STEP: 15 -> 15 [repair-current-configuration-relationships]");
+        assertTrue(completedDerived >= 0 && completedConfiguration > completedDerived, result::output);
+        assertTrue(result.output().contains(
+            "RESET bounded receiver activity and statistics rows: 1 row(s)"), result::output);
+        assertFalse(result.output().contains("must-not-appear-in-migration-output"), result::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias WHERE id=17500"));
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM configuration_broadcast_stream WHERE " +
+            "configuration_id='" + validProviderId + "'"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM configuration_broadcast_stream WHERE " +
+            "configuration_id='" + invalidProviderId + "'"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM configuration_channel WHERE " +
+            "configuration_id='" + invalidChannelId + "'"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM receiver_channel"));
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias_broadcast_channel WHERE id=17500"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM alias_broadcast_channel WHERE id=17501"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+    }
+
+    @Test
+    void repairsCurrentAliasAndScanListNamesThatCollideAfterTrimming() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family, unmatched_talkgroup_record_enabled) VALUES
+                    (17600, 'Dispatch Repair', 'P25', 0),
+                    (17601, ' Dispatch Repair ', 'P25', 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO scan_list(id, sort_order, name, description, published, is_default) VALUES
+                    (17600, 100, 'Operations Repair', NULL, 1, 0),
+                    (17601, 101, ' Operations Repair ', NULL, 1, 0)
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "DEFAULT Alias List names separated after normalization: 1 row(s)"), result::output);
+        assertTrue(result.output().contains(
+            "DEFAULT scan-list names separated after normalization: 1 row(s)"), result::output);
+        assertEquals("Dispatch Repair|Dispatch Repair (2)", scalar(database, """
+            SELECT group_concat(name, '|') FROM
+                (SELECT name FROM alias_list WHERE id IN (17600, 17601) ORDER BY id)
+            """));
+        assertEquals("Operations Repair|Operations Repair (2)", scalar(database, """
+            SELECT group_concat(name, '|') FROM
+                (SELECT name FROM scan_list WHERE id IN (17600, 17601) ORDER BY id)
+            """));
+        try(Connection connection = open(database))
+        {
+            new ConfigurationRepository(database).load(connection);
+        }
+    }
+
+    @Test
+    void keepsCurrentChannelButClearsAnIncompatibleAliasListAssignment() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String configurationId;
+        try(Connection connection = open(database))
+        {
+            long p25AliasListId = Long.parseLong(scalar(connection,
+                "SELECT id FROM alias_list WHERE family='P25' ORDER BY id LIMIT 1"));
+            Channel channel = new Channel("Keep this NBFM channel");
+            SourceConfigTuner source = new SourceConfigTuner();
+            source.setFrequency(155_250_000L);
+            channel.setSourceConfiguration(source);
+            configurationId = channel.getConfigurationId();
+            ObjectNode payload = OBJECT_MAPPER.valueToTree(channel);
+            payload.remove(java.util.List.of("configurationId", "system", "site", "name", "aliasListId",
+                "aliasListName", "radioResolveId", "radresGuid", "radres_guid", "autoStart", "enabled",
+                "autoStartOrder", "order", "channelType"));
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start, decoder_type,
+                    address_domain_code, primary_frequency_hz, config_json
+                ) VALUES (?, 'CONVENTIONAL', 0, 'Keep this NBFM channel', ?, 0, 'NBFM', 0, 155250000, ?)
+                """))
+            {
+                insert.setString(1, configurationId);
+                insert.setLong(2, p25AliasListId);
+                insert.setString(3, OBJECT_MAPPER.writeValueAsString(payload));
+                insert.executeUpdate();
+            }
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("DEFAULT channels with an unusable Alias List: 1 row(s)"),
+            result::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM configuration_channel WHERE configuration_id='" +
+            configurationId + "'"));
+        assertEquals("1", scalar(database, "SELECT alias_list_id IS NULL FROM configuration_channel WHERE " +
+            "configuration_id='" + configurationId + "'"));
     }
 
     @Test
@@ -119,10 +694,36 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("PLAN STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
-            DatabaseFormatCatalog.CURRENT_VERSION + " [adopt-global-format-marker]"), result.output());
         assertTrue(result.output().contains("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
             DatabaseFormatCatalog.CURRENT_VERSION + " [adopt-global-format-marker]"), result.output());
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+    }
+
+    @Test
+    void repairsRetiredMetadataBeforeAdoptingAMissingCurrentMarker() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate("""
+                DELETE FROM database_metadata WHERE key='database_format_version'
+                """));
+            assertEquals(1, statement.executeUpdate("""
+                INSERT INTO database_metadata(key, value, updated_at_ms)
+                VALUES ('alias_schema_version', '6', 1)
+                """));
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("DROP malformed non-structural metadata: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+            DatabaseFormatCatalog.CURRENT_VERSION + " [adopt-global-format-marker]"), result::output);
+        assertNull(metadata(database, "alias_schema_version"));
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
     }
@@ -136,8 +737,9 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertFalse(result.output().contains("format-1-to-2"));
-        assertTrue(result.output().contains("PLAN STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
+        assertTrue(result.output().indexOf("COMPLETED STEP: 2 -> 3 [format-2-to-3]") <
+            result.output().indexOf("COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
 
@@ -150,9 +752,72 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void compactsFreedPagesAfterMigratingAStagedDatabase() throws Exception
+    void format2MigrationRecoversMatchingJsonAliasListBeforeFactoryDefaults() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO alias_list(name, family) VALUES ('County P25', 'P25')");
+            try(var insert = connection.prepareStatement("""
+                INSERT INTO configuration_channel(
+                    id, sort_order, name, alias_list_name, radres_guid, decoder_type, source_type,
+                    primary_frequency_hz, frequency_count, config_json
+                ) VALUES (1, 1, 'County Control', NULL,
+                    '00000000-0000-4000-8000-000000000001', 'P25_PHASE1', 'TUNER', 851012500, 1, ?)
+                """))
+            {
+                insert.setString(1, channelJson("County Control", "County", "Simulcast", "County P25",
+                    DecoderType.P25_PHASE1, 851012500));
+                insert.executeUpdate();
+            }
+            assertEquals(1, new Format2To3DatabaseMigration().validateSource(connection).stream()
+                .filter(effect -> effect.subject().equals("saved channel Alias List projections"))
+                .findFirst().orElseThrow().affectedRows());
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals("County P25", scalar(database, """
+            SELECT list.name
+            FROM configuration_channel channel
+            JOIN alias_list list ON list.id=channel.alias_list_id
+            WHERE channel.name='County Control'
+            """));
+    }
+
+    @Test
+    void historicalAccountCheckDamageDoesNotBlockIndependentChannelMigration() throws Exception
+    {
+        Path database = Format11TestDatabase.create(newStagedDatabase());
+        String preservedChannelName = scalar(database, """
+            SELECT name FROM configuration_channel
+            WHERE name IS NOT NULL ORDER BY id LIMIT 1
+            """);
+        assertTrue(preservedChannelName != null && !preservedChannelName.isBlank());
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            assertEquals(1, statement.executeUpdate(
+                "UPDATE web_user SET tier='BROKEN' WHERE username='listener'"));
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM configuration_channel WHERE name='" +
+            preservedChannelName.replace("'", "''") + "'"));
+        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM web_user WHERE username='listener'"));
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
+        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
+    }
+
+    @Test
+    void leavesReusableFreePagesInsteadOfRunningRiskyMigrationTimeCompaction() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -170,13 +835,12 @@ class ApplicationDatabaseMigratorTest
             statement.executeUpdate("DELETE FROM application_settings WHERE key LIKE 'temporary-bloat-%'");
         }
 
-        long bloatedBytes = Files.size(database);
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("Compacting the migrated staged database."));
-        assertTrue(bloatedBytes - Files.size(database) > 4L * 1024L * 1024L,
-            "Expected migration compaction to reclaim the synthetic free pages");
+        assertFalse(result.output().contains("Compacting the migrated staged database."));
+        assertTrue(Long.parseLong(scalar(database, "PRAGMA freelist_count")) > 0,
+            "Freed pages should remain reusable without requiring temporary VACUUM space");
         try(Connection connection = open(database))
         {
             DatabaseFormatCatalog.requireCurrent(connection);
@@ -360,7 +1024,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database, sourceRoot, targetRoot);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("PLAN STEP: 1 -> 2 [format-1-to-2]"));
+        assertTrue(result.output().contains("COMPLETED STEP: 1 -> 2 [format-1-to-2]"));
         assertTrue(result.output().contains("TRANSFORM unmatched-talkgroup catch-all aliases: 4 row(s)"));
         assertTrue(result.output().contains("DROP retired fully-qualified talkgroup aliases: 1 row(s)"));
         assertTrue(result.output().contains("DROP retired fully-qualified radio aliases: 1 row(s)"));
@@ -603,7 +1267,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void refusesLegacyP25QualifiersOnAnOtherwiseRetainedAliasWithoutChangingTheSource() throws Exception
+    void dropsLegacyP25QualifiersWhileRetainingTheAlias() throws Exception
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
 
@@ -619,12 +1283,12 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertTrue(result.error().contains("legacy P25 qualifier values"));
-        assertFalse(result.output().contains("Updating the staged database"));
-        assertEquals("4", metadata(database, "alias_schema_version"));
-        assertEquals("781824:840", scalar(database, """
-            SELECT wacn || ':' || p25_system_id FROM alias WHERE id=1
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("DROP legacy P25 qualifier values: 1 row(s)"));
+        assertEquals("1", scalar(database, """
+            SELECT COUNT(*) FROM alias
+            WHERE id=1 AND name='Unexpected Qualifier' AND matcher_type='TALKGROUP'
+              AND protocol='APCO25' AND value=43
             """));
     }
 
@@ -732,7 +1396,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database, source, target);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode());
-        assertTrue(result.output().contains("Portable directory preferences updated: 4"));
+        assertTrue(result.output().contains("TRANSFORM portable directory preferences: 4 preference component(s)"));
 
         try(Connection connection = open(database))
         {
@@ -757,6 +1421,39 @@ class ApplicationDatabaseMigratorTest
                 settings.path("directories").path("unrecognized.absolute.path").asText());
             assertNull(metadata(connection, "dmr_activity_schema_version"));
         }
+    }
+
+    @Test
+    void dropsOnlyAPathWhoseLongerRelocationWouldOverflowPortablePreferences() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path source = Path.of("/s");
+        Path target = Path.of("/" + "target".repeat(512));
+
+        String json = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
+            "directories", java.util.Map.of("directory.recording", source.resolve("recordings").toString()),
+            "preserved", java.util.Map.of("large.preference", "x".repeat(4_194_000))));
+        assertTrue(json.getBytes(StandardCharsets.UTF_8).length < 4_194_304);
+        try(Connection connection = open(database); var statement = connection.prepareStatement("""
+            INSERT INTO application_settings(key, settings_json, updated_at_ms)
+            VALUES ('portable_java_preferences_v1', ?, 1)
+            """))
+        {
+            statement.setString(1, json);
+            statement.executeUpdate();
+        }
+
+        CommandResult result = run(database, source, target);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("RESET unusable portable preference components: 1 preference component(s)"),
+            result::output);
+        JsonNode settings = OBJECT_MAPPER.readTree(scalar(database, """
+            SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertFalse(settings.path("directories").has("directory.recording"));
+        assertEquals(4_194_000, settings.path("preserved").path("large.preference").asText().length());
     }
 
     @Test
@@ -806,7 +1503,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void malformedCurrentReceiverSettingsAreRefusedBeforeRelocationWithoutSchemaChanges() throws Exception
+    void malformedCurrentPortablePreferencesAreResetWithoutBlockingMigration() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -825,20 +1522,24 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database, source, target);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("portable preference document is not strict JSON"), result::error);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
+        assertTrue(result.output().contains(
+            "RESET unusable portable preference components: 1 preference component(s)"), result::output);
 
         try(Connection connection = open(database))
         {
-            assertEquals("{invalid", scalar(connection, """
+            assertEquals("{}", scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
             assertNull(metadata(connection, "dmr_activity_schema_version"));
+            DatabaseFormatCatalog.requireCurrent(connection);
         }
     }
 
     @Test
-    void alpha9LateRelocationFailureRollsBackTheEntireReleaseMigration() throws Exception
+    void alpha9MalformedPortablePreferencesDoNotBlockTheReleaseMigration() throws Exception
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
         insertAlpha9MigrationCases(database);
@@ -855,32 +1556,24 @@ class ApplicationDatabaseMigratorTest
 
         CommandResult result = run(database, source, target);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
-        assertFalse(result.error().isBlank());
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains("RESET unusable legacy web/settings state: 1 row(s)"));
 
         try(Connection connection = open(database))
         {
-            new Format1To2DatabaseMigration().validateSource(connection);
-            assertEquals("4", metadata(connection, "alias_schema_version"));
-            assertEquals("24", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("15", scalar(connection, "SELECT COUNT(*) FROM alias"));
-            assertEquals("2", scalar(connection, """
-                SELECT COUNT(*) FROM alias
-                WHERE matcher_type IN (
-                    'P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'
-                )
-                """));
-            assertEquals("15", scalar(connection, """
-                SELECT (SELECT COUNT(*) FROM trunked_identity_scope) +
-                       (SELECT COUNT(*) FROM trunked_identity_scope_context) +
-                       (SELECT COUNT(*) FROM trunked_identity_summary) +
-                       (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary)
-                """));
-            assertEquals("3", scalar(connection, "SELECT COUNT(*) FROM p25_radio_affiliation"));
-            assertEquals("{invalid", scalar(connection, """
-                SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals("9", scalar(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals("1", scalar(connection, """
+                SELECT json_valid(settings_json) FROM application_settings
+                WHERE key='portable_java_preferences_v1'
                 """));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
+            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+            assertEquals("0", scalar(connection, """
+                SELECT COUNT(*) FROM application_settings
+                WHERE key='portable_java_preferences_v1' AND settings_json='{invalid'
+                """));
         }
     }
 

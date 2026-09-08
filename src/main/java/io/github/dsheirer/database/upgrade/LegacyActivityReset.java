@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Clears reproducible receiver activity while retaining the exact historical schema needed by the adjacent chain. */
+/** Clears a caller-classified set of reproducible receiver-activity tables in foreign-key-safe order. */
 final class LegacyActivityReset
 {
     /** Receiver-derived tables present before the logical-call format-4 boundary. */
@@ -149,7 +149,7 @@ final class LegacyActivityReset
         Set<String> remaining = new LinkedHashSet<>(tables);
         if(remaining.size() != tables.size())
         {
-            throw new SQLException("Legacy activity reset contains a duplicate table classification");
+            throw new SQLException("Receiver activity reset contains a duplicate table classification");
         }
 
         Map<String,Set<String>> referencedParents = new HashMap<>();
@@ -177,7 +177,7 @@ final class LegacyActivityReset
             String next = remaining.stream().filter(candidate -> remaining.stream().noneMatch(other ->
                 !candidate.equals(other) && referencedParents.getOrDefault(other, Set.of()).contains(candidate)))
                 .sorted().findFirst().orElseThrow(() ->
-                    new SQLException("Legacy receiver activity schema contains a foreign-key cycle"));
+                    new SQLException("Receiver activity schema contains a foreign-key cycle"));
             deletionOrder.add(next);
             remaining.remove(next);
         }

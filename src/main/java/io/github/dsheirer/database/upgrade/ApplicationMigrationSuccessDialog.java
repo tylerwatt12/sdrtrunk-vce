@@ -142,25 +142,40 @@ public final class ApplicationMigrationSuccessDialog
 
     public static String currentDatabaseReport(ApplicationMigrationService.MigrationResult migration)
     {
-        return "Your database was migrated successfully.\n\n" + migration.helperOutput() +
+        String result = migration.completedWithRepairsOrSkippedItems() ?
+            "Your database migration completed with itemized repairs, resets, or skipped items. " +
+                "Usable independent settings were preserved." :
+            "Your database was migrated successfully without row-level repairs, resets, or skipped items.";
+        return result + "\n\n" + migration.helperOutput() +
             "\n\nSafety backup:\n" + migration.safetyBackup();
     }
 
     public static String previousImportReport(ApplicationMigrationService.MigrationResult migration)
     {
+        String result = migration.completedWithRepairsOrSkippedItems() ?
+            "Migration completed with itemized repairs, resets, or skipped items. Usable independent settings " +
+                "were preserved." :
+            "Migration completed without row-level repairs, resets, or skipped items.";
         return migration.inputScope() == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
-            "Migration complete. The portable profile was copied and its stored paths were remapped. Your " +
-                "previous installation and its data were left unchanged.\n\n" + migration.helperOutput() :
-            "Migration complete. Only the selected SQLite database was imported. The source database and its " +
+            result + " The database was migrated and each usable optional profile item was imported " +
+                "separately. Eligible stored paths were checked and remapped where applicable. Your previous " +
+                "installation and its data were left unchanged. Review the itemized " +
+                "optional-profile results below.\n\n" +
+                migration.helperOutput() :
+            result + " Only the selected SQLite database was imported. The source database and its " +
                 "neighboring files were left unchanged.\n\n" + migration.helperOutput();
     }
 
     public static String replacementImportReport(ApplicationMigrationService.MigrationResult migration,
                                                  Path sourceDatabase)
     {
-        return "SQLite database import complete. The selected database replaced the active database after staged " +
+        String result = migration.completedWithRepairsOrSkippedItems() ?
+            "SQLite database import completed with itemized repairs, resets, or skipped items. Usable independent " +
+                "settings were preserved." :
+            "SQLite database import completed without row-level repairs, resets, or skipped items.";
+        return result + " The selected database replaced the active database after staged " +
             "migration and validation. The selected source file and its neighboring files were left unchanged.\n\n" +
-            "Stored portable paths were not remapped. If the imported database did not contain an administrator, " +
+            "Stored portable paths were not remapped. If no usable administrator credential could be preserved, " +
             "setup will request a new administrator password after restart.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
             "\n\nPrevious active database backup:\n" + migration.safetyBackup() +

@@ -14,12 +14,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
+import io.github.dsheirer.gui.setup.SetupProgress;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -405,20 +409,29 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesZeroProjectionForFormat14MultipleFrequencySource() throws Exception
+    void derivesMultipleFrequencyProjectionFromJsonWithoutTrustingStaleColumns() throws Exception
     {
-        assertRefused("format14-zero-multiple-frequency.sqlite", """
-            UPDATE configuration_channel
-            SET source_type='TUNER_MULTIPLE_FREQUENCIES',
-                primary_frequency_hz=0,
-                frequency_count=0,
-                config_json=json_set(
-                    json_remove(config_json, '$.sourceConfiguration.frequency'),
-                    '$.sourceConfiguration.type', 'sourceConfigTunerMultipleFrequency',
-                    '$.sourceConfiguration.sourceType', 'TUNER_MULTIPLE_FREQUENCIES',
-                    '$.sourceConfiguration.frequencies', json('[]'))
-            WHERE configuration_id='%s'
-            """.formatted(CONVENTIONAL_CHANNEL), "query projection does not match config_json");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14-zero-multiple-frequency.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET source_type='RECORDING', primary_frequency_hz=123, frequency_count=99,
+                    config_json=json_set(
+                        json_remove(config_json, '$.sourceConfiguration.frequency'),
+                        '$.sourceConfiguration.type', 'sourceConfigTunerMultipleFrequency',
+                        '$.sourceConfiguration.sourceType', 'TUNER_MULTIPLE_FREQUENCIES',
+                        '$.sourceConfiguration.frequencies', json('[]'))
+                WHERE configuration_id='%s'
+                """.formatted(CONVENTIONAL_CHANNEL));
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_channel WHERE configuration_id='" +
+                CONVENTIONAL_CHANNEL + "'"));
+            assertNull(nullableScalar(connection, "SELECT primary_frequency_hz FROM configuration_channel " +
+                "WHERE configuration_id='" + CONVENTIONAL_CHANNEL + "'"));
+            connection.rollback();
+        }
     }
 
     @Test
@@ -486,6 +499,14 @@ class Format14To15DatabaseMigrationTest
                 new Format14To15DatabaseMigration().migrate(connection);
                 assertFalse(columns(connection, "configuration_channel").contains("alias_list_name"));
                 assertTrue(columns(connection, "configuration_channel").contains("alias_list_id"));
+                String firstBoundary = scalar(connection, """
+                    SELECT value FROM database_metadata WHERE key='radio_system_metrics_started_at_ms'
+                    """);
+                connection.rollback();
+                new Format14To15DatabaseMigration().migrate(connection);
+                assertEquals(firstBoundary, scalar(connection, """
+                    SELECT value FROM database_metadata WHERE key='radio_system_metrics_started_at_ms'
+                    """));
                 connection.rollback();
             }
             finally
@@ -667,107 +688,687 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void stillRefusesChannelIdentityKindAndDecoderSourceProjectionMismatches() throws Exception
+    void repairsChannelIdentityAndDerivesKindAndProjectionFromJson() throws Exception
     {
-        assertRefused("mismatched-channel-identity.sqlite", """
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("mismatched-channel-projections.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_channel
+                SET channel_kind='CONVENTIONAL', source_type='RECORDING', decoder_type='AM',
+                    primary_frequency_hz=1, frequency_count=99,
+                    config_json=json_set(config_json, '$.configurationId',
+                        '40000000-0000-4000-8000-000000000001')
+                WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL));
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals("TRUNKED", scalar(connection, "SELECT channel_kind FROM configuration_channel WHERE " +
+                "configuration_id='" + MIXED_CASE_CHANNEL + "'"));
+            assertEquals("P25_PHASE1", scalar(connection, "SELECT decoder_type FROM configuration_channel WHERE " +
+                "configuration_id='" + MIXED_CASE_CHANNEL + "'"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void separatesFormat14ListNamesThatCollideAfterRuntimeNormalization() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("format14-normalized-list-names.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                INSERT INTO alias_list(id, name, family, unmatched_talkgroup_record_enabled) VALUES
+                    (99001, 'Dispatch Repair', 'P25', 0),
+                    (99002, ' Dispatch Repair ', 'P25', 0)
+                """);
+            execute(connection, """
+                INSERT INTO scan_list(id, sort_order, name, description, published, is_default) VALUES
+                    (99101, 100, 'Operations Repair', NULL, 1, 0),
+                    (99102, 101, ' Operations Repair ', NULL, 1, 0)
+                """);
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+            connection.commit();
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows() >= 2);
+
+            assertEquals("Dispatch Repair|Dispatch Repair (2)", scalar(connection, """
+                SELECT group_concat(name, '|') FROM
+                    (SELECT name FROM alias_list WHERE id IN (99001, 99002) ORDER BY id)
+                """));
+            assertEquals("Operations Repair|Operations Repair (2)", scalar(connection, """
+                SELECT group_concat(name, '|') FROM
+                    (SELECT name FROM scan_list WHERE id IN (99101, 99102) ORDER BY id)
+                """));
+            new ConfigurationRepository(database).load(connection);
+        }
+    }
+
+    @Test
+    void recoversUnicodeBlankFormat14AliasListNameWithoutBlockingTheMigration() throws Exception
+    {
+        Path database = Format14TestDatabase.create(
+            mTemporaryFolder.resolve("format14-unicode-blank-alias-list.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                INSERT INTO alias_list(id, name, family, unmatched_talkgroup_record_enabled)
+                VALUES (981, replace(printf('%025d', 0), '0', char(8195)) || 'x', 'P25', 0)
+                """);
+            execute(connection, """
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (982, 981, 'Preserved Unicode-blank owner', 'TALKGROUP', 'APCO25', 104)
+                """);
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stampForMigration(connection, DatabaseFormatCatalog.CURRENT_VERSION);
+            connection.commit();
+
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows() >= 1);
+            assertEquals("Recovered 981", scalar(connection,
+                "SELECT name FROM alias_list WHERE id=981"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id=982"));
+            DatabaseFormatCatalog.requireCurrent(connection);
+            new ConfigurationRepository(database).load(connection);
+        }
+    }
+
+    @Test
+    void defaultsMalformedOptionalAliasFieldsWithoutDroppingTheFormat14Alias() throws Exception
+    {
+        Path database = Format14TestDatabase.create(
+            mTemporaryFolder.resolve("format14-optional-alias-field-repair.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long p25List = number(connection,
+                "SELECT id FROM alias_list WHERE family='P25' ORDER BY id LIMIT 1");
+            long scanList = number(connection, "SELECT id FROM scan_list WHERE is_default=1");
+            execute(connection, """
+                INSERT INTO alias(id, alias_list_id, name, description, group_name, color, icon_name,
+                                  stream_as_talkgroup, record_enabled, matcher_type, protocol, value)
+                VALUES
+                    (97401, %d, 'Repair format-14 optional fields', 'description', 'group', 123, 'icon',
+                     456, 1, 'TALKGROUP', 'APCO25', 301),
+                    (97402, %d, 'Keep format-14 optional fields', 'keep description', 'keep group', 321,
+                     'keep icon', 654, 1, 'TALKGROUP', 'APCO25', 302)
+                """.formatted(p25List, p25List));
+            execute(connection, "INSERT INTO alias_scan_list_membership(alias_id, scan_list_id) VALUES " +
+                "(97401, " + scanList + ")");
+            List<DatabaseMigrationEffect> baseline = new Format14To15DatabaseMigration().validateSource(connection);
+            long baselineDefaults = effect(baseline, DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields").affectedRows();
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, """
+                UPDATE alias SET description=X'01', group_name=X'02', color=1.5, icon_name=X'03',
+                                 stream_as_talkgroup=0, record_enabled=2
+                WHERE id=97401
+                """);
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields").affectedRows());
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id=97401"));
+            assertEquals(1, number(connection, """
+                SELECT description IS NULL AND group_name IS NULL AND color=0 AND icon_name IS NULL
+                       AND stream_as_talkgroup IS NULL AND record_enabled=0
+                FROM alias WHERE id=97401
+                """));
+            assertEquals("keep description|keep group|321|keep icon|654|1", scalar(connection, """
+                SELECT description || '|' || group_name || '|' || color || '|' || icon_name || '|' ||
+                       stream_as_talkgroup || '|' || record_enabled FROM alias WHERE id=97402
+                """));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=97401"));
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void defaultsOneOversizedOptionalAliasTextFieldWithoutTouchingSiblingAliases() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("oversized-alias-text.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            List<DatabaseMigrationEffect> baseline = migration.validateSource(connection);
+            long baselineDrops = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            long baselineAliasDefaults = effect(baseline, DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields").affectedRows();
+            long sourceAliases = number(connection, "SELECT COUNT(*) FROM alias");
+            execute(connection, """
+                UPDATE alias SET description=hex(zeroblob(2097153)) WHERE name='Migration Dispatch'
+                """);
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+            assertEquals(baselineDrops, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(baselineAliasDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "Aliases with defaulted optional fields").affectedRows());
+            assertEquals(sourceAliases, number(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals(1, number(connection, "SELECT description IS NULL FROM alias " +
+                "WHERE name='Migration Dispatch'"));
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void boundsOversizedLegacyScalarsWithoutLosingIndependentConfiguration() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("oversized-legacy-scalars.sqlite"));
+        long baselineDefaults;
+        long baselineConfigurationDrops;
+        long baselineRelationshipDrops;
+        long sourceChannels;
+        long sourceProviders;
+        long sourceAliasRoutes;
+        long sourceUnmatchedRoutes;
+        try(Connection connection = open(database))
+        {
+            List<DatabaseMigrationEffect> baseline = new Format14To15DatabaseMigration().validateSource(connection);
+            baselineDefaults = effect(baseline, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows();
+            baselineConfigurationDrops = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            baselineRelationshipDrops = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows();
+            sourceChannels = number(connection, "SELECT COUNT(*) FROM configuration_channel");
+            sourceProviders = number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream");
+            sourceAliasRoutes = number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel");
+            sourceUnmatchedRoutes = number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream");
+        }
+
+        mutateIgnoringCheckConstraints(database, """
             UPDATE configuration_channel
-            SET config_json=json_set(config_json, '$.configurationId',
-                '40000000-0000-4000-8000-000000000001')
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "JSON field configurationId does not match");
-        assertRefused("mismatched-channel-kind.sqlite", """
-            UPDATE configuration_channel SET channel_kind='CONVENTIONAL'
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "channel_kind does not match config_json");
-        assertRefused("mismatched-channel-source.sqlite", """
-            UPDATE configuration_channel SET source_type='RECORDING'
-            WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "query projection does not match config_json");
+            SET system_name='OVERSIZED_CHANNEL_SENTINEL-' || hex(zeroblob(2097152))
+            WHERE configuration_id='%s';
+            UPDATE configuration_broadcast_stream
+            SET name='OVERSIZED_PROVIDER_SENTINEL-' || hex(zeroblob(2097152))
+            WHERE json_extract(config_json, '$.name')='Primary Migration Feed';
+            UPDATE alias_broadcast_channel
+            SET channel_name='OVERSIZED_ROUTE_SENTINEL-' || hex(zeroblob(2097152));
+            """.formatted(MIXED_CASE_CHANNEL));
+
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows() >= baselineDefaults + 1);
+            assertEquals(baselineConfigurationDrops, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(baselineRelationshipDrops + sourceAliasRoutes,
+                effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                    "orphaned legacy relationships").affectedRows());
+            assertEquals(sourceChannels, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertNull(nullableScalar(connection, """
+                SELECT system_name FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(MIXED_CASE_CHANNEL)));
+            assertEquals(sourceProviders,
+                number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*) FROM configuration_broadcast_stream
+                WHERE json_extract(config_json, '$.name')='Primary Migration Feed'
+                """));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(sourceUnmatchedRoutes,
+                number(connection, "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+
+            String report = effects.toString();
+            assertFalse(report.contains("OVERSIZED_CHANNEL_SENTINEL"));
+            assertFalse(report.contains("OVERSIZED_PROVIDER_SENTINEL"));
+            assertFalse(report.contains("OVERSIZED_ROUTE_SENTINEL"));
+            assertTrue(report.length() < 20_000, report);
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
     }
 
     @Test
-    void stillRefusesMalformedAuthoritativeAutoStartScalars() throws Exception
+    void retainsOnlyTheBoundedWebUserSetWhenFormat14ContainsExcessAccounts() throws Exception
     {
-        assertRefusedIgnoringCheckConstraints("invalid-row-auto-start.sqlite", """
-            UPDATE configuration_channel SET auto_start=2 WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "auto_start is not a boolean flag");
-        assertRefusedIgnoringCheckConstraints("fractional-row-auto-start-order.sqlite", """
-            UPDATE configuration_channel SET auto_start_order=1.5 WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "auto_start_order is not stored as an integer");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("excess-format14-users.sqlite"));
+        try(Connection connection = open(database))
+        {
+            int addedUsers = 300;
+            long originalUsers = number(connection, "SELECT COUNT(*) FROM web_user");
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            long baselineDrops = effect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            execute(connection, """
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 300
+                )
+                INSERT INTO web_user (
+                    id, username, tier, primary_admin, credential_version, password_algorithm,
+                    password_iterations, password_derived_key_bits, password_salt, password_hash,
+                    password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
+                    created_at_ms, updated_at_ms
+                )
+                SELECT 1000 + sequence.value, 'bulk-user-' || sequence.value, 'USER', 0,
+                       credential_version, password_algorithm, password_iterations,
+                       password_derived_key_bits, password_salt, password_hash,
+                       password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
+                       created_at_ms, updated_at_ms
+                FROM web_user primary_user CROSS JOIN sequence
+                WHERE primary_user.primary_admin=1
+                """);
+
+            long expectedDrops = Math.max(0,
+                originalUsers + addedUsers - (WebAccessService.MAXIMUM_USERS + 1L));
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+            assertEquals(baselineDrops + expectedDrops, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(WebAccessService.MAXIMUM_USERS + 1L,
+                number(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
+            Format5WebStateValidator.validate(connection);
+            connection.rollback();
+        }
     }
 
     @Test
-    void refusesAdministratorRowsThatCannotSatisfyTheStrictFormat15Schema() throws Exception
+    void defaultsMalformedAuthoritativeAutoStartScalars() throws Exception
     {
-        assertRefused("invalid-metadata-time.sqlite", """
-            UPDATE database_metadata SET updated_at_ms=0 WHERE key='database_format_version'
-            """, "update time must be a positive integer");
-        assertRefused("invalid-application-setting.sqlite", """
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("invalid-channel-scalars.sqlite"));
+        mutateIgnoringCheckConstraints(database, """
+            UPDATE configuration_channel SET auto_start=2, auto_start_order=1.5
+            WHERE configuration_id='%s'
+            """.formatted(MIXED_CASE_CHANNEL));
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows() >= 1);
+            assertEquals(0, number(connection, "SELECT auto_start FROM configuration_channel WHERE " +
+                "configuration_id='" + MIXED_CASE_CHANNEL + "'"));
+            assertNull(nullableScalar(connection, "SELECT auto_start_order FROM configuration_channel WHERE " +
+                "configuration_id='" + MIXED_CASE_CHANNEL + "'"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void rebasesAnExhaustedLegacyPreferenceRevisionWithoutDiscardingTheAccount() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("exhausted-preference-revision.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            long baselineDefaults = effect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values").affectedRows();
+            execute(connection, "UPDATE web_user SET preferences_revision=" + (Long.MAX_VALUE - 1) +
+                " WHERE primary_admin=1");
+            connection.setAutoCommit(false);
+
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+
+            assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values").affectedRows());
+            assertEquals(1, number(connection,
+                "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
+            Format5WebStateValidator.validate(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void migratesIndependentComponentsAcrossMixedDefects() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("mixed-defects.sqlite"));
+        mutateIgnoringCheckConstraints(database, """
             UPDATE application_settings SET settings_json='not-json'
-            WHERE key='format-4-preserve-sentinel'
-            """, "is not valid JSON");
-        assertRefused("invalid-icon-document.sqlite", """
+            WHERE key='format-4-preserve-sentinel';
             INSERT OR REPLACE INTO application_icons(key, icons_json, updated_at_ms)
-            VALUES ('invalid-icons', '[]', 1700000000000)
-            """, "must be a JSON object");
-        assertRefused("missing-default-scan-list.sqlite", """
-            UPDATE scan_list SET is_default=0 WHERE is_default=1
-            """, "exactly one Default scan list");
-        assertRefused("fractional-scan-order.sqlite", """
-            UPDATE scan_list SET sort_order=1.5 WHERE is_default=1
-            """, "sort_order is not stored as an integer");
-        assertRefused("fractional-alias-color.sqlite", """
-            UPDATE alias SET color=1.5 WHERE name='Migration Dispatch'
-            """, "color is not stored as an integer");
-        assertRefused("oversized-alias-list-name.sqlite", """
-            UPDATE alias_list SET name='12345678901234567890123456' WHERE name='Migration Mixed Case'
-            """, "name outside 1 through 25 characters");
-        assertRefused("missing-alias-name.sqlite", """
-            UPDATE alias SET name=NULL WHERE name='Migration Dispatch'
-            """, "cannot be null");
-        assertRefused("mixed-alias-payload.sqlite", """
-            UPDATE alias SET min_value=1 WHERE name='Migration Dispatch'
-            """, "matcher fields do not match its type");
-        assertRefused("oversized-status-value.sqlite", """
-            UPDATE alias
-            SET matcher_type='STATUS', protocol=NULL, value=NULL, min_value=NULL, max_value=NULL,
-                text_value=NULL, numeric_value=256, tone_sequence=NULL
-            WHERE name='Migration Dispatch'
-            """, "status value is outside 0 through 255");
-        assertRefused("blank-esn-value.sqlite", """
-            UPDATE alias
-            SET matcher_type='ESN', protocol=NULL, value=NULL, min_value=NULL, max_value=NULL,
-                text_value=' ', numeric_value=NULL, tone_sequence=NULL
-            WHERE name='Migration Dispatch'
-            """, "matcher fields do not match its type");
-        assertRefused("negative-channel-order.sqlite", """
-            UPDATE configuration_channel SET sort_order=-1 WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "negative sort order");
-        assertRefused("missing-decoder-type.sqlite", """
-            UPDATE configuration_channel SET decoder_type=NULL WHERE configuration_id='%s'
-            """.formatted(MIXED_CASE_CHANNEL), "has no decoder type");
-        assertRefused("text-password-salt.sqlite", """
-            UPDATE web_user SET password_salt=CAST('0123456789abcdef' AS TEXT) WHERE primary_admin=1
-            """, "password salt must use SQLite blob storage");
-        assertRefused("invalid-username-characters.sqlite", """
-            INSERT INTO web_user (
-                username, tier, primary_admin, credential_version, password_algorithm,
-                password_iterations, password_derived_key_bits, password_salt, password_hash,
-                password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
-                created_at_ms, updated_at_ms
-            )
-            SELECT '!invalid', 'USER', 0, credential_version, password_algorithm,
-                   password_iterations, password_derived_key_bits, password_salt, password_hash,
-                   password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
-                   created_at_ms, updated_at_ms
-            FROM web_user WHERE primary_admin=1
-            """, "has an invalid username");
-        assertRefused("fractional-account-time.sqlite", """
-            UPDATE web_user SET created_at_ms=1.5 WHERE primary_admin=1
-            """, "account creation time must use SQLite integer storage");
-        assertRefused("fractional-policy-time.sqlite", """
-            UPDATE web_access_policy SET updated_at_ms=1700000000000.5 WHERE capability_id='dashboard'
-            """, "access-policy update time must use SQLite integer storage");
+            VALUES ('invalid-icons', '[]', 1700000000000);
+            INSERT OR REPLACE INTO application_icons(key, icons_json, updated_at_ms)
+            VALUES ('default', '{"icons":{}}', 1700000000000);
+            INSERT OR REPLACE INTO database_metadata(key, value, updated_at_ms)
+            VALUES ('icon_config_initialized', 'true', 1700000000000);
+            UPDATE alias SET min_value=1 WHERE name='Migration Dispatch';
+            UPDATE configuration_channel SET config_json='{' WHERE configuration_id='%s';
+            UPDATE configuration_broadcast_stream SET config_json='{' WHERE name='Primary Migration Feed';
+            UPDATE web_user SET preferences_json='not-json', preferences_revision=0 WHERE primary_admin=1;
+            UPDATE scan_list SET sort_order=-1, is_default=0 WHERE is_default=1;
+            UPDATE sqlite_sequence SET seq=-100 WHERE name='alias';
+            """.formatted(MIXED_CASE_CHANNEL));
+
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertEquals(6, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(5, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows());
+            assertTrue(effects.stream().allMatch(candidate -> candidate.affectedRows() >= 0));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE name='Migration Dispatch' " +
+                "AND min_value IS NULL"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM application_settings WHERE key='format-4-preserve-sentinel'"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM application_icons WHERE key='invalid-icons'"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM application_icons WHERE key='default'"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM database_metadata WHERE key='icon_config_initialized'"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM scan_list WHERE is_default=1 AND published=1"));
+            assertEquals(6, number(connection,
+                "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE primary_admin=1"));
+            assertEquals(number(connection, "SELECT coalesce(max(id), 0) FROM alias"),
+                number(connection, "SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='alias'), 0)"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void preservesValidCoreRowsWhenOnlyTheirUpdateTimestampIsMalformed() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("core-timestamp-salvage.sqlite"));
+        Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+        long baselineDefaults;
+        try(Connection connection = open(database))
+        {
+            baselineDefaults = effect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable application settings and metadata").affectedRows();
+        }
+
+        String iconJson = "{\"icons\":[]}";
+        mutateIgnoringCheckConstraints(database, """
+            INSERT OR REPLACE INTO database_metadata(key, value, updated_at_ms)
+            VALUES ('timestamp-salvage-metadata', 'preserved', 0);
+            UPDATE application_settings SET updated_at_ms=0
+            WHERE key='format-4-preserve-sentinel';
+            INSERT OR REPLACE INTO application_icons(key, icons_json, updated_at_ms)
+            VALUES ('default', '%s', 0);
+            """.formatted(iconJson));
+
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+
+            assertEquals(baselineDefaults + 3, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable application settings and metadata").affectedRows());
+            assertEquals("preserved", scalar(connection, """
+                SELECT value FROM database_metadata WHERE key='timestamp-salvage-metadata'
+                """));
+            assertEquals(1, number(connection, """
+                SELECT updated_at_ms FROM database_metadata WHERE key='timestamp-salvage-metadata'
+                """));
+            assertEquals(1, number(connection, """
+                SELECT updated_at_ms FROM application_settings WHERE key='format-4-preserve-sentinel'
+                """));
+            assertEquals(iconJson, scalar(connection,
+                "SELECT icons_json FROM application_icons WHERE key='default'"));
+            assertEquals(1, number(connection,
+                "SELECT updated_at_ms FROM application_icons WHERE key='default'"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void salvagesPortablePreferencesWhenOnlyTheirUpdateTimestampIsMalformed() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("portable-timestamp-salvage.sqlite"));
+        mutateIgnoringCheckConstraints(database, """
+            UPDATE application_settings SET updated_at_ms=0
+            WHERE key='portable_java_preferences_v1'
+            """);
+
+        try(Connection connection = open(database))
+        {
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*) FROM application_settings
+                WHERE key='portable_java_preferences_v1' AND updated_at_ms=0
+                """));
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*) FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            assertEquals(1, number(connection, """
+                SELECT updated_at_ms FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            Format5WebStateValidator.validateCurrentPortablePreferences(scalar(connection, """
+                SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void preservesAutoincrementHighWaterBeyondRetainedRows() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("sequence-high-water.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long baselineDefaults = effect(new Format14To15DatabaseMigration().validateSource(connection),
+                DatabaseMigrationEffect.Kind.DEFAULT, "recoverable configuration values").affectedRows();
+            execute(connection, "UPDATE sqlite_sequence SET seq=900 WHERE name='alias'");
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertEquals(baselineDefaults, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows());
+            assertEquals(900, number(connection, "SELECT seq FROM sqlite_sequence WHERE name='alias'"));
+            assertEquals(901, insertAliasSequenceProbe(connection, "Post-migration high-water probe"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void defaultsMissingLowAndExhaustedAutoincrementSequences() throws Exception
+    {
+        for(long sourceSequence: List.of(0L, Long.MAX_VALUE))
+        {
+            Path database = Format14TestDatabase.create(
+                mTemporaryFolder.resolve("sequence-repair-" + sourceSequence + ".sqlite"));
+            try(Connection connection = open(database))
+            {
+                long baselineDefaults = effect(new Format14To15DatabaseMigration().validateSource(connection),
+                    DatabaseMigrationEffect.Kind.DEFAULT, "recoverable configuration values").affectedRows();
+                execute(connection, "UPDATE sqlite_sequence SET seq=" + sourceSequence + " WHERE name='alias'");
+                connection.setAutoCommit(false);
+                List<DatabaseMigrationEffect> effects =
+                    new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+                assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                    "recoverable configuration values").affectedRows());
+                long retainedMaximum = number(connection, "SELECT max(id) FROM alias");
+                assertEquals(retainedMaximum,
+                    number(connection, "SELECT seq FROM sqlite_sequence WHERE name='alias'"));
+                assertEquals(retainedMaximum + 1,
+                    insertAliasSequenceProbe(connection, "Post-migration repaired-sequence probe"));
+                connection.rollback();
+            }
+        }
+    }
+
+    @Test
+    void allocatesGeneratedDefaultScanListAboveSourceHighWater() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("generated-default-high-water.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, "DELETE FROM scan_list");
+            execute(connection, "UPDATE sqlite_sequence SET seq=900 WHERE name='scan_list'");
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(901, number(connection, "SELECT id FROM scan_list WHERE is_default=1"));
+            assertEquals(901, number(connection, "SELECT seq FROM sqlite_sequence WHERE name='scan_list'"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void recoversSurvivingMembershipOwnersWhenEveryFormat14ScanListIsUnusable() throws Exception
+    {
+        Path database = Format14TestDatabase.create(
+            mTemporaryFolder.resolve("generated-default-membership-recovery.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long scanListId = number(connection, "SELECT id FROM scan_list WHERE is_default=1");
+            long aliasId = number(connection, "SELECT id FROM alias ORDER BY id LIMIT 1");
+            long aliasListId = number(connection, "SELECT id FROM alias_list ORDER BY id LIMIT 1");
+            execute(connection, "INSERT OR IGNORE INTO alias_scan_list_membership(alias_id, scan_list_id) VALUES (" +
+                aliasId + ", " + scanListId + ")");
+            execute(connection, "INSERT OR IGNORE INTO alias_list_unmatched_talkgroup_scan_list_membership" +
+                "(alias_list_id, scan_list_id) VALUES (" + aliasListId + ", " + scanListId + ")");
+
+            long sourceRows = number(connection, """
+                SELECT
+                    (SELECT COUNT(*) FROM alias_scan_list_membership membership
+                     JOIN alias owner ON owner.id=membership.alias_id) +
+                    (SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership membership
+                     JOIN alias_list owner ON owner.id=membership.alias_list_id)
+                """);
+            long aliasOwners = number(connection, """
+                SELECT COUNT(DISTINCT membership.alias_id)
+                FROM alias_scan_list_membership membership JOIN alias owner ON owner.id=membership.alias_id
+                """);
+            long aliasListOwners = number(connection, """
+                SELECT COUNT(DISTINCT membership.alias_list_id)
+                FROM alias_list_unmatched_talkgroup_scan_list_membership membership
+                JOIN alias_list owner ON owner.id=membership.alias_list_id
+                """);
+            assertTrue(sourceRows > 0);
+
+            execute(connection, "PRAGMA foreign_keys=OFF");
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, "UPDATE scan_list SET id=9007199254740991 + id");
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+            execute(connection, "PRAGMA foreign_keys=ON");
+
+            List<DatabaseMigrationEffect> planned = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(sourceRows, effect(planned, DatabaseMigrationEffect.Kind.TRANSFORM,
+                "scan-list memberships recovered into Default").affectedRows());
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM scan_list WHERE is_default=1 AND published=1"));
+            assertEquals(aliasOwners, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership"));
+            assertEquals(aliasOwners, number(connection, """
+                SELECT COUNT(*) FROM alias_scan_list_membership membership
+                JOIN scan_list target ON target.id=membership.scan_list_id AND target.is_default=1
+                """));
+            assertEquals(aliasListOwners, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership"));
+            assertEquals(aliasListOwners, number(connection, """
+                SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership membership
+                JOIN scan_list target ON target.id=membership.scan_list_id AND target.is_default=1
+                """));
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void remapsOnlyDiscardedFormat14DefaultMembershipsWhenAHealthyCustomListSurvives() throws Exception
+    {
+        Path database = Format14TestDatabase.create(
+            mTemporaryFolder.resolve("format14-discarded-default-membership-recovery.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long oldDefault = number(connection, "SELECT id FROM scan_list WHERE is_default=1");
+            execute(connection, "INSERT INTO scan_list(sort_order, name, published, is_default) " +
+                "VALUES (1, 'Healthy custom list', 1, 0)");
+            long customList = number(connection, "SELECT id FROM scan_list WHERE name='Healthy custom list'");
+            long oldDefaultOwner = number(connection, "SELECT id FROM alias ORDER BY id LIMIT 1");
+            long owningList = number(connection, "SELECT alias_list_id FROM alias WHERE id=" + oldDefaultOwner);
+            execute(connection, "INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value) VALUES (" +
+                owningList + ", 'Healthy custom-list owner', 'TALKGROUP', 'APCO25', 65432)");
+            long customOnlyOwner = number(connection,
+                "SELECT id FROM alias WHERE name='Healthy custom-list owner'");
+            execute(connection, "DELETE FROM alias_scan_list_membership WHERE alias_id IN (" +
+                oldDefaultOwner + ", " + customOnlyOwner + ")");
+            execute(connection, "INSERT INTO alias_scan_list_membership(alias_id, scan_list_id) VALUES (" +
+                oldDefaultOwner + ", " + oldDefault + "), (" + customOnlyOwner + ", " + customList + ")");
+            long recoverableRows = number(connection, """
+                SELECT
+                    (SELECT COUNT(*) FROM alias_scan_list_membership WHERE scan_list_id=%d) +
+                    (SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership
+                     WHERE scan_list_id=%d)
+                """.formatted(oldDefault, oldDefault));
+            execute(connection, "PRAGMA foreign_keys=OFF");
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, "UPDATE scan_list SET id=9007199254740991 WHERE id=" + oldDefault);
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+            execute(connection, "PRAGMA foreign_keys=ON");
+
+            List<DatabaseMigrationEffect> planned = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(recoverableRows, effect(planned, DatabaseMigrationEffect.Kind.TRANSFORM,
+                "scan-list memberships recovered into Default").affectedRows());
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            long newDefault = number(connection, "SELECT id FROM scan_list WHERE is_default=1");
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=" +
+                oldDefaultOwner + " AND scan_list_id=" + newDefault));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=" +
+                customOnlyOwner + " AND scan_list_id=" + customList));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=" +
+                customOnlyOwner + " AND scan_list_id=" + newDefault));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM scan_list WHERE id=" + customList + " AND is_default=0"));
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void defaultsMissingOrMalformedRequiredSettingsIndependently() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("required-setting-repair.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            List<DatabaseMigrationEffect> baseline = migration.validateSource(connection);
+            long baselineDrops = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            long baselineDefaults = effect(baseline, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows();
+            execute(connection, "UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'");
+            execute(connection, "DELETE FROM application_settings WHERE key='spectrum_snap_country'");
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+            assertEquals(baselineDrops + 1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(baselineDefaults + 2, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows());
+            assertTrue(SetupProgress.read(connection).isImported());
+            assertEquals(SpectrumSnapSettings.defaults(), SpectrumSnapSettings.read(connection));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            connection.rollback();
+        }
     }
 
     @Test
@@ -792,6 +1393,93 @@ class Format14To15DatabaseMigrationTest
             Format5WebStateValidator.validate(connection);
             connection.rollback();
         }
+    }
+
+    @Test
+    void preservesFormat14CredentialsWhenOnlyCredentialBookkeepingIsDamaged() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("credential-bookkeeping-repair.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            long baselineDefaults = effect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values").affectedRows();
+            long sourceUsers = number(connection, "SELECT COUNT(*) FROM web_user");
+            String verifier = scalar(connection, "SELECT hex(password_salt) || ':' || hex(password_hash) " +
+                "FROM web_user WHERE primary_admin=1");
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, "UPDATE web_user SET password_changed_at_ms=0, " +
+                "auth_revision=9223372036854775807, created_at_ms=0, updated_at_ms=0 WHERE primary_admin=1");
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+
+            assertEquals(sourceUsers, number(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals(verifier, scalar(connection, "SELECT hex(password_salt) || ':' || hex(password_hash) " +
+                "FROM web_user WHERE primary_admin=1"));
+            assertEquals(1, number(connection, "SELECT auth_revision FROM web_user WHERE primary_admin=1"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1 AND " +
+                "password_changed_at_ms>0 AND created_at_ms>0 AND updated_at_ms>=created_at_ms"));
+            assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable web account values").affectedRows());
+            Format5WebStateValidator.validate(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void resetsOnlyWebAuthenticationWhenThePrimaryCredentialIsUnusable() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("unusable-primary.sqlite"));
+        mutateIgnoringCheckConstraints(database, """
+            UPDATE web_user SET password_salt=CAST('not-a-valid-salt' AS TEXT) WHERE primary_admin=1
+            """);
+        try(Connection connection = open(database))
+        {
+            long sourceUsers = number(connection, "SELECT COUNT(*) FROM web_user");
+            long sourcePolicies = number(connection, "SELECT COUNT(*) FROM web_access_policy");
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertEquals(sourceUsers + sourcePolicies, effect(effects, DatabaseMigrationEffect.Kind.RESET,
+                "web authentication").affectedRows());
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM web_access_policy"));
+            assertEquals("required", scalar(connection,
+                "SELECT value FROM database_metadata WHERE key='initial_admin_setup'"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            Format5WebStateValidator.validate(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void dropsUnsupportedInitialAdminMarkerWhilePreservingValidCredentials() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("invalid-admin-marker.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            long baselineDrops = effect(migration.validateSource(connection), DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            long users = number(connection, "SELECT COUNT(*) FROM web_user");
+            execute(connection, """
+                INSERT OR REPLACE INTO database_metadata(key, value, updated_at_ms)
+                VALUES ('initial_admin_setup', 'unsupported-state', 1700000000000)
+                """);
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+
+            assertEquals(baselineDrops + 1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(users, number(connection, "SELECT COUNT(*) FROM web_user"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM database_metadata WHERE key='initial_admin_setup'"));
+            Format5WebStateValidator.validate(connection);
+            DatabaseFormatCatalog.stamp(connection, 15);
+            connection.commit();
+        }
+        assertFalse(InitialAdminSetup.isPasswordRequired(database));
     }
 
     @Test
@@ -838,14 +1526,130 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesFutureReceiverSettingsRevisionInTheFormat14Source() throws Exception
+    void acceptsAlreadyRenamedReceiverSettingsRevision() throws Exception
     {
-        assertRefused("mixed-receiver-settings-revision.sqlite", """
-            UPDATE application_settings
-            SET settings_json=json_set(settings_json,
-                '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"', '7')
-            WHERE key='portable_java_preferences_v1'
-            """, "unexpected settings revision key");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("mixed-receiver-settings-revision.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE application_settings
+                SET settings_json=json_set(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"', '7')
+                WHERE key='portable_java_preferences_v1'
+                """);
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+            assertEquals("7", scalar(connection, """
+                SELECT json_extract(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"')
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void defaultsAnExhaustedAlreadyRenamedReceiverSettingsRevision() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("exhausted-receiver-settings.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE application_settings
+                SET settings_json=json_set(
+                    json_remove(settings_json,
+                        '$."user/io/github/dsheirer/preference/nowplaying"."site.settings.revision"'),
+                    '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"', '%d',
+                    '$."user/io/github/dsheirer/preference/nowplaying"."migration-sentinel"', 'preserved')
+                WHERE key='portable_java_preferences_v1'
+                """.formatted(Long.MAX_VALUE - 1));
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            String migrated = scalar(connection, """
+                SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+                """);
+            Format5WebStateValidator.validateCurrentPortablePreferences(migrated);
+            JsonNode nowPlaying = MAPPER.readTree(migrated)
+                .get("user/io/github/dsheirer/preference/nowplaying");
+            assertEquals("preserved", nowPlaying.get("migration-sentinel").textValue());
+            assertFalse(nowPlaying.has("receiver.settings.revision"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void salvagesPortablePreferenceNodesAndValuesIndependently() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("mixed-portable-preferences.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long baselineDefaults = effect(new Format14To15DatabaseMigration().validateSource(connection),
+                DatabaseMigrationEffect.Kind.DEFAULT, "recoverable configuration values").affectedRows();
+            execute(connection, """
+                UPDATE application_settings SET settings_json=
+                    '{"user/io/github/dsheirer/preference/nowplaying":{"sentinel":"keep",' ||
+                    '"site.settings.revision":"7","retain.idle.call.details":"true",' ||
+                    '"traffic.grant.age.out.milliseconds":"99999"},' ||
+                    '"valid/node":{"keep":"yes","bad":7,' ||
+                    '"stats.web.call.maximum.listeners":"12"},"bad/node":[]}'
+                WHERE key='portable_java_preferences_v1'
+                """);
+
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows());
+
+            connection.setAutoCommit(false);
+            DatabaseMigrationChain.migrate(connection);
+            assertEquals("keep", scalar(connection, """
+                SELECT json_extract(settings_json,
+                    '$."user/io/github/dsheirer/preference/nowplaying".sentinel')
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            assertEquals("yes", scalar(connection, """
+                SELECT json_extract(settings_json, '$."valid/node".keep')
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            assertEquals(0, number(connection, """
+                SELECT json_type(settings_json, '$."bad/node"') IS NOT NULL OR
+                       json_type(settings_json, '$."valid/node".bad') IS NOT NULL OR
+                       json_type(settings_json,
+                         '$."user/io/github/dsheirer/preference/nowplaying"."retain.idle.call.details"') IS NOT NULL
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            DatabaseFormatCatalog.requireCurrent(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void canonicalizesDuplicatePortablePreferenceKeysInsteadOfFailingTheChain() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("duplicate-portable-preferences.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long baselineDefaults = effect(new Format14To15DatabaseMigration().validateSource(connection),
+                DatabaseMigrationEffect.Kind.DEFAULT, "recoverable configuration values").affectedRows();
+            execute(connection, """
+                UPDATE application_settings
+                SET settings_json='{"valid/node":{"keep":"first","keep":"second"}}'
+                WHERE key='portable_java_preferences_v1'
+                """);
+
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable configuration values").affectedRows());
+
+            connection.setAutoCommit(false);
+            DatabaseMigrationChain.migrate(connection);
+            assertEquals("second", scalar(connection, """
+                SELECT json_extract(settings_json, '$."valid/node".keep')
+                FROM application_settings WHERE key='portable_java_preferences_v1'
+                """));
+            DatabaseFormatCatalog.requireCurrent(connection);
+            connection.rollback();
+        }
     }
 
     @Test
@@ -874,6 +1678,29 @@ class Format14To15DatabaseMigrationTest
             assertEquals(0, number(connection,
                 "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
             assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void dropsNonTextBroadcastRouteNamesWithoutBlockingIndependentComponents() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("non-text-provider-route.sqlite"));
+        mutateIgnoringCheckConstraints(database, """
+            UPDATE alias_broadcast_channel SET channel_name=X'00';
+            UPDATE alias_list_unmatched_talkgroup_stream SET channel_name=X'01';
+            """);
+        try(Connection connection = open(database))
+        {
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertEquals(2, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(0, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
             connection.rollback();
         }
     }
@@ -954,14 +1781,25 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesAmbiguousNameBasedBroadcastRoutesWithoutWriting() throws Exception
+    void dropsAmbiguousNameBasedBroadcastRoutesAndPreservesProviders() throws Exception
     {
-        assertRefused("ambiguous-provider.sqlite", """
-            UPDATE configuration_broadcast_stream
-            SET name='Primary Migration Feed',
-                config_json=json_set(config_json, '$.name', 'Primary Migration Feed')
-            WHERE name='Secondary Migration Feed'
-            """, "ambiguous broadcast provider");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("ambiguous-provider.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET name='Primary Migration Feed',
+                    config_json=json_set(config_json, '$.name', 'Primary Migration Feed')
+                WHERE name='Secondary Migration Feed'
+                """);
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows() >= 1);
+            connection.rollback();
+        }
     }
 
     @Test
@@ -1018,14 +1856,233 @@ class Format14To15DatabaseMigrationTest
     }
 
     @Test
-    void refusesCaseFoldedLegacyRadioResolveSubtype() throws Exception
+    void derivesProviderNameFromJsonInsteadOfStaleRelationalProjection() throws Exception
     {
-        assertRefused("case-folded-radioresolve-provider.sqlite", """
-            UPDATE configuration_broadcast_stream
-            SET server_type='RADIORESOLVE',
-                config_json=json_set(config_json, '$.type', 'radioresolve')
-            WHERE name='Primary Migration Feed'
-            """, "not a supported broadcast provider document");
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("stale-provider-projection.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_broadcast_stream SET name='Stale relational provider name'
+                WHERE name='Primary Migration Feed'
+                """);
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*) FROM configuration_broadcast_stream
+                WHERE json_extract(config_json, '$.name')='Primary Migration Feed'
+                """));
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*) FROM alias_broadcast_channel route
+                JOIN configuration_broadcast_stream provider
+                  ON provider.configuration_id=route.broadcast_configuration_id
+                WHERE json_extract(provider.config_json, '$.name')='Primary Migration Feed'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void coalescesLegacyRouteNamesThatResolveToTheSameProviderIdentity() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("duplicate-resolved-routes.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long aliasRoutes = number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel");
+            long unmatchedRoutes = number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream");
+            execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET name=CASE name
+                    WHEN 'Primary Migration Feed' THEN 'Stale primary provider name'
+                    WHEN 'Secondary Migration Feed' THEN 'Stale secondary provider name'
+                END
+                WHERE name IN ('Primary Migration Feed', 'Secondary Migration Feed')
+                """);
+            execute(connection, """
+                INSERT INTO alias_broadcast_channel(alias_id, channel_name)
+                SELECT alias_id, 'Stale primary provider name'
+                FROM alias_broadcast_channel
+                WHERE channel_name='Primary Migration Feed'
+                LIMIT 1
+                """);
+            execute(connection, """
+                INSERT INTO alias_list_unmatched_talkgroup_stream(alias_list_id, channel_name)
+                SELECT alias_list_id, 'Stale secondary provider name'
+                FROM alias_list_unmatched_talkgroup_stream
+                WHERE channel_name='Secondary Migration Feed'
+                LIMIT 1
+                """);
+
+            List<DatabaseMigrationEffect> preflight = new Format14To15DatabaseMigration().validateSource(connection);
+            assertEquals(2, effect(preflight, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+
+            connection.setAutoCommit(false);
+            new Format14To15DatabaseMigration().migrate(connection);
+
+            assertEquals(aliasRoutes, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(unmatchedRoutes, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void skipsMalformedProviderWithoutDroppingValidChannels() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("case-folded-radioresolve-provider.sqlite"));
+        try(Connection connection = open(database))
+        {
+            execute(connection, """
+                UPDATE configuration_broadcast_stream
+                SET server_type='RADIORESOLVE',
+                    config_json=json_set(config_json, '$.type', 'radioresolve')
+                WHERE name='Primary Migration Feed'
+                """);
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals(1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void usesTheLegacyProviderNameWhenJsonNameIsMissingAndKeepsItsRoutes() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("provider-scalar-name-route.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long sourceRoutes = number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel " +
+                "WHERE channel_name='Primary Migration Feed'");
+            assertTrue(sourceRoutes > 0);
+            execute(connection, "UPDATE configuration_broadcast_stream " +
+                "SET config_json=json_remove(config_json, '$.name') WHERE name='Primary Migration Feed'");
+
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects =
+                new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
+                "recoverable broadcast provider values").affectedRows() >= 1);
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream " +
+                "WHERE json_extract(config_json, '$.name')='Primary Migration Feed'"));
+            assertEquals(sourceRoutes, number(connection, """
+                SELECT COUNT(*) FROM alias_broadcast_channel route
+                JOIN configuration_broadcast_stream provider
+                  ON provider.configuration_id=route.broadcast_configuration_id
+                WHERE json_extract(provider.config_json, '$.name')='Primary Migration Feed'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void skipsChannelMissingItsTypedDecoderAndSourceInsteadOfInventingNbfmDefaults() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("missing-channel-components.sqlite"));
+        try(Connection connection = open(database))
+        {
+            long before = number(connection, "SELECT COUNT(*) FROM configuration_channel");
+            execute(connection, """
+                UPDATE configuration_channel SET config_json='{}'
+                WHERE id=(SELECT MIN(id) FROM configuration_channel)
+                """);
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertEquals(before - 1, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            assertEquals(1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM configuration_channel
+                WHERE decoder_type='NBFM' AND name NOT LIKE '%NBFM%'
+                """));
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void clearsAnIncompatibleLegacyAliasListInsteadOfFailingTheWholeConfiguration() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("incompatible-channel-list.sqlite"));
+        try(Connection connection = open(database))
+        {
+            String configurationId;
+            String incompatibleAliasList;
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
+                SELECT channel.configuration_id, target.name
+                FROM configuration_channel channel
+                CROSS JOIN alias_list target
+                WHERE target.family <> CASE
+                    WHEN channel.decoder_type IN ('P25_PHASE1', 'P25_PHASE2', 'P25_CONVENTIONAL') THEN 'P25'
+                    WHEN channel.decoder_type='DMR' THEN 'DMR'
+                    WHEN channel.decoder_type='NXDN' THEN 'NXDN'
+                    WHEN channel.decoder_type IN ('AM', 'NBFM') THEN 'NBFM'
+                END
+                ORDER BY channel.id, target.id
+                LIMIT 1
+                """))
+            {
+                assertTrue(rows.next(), "The format-14 fixture needs a channel and an incompatible Alias List");
+                configurationId = rows.getString(1);
+                incompatibleAliasList = rows.getString(2);
+            }
+            try(var update = connection.prepareStatement("""
+                UPDATE configuration_channel SET alias_list_name=? WHERE configuration_id=?
+                """))
+            {
+                update.setString(1, incompatibleAliasList);
+                update.setString(2, configurationId);
+                assertEquals(1, update.executeUpdate());
+            }
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = new Format14To15DatabaseMigration().migrateAndReport(connection);
+
+            assertEquals(1, number(connection, """
+                SELECT alias_list_id IS NULL FROM configuration_channel WHERE configuration_id='%s'
+                """.formatted(configurationId)));
+            assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows() >= 1);
+            new ConfigurationRepository(database).load(connection);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void skipsExhaustedProviderRowIdAndItsDependentRoute() throws Exception
+    {
+        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve("exhausted-provider-row-id.sqlite"));
+        try(Connection connection = open(database))
+        {
+            Format14To15DatabaseMigration migration = new Format14To15DatabaseMigration();
+            List<DatabaseMigrationEffect> baseline = migration.validateSource(connection);
+            long baselineDrops = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows();
+            long baselineOrphans = effect(baseline, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows();
+            execute(connection, """
+                UPDATE configuration_broadcast_stream SET id=9223372036854775807
+                WHERE name='Primary Migration Feed'
+                """);
+            connection.setAutoCommit(false);
+            List<DatabaseMigrationEffect> effects = migration.migrateAndReport(connection);
+
+            assertEquals(baselineDrops + 1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "unusable administrator-owned configuration").affectedRows());
+            assertEquals(baselineOrphans + 1, effect(effects, DatabaseMigrationEffect.Kind.DROP,
+                "orphaned legacy relationships").affectedRows());
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM alias_broadcast_channel"));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_stream"));
+            assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
+            connection.rollback();
+        }
     }
 
     @Test
@@ -1082,45 +2139,47 @@ class Format14To15DatabaseMigrationTest
         assertCanonicalUniqueProviderIds(firstIds);
     }
 
-
-    private void assertRefused(String filename, String mutation, String message) throws Exception
+    private static void mutateIgnoringCheckConstraints(Path database, String mutation) throws Exception
     {
-        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve(filename));
-        try(Connection connection = open(database))
-        {
-            execute(connection, mutation);
-            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> new Format14To15DatabaseMigration().validateSource(connection), filename);
-            assertTrue(exception.getMessage().contains(message), filename + ": " + exception.getMessage());
-            assertThrows(SQLException.class, () -> new Format14To15DatabaseMigration().migrate(connection), filename);
-            assertEquals("14", scalar(connection, """
-                SELECT value FROM database_metadata WHERE key='database_format_version'
-                """));
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-            assertTrue(columns(connection, "configuration_channel").contains("alias_list_name"));
-        }
-    }
-
-    private void assertRefusedIgnoringCheckConstraints(String filename, String mutation, String message)
-        throws Exception
-    {
-        Path database = Format14TestDatabase.create(mTemporaryFolder.resolve(filename));
         try(Connection connection = open(database); var statement = connection.createStatement())
         {
             statement.execute("PRAGMA ignore_check_constraints=ON");
-            execute(connection, mutation);
+            for(String sql: mutation.split(";"))
+            {
+                if(!sql.isBlank())
+                {
+                    statement.executeUpdate(sql);
+                }
+            }
             statement.execute("PRAGMA ignore_check_constraints=OFF");
-            String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            SQLException exception = assertThrows(SQLException.class,
-                () -> new Format14To15DatabaseMigration().validateSource(connection), filename);
-            assertTrue(exception.getMessage().contains(message), filename + ": " + exception.getMessage());
-            assertThrows(SQLException.class, () -> new Format14To15DatabaseMigration().migrate(connection), filename);
-            assertEquals("14", scalar(connection, """
-                SELECT value FROM database_metadata WHERE key='database_format_version'
-                """));
-            assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-            assertTrue(columns(connection, "configuration_channel").contains("alias_list_name"));
+        }
+    }
+
+    private static long insertAliasSequenceProbe(Connection connection, String name) throws Exception
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO alias(
+                alias_list_id, name, description, group_name, color, icon_name, stream_as_talkgroup,
+                record_enabled, matcher_type, protocol, value, min_value, max_value, text_value,
+                numeric_value, tone_sequence
+            )
+            SELECT alias_list_id, ?, description, group_name, color, icon_name, stream_as_talkgroup,
+                   record_enabled, matcher_type, protocol, value, min_value, max_value, text_value,
+                   numeric_value, tone_sequence
+            FROM alias ORDER BY id LIMIT 1
+            """))
+        {
+            statement.setString(1, name);
+            assertEquals(1, statement.executeUpdate());
+        }
+        try(PreparedStatement statement = connection.prepareStatement("SELECT id FROM alias WHERE name=?"))
+        {
+            statement.setString(1, name);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                assertTrue(rows.next());
+                return rows.getLong(1);
+            }
         }
     }
 
@@ -1310,8 +2369,40 @@ class Format14To15DatabaseMigrationTest
     private static DatabaseMigrationEffect effect(List<DatabaseMigrationEffect> effects,
                                                    DatabaseMigrationEffect.Kind kind, String subject)
     {
-        return effects.stream().filter(effect -> effect.kind() == kind && effect.subject().equals(subject))
-            .findFirst().orElseThrow();
+        DatabaseMigrationEffect exact = effects.stream()
+            .filter(effect -> effect.kind() == kind && effect.subject().equals(subject))
+            .findFirst().orElse(null);
+        if(exact != null)
+        {
+            return exact;
+        }
+
+        Set<String> splitSubjects;
+        if(kind == DatabaseMigrationEffect.Kind.DROP &&
+            "unusable administrator-owned configuration".equals(subject))
+        {
+            splitSubjects = Set.of("unusable application settings, icons, and metadata",
+                "unusable Alias, Alias List, and scan-list rows", "unusable saved channel rows",
+                "unusable broadcast provider rows", "unusable web accounts and access policies");
+        }
+        else if(kind == DatabaseMigrationEffect.Kind.DEFAULT && "recoverable configuration values".equals(subject))
+        {
+            splitSubjects = Set.of("recoverable application settings and metadata",
+                "recoverable Alias List and scan-list values", "recoverable saved channel values",
+                "recoverable broadcast provider values", "recoverable web account values",
+                "Aliases with defaulted optional fields", "SQLite identity high-water marks");
+        }
+        else
+        {
+            throw new java.util.NoSuchElementException("Missing migration effect: " + kind + " " + subject);
+        }
+
+        long affectedRows = effects.stream()
+            .filter(effect -> effect.kind() == kind && splitSubjects.contains(effect.subject()))
+            .mapToLong(DatabaseMigrationEffect::affectedRows)
+            .sum();
+        return new DatabaseMigrationEffect(kind, subject, affectedRows,
+            "Test-only aggregate of component-specific migration effects");
     }
 
     private static Map<Long,Preference> preferences(Connection connection) throws Exception

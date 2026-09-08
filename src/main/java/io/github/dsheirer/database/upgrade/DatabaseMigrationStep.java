@@ -29,9 +29,21 @@ interface DatabaseMigrationStep
     /** Static policy visible even when an earlier step has not yet produced this step's source layout. */
     List<DatabaseMigrationEffect> declaredEffects();
 
-    /** Performs all source-specific, read-only admission checks and returns the preflight effects. */
+    /** Inspects the staged source without mutation and returns exact effects for this step. */
     List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException;
 
     /** Mutates only the caller-provided staged database inside the caller-owned transaction. */
     void migrate(Connection connection) throws SQLException;
+
+    /**
+     * Migrates the staged database and returns the effects actually observed.  Historical steps retain their
+     * validate-then-migrate behavior by default; recovery-oriented steps can override this hook to build their
+     * migration input once and report skipped or repaired rows precisely.
+     */
+    default List<DatabaseMigrationEffect> migrateAndReport(Connection connection) throws SQLException
+    {
+        List<DatabaseMigrationEffect> effects = List.copyOf(validateSource(connection));
+        migrate(connection);
+        return effects;
+    }
 }

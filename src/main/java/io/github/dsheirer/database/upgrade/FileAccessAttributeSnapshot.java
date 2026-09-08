@@ -17,6 +17,9 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryFlag;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
 import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.DosFileAttributeView;
 import java.nio.file.attribute.DosFileAttributes;
@@ -29,6 +32,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.UserDefinedFileAttributeView;
 import java.nio.file.attribute.UserPrincipal;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,6 +128,69 @@ final class FileAccessAttributeSnapshot
         }
 
         return new FileAccessAttributeSnapshot(posix, acl, owner, dos, Map.copyOf(userDefined));
+    }
+
+    /** Restricts a sensitive regular file to its owner on POSIX and ACL filesystems. */
+    static void restrictSensitiveFile(Path path) throws IOException
+    {
+        Path normalized = requireOrdinaryPath(path);
+        restrictPosix(normalized, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+        restrictAcl(normalized, false);
+        DosFileAttributeView dosView = view(normalized, DosFileAttributeView.class);
+        if(dosView != null)
+        {
+            dosView.setReadOnly(false);
+            if(dosView.readAttributes().isReadOnly())
+            {
+                throw new IOException("Unable to make migrated sensitive file writable: " + path);
+            }
+        }
+    }
+
+    /** Restricts a private staging directory and inherited children to its owner. */
+    static void restrictPrivateDirectory(Path path) throws IOException
+    {
+        Path normalized = requireOrdinaryPath(path);
+        restrictPosix(normalized, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE));
+        restrictAcl(normalized, true);
+    }
+
+    private static void restrictPosix(Path path, Set<PosixFilePermission> permissions) throws IOException
+    {
+        Path normalized = requireOrdinaryPath(path);
+        PosixFileAttributeView view = view(normalized, PosixFileAttributeView.class);
+        if(view != null)
+        {
+            view.setPermissions(permissions);
+            if(!view.readAttributes().permissions().equals(permissions))
+            {
+                throw new IOException("Unable to apply private POSIX permissions to " + normalized);
+            }
+        }
+    }
+
+    private static void restrictAcl(Path path, boolean directory) throws IOException
+    {
+        AclFileAttributeView view = view(path, AclFileAttributeView.class);
+        if(view == null)
+        {
+            return;
+        }
+
+        UserPrincipal owner = view.getOwner();
+        AclEntry.Builder builder = AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(owner)
+            .setPermissions(EnumSet.allOf(AclEntryPermission.class));
+        if(directory)
+        {
+            builder.setFlags(AclEntryFlag.FILE_INHERIT, AclEntryFlag.DIRECTORY_INHERIT);
+        }
+        view.setAcl(List.of(builder.build()));
+        List<AclEntry> actual = view.getAcl();
+        if(actual.isEmpty() || actual.stream().anyMatch(entry -> !owner.equals(entry.principal())))
+        {
+            throw new IOException("Unable to apply owner-only access control to " + path);
+        }
     }
 
     /**

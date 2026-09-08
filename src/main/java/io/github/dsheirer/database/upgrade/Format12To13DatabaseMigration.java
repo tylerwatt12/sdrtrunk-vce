@@ -19,20 +19,20 @@ final class Format12To13DatabaseMigration implements DatabaseMigrationStep
     }
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspect(connection).version() != 12) throw new SQLException("Expected format 12");
-        try(var query = connection.prepareStatement("SELECT COUNT(*) FROM application_settings WHERE key=?"))
-        {
-            query.setString(1, SetupProgress.KEY);
-            try(var rows = query.executeQuery())
-            {
-                if(rows.next() && rows.getInt(1) != 0) throw new SQLException("Unexpected setup progress in format 12");
-            }
-        }
+        requireSourceFormat(connection);
         return declaredEffects();
     }
     public void migrate(Connection connection) throws SQLException
     {
-        validateSource(connection);
+        requireSourceFormat(connection);
         SetupProgress.write(connection, new SetupProgress(true, false));
+    }
+
+    private static void requireSourceFormat(Connection connection) throws SQLException
+    {
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 12)
+        {
+            throw new SQLException("Expected format 12");
+        }
     }
 }

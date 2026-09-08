@@ -66,7 +66,7 @@ public final class SetupWizardImportSmoke
                 java.util.prefs.Preferences.userRoot().flush();
                 SqlitePreferencesFactory.shutdown();
                 var migration = new ApplicationMigrationService().replaceCurrentDatabase(result.replacement().sourceDatabase(),
-                    root, result.replacement().plan(), null);
+                    root, result.replacement().approval(), null);
                 if(aliasCount(database) != 0 || aliasCount(migration.safetyBackup()) != 1)
                     throw new AssertionError("Replacement/backup scope changed");
                 if(SetupProgress.read(database).isComplete()) throw new AssertionError("Replacement bypasses review");

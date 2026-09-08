@@ -12,11 +12,14 @@ format used by the running build. `main`, alpha, and nightly are build channels 
 they are not separate migration tracks. Each previously distributed format must have a catalog entry and fixture;
 omitting it from the catalog does not make it an allowed support exception.
 
-- An exact current-format database is accepted without mutation.
-- An exact recognized older format is migrated forward through the linear chain.
+- A valid exact current-format database is accepted without mutation. A structurally exact current database with
+  recoverable row-level damage can be repaired only by the staged Application Migrator, with every change itemized.
+- A structurally recognized older format is migrated forward through the linear chain. Recoverable row-level damage
+  does not disqualify the whole database: each configuration component is preserved, repaired, defaulted, or skipped
+  independently and the completion report gives non-secret counts.
 - Alpha 8, Alpha 9, and Alpha 10 share one verified legacy format signature and therefore enter at the same baseline.
-- Pre-Alpha 8, retired `webfirst`, unknown, mixed, partially migrated, and corrupt layouts are refused without changing
-  the source.
+- Pre-Alpha 8, retired `webfirst`, unknown, mixed, structurally partial, and physically corrupt layouts are refused
+  without changing the source.
 - Migration is forward-only. A build must refuse a database whose format is newer than it understands.
 
 Support is based on database structure, not a release label, filename, timestamp, or build number. This matters for
@@ -59,17 +62,19 @@ that an exact DDL fingerprint alone cannot identify. Historical formats retain t
 of their frozen signatures. Format 15 removes those redundant rows from the current database; only the global format
 version chooses or validates the current contract. Do not add another version or migration-history table.
 
-Marker-bearing formats resolve by global version first and then validate that version's exact fingerprint, metadata,
-and invariants. This permits a semantic-only format bump to share its predecessor's DDL fingerprint. Markerless legacy
-formats resolve from all matching fingerprint candidates and are accepted only when metadata and invariants identify
-exactly one; an ambiguous markerless state is refused.
+Marker-bearing historical formats resolve by the authoritative global version and its exact schema fingerprint. The
+format marker never overrides a structurally mixed layout, but redundant subsystem metadata and recoverable row-content
+invariants are migration inputs rather than whole-file admission failures; adjacent steps normalize or remove them
+before final strict validation. This permits recovery from incomplete preference writes, orphaned relationships, and
+damaged derived metadata without guessing a schema. Markerless legacy formats still resolve from all matching
+fingerprint candidates and are accepted only when their structure, subsystem metadata, and critical disambiguating
+invariants identify one safe source format; an ambiguous markerless state is refused.
 
-Legacy Alpha 8-or-newer databases that predate the global marker are admitted through a small registry of exact format
-signatures. A signature combines the complete schema fingerprint with the expected subsystem metadata and critical
-structural/data invariants, then maps that state to its first global format version. A metadata or invariant mismatch
-is an error, not a repair opportunity; the subsystem tuple alone is never sufficient. When several historical builds
-share one signature, their common step must be safe for every legal database in that group; reset indistinguishable
-derived state or refuse ambiguous critical configuration instead of guessing which build produced it.
+Legacy Alpha 8-or-newer databases that predate the global marker are admitted through the format registry. A signature
+combines the complete schema fingerprint with exact subsystem metadata and critical structural/data invariants. A
+unique signature may still contain independently repairable row damage. When several semantic formats share one
+schema, their metadata and disambiguating invariants must identify exactly one source; the migrator refuses an
+ambiguous markerless state instead of guessing which build produced it.
 
 Migration steps form one ordered chain:
 
@@ -87,8 +92,8 @@ from zero. It also creates missing canonical factory Alias Lists and their Defau
 same-family match keeps its stored spelling and administrator-owned routing; blank compatible channels use that
 stored spelling. If a custom list from the source uses a factory name for a different family, the migrator moves that
 custom list to a unique name such as `Default P25 (DMR)`, preserves its ID, aliases, policy, routing, and historical
-references, and then creates the correct factory list. The exact rename and reference counts appear in preflight and
-the completion report.
+references, and then creates the correct factory list. Preflight declares this possible repair; exact rename and
+reference counts appear in the completion report.
 
 The format 3-to-4 step resets all remaining receiver-derived rows and establishes separate logical-call and P25
 site-observation summaries at a new collection boundary. It does not copy signaling buckets, conventional counters,
@@ -98,12 +103,13 @@ The format 4-to-5 step normalizes web accounts, password verifiers, per-user bro
 overrides, and the receiver-settings revision. It gives every active saved channel one exact configuration UUID and kind
 and rebuilds its deterministic database query projections from the authoritative channel document. Those old query
 columns are reproducible derived state, so a stale value there is replaced rather than mistaken for administrator
-configuration. Trunked channels must also have a nonblank RadioResolve ID. The step drops and counts recognized
-MPT-1327 and sound-card channel rows, retired web-policy overrides, and superseded personal-setting storage. It still
-refuses a malformed or ambiguous authoritative channel document, identity, kind, RadioResolve ID, account,
-credential, access policy, or shared preference instead of guessing. Password verifier material, roles,
-authentication revisions, supported access overrides, shared receiver preferences, and active supported channels are
-preserved exactly or converted deterministically. Published Alpha profiles can contain the former shared browser
+configuration. The step drops and counts recognized MPT-1327 and sound-card channel rows, retired web-policy
+overrides, superseded personal-setting storage, and channel documents that cannot be decoded as a supported channel.
+Missing or duplicate technical channel identifiers are regenerated deterministically. Malformed legacy web access
+state is reset independently, so it cannot block channel migration; setup requests a new administrator when the
+primary credential cannot be retained. Valid password verifier material, roles, authentication revisions, supported
+access overrides, shared receiver preferences, and active supported channels are preserved exactly or converted
+deterministically. Published Alpha profiles can contain the former shared browser
 presentation values without any web account because those builds did not support administrator accounts. In that
 valid case the migration retains the bounded legacy values until setup creates the primary administrator, assigns the
 converted preferences to that account, and only then removes the superseded storage.
@@ -116,24 +122,23 @@ channel configuration is unchanged, and live traffic rebuilds activity using can
 The format 6-to-7 step upgrades every complete per-user browser preference document from version 1 to version 2. It
 preserves existing personal settings, enables conversation grouping with a four-call burst limit, and increments each
 user's preference revision. It also removes the five retired global browser-audio capacity keys from portable Java
-preferences while leaving every unrelated node and value intact. An unknown, incomplete, malformed, or already newer
-preference document and an exhausted preference revision are refused rather than defaulted. Version-1 preferences
-that select more than the version-2 limit of 16 Scan Lists are also refused with instructions to reduce the selection
-in the previous build; the migrator never silently truncates a user's choices.
+preferences while leaving every unrelated node and value intact. An unknown, incomplete, malformed, over-capacity, or
+revision-exhausted user preference document is reset to a bounded default for that user and counted without changing
+the account credential. Invalid portable-preference nodes are discarded independently while valid nodes survive.
 
 The format 7-to-8 step upgrades every exact version-2 per-user browser preference document to version 3. It adds an
 empty bounded list of disabled receiver-health alert codes, so every existing and newly introduced alert remains on
 unless that account explicitly turns it off. Every existing personal preference is preserved and each affected
-preference revision is incremented. Unknown, incomplete, malformed, already-newer, or revision-exhausted preference
-documents are refused instead of repaired or defaulted.
+preference revision is incremented. An unusable or revision-exhausted preference document is defaulted for only that
+user and counted; it does not block other accounts or receiver configuration.
 
 The format 8-to-9 step upgrades every exact version-3 per-user browser preference document to version 4. It adds
 active-trunked-channel filtering, retain-last-call-on-idle-rows, and clear-voice-quality-when-idle choices. Filtering
 defaults off. The other two choices are copied from the former receiver-wide values into every existing account, or
 default false when the corresponding shared value is absent. The step then removes only those two obsolete shared
 keys from portable Java preferences while preserving traffic-grant age-out, the receiver-settings revision, and every
-unrelated value. Every affected user preference revision is incremented; malformed documents and exhausted revisions
-are refused.
+unrelated value. Every affected user preference revision is incremented; an unusable user document or portable
+preference node is defaulted or skipped independently and counted.
 
 The format 9-to-10 step introduces optional P25 bandplan override profiles and a saved-channel opt-in setting without
 rewriting existing configuration. Existing channels remain opted out because an absent setting means disabled, and no
@@ -149,15 +154,15 @@ moved to a unique custom name with its ID and saved references retained. If a ch
 disagree, the JSON is repaired from the scalar used by the previous runtime.
 Only newly created lists get Default scan-list routing with unmatched recording disabled. Existing lists keep their
 routing and recording policy. Compatible channels with a blank Alias List selection get their factory list; existing
-selections stay unchanged except references to the renamed analog list. Preflight and completion report the affected
-counts. This is a semantic-only version change with unchanged DDL. Normal startup remains validation-only and does
+selections stay unchanged except references to the renamed analog list. Preflight declares the possible changes and
+completion reports the affected counts. This is a semantic-only version change with unchanged DDL. Normal startup remains validation-only and does
 not recreate lists deleted after this migration.
 
 The format 11-to-12 step upgrades every exact version-4 per-user browser preference document to version 5. It adds
 an independent idle FFT channel-marker switch, initially off so the existing display is unchanged. Every existing
 browser preference, account, credential, role, receiver setting, and channel assignment is preserved. Each affected
-preference revision is incremented; malformed, incomplete, already-newer, and revision-exhausted documents are
-refused. This is a semantic-only version change with unchanged DDL and no new runtime migration path.
+preference revision is incremented; an unusable or revision-exhausted preference document is defaulted for only its
+user and counted. This is a semantic-only version change with unchanged DDL and no new runtime migration path.
 
 The format 12-to-13 step adds the one bounded `setup_wizard` progress record described below. It preserves every
 existing setting and marks an upgraded profile as previously configured while still requiring runtime readiness
@@ -175,14 +180,17 @@ Retain the existing launcher, child-process isolation, source backup, staged-cop
 validation, and atomic promotion where they already meet this contract. Graphical setup, headless setup, and direct
 SQLite-file selection are entry points to the same engine, not separate implementations.
 
-The Swing Setup Wizard owns first-run graphical presentation. Migration preflight runs the complete chain on a
-disposable SQLite snapshot so a later-step refusal is shown before approval; the selected source remains unchanged.
+The Swing Setup Wizard owns first-run graphical presentation. Migration preflight performs a read-only structural
+inspection and quick integrity check, then shows the declared best-effort policy for every required step. It does not
+run a redundant throwaway migration. The child process scans and migrates the staged copy once and the completion
+report replaces unknown preflight counts with the exact observed repair, reset, and skip counts.
 Preflight, progress, and completion stay on its Starting point page; completion offers Copy Message and a ten-second
 continuation countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
 replacement and startup errors use the same bounded, expandable, copyable presentation instead of message-sized
 dialogs. After promotion,
 Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
-SQLite replacement workflow is reached through **Help > Setup Wizard…** on that same Starting point page. It retains
+SQLite replacement workflow is reached through **File > Import SQLite Database…** and uses that same Starting point
+boundary. It retains
 its existing service-stop, backup, validation, restart, and quit-blocking rules. Its source confirmation and completion
 dialogs are reused; it does not reuse the new-install copy operation against an occupied data folder.
 
@@ -193,8 +201,9 @@ destination before validation/promotion, without changing the selected source. T
 drafts, hardware inventories, benchmark data, or transcripts. Its absence or malformed contents in format 13 are
 validation errors, not permission for startup to repair the database.
 
-Format 14 adds one bounded `spectrum_snap_country` record in `application_settings`. Existing profiles are assigned
-the `US` catalog explicitly; the step preserves every other setting and all receiver configuration. The country is
+Format 14 adds one bounded `spectrum_snap_country` record in `application_settings`. Existing profiles without a
+usable selection are assigned the `US` catalog explicitly; a usable premature selection is left untouched. The step
+preserves every other setting and all receiver configuration. The country is
 administrator-owned configuration with one row for the lifetime of the profile. Built-in regulatory scopes and their
 optional snap rules remain
 code-owned rather than copied into mutable database rows, so adding or correcting a shipped country catalog does not
@@ -207,25 +216,30 @@ the durable internal identities. It preserves administrator-owned channels, Alia
 routes, accounts, credentials, settings, icons, and decoder-specific channel maps stored with saved channels. Channel
 rows
 replace the duplicated Alias List name with a foreign key and rename the RadioResolve upload-correlation field so it
-is no longer mistaken for channel or system identity. As in the format-14 loader, the relational row is authoritative
-for channel display fields, Alias List name, RadioResolve ID, and auto-start settings; stale or missing JSON copies of
-those values are discarded. The saved channel UUID, trunked/conventional classification, and decoder/source query
-projections must still match the channel document exactly. DMR and NXDN rows that predate an explicit channel type
+is no longer mistaken for channel or system identity. The relational row is authoritative for channel display fields,
+Alias List name, RadioResolve ID, and auto-start settings; stale or missing JSON copies of those values are discarded.
+Usable channel documents are retained while missing, malformed, or colliding technical UUIDs are normalized or
+regenerated, channel classification is recovered from supported decoder/source content, and query projections are
+rebuilt from decodable configuration. DMR and NXDN rows that predate an explicit channel type
 are converted once using the exact former defaults: a DMR row is trunked only when it has a usable
 channel-to-frequency map, while an NXDN row is trunked. Broadcast providers receive a canonical stable UUID; an
 existing canonical unique UUID is preserved and a missing one is generated deterministically. Site-bound
 Broadcastify providers keep only the Alias List ID, not a duplicate display name. Alias streaming routes are
 converted from provider names to provider UUIDs, so a later provider rename cannot break routing. Unresolved or
 missing legacy relationships are cleared or removed only when their referenced Alias, Alias List, scan list, or
-stream provider no longer exists; the preflight and completion reports identify the change and its exact row count.
-Ambiguous names, mismatched decoder/source projections, and malformed or duplicate authoritative identities are
-still refused rather than guessed.
+stream provider no longer exists; preflight identifies the possible change and completion reports its exact row count.
+Missing relationships are cleared, ambiguous name-based routes are dropped, safe identities are generated
+deterministically, and a malformed channel or provider row is skipped without preventing independent rows from being
+recovered. A skipped or defaulted component is always counted; the migrator never invents a relationship between two
+ambiguous records.
 
 The same step removes the unused legacy named Channel Maps table and reports how many of those retired rows were
 dropped. These are not the decoder channel maps stored inside saved DMR or NXDN channel configuration, which remain
 intact.
 
-Accounts and password verifiers are preserved exactly while the stricter current tables are rebuilt. Exact version-5
+Usable accounts and password verifiers are preserved exactly while the stricter current tables are rebuilt. An
+unusable account or credential is skipped independently; if no usable primary administrator credential survives,
+setup requires a new administrator password. Exact version-5
 browser preferences are upgraded to version 6 by renaming conversation grouping to target grouping and incrementing
 each preference revision. The old Systems and Conventional web access choices become one Radio choice using the more
 restrictive saved level. Whole-site access is renamed to Web access, and the shared site-settings revision is renamed
@@ -279,29 +293,37 @@ Migration support does not mean every historical value must survive. Each step c
 
 | Data class | Required behavior |
 | --- | --- |
-| Administrator-owned configuration | Preserve it exactly, convert it unambiguously, or refuse the migration. Never guess or silently truncate it. |
-| Credentials and secret material | Preserve opaquely when supported; never print values in plans, logs, or reports. |
+| Administrator-owned configuration | Preserve or convert each valid component independently. Repair a safe technical default when possible; otherwise skip only the unusable row and count it. Never guess relationships or silently truncate data. |
+| Credentials and secret material | Preserve opaquely when valid; reset only the affected authentication/provider setup when unusable, and never print values in plans, logs, or reports. |
 | Bounded activity summaries and detailed history | Preserve when straightforward; otherwise reset when conversion cost or ambiguity is disproportionate. |
 | Caches, indexes, and reproducible projections | Rebuild or reset. |
 | State for intentionally retired features | Drop when it has no supported current representation. |
-| Invalid, over-capacity, or ambiguous critical state | Refuse with a clear, actionable reason. |
+| Invalid, over-capacity, or ambiguous row state | Default or skip that bounded component and report it. Refuse only when the database structure, integrity, final consistency, or promotion cannot be made safe. |
 
-Every reset or drop is named during preflight, counted when practical, and repeated in the completion report. Release
-notes summarize the user-visible preservation and loss policy for every format introduced by that release.
+Every possible reset or drop is named during preflight. Exact counts are determined by the one real staged migration
+and repeated in the completion report. Release notes summarize the user-visible preservation and loss policy for every
+format introduced by that release.
 
 ## Safe Execution
 
 The bundled Application Migrator is the only component allowed to change an existing supported database schema. Its
 single execution pipeline is:
 
-1. Open the source read-only, fingerprint it, resolve its format, and calculate the ordered steps.
+1. Open the source read-only, fingerprint it, resolve its format, and run a quick physical integrity check. Source
+   checks do not apply row `CHECK` rules that staged repair can fix; final validation remains strict. The selected
+   file and its containing folder do not need to be writable. The database and any readable journal/WAL are copied
+   into private scratch space on the selected destination's filesystem, after a free-space check. The original files
+   are verified byte-for-byte unchanged, and SQLite recovery or WAL replay occurs only on that private copy. If the
+   source changes during this copy, the attempt is refused and can be retried after closing the prior application.
 2. Present the source, target, external-file scope, and declared resets or drops before mutation.
 3. Create a recoverable backup or snapshot and a separate staged database.
-4. Run the chain only against the staged copy in the migration child process.
-5. Compact the migrated staged copy so reset or pruned data does not remain as unused file space.
-6. Validate the final global version, exact schema fingerprint, required row invariants, SQLite integrity, and foreign
+4. Run the chain once, only against the staged copy in the migration child process. Legacy foreign-key enforcement is
+   relaxed during the transaction so orphaned rows can be removed, but a complete foreign-key check is mandatory
+   before commit.
+5. Validate the final global version, exact schema fingerprint, required row invariants, SQLite integrity, and foreign
    keys.
-7. Promote the staged result atomically only after every validation succeeds.
+6. Promote the staged result atomically only after every validation succeeds. Freed pages remain reusable by SQLite;
+   migration does not run a temporary-space-intensive compaction pass.
 
 For an import, the selected source database and previous installation remain unchanged. For an in-place upgrade, the
 live database is replaced only after the staged result passes every check, and the pre-migration safety backup is
@@ -310,8 +332,8 @@ not promoted. After the atomic promotion point, the already validated result may
 validation restores the retained backup on failure. Normal application startup after setup is exact-schema
 validation-only and never creates, repairs, or migrates an existing schema.
 
-After setup, **Help > Setup Wizard… > Replace settings from a SQLite database** provides an explicit database-only
-replacement workflow. Restarting into setup first closes the receiver and its database-owning runtime services.
+After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
+restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.
 The wizard preflights the selected source and displays a bold red replacement warning before confirmation. With the
 portable-data lock retained and setup preferences closed, it backs up the current active database, migrates a staged
 copy of the selected source, validates it, promotes it atomically, and starts a new application process. The source is
@@ -326,16 +348,18 @@ interrupted. Old in-memory preferences are closed before replacement and are nev
 ## Input Scope
 
 Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as the vault, JMBE library, optional modules, and paths that need remapping. Selecting only
-`database/sdrtrunk.sqlite` migrates only values stored in SQLite. The plan and completion report must clearly say when
-external artifacts were unavailable; file-only migration must never imply that they were copied.
+as the vault, JMBE library, optional modules, and paths that need remapping. An unavailable optional artifact is
+reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
+`database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the
+selected scope can attempt; completion reports what was copied, unavailable, or skipped. File-only migration must never
+imply that external artifacts were copied.
 
 The after-setup SQLite wizard import also has database-only scope. It replaces the active SQLite contents rather than
 merging rows, leaves the selected source and its neighboring files unchanged, and leaves the active data folder's
 existing non-database files in place. Its confirmation must identify both the selected source and active target and
 state these boundaries before replacement. Stored portable paths are not remapped for this database-only workflow. A
-markerless imported database is initialized as a newly imported profile: an existing primary administrator satisfies
-the administrator step, otherwise startup requires the operator to create one. Both cases require destination review.
+markerless imported database is initialized as a newly imported profile: a usable primary administrator credential
+satisfies the administrator step, otherwise startup requires the operator to create one. Both cases require destination review.
 
 All graphical and headless entry points use the same inspector, registry, chain runner, validator, and report model.
 Do not add schema-specific launchers or separately maintained migration utilities.
@@ -346,8 +370,10 @@ The retained fixture set is per database format, not per release label. It must 
 every distinct Alpha 8-or-newer format and exercise:
 
 - every adjacent step and every supported source format through the current target;
-- exact preservation of representative administrator configuration and credentials without secret disclosure;
-- the declared resets, drops, counts, and refusals for each step;
+- preservation of representative valid administrator configuration and credentials without secret disclosure;
+- mixed-defect fixtures proving malformed channels, providers, preferences, relationships, and optional artifacts are
+  isolated while independent valid configuration survives;
+- the declared repairs, defaults, resets, drops, exact completion counts, and structural refusals for each step;
 - current-format no-op behavior and rejection of newer, unknown, mixed, tampered, and corrupt inputs;
 - migration from both SQLite-file and full portable-data inputs;
 - failure injection before and after each step, final validation failure, and atomic-promotion failure;

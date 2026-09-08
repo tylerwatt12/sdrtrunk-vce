@@ -156,11 +156,11 @@ public final class SdrTrunkDatabaseStartup
         List<String> footprints = new ArrayList<>();
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT type || ':' || name
+                SELECT substr(type, 1, 16) || ':' || substr(name, 1, 128)
                 FROM sqlite_master
                 WHERE lower(name) GLOB 'recorded_call*'
                    OR lower(name) GLOB 'idx_recorded_call*'
-                ORDER BY type, name
+                LIMIT 1
                 """))
         {
             while(resultSet.next())
@@ -171,10 +171,10 @@ public final class SdrTrunkDatabaseStartup
 
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT 'metadata:' || key
+                SELECT 'metadata:' || substr(CAST(key AS TEXT), 1, 128)
                 FROM database_metadata
-                WHERE lower(key) GLOB 'recorded_call*'
-                ORDER BY key
+                WHERE lower(substr(CAST(key AS TEXT), 1, 13)) = 'recorded_call'
+                LIMIT 1
                 """))
         {
             while(resultSet.next())

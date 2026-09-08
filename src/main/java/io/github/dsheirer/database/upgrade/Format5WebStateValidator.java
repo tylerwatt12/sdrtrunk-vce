@@ -117,9 +117,25 @@ public final class Format5WebStateValidator
         long primary = 0;
         long ordinary = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, username, tier, primary_admin, credential_version, password_algorithm,
-                   password_iterations, password_derived_key_bits, password_salt, password_hash,
-                   password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
+            SELECT id,
+                   CASE WHEN typeof(username)='text' AND length(CAST(username AS BLOB)) <= 64
+                        THEN username END AS username,
+                   CASE WHEN typeof(tier)='text' AND length(CAST(tier AS BLOB)) <= 16
+                        THEN tier END AS tier,
+                   primary_admin, credential_version,
+                   CASE WHEN typeof(password_algorithm)='text'
+                              AND length(CAST(password_algorithm AS BLOB)) <= 64
+                        THEN password_algorithm END AS password_algorithm,
+                   password_iterations, password_derived_key_bits,
+                   CASE WHEN typeof(password_salt)='blob' AND length(password_salt) <= 64
+                        THEN password_salt END AS password_salt,
+                   CASE WHEN typeof(password_hash)='blob' AND length(password_hash) <= 32
+                        THEN password_hash END AS password_hash,
+                   password_changed_at_ms, auth_revision,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision,
                    created_at_ms, updated_at_ms,
                    typeof(id) AS id_type,
                    typeof(username) AS username_type,
@@ -172,6 +188,39 @@ public final class Format5WebStateValidator
 
     private static boolean validateUser(ResultSet resultSet, int preferenceDocumentVersion) throws SQLException
     {
+        boolean primary = validateUserAccount(resultSet, true);
+        validateUserPreferences(resultSet, preferenceDocumentVersion);
+        return primary;
+    }
+
+    /** Validates the credential-bearing portion of one current user row for bounded staged salvage. */
+    static boolean validateCurrentUserAccount(ResultSet resultSet) throws SQLException
+    {
+        return validateUserAccount(resultSet, false, true);
+    }
+
+    /** Validates the independently replaceable preference portion of one current user row. */
+    static void validateCurrentUserPreferences(ResultSet resultSet) throws SQLException
+    {
+        validateUserPreferences(resultSet, WebUserPreferences.CURRENT_VERSION);
+    }
+
+    /** Validates only the independently replaceable current preference document, excluding row bookkeeping. */
+    static void validateCurrentUserPreferenceDocument(ResultSet resultSet) throws SQLException
+    {
+        validateUserPreferenceDocument(resultSet, WebUserPreferences.CURRENT_VERSION);
+    }
+
+    private static boolean validateUserAccount(ResultSet resultSet, boolean requireIncrementableRevision)
+        throws SQLException
+    {
+        return validateUserAccount(resultSet, requireIncrementableRevision, false);
+    }
+
+    private static boolean validateUserAccount(ResultSet resultSet, boolean requireIncrementableRevision,
+                                               boolean allowRepairableBookkeeping)
+        throws SQLException
+    {
         requireStorage(resultSet, "id_type", "integer", "account identifier");
         requireStorage(resultSet, "username_type", "text", "username");
         requireStorage(resultSet, "tier_type", "text", "account tier");
@@ -182,15 +231,17 @@ public final class Format5WebStateValidator
         requireStorage(resultSet, "password_derived_key_bits_type", "integer", "password derived-key size");
         requireStorage(resultSet, "password_salt_type", "blob", "password salt");
         requireStorage(resultSet, "password_hash_type", "blob", "password verifier");
-        requireStorage(resultSet, "password_changed_at_type", "integer", "password-change time");
-        requireStorage(resultSet, "auth_revision_type", "integer", "authentication revision");
-        requireStorage(resultSet, "preferences_json_type", "text", "preference document");
-        requireStorage(resultSet, "preferences_revision_type", "integer", "preference revision");
-        requireStorage(resultSet, "created_at_type", "integer", "account creation time");
-        requireStorage(resultSet, "updated_at_type", "integer", "account update time");
-        requireIncrementablePositive(resultSet, "preferences_revision", "preference revision");
-        requirePositive(resultSet, "created_at_ms", "account creation time");
-        requirePositive(resultSet, "updated_at_ms", "account update time");
+        if(!allowRepairableBookkeeping)
+        {
+            requireStorage(resultSet, "password_changed_at_type", "integer", "password-change time");
+            requireStorage(resultSet, "auth_revision_type", "integer", "authentication revision");
+            requireStorage(resultSet, "created_at_type", "integer", "account creation time");
+            requirePositive(resultSet, "created_at_ms", "account creation time");
+            if(requireIncrementableRevision)
+            {
+                requireIncrementablePositive(resultSet, "auth_revision", "authentication revision");
+            }
+        }
 
         String username = resultSet.getString("username");
         long id = resultSet.getLong("id");
@@ -224,11 +275,12 @@ public final class Format5WebStateValidator
         byte[] hash = resultSet.getBytes("password_hash");
         try
         {
+            long passwordChangedAt = allowRepairableBookkeeping ? 1 : resultSet.getLong("password_changed_at_ms");
+            long authRevision = allowRepairableBookkeeping ? 1 : resultSet.getLong("auth_revision");
             WebPasswordVerifier verifier = new WebPasswordVerifier(resultSet.getInt("credential_version"), username,
                 resultSet.getString("password_algorithm"), resultSet.getInt("password_iterations"),
                 resultSet.getInt("password_derived_key_bits"), Base64.getEncoder().encodeToString(salt),
-                Base64.getEncoder().encodeToString(hash), resultSet.getLong("password_changed_at_ms"),
-                resultSet.getLong("auth_revision"));
+                Base64.getEncoder().encodeToString(hash), passwordChangedAt, authRevision);
             new WebAccessAccount(id, username, tier,
                 verifier.passwordChangedAtEpochMillis(), verifier.authRevision(),
                 primaryValue == 1);
@@ -249,31 +301,57 @@ public final class Format5WebStateValidator
             }
         }
 
+        return primaryValue == 1;
+    }
+
+    private static void validateUserPreferences(ResultSet resultSet, int preferenceDocumentVersion)
+        throws SQLException
+    {
+        requireStorage(resultSet, "preferences_json_type", "text", "preference document");
+        requireStorage(resultSet, "preferences_revision_type", "integer", "preference revision");
+        requireStorage(resultSet, "updated_at_type", "integer", "account update time");
+        requireIncrementablePositive(resultSet, "preferences_revision", "preference revision");
+        requirePositive(resultSet, "updated_at_ms", "account update time");
+
+        validateUserPreferenceDocument(resultSet, preferenceDocumentVersion);
+    }
+
+    private static void validateUserPreferenceDocument(ResultSet resultSet, int preferenceDocumentVersion)
+        throws SQLException
+    {
+        requireStorage(resultSet, "preferences_json_type", "text", "preference document");
+
+        String preferencesJson = resultSet.getString("preferences_json");
+        if(preferencesJson == null)
+        {
+            throw invalid("preference document is missing or exceeds its storage bound");
+        }
+
         try
         {
             if(preferenceDocumentVersion == 1)
             {
-                Format6WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+                Format6WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == 2)
             {
-                Format7WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+                Format7WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == 3)
             {
-                Format8WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+                Format8WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == 4)
             {
-                Format9WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+                Format9WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == 5)
             {
-                Format12WebUserPreferencesCodec.validate(resultSet.getString("preferences_json"));
+                Format12WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == WebUserPreferences.CURRENT_VERSION)
             {
-                WebUserPreferencesCodec.decode(resultSet.getString("preferences_json"));
+                WebUserPreferencesCodec.decode(preferencesJson);
             }
             else
             {
@@ -285,8 +363,6 @@ public final class Format5WebStateValidator
         {
             throw invalid("an account has an invalid typed preference document", exception);
         }
-
-        return primaryValue == 1;
     }
 
     private static long validatePolicies(Connection connection, Map<String,PolicyDefinition> policyRegistry)
@@ -296,7 +372,13 @@ public final class Format5WebStateValidator
             .count();
         Set<String> visited = new HashSet<>();
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT capability_id, required_tier, updated_at_ms,
+            SELECT CASE WHEN typeof(capability_id)='text'
+                              AND length(CAST(capability_id AS BLOB)) <= 64
+                        THEN capability_id END AS capability_id,
+                   CASE WHEN typeof(required_tier)='text'
+                              AND length(CAST(required_tier AS BLOB)) <= 16
+                        THEN required_tier END AS required_tier,
+                   updated_at_ms,
                    typeof(capability_id) AS capability_id_type,
                    typeof(required_tier) AS required_tier_type,
                    typeof(updated_at_ms) AS updated_at_type
@@ -319,8 +401,12 @@ public final class Format5WebStateValidator
                     requireStorage(resultSet, "updated_at_type", "integer", "access-policy update time");
                     requirePositive(resultSet, "updated_at_ms", "access-policy update time");
                     String id = resultSet.getString("capability_id");
+                    if(id == null)
+                    {
+                        throw invalid("unknown access-policy capability");
+                    }
                     PolicyDefinition capability = java.util.Optional.ofNullable(policyRegistry.get(id))
-                        .orElseThrow(() -> invalid("unknown access-policy capability: " + id));
+                        .orElseThrow(() -> invalid("unknown access-policy capability"));
                     AccessTier tier;
                     try
                     {
@@ -328,25 +414,31 @@ public final class Format5WebStateValidator
                     }
                     catch(IllegalArgumentException | NullPointerException exception)
                     {
-                        throw invalid("access-policy capability has an invalid tier: " + id, exception);
+                        throw invalid("access-policy capability has an invalid tier", exception);
                     }
 
                     if(!capability.configurable())
                     {
-                        throw invalid("fixed access-policy capability is persisted: " + id);
+                        throw invalid("fixed access-policy capability is persisted");
                     }
                     if(tier == capability.defaultTier())
                     {
-                        throw invalid("default access-policy capability is redundantly persisted: " + id);
+                        throw invalid("default access-policy capability is redundantly persisted");
                     }
                     if(!visited.add(id))
                     {
-                        throw invalid("duplicate access-policy capability is persisted: " + id);
+                        throw invalid("duplicate access-policy capability is persisted");
                     }
                 }
             }
         }
         return visited.size();
+    }
+
+    /** Validates only current access-policy overrides for independent staged salvage. */
+    static long validateCurrentPolicies(Connection connection) throws SQLException
+    {
+        return validatePolicies(connection, currentPolicyRegistry());
     }
 
     private static Map<String,PolicyDefinition> currentPolicyRegistry()
@@ -396,7 +488,10 @@ public final class Format5WebStateValidator
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT settings_json, updated_at_ms,
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json,
+                   updated_at_ms,
                    typeof(settings_json) AS settings_json_type,
                    typeof(updated_at_ms) AS updated_at_type
             FROM application_settings
@@ -414,7 +509,12 @@ public final class Format5WebStateValidator
                 requireStorage(resultSet, "settings_json_type", "text", "portable preference document");
                 requireStorage(resultSet, "updated_at_type", "integer", "portable preference update time");
                 requirePositive(resultSet, "updated_at_ms", "portable preference update time");
-                validatePortablePreferences(resultSet.getString("settings_json"), allowRetiredWebAudioSettings,
+                String settingsJson = resultSet.getString("settings_json");
+                if(settingsJson == null)
+                {
+                    throw invalid("portable preference document is missing or exceeds its storage bound");
+                }
+                validatePortablePreferences(settingsJson, allowRetiredWebAudioSettings,
                     allowMovedPresentationSettings, settingsRevisionKey);
             }
         }
@@ -445,7 +545,7 @@ public final class Format5WebStateValidator
                 JsonNode node = nodeEntry.getValue();
                 if(!node.isObject())
                 {
-                    throw invalid("portable preference node must be a JSON object: " + nodeEntry.getKey());
+                    throw invalid("portable preference node must be a JSON object");
                 }
 
                 var preferences = node.fields();
@@ -454,15 +554,13 @@ public final class Format5WebStateValidator
                     var preference = preferences.next();
                     if(!preference.getValue().isTextual())
                     {
-                        throw invalid("portable preference value must be text: " + nodeEntry.getKey() + "/" +
-                            preference.getKey());
+                        throw invalid("portable preference value must be text");
                     }
 
                     if(!allowRetiredWebAudioSettings &&
                         Format6To7DatabaseMigration.RETIRED_WEB_AUDIO_KEYS.contains(preference.getKey()))
                     {
-                        throw invalid("retired global browser-audio setting is still stored: " +
-                            preference.getKey());
+                        throw invalid("retired global browser-audio setting is still stored");
                     }
                 }
             }
@@ -477,6 +575,12 @@ public final class Format5WebStateValidator
         {
             throw invalid("portable preference document is not strict JSON", exception);
         }
+    }
+
+    /** Validates only the current portable-preference document after staged repair. */
+    static void validateCurrentPortablePreferences(String json) throws SQLException
+    {
+        validatePortablePreferences(json, false, false, RECEIVER_SETTINGS_REVISION_KEY);
     }
 
     private static void validateNowPlayingReceiverSettings(JsonNode nowPlaying,
@@ -510,7 +614,7 @@ public final class Format5WebStateValidator
         }
 
         long revision = parseCanonicalLong(nowPlaying.get(revisionKey).textValue(), revisionKey);
-        if(revision < 1 || revision == Long.MAX_VALUE)
+        if(revision < 1 || revision >= Long.MAX_VALUE - 1)
         {
             throw invalid("receiver-settings revision must be positive and incrementable");
         }
@@ -579,7 +683,7 @@ public final class Format5WebStateValidator
         throws SQLException
     {
         long value = resultSet.getLong(column);
-        if(value <= 0 || value == Long.MAX_VALUE)
+        if(value <= 0 || value >= Long.MAX_VALUE - 1)
         {
             throw invalid(label + " must be positive and incrementable");
         }

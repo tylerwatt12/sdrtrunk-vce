@@ -68,15 +68,17 @@ public final class SqliteDatabaseImportDialog
 
             Window owner = parent instanceof Window parentWindow ? parentWindow :
                 (parent == null ? null : SwingUtilities.getWindowAncestor(parent));
-            DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationProgressDialog.run(owner, TITLE,
+            ApplicationMigrationService.ApprovedMigrationPlan approval =
+                ApplicationMigrationProgressDialog.run(owner, TITLE,
                 progress -> {
                     progress.update("Checking the selected SQLite database");
-                    return ApplicationMigrationService.readMigrationPlan(source);
+                    return ApplicationMigrationService.readMigrationApproval(source, activeDatabase.getParent());
                 });
             Object[] options = {"Replace Database and Restart", "Cancel"};
-            int choice = JOptionPane.showOptionDialog(parent, confirmationPanel(source, activeDatabase, plan), TITLE,
+            int choice = JOptionPane.showOptionDialog(parent,
+                confirmationPanel(source, activeDatabase, approval.plan()), TITLE,
                 JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
-            return choice == 0 ? new PreparedImport(source, plan) : null;
+            return choice == 0 ? new PreparedImport(source, approval) : null;
         }
         catch(Exception e)
         {
@@ -99,13 +101,14 @@ public final class SqliteDatabaseImportDialog
         JTextArea details = new JTextArea(
             "The active database will be completely replaced after the selected file is copied, migrated, and " +
                 "validated. This includes channels, aliases, web users and password verifiers, preferences, and " +
-                "activity data stored in SQLite. The current database will first be retained as a " +
+                "other compatible data stored in SQLite. Reproducible activity or statistics data may be reset " +
+                "when it cannot be converted safely. The current database will first be retained as a " +
                 "timestamped safety backup.\n\n" +
                 "Only data inside the selected SQLite file will be imported. Its neighboring vault, JMBE library, " +
                 "optional modules, and other files will not be copied. Existing non-database files in the active " +
                 "portable data folder will remain in place. Stored portable paths in a database-only import are " +
-                "not remapped. If the imported database has no administrator, setup will require a new administrator " +
-                "password when SDRTrunk restarts.\n\n" +
+                "not remapped. If no usable administrator credential can be preserved, setup will require a new " +
+                "administrator password when SDRTrunk restarts.\n\n" +
                 "Receiving is stopped during setup. SDRTrunk will perform the replacement and restart automatically " +
                 "into setup to review the imported settings before receiving resumes." +
                 "\n\nSelected SQLite database:\n" + source +
@@ -157,7 +160,7 @@ public final class SqliteDatabaseImportDialog
             cause.getMessage() : cause.getClass().getSimpleName();
     }
 
-    public record PreparedImport(Path sourceDatabase, DatabaseMigrationChain.PreflightReport plan)
+    public record PreparedImport(Path sourceDatabase, ApplicationMigrationService.ApprovedMigrationPlan approval)
     {
     }
 }

@@ -67,7 +67,7 @@ class DatabaseFormatCatalogTest
         assertFalse(DatabaseFormatCatalog.requireVersion(14).subsystemMetadata().isEmpty(),
             "The exact historical format-14 signature must retain its subsystem metadata");
         assertTrue(DatabaseFormatCatalog.requireVersion(7).migrationPolicy().stream()
-            .anyMatch(policy -> policy.contains("limit of 16 scan lists")));
+            .anyMatch(policy -> policy.contains("Default only a malformed or unrepresentable")));
         assertTrue(DatabaseFormatCatalog.requireVersion(9).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("Seed both moved presentation choices")));
         assertTrue(DatabaseFormatCatalog.requireVersion(10).migrationPolicy().stream()
@@ -290,6 +290,79 @@ class DatabaseFormatCatalogTest
             SQLException catalog = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspect(connection));
             assertTrue(catalog.getMessage().contains("uses noncanonical key"));
+            assertEquals(6, DatabaseFormatCatalog.inspectForMigration(connection).version());
+        }
+    }
+
+    @Test
+    void onlyMigrationInspectionAdmitsRecoverableCurrentAdministrativeData() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("damaged-current.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'
+                """);
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
+            assertTrue(detected.markerPresent());
+        }
+    }
+
+    @Test
+    void onlyMigrationInspectionAdmitsRepairableCurrentPortablePreferences() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("repairable-current-preferences.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1', '[]', 1)
+                """);
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.requireCurrent(connection));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
+            assertTrue(detected.markerPresent());
+        }
+    }
+
+    @Test
+    void migrationInspectionKeepsTheAuthoritativeMarkerStorageStrict() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-with-malformed-marker.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("""
+                UPDATE database_metadata SET key=CAST(key AS BLOB)
+                WHERE key='database_format_version'
+                """);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspectForMigration(connection));
+        }
+    }
+
+    @Test
+    void onlyMigrationInspectionAdmitsRepairableLegacySubsystemMarkers() throws Exception
+    {
+        Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("legacy-metadata.sqlite"));
+        updateMetadata(database, "alias_schema_version", "999");
+
+        try(Connection connection = open(database))
+        {
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(6, detected.version());
+            assertTrue(detected.markerPresent());
         }
     }
 
@@ -378,6 +451,7 @@ class DatabaseFormatCatalogTest
                 exception::getMessage);
             assertTrue(exception.getMessage().contains("authoritative database_format_version marker is required"),
                 exception::getMessage);
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspectForMigration(connection));
         }
     }
 
@@ -400,6 +474,30 @@ class DatabaseFormatCatalogTest
             SQLException exception = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.requireCurrent(connection));
             assertTrue(exception.getMessage().contains("missing authoritative metadata"), exception::getMessage);
+        }
+    }
+
+    @Test
+    void migrationInspectionAdmitsRetiredMetadataInAnExactUnmarkedCurrentLayout() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("unmarked-current-with-retired-metadata.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate("""
+                DELETE FROM database_metadata WHERE key='database_format_version'
+                """));
+            assertEquals(1, statement.executeUpdate("""
+                INSERT INTO database_metadata(key, value, updated_at_ms)
+                VALUES ('alias_schema_version', '6', 1)
+                """));
+
+            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
+            assertFalse(detected.markerPresent());
+            assertTrue(detected.requiresMigration());
         }
     }
 

@@ -73,11 +73,16 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
                 "custom Alias Lists using factory names", unknown,
                 "Move wrong-family custom lists to unique names while preserving their IDs and references"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "saved channel Alias List projections", unknown,
+                "Recover an existing JSON-selected list when the relational projection is unusable"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", unknown,
                 "Seed only missing canonical family lists and compatible unassigned channel routing"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
                 "factory unmatched-talkgroup routing", unknown,
                 "Route each newly created factory Alias List to the Default scan list"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "Default scan list", unknown,
+                "Restore one deterministic Default scan list when the legacy selection is missing or duplicated"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
                 "unassigned channel Alias Lists", unknown,
                 "Assign compatible factory lists where format 2 retained no Alias List"));
@@ -87,11 +92,10 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
-        requireZero(connection, "SELECT COUNT(*) FROM configuration_channel WHERE json_valid(config_json) = 0",
-            "configuration channels with invalid JSON that cannot be updated safely");
 
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
+        long projectionRecoveries = FactoryAliasListCollisionRepair.jsonOwnedChannelProjectionRecoveryCount(connection);
 
         long activityRows = LegacyActivityReset.count(connection, LegacyActivityReset.PRE_LOGICAL_CALL_TABLES);
         long defaultLists = missingDefaultAliasListCount(connection);
@@ -103,6 +107,16 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
               AND decoder_type IN (
                   'P25_CONVENTIONAL', 'P25_PHASE1', 'P25_PHASE2', 'DMR', 'NXDN', 'AM', 'NBFM'
               )
+              AND NOT EXISTS (
+                  SELECT 1 FROM alias_list AS recovered_list
+                  WHERE recovered_list.name=(
+                      CASE WHEN json_valid(configuration_channel.config_json)=1 THEN
+                          CASE WHEN json_type(configuration_channel.config_json, '$.aliasListName')='text'
+                              THEN nullif(trim(json_extract(configuration_channel.config_json,
+                                  '$.aliasListName')), '') END
+                      END
+                  ) COLLATE NOCASE
+              )
             """);
 
         return List.of(
@@ -112,11 +126,17 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
                 "custom Alias Lists using factory names", collisions.size(),
                 "Move wrong-family custom lists to unique names and update " +
                     FactoryAliasListCollisionRepair.referenceCount(collisions) + " saved reference(s)"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
+                "saved channel Alias List projections", projectionRecoveries,
+                "Recover an existing JSON-selected list when the relational projection is unusable"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "factory Alias Lists", defaultLists,
                 "Create only missing canonical family lists and route unmatched talkgroups to Default"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
                 "factory unmatched-talkgroup routing", defaultMemberships,
                 "Route each newly created factory Alias List to the Default scan list"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "Default scan list",
+                LegacyDefaultScanListRepair.repairCount(connection),
+                "Restore one deterministic Default scan list when the legacy selection is missing or duplicated"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, "unassigned channel Alias Lists",
                 unassignedChannels, "Assign compatible factory lists where format 2 retained no Alias List"));
     }
@@ -125,6 +145,8 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
     public void migrate(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
+        LegacyDefaultScanListRepair.ensureOneDefault(connection);
+        FactoryAliasListCollisionRepair.recoverJsonOwnedChannelProjections(connection);
         List<FactoryAliasListCollisionRepair.Collision> collisions =
             FactoryAliasListCollisionRepair.plan(connection, FACTORY_TARGETS);
         LegacyActivityReset.clear(connection, LegacyActivityReset.PRE_LOGICAL_CALL_TABLES);
@@ -147,7 +169,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
 
     private static void requireSourceFormat(Connection connection) throws SQLException
     {
-        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
+        DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
 
         if(detected.version() != 2)
         {
@@ -256,6 +278,7 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
                 config_json = json_set(config_json, '$.aliasListName', ?)
             WHERE (alias_list_name IS NULL OR trim(alias_list_name) = '')
               AND decoder_type = ?
+              AND json_valid(config_json) = 1
             """))
         {
             for(DecoderAliasList mapping: DECODER_ALIAS_LISTS)
@@ -411,16 +434,6 @@ final class Format2To3DatabaseMigration implements DatabaseMigrationStep
 
         return builder.append(" ELSE ").append(fallback != null ? "'" + fallback + "'" : "NULL")
             .append(" END").toString();
-    }
-
-    private static void requireZero(Connection connection, String sql, String description) throws SQLException
-    {
-        long count = scalarLong(connection, sql);
-
-        if(count != 0)
-        {
-            throw new SQLException("Refusing migration: found " + count + " " + description);
-        }
     }
 
     private static long scalarLong(Connection connection, String sql) throws SQLException

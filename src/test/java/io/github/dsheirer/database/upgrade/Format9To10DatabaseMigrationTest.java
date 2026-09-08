@@ -37,7 +37,7 @@ class Format9To10DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 9, preflight.steps().size());
             assertEquals("format-9-to-10", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.PRESERVE,
-                "saved channels and application settings", 4);
+                "saved channels and application settings", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "P25 bandplan overrides", 0);
 

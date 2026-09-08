@@ -33,6 +33,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -51,10 +52,15 @@ public final class SetupWizard extends JDialog
         public Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels)
         { this(preferences, lock, startChannels, null); }
     }
+    private record CurrentMigrationInspection(DatabaseMigrationChain.PreflightReport plan,
+                                              ApplicationMigrationService.ApprovedMigrationPlan approval)
+    {
+    }
     private final Path root;
     private final Path database;
     private final SdrTrunkDatabaseBootstrap.Options options;
     private final boolean forced;
+    private final boolean databaseImportRequested;
     private PortableDataRootLock lock;
     private final boolean ownsLock;
     private UserPreferences preferences;
@@ -151,7 +157,7 @@ public final class SetupWizard extends JDialog
             Throwable inspectionFailure = null;
             if(Files.isRegularFile(wizard.database))
             {
-                try { current = !ApplicationMigrationService.readMigrationPlan(wizard.database).source().requiresMigration(); }
+                try { current = !ApplicationMigrationService.readMigrationPlan(wizard.database).requiresMigration(); }
                 catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
             if(current)
@@ -167,12 +173,16 @@ public final class SetupWizard extends JDialog
                 {
                     ThemeManager.getInstance().initialize(wizard.preferences);
                     SwingUtilities.updateComponentTreeUI(wizard);
-                    wizard.showPage(wizard.initialStep());
+                    wizard.showPage(wizard.databaseImportRequested ? SetupStep.SOURCE : wizard.initialStep());
                 }
                 else wizard.showPage(SetupStep.SOURCE);
                 if(showInspectionFailure != null) wizard.fail(
                     "We couldn’t check your saved settings. Choose Check my settings to try again. No files have been changed.",
                     CopyableErrorDialog.message(showInspectionFailure));
+                if(wizard.databaseImportRequested && wizard.preferences != null)
+                {
+                    SwingUtilities.invokeLater(wizard::promptForDatabaseReplacement);
+                }
                 wizard.setVisible(true);
             });
             return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels, wizard.replacement) : null;
@@ -192,10 +202,11 @@ public final class SetupWizard extends JDialog
         database = SdrTrunkDatabasePath.getDatabasePath(root);
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
         if(Files.isRegularFile(database) && options.upgradeData() != null)
-            throw new IllegalArgumentException("This profile already has a database. Use Help → Setup Wizard for explicitly confirmed replacement.");
+            throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database for explicitly confirmed replacement.");
         if(!Files.isRegularFile(database) && options.upgradeCurrent())
             throw new IllegalArgumentException("--upgrade-current requires an existing portable database.");
-        forced = Arrays.asList(args).contains("--setup-wizard");
+        databaseImportRequested = Arrays.asList(args).contains("--import-sqlite");
+        forced = Arrays.asList(args).contains("--setup-wizard") || databaseImportRequested;
         lock = existingLock;
         ownsLock = existingLock == null;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
@@ -451,7 +462,7 @@ public final class SetupWizard extends JDialog
                 return;
             }
             notice("Your settings are in place", "Continue using this installation’s saved settings. You can review or change them in the following steps.", true);
-            details("Where my settings are saved", database + "\n\nTo import another profile later, use Help → Setup Wizard from the main application. Returning to this page never replaces your data.");
+            details("Where my settings are saved", database + "\n\nTo replace this database later, use File → Import SQLite Database from the main application. Returning to this page never replaces your data.");
             if(!migrationReport.isBlank())
             {
                 details("View the full import report",migrationReport);
@@ -463,13 +474,18 @@ public final class SetupWizard extends JDialog
         {
             paragraph("Your settings were saved by an earlier version. We’ll check them before making any changes.");
             notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
-            Runnable inspect = () -> job("Checking your saved settings…", null,
-                () -> ApplicationMigrationService.readMigrationPlan(database), plan -> {
+            Runnable inspect = () -> job("Checking your saved settings…", null, () -> {
+                DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
+                ApplicationMigrationService.ApprovedMigrationPlan approval = plan.requiresMigration() ?
+                    ApplicationMigrationService.readMigrationApproval(database, database.getParent()) : null;
+                return new CurrentMigrationInspection(approval != null ? approval.plan() : plan, approval);
+            }, inspection -> {
+                    DatabaseMigrationChain.PreflightReport plan = inspection.plan();
                     page.removeAll();
                     paragraph("Your saved settings can be used with this version. Before updating, we’ll save a recovery copy. Your recorded audio files will stay unchanged.");
                     migrationDetails(plan);
-                    next.setText(plan.source().requiresMigration() ? "Back up & update" : "Continue setup");
-                    accept = plan.source().requiresMigration() ? () -> migrate(null, false, false, plan) :
+                    next.setText(plan.requiresMigration() ? "Back up & update" : "Continue setup");
+                    accept = plan.requiresMigration() ? () -> migrate(null, false, false, inspection.approval()) :
                         () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
                     page.revalidate();
                 });
@@ -515,7 +531,9 @@ public final class SetupWizard extends JDialog
             if(xml.isSelected()) { migrate(input, false, true, null); return; }
             var selection = PreviousBuildLocator.resolveSelection(input).orElseThrow(() -> new IllegalArgumentException("No supported portable database found at this location."));
             if(folder.isSelected() != selection.portableProfile()) throw new IllegalArgumentException("The selected path does not match the chosen folder/file import scope.");
-            job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationPlan(selection.database()), plan -> {
+            job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationApproval(
+                selection.database(), root.getParent()), approval -> {
+                DatabaseMigrationChain.PreflightReport plan = approval.plan();
                 page.removeAll();
                 notice("Ready to bring your settings over", "Your previous installation will stay unchanged. We’ll check the copied settings before using them.", false);
                 paragraph("Import from: " + selection.path());
@@ -524,13 +542,14 @@ public final class SetupWizard extends JDialog
                 migrationDetails(plan);
                 button("Choose a different source", () -> showPage(SetupStep.SOURCE));
                 next.setText("Confirm import");
-                accept = () -> migrate(input, false, false, plan);
+                accept = () -> migrate(input, false, false, approval);
                 page.revalidate();
             });
         };
     }
 
-    private void migrate(Path source, boolean fresh, boolean xml, DatabaseMigrationChain.PreflightReport approved)
+    private void migrate(Path source, boolean fresh, boolean xml,
+                         ApplicationMigrationService.ApprovedMigrationPlan approved)
     {
         job("Preparing your profile…", null, () -> {
             String report;
@@ -548,10 +567,12 @@ public final class SetupWizard extends JDialog
                     report = ApplicationMigrationSuccessDialog.previousImportReport(result);
                 }
             }
+            //The database/profile operation is already committed at this point. If the following readiness refresh
+            //fails, recovery must not offer to import again into the now-occupied destination.
+            sourceCommitted = true;
             initialize(fresh || xml);
             return report;
         }, report -> {
-            sourceCommitted = true;
             migrationReport = report;
             progress.setComplete(false);
             if(!persist()) return;
@@ -589,12 +610,7 @@ public final class SetupWizard extends JDialog
             if(!persist()) return;
             if(sqlite.isSelected())
             {
-                var selected = SqliteDatabaseImportDialog.choose(this, database, root);
-                if(selected == null) return;
-                //Return to the startup boundary. No old preferences or setup callbacks may write after replacement.
-                replacement = selected;
-                finished = true;
-                dispose();
+                promptForDatabaseReplacement();
             }
             else
             {
@@ -617,6 +633,22 @@ public final class SetupWizard extends JDialog
                     });
             }
         };
+    }
+
+    private void promptForDatabaseReplacement()
+    {
+        if(busy || preferences == null || !persist())
+        {
+            return;
+        }
+        var selected = SqliteDatabaseImportDialog.choose(this, database, root);
+        if(selected != null)
+        {
+            //Return to the startup boundary. No old preferences or setup callbacks may write after replacement.
+            replacement = selected;
+            finished = true;
+            dispose();
+        }
     }
 
     private void administratorPage()
@@ -1007,12 +1039,23 @@ public final class SetupWizard extends JDialog
                 {
                     boolean stopped=problem instanceof InterruptedException;
                     if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
+                    if(step == SetupStep.SOURCE &&
+                        problem instanceof ApplicationMigrationService.LiveDatabaseRecoveryException recovery)
+                    {
+                        sourceCommitted = true;
+                        restartRequired = true;
+                        showPage(SetupStep.SOURCE);
+                        fail("The active database could not be confirmed after migration. Exit setup and do not " +
+                            "retry or start receiving until the retained safety backup has been restored.",
+                            recovery.getMessage());
+                        return;
+                    }
                     if(step == SetupStep.SOURCE && sourceCommitted)
                     {
                         restartRequired = true;
                         showPage(SetupStep.SOURCE);
-                        fail("Your import completed, but setup couldn’t refresh the review. Exit setup and reopen it " +
-                            "to load your imported settings. Do not import the playlist again.",
+                        fail("Your profile was created or imported, but setup couldn’t refresh the review. Exit " +
+                            "setup and reopen it to load your settings. Do not run the import again.",
                             CopyableErrorDialog.message(problem));
                         return;
                     }
@@ -1039,6 +1082,7 @@ public final class SetupWizard extends JDialog
         if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
         if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
+        if(step==SetupStep.SOURCE) return "We couldn’t migrate the selected data. Your original data is still safe and has not been replaced. Copy the technical details below when reporting this problem.";
         return "We couldn’t finish this step. Check the file or folder you selected and make sure there is enough free space, then try again. Your original data has not been replaced by an incomplete import.";
     }
 
@@ -1244,17 +1288,31 @@ public final class SetupWizard extends JDialog
     }
     private void migrationDetails(DatabaseMigrationChain.PreflightReport plan)
     {
-        if(plan.source().requiresMigration())
+        if(plan.requiresMigration())
         {
-            notice("What stays", "Supported channels, aliases and streaming settings will be kept.", false);
+            notice("What stays", "Usable supported channels, aliases, and streaming settings are migrated " +
+                "independently. A broken item in one area won't discard usable items in another.", false);
             if(plan.steps().stream().flatMap(step -> step.effects().stream())
-                .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.RESET))
+                .anyMatch(SetupWizard::resetsReceiverActivity))
                 paragraph("Activity history and statistics will start fresh. Radio-system and site information will be learned again as receiving resumes.");
             if(plan.steps().stream().flatMap(step -> step.effects().stream())
                 .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP))
-                paragraph("Obsolete data and settings from retired features will be removed. Expand the details below to see the full list of changes.");
+                paragraph("Unusable components may be skipped, and retired state may be removed. Expand the " +
+                    "details below to see the full list of changes.");
         }
         details("Technical details",ApplicationMigrationService.describePlan(plan));
+    }
+    private static boolean resetsReceiverActivity(DatabaseMigrationEffect effect)
+    {
+        if(effect.kind() != DatabaseMigrationEffect.Kind.RESET)
+        {
+            return false;
+        }
+        return Set.of("trunked-identity evidence", "P25 affiliation history",
+            "receiver-derived activity and counters", "receiver activity and call history",
+            "learned site observations", "signal-quality observations",
+            "radio-system and receiver-channel identity cache", "activity metric boundaries")
+            .contains(effect.subject());
     }
     private static String colorHex(Color color) { return String.format("#%02x%02x%02x",color.getRed(),color.getGreen(),color.getBlue()); }
     private static JTextArea text(String value)

@@ -42,15 +42,17 @@ public final class SdrTrunkDatabaseBootstrap
         {
             if(options.upgradeData() != null) throw new IOException("The current portable data folder already has a database");
             var plan = ApplicationMigrationService.readMigrationPlan(database);
-            String adminState = InitialAdminSetup.readState(database);
-            if(plan.source().requiresMigration())
+            if(plan.requiresMigration())
             {
                 if(!options.upgradeCurrent()) throw new IOException("The portable database requires these changes: " +
                     ApplicationMigrationService.describePlan(plan) +
                     ". Start once with --upgrade-current to create a safety backup and migrate it.");
-                var result = new ApplicationMigrationService().migrateCurrent(normalized, plan, System.out::println);
+                var approval = ApplicationMigrationService.readMigrationApproval(database, database.getParent());
+                var result = new ApplicationMigrationService().migrateCurrent(normalized, approval,
+                    System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
-                InitialAdminSetup.restoreExistingProfileState(database, adminState);
+                if(result.safetyBackup() != null)
+                    System.out.println("Safety backup: " + result.safetyBackup().toAbsolutePath().normalize());
             }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         }

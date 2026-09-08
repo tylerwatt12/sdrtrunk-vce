@@ -500,6 +500,14 @@ public class SDRTrunk
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
 
+        JMenuItem importSqliteDatabaseMenu = new JMenuItem("Import SQLite Database…");
+        importSqliteDatabaseMenu.addActionListener(event -> restartIntoSetupWizard(
+            "Restart to import a SQLite database? Receiving and streaming will stop while you choose, review, " +
+                "and migrate the database. Your active database will not be replaced unless you approve the " +
+                "migration plan.", "--setup-wizard", "--import-sqlite"));
+        fileMenu.add(importSqliteDatabaseMenu);
+        fileMenu.add(new JSeparator());
+
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> {
                 if(mDatabaseReplacementInProgress)
@@ -635,31 +643,9 @@ public class SDRTrunk
 
         JMenu helpMenu = new JMenu("Help");
         JMenuItem setupWizardItem = new JMenuItem("Setup Wizard…");
-        setupWizardItem.addActionListener(event -> {
-            if(mDatabaseReplacementInProgress) return;
-            if(JOptionPane.showConfirmDialog(mMainGui,
-                "Restart into Setup Wizard? Receiving and streaming will stop until you finish setup. " +
-                "Your existing profile and accepted settings will be preserved.", "Restart for setup",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
-            try
-            {
-                mDatabaseReplacementInProgress = true;
-                mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-                flushConfigurationForDatabaseReplacement();
-                processShutdown(false);
-                releaseDataRootLock();
-                ApplicationRelauncher.relaunch("--setup-wizard");
-                System.exit(0);
-            }
-            catch(Exception e)
-            {
-                mDatabaseReplacementInProgress = false;
-                mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-                CopyableErrorDialog.show(mMainGui, "Restart Required",
-                    "Automatic restart failed. Close this process and start again with --setup-wizard.",
-                    exceptionMessage(e));
-            }
-        });
+        setupWizardItem.addActionListener(event -> restartIntoSetupWizard(
+            "Restart into Setup Wizard? Receiving and streaming will stop until you finish setup. " +
+                "Your existing profile and accepted settings will be preserved.", "--setup-wizard"));
         helpMenu.add(setupWizardItem);
         helpMenu.add(new JSeparator());
         if(WhatsNewDialog.hasCurrent())
@@ -850,7 +836,7 @@ public class SDRTrunk
             SqlitePreferencesFactory.shutdown();
             ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(null,
                 APPLICATION_MIGRATOR_TITLE, progress -> new ApplicationMigrationService()
-                    .replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.plan(), progress));
+                    .replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.approval(), progress));
             ApplicationMigrationSuccessDialog.show(null, APPLICATION_MIGRATOR_TITLE,
                 ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase()));
         }
@@ -913,12 +899,53 @@ public class SDRTrunk
         }
     }
 
+    /** Stops receiver/database owners before starting any setup-time migration or replacement UI. */
+    private void restartIntoSetupWizard(String confirmation, String... arguments)
+    {
+        if(mDatabaseReplacementInProgress)
+        {
+            return;
+        }
+        if(JOptionPane.showConfirmDialog(mMainGui, confirmation, "Restart for setup",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION)
+        {
+            return;
+        }
+        try
+        {
+            mDatabaseReplacementInProgress = true;
+            mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+            flushConfigurationForDatabaseReplacement();
+            processShutdown(false);
+            releaseDataRootLock();
+            ApplicationRelauncher.relaunch(arguments);
+            System.exit(0);
+        }
+        catch(Exception e)
+        {
+            mDatabaseReplacementInProgress = false;
+            mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            CopyableErrorDialog.show(mMainGui, "Restart Required",
+                "Automatic restart failed. Close this process and start again with --setup-wizard.",
+                exceptionMessage(e));
+        }
+    }
+
     private static String exceptionMessage(Throwable throwable)
     {
         Throwable cause = throwable;
 
-        while(cause.getCause() != null)
+        while(cause != null)
         {
+            if(cause instanceof ApplicationMigrationService.LiveDatabaseRecoveryException)
+            {
+                return cause.getMessage() != null && !cause.getMessage().isBlank() ?
+                    cause.getMessage() : cause.getClass().getSimpleName();
+            }
+            if(cause.getCause() == null)
+            {
+                break;
+            }
             cause = cause.getCause();
         }
 

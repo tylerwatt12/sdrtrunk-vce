@@ -38,7 +38,7 @@ class Format7To8DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 7, preflight.steps().size());
             assertEquals("format-7-to-8", preflight.steps().getFirst().id());
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
-                "per-user receiver-health alert settings", 3);
+                "per-user receiver-health alert settings", DatabaseMigrationEffect.UNKNOWN_COUNT);
 
             connection.setAutoCommit(false);
             DatabaseMigrationChain.MigrationReport report;
@@ -102,7 +102,7 @@ class Format7To8DatabaseMigrationTest
     }
 
     @Test
-    void rejectsUnknownVersionTwoFieldsAndExhaustedRevisionsWithoutChangingSource() throws Exception
+    void defaultsOnlyMalformedPreferencesAndExhaustedRevisions() throws Exception
     {
         Path unknown = Format7TestDatabase.create(mTemporaryFolder.resolve("unknown.sqlite"));
         try(Connection connection = open(unknown); Statement statement = connection.createStatement())
@@ -112,23 +112,59 @@ class Format7To8DatabaseMigrationTest
                 SET preferences_json=json_set(preferences_json, '$.unknown', 1)
                 WHERE id=1
                 """);
-            String malformed = preferenceDigest(connection);
-            SQLException rejection = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.migrate(connection));
-            assertTrue(rejection.getMessage().contains("invalid typed preference document"), rejection.getMessage());
-            assertEquals(malformed, preferenceDigest(connection));
-            assertEquals("7", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", 1);
+            assertEquals("6", scalar(connection,
+                "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE id=1"));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
 
         Path exhausted = Format7TestDatabase.create(mTemporaryFolder.resolve("exhausted.sqlite"));
         try(Connection connection = open(exhausted); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE web_user SET preferences_revision=9223372036854775807 WHERE id=1");
-            SQLException rejection = assertThrows(SQLException.class,
-                () -> DatabaseMigrationChain.migrate(connection));
-            assertTrue(rejection.getMessage().contains("preference revision must be positive and incrementable"),
-                rejection.getMessage());
-            assertEquals("7", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", 1);
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
+    }
+
+    @Test
+    void defaultsOnlyAnOversizedUserPreferenceDocument() throws Exception
+    {
+        Path database = Format7TestDatabase.create(mTemporaryFolder.resolve("oversized.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            String siblingTheme = scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2");
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            try
+            {
+                statement.executeUpdate("""
+                    UPDATE web_user
+                    SET preferences_json='{"padding":"' || hex(zeroblob(65537)) || '"}'
+                    WHERE id=1
+                    """);
+            }
+            finally
+            {
+                statement.execute("PRAGMA ignore_check_constraints=OFF");
+            }
+            assertTrue(Long.parseLong(scalar(connection, """
+                SELECT length(CAST(preferences_json AS BLOB)) FROM web_user WHERE id=1
+                """)) > 131_072);
+
+            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", 1);
+            assertEquals(siblingTheme, scalar(connection,
+                "SELECT json_extract(preferences_json, '$.appearance.theme') FROM web_user WHERE id=2"));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
+                DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

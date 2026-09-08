@@ -42,83 +42,109 @@ final class Format11To12DatabaseMigration implements DatabaseMigrationStep
     @Override
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT);
+        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
     }
 
     @Override
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
-        return effects(inspect(connection).size());
+        UserInspection inspection = inspect(connection);
+        return effects(inspection.users().size(), inspection.defaultedUsers());
     }
 
     @Override
     public void migrate(Connection connection) throws SQLException
     {
-        List<UserUpdate> updates = inspect(connection);
+        List<UserUpdate> updates = inspect(connection).users();
         long updatedAt = System.currentTimeMillis();
         try(var statement = connection.prepareStatement("""
             UPDATE web_user SET preferences_json=?, preferences_revision=?, updated_at_ms=?
-            WHERE id=? AND preferences_json=? AND preferences_revision=?
+            WHERE id=?
             """))
         {
             for(UserUpdate update: updates)
             {
                 statement.setString(1, update.targetJson());
-                statement.setLong(2, update.revision() + 1);
+                statement.setLong(2, update.targetRevision());
                 statement.setLong(3, updatedAt);
                 statement.setLong(4, update.id());
-                statement.setString(5, update.sourceJson());
-                statement.setLong(6, update.revision());
                 if(statement.executeUpdate() != 1)
                 {
-                    throw new SQLException("Web user preferences changed after format-11-to-12 preflight: user " +
+                    throw new SQLException("Unable to update web user preferences during format-11-to-12: user " +
                         update.id());
                 }
             }
         }
     }
 
-    private static List<UserUpdate> inspect(Connection connection) throws SQLException
+    private static UserInspection inspect(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspect(connection).version() != 11)
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 11)
         {
             throw new SQLException("Migration step format-11-to-12 requires exact source format 11");
         }
         List<UserUpdate> updates = new ArrayList<>();
-        try(var query = connection.createStatement(); ResultSet rows = query.executeQuery(
-            "SELECT id, preferences_json, preferences_revision FROM web_user ORDER BY id"))
+        int defaultedUsers = 0;
+        try(var query = connection.createStatement(); ResultSet rows = query.executeQuery("""
+            SELECT id,
+                   CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   preferences_revision
+            FROM web_user ORDER BY id
+            """))
         {
             while(rows.next())
             {
                 long id = rows.getLong("id");
                 long revision = rows.getLong("preferences_revision");
-                if(revision == Long.MAX_VALUE)
-                {
-                    throw new SQLException("Refusing format-11-to-12 migration: exhausted preference revision for user " + id);
-                }
                 String source = rows.getString("preferences_json");
+                long targetRevision = revision > 0 && revision < Long.MAX_VALUE ? revision + 1 : 1;
+                String target;
+                boolean defaulted = targetRevision == 1;
                 try
                 {
-                    updates.add(new UserUpdate(id, source, Format12WebUserPreferencesCodec.migrateFromFormat11(source),
-                        revision));
+                    target = Format12WebUserPreferencesCodec.migrateFromFormat11(source);
                 }
-                catch(IOException e)
+                catch(IOException | RuntimeException e)
                 {
-                    throw new SQLException("Refusing format-11-to-12 migration: user " + id +
-                        " does not have an exact version-4 preference document", e);
+                    target = defaultPreferences();
+                    defaulted = true;
                 }
+                if(defaulted)
+                {
+                    defaultedUsers++;
+                }
+                updates.add(new UserUpdate(id, target, targetRevision));
             }
         }
-        return List.copyOf(updates);
+        return new UserInspection(List.copyOf(updates), defaultedUsers);
     }
 
-    private static List<DatabaseMigrationEffect> effects(long count)
+    private static String defaultPreferences() throws SQLException
     {
-        return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
-            "per-user idle FFT channel markers", count,
-            "Upgrade exact version-4 browser preferences to version 5 with idle FFT markers off, preserving " +
-                "all existing settings and incrementing each preference revision; receiver configuration is unchanged"));
+        try
+        {
+            return Format12WebUserPreferencesCodec.defaults();
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            throw new SQLException("Unable to create default version-5 browser preferences", exception);
+        }
     }
 
-    private record UserUpdate(long id, String sourceJson, String targetJson, long revision) {}
+    private static List<DatabaseMigrationEffect> effects(long count, long defaultedCount)
+    {
+        return List.of(
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "per-user idle FFT channel markers", count,
+                "Upgrade usable version-4 browser preferences to version 5 with idle FFT markers off and increment " +
+                    "each usable preference revision; receiver configuration is unchanged"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "unusable per-user browser preferences", defaultedCount,
+                "Replace only malformed or oversized user preference documents with version-5 defaults"));
+    }
+
+    private record UserUpdate(long id, String targetJson, long targetRevision) {}
+    private record UserInspection(List<UserUpdate> users, int defaultedUsers) {}
 }

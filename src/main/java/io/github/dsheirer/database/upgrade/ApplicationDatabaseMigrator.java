@@ -11,8 +11,9 @@
 
 package io.github.dsheirer.database.upgrade;
 
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -23,6 +24,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
@@ -33,13 +35,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.regex.Pattern;
-import org.sqlite.SQLiteConfig;
 
 /**
  * The single application-owned database migration entry point.
@@ -58,6 +60,9 @@ public final class ApplicationDatabaseMigrator
     public static final int EXIT_MIGRATION_FAILED = 5;
 
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
+    private static final String NOW_PLAYING_PREFERENCES_NODE =
+        "user/io/github/dsheirer/preference/nowplaying";
+    private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
     private static final Set<String> PORTABLE_DIRECTORY_KEYS = Set.of(
         "directory.application.logs",
         "directory.event.logs",
@@ -70,6 +75,13 @@ public final class ApplicationDatabaseMigrator
     private static final Set<String> PORTABLE_PATH_KEY_PREFIXES = Set.of(
         "path.jmbe.library.",
         "path.voice.decryption.module."
+    );
+    private static final Set<String> RECEIVER_PREFERENCE_KEYS = Set.of(
+        "site.settings.revision",
+        "receiver.settings.revision",
+        "retain.idle.call.details",
+        "clear.voice.decode.quality.on.call.end",
+        "traffic.grant.age.out.milliseconds"
     );
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String UUID_PATTERN =
@@ -169,7 +181,8 @@ public final class ApplicationDatabaseMigrator
         requireSingleFilesystemLinkWhenSupported(database);
 
         requireApplicationStage(database);
-        output.println("Checking staged database: " + database);
+        //The helper output is shown and copyable in migration-completion dialogs. Keep private staging paths out of it.
+        output.println("Checking staged database.");
 
         try(Connection connection = open(database))
         {
@@ -180,32 +193,30 @@ public final class ApplicationDatabaseMigrator
             printPreflight(output, preflight, relocation);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
-
-            if(!source.requiresMigration() && !relocationRequired)
+            if(!preflight.requiresMigration() && !relocationRequired)
             {
                 validateCurrentDatabase(connection);
+                requireForeignKeysValid(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 finalizeStagedDatabase(connection);
                 validateConfiguration(database);
-                output.println("RESULT: Application database is already current and valid; no schema changes made.");
+                output.println("Portable directory preferences updated: 0.");
+                output.println("Portable preference components repaired or reset: 0.");
+                output.println("Database is already at current format " + DatabaseFormatCatalog.CURRENT_VERSION +
+                    ".");
+                output.println("RESULT: Application database is already current and valid; no changes made.");
                 return;
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            MigrationSummary migration = migrateInTransaction(connection, source, relocation);
-            output.println("Compacting the migrated staged database.");
-            try(Statement statement = connection.createStatement())
-            {
-                statement.execute("VACUUM");
-            }
+            MigrationSummary migration = migrateInTransaction(connection, source, relocation, database);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
             validateConfiguration(database);
 
-            printCompletion(output, migration.chainReport());
-            output.println("Portable directory preferences updated: " + migration.rebasedDirectories() + ".");
+            printCompletion(output, migration);
             output.println("RESULT: Application database migration and validation complete.");
         }
     }
@@ -254,27 +265,12 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    static DatabaseMigrationChain.PreflightReport validateAcceptedSource(Path database,
-                                                                          DatabaseFormatCatalog.DetectedFormat expected)
-        throws IOException, SQLException
-    {
-        try(Connection connection = openReadOnly(database))
-        {
-            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-            DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection,
-                expected);
-            requireForeignKeysValid(connection);
-            requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
-            return report;
-        }
-    }
-
     private static DatabaseFormatCatalog.DetectedFormat requireSupportedFormat(Connection connection)
         throws SQLException, UnsupportedDatabaseFormatException
     {
         try
         {
-            return DatabaseFormatCatalog.inspect(connection);
+            return DatabaseFormatCatalog.inspectForMigration(connection);
         }
         catch(DatabaseFormatCatalog.FormatRejectionException e)
         {
@@ -286,26 +282,67 @@ public final class ApplicationDatabaseMigrator
             DatabaseFormatCatalog.DetectedFormat source) throws SQLException
     {
         SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-        DatabaseMigrationChain.PreflightReport report = DatabaseMigrationChain.validateSource(connection, source);
-        requireForeignKeysValid(connection);
-        requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+        DatabaseMigrationChain.PreflightReport report =
+            DatabaseMigrationChain.planForApplicationMigration(connection, source);
+        requireSourceIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
         return report;
     }
 
     private static MigrationSummary migrateInTransaction(Connection connection,
-            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation)
+            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             boolean transactionOpen = false;
+            boolean foreignKeysRelaxed = expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION;
+            boolean checkConstraintsRelaxed = foreignKeysRelaxed;
+
+            if(foreignKeysRelaxed)
+            {
+                //Historical databases can contain orphaned relationships and row-local CHECK damage that later
+                //steps rebuild, default, or drop. Keep those constraints from aborting an intermediate bulk copy;
+                //the exact current target is checked in full before COMMIT. Foreign keys must change before BEGIN.
+                statement.execute("PRAGMA foreign_keys=OFF");
+                statement.execute("PRAGMA ignore_check_constraints=ON");
+            }
 
             try
             {
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
+                PortablePreferenceResult portablePreferences = new PortablePreferenceResult(0, 0);
+                CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair =
+                    CurrentDatabaseAdministrativeRepair.Inspection.none();
+                CurrentDatabaseBestEffortRepair.Inspection currentRepair =
+                    CurrentDatabaseBestEffortRepair.Inspection.none();
+                CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair =
+                    CurrentDatabaseDerivedStateRepair.Inspection.none();
+                SqliteIdentityRepair.Inspection identityRepair = SqliteIdentityRepair.Inspection.none();
+                if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                {
+                    //Historical steps can seed factory configuration. Normalize exhausted allocator state and
+                    //isolate JSON-unsafe configuration identities before any such insert occurs.
+                    identityRepair = SqliteIdentityRepair.repair(connection);
+                }
+                if(expectedSource.version() == DatabaseFormatCatalog.CURRENT_VERSION)
+                {
+                    //A current-format source has the final schema already. Repair its bounded components before the
+                    //chain performs strict current-format validation or adopts a missing global marker.
+                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
+                    administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection);
+                    derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
+                    currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
+                    identityRepair = SqliteIdentityRepair.repair(connection);
+                }
+
                 DatabaseMigrationChain.MigrationReport chainReport = DatabaseMigrationChain.migrate(connection);
+                if(checkConstraintsRelaxed)
+                {
+                    statement.execute("PRAGMA ignore_check_constraints=OFF");
+                    checkConstraintsRelaxed = false;
+                }
                 if(chainReport.source().version() != expectedSource.version() ||
                     !chainReport.source().id().equals(expectedSource.id()) ||
                     chainReport.source().markerPresent() != expectedSource.markerPresent())
@@ -314,16 +351,27 @@ public final class ApplicationDatabaseMigrator
                         expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
                         chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
                 }
-                int rebased = rebasePortableDirectoryPreferences(connection, relocation);
+                if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                {
+                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
+                }
 
                 validateCurrentDatabase(connection);
                 requireForeignKeysValid(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                validateConfiguration(connection, database);
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return new MigrationSummary(rebased, chainReport);
+                MigrationSummary summary = new MigrationSummary(portablePreferences.rebasedDirectories(),
+                    portablePreferences.resetEntries(), administrativeRepair, currentRepair, derivedStateRepair,
+                    identityRepair, chainReport);
+                if(foreignKeysRelaxed)
+                {
+                    statement.execute("PRAGMA foreign_keys=ON");
+                }
+                return summary;
             }
-            catch(IOException | SQLException | RuntimeException e)
+            catch(IOException | SQLException | RuntimeException | Error e)
             {
                 if(transactionOpen)
                 {
@@ -337,23 +385,50 @@ public final class ApplicationDatabaseMigrator
                     }
                 }
 
+                if(checkConstraintsRelaxed)
+                {
+                    try
+                    {
+                        statement.execute("PRAGMA ignore_check_constraints=OFF");
+                    }
+                    catch(SQLException checkConstraintRestoreFailure)
+                    {
+                        e.addSuppressed(checkConstraintRestoreFailure);
+                    }
+                }
+
+                if(foreignKeysRelaxed)
+                {
+                    try
+                    {
+                        statement.execute("PRAGMA foreign_keys=ON");
+                    }
+                    catch(SQLException foreignKeyRestoreFailure)
+                    {
+                        e.addSuppressed(foreignKeyRestoreFailure);
+                    }
+                }
+
                 throw e;
             }
         }
     }
 
-    private static int rebasePortableDirectoryPreferences(Connection connection, DataRootRelocation relocation)
+    private static PortablePreferenceResult updatePortableDirectoryPreferences(Connection connection,
+                                                                                DataRootRelocation relocation)
         throws IOException, SQLException
     {
-        if(relocation == null || relocation.source().equals(relocation.target()))
-        {
-            return 0;
-        }
-
         String json;
 
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT settings_json FROM application_settings WHERE key=?"))
+        boolean sourceRowStorageValid;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 4194304
+                        THEN settings_json END AS settings_json,
+                   updated_at_ms, typeof(settings_json), typeof(updated_at_ms),
+                   length(CAST(settings_json AS BLOB)) AS settings_json_bytes
+            FROM application_settings WHERE key=?
+            """))
         {
             statement.setString(1, PORTABLE_PREFERENCES_KEY);
 
@@ -361,98 +436,272 @@ public final class ApplicationDatabaseMigrator
             {
                 if(!resultSet.next())
                 {
-                    return 0;
+                    return new PortablePreferenceResult(0, 0);
                 }
 
                 json = resultSet.getString(1);
+                sourceRowStorageValid = "text".equals(resultSet.getString(3)) &&
+                    "integer".equals(resultSet.getString(4)) && resultSet.getLong(2) > 0 &&
+                    resultSet.getLong("settings_json_bytes") <= MAXIMUM_PORTABLE_PREFERENCES_BYTES;
             }
         }
 
-        Map<String,Map<String,String>> values;
-
+        Map<String,Map<String,String>> values = new LinkedHashMap<>();
+        int reset = 0;
+        boolean sourceDocumentValid = sourceRowStorageValid;
         try
         {
-            values = OBJECT_MAPPER.readValue(json, new TypeReference<>() {});
+            Format5WebStateValidator.validateCurrentPortablePreferences(json);
         }
-        catch(IOException e)
+        catch(SQLException exception)
         {
-            throw new SQLException("Portable directory preferences contain invalid JSON.", e);
+            sourceDocumentValid = false;
         }
-
-        if(values == null)
+        try
         {
-            return 0;
-        }
-
-        int rebased = 0;
-
-        for(Map<String,String> node : values.values())
-        {
-            if(node == null)
+            if(json == null || json.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_PORTABLE_PREFERENCES_BYTES)
             {
-                continue;
+                throw new IOException("unusable portable preferences");
             }
-
-            for(Map.Entry<String,String> entry : node.entrySet())
+            JsonNode parsed = OBJECT_MAPPER.readTree(json);
+            if(!(parsed instanceof ObjectNode root))
             {
-                String key = entry.getKey();
-                if(!isPortablePathKey(key))
+                throw new IOException("portable preferences are not an object");
+            }
+            var nodes = root.fields();
+            while(nodes.hasNext())
+            {
+                Map.Entry<String,JsonNode> node = nodes.next();
+                if(!(node.getValue() instanceof ObjectNode storedValues))
                 {
+                    reset++;
                     continue;
                 }
-
-                String value = entry.getValue();
-
-                if(value == null || value.isBlank())
+                Map<String,String> retained = new LinkedHashMap<>();
+                var entries = storedValues.fields();
+                while(entries.hasNext())
                 {
-                    continue;
-                }
-
-                try
-                {
-                    Path stored = Path.of(value);
-
-                    if(stored.isAbsolute())
+                    Map.Entry<String,JsonNode> entry = entries.next();
+                    if(Format6To7DatabaseMigration.RETIRED_WEB_AUDIO_KEYS.contains(entry.getKey()))
                     {
-                        Path normalized = stored.normalize();
+                        reset++;
+                    }
+                    else if(entry.getValue().isTextual())
+                    {
+                        retained.put(entry.getKey(), entry.getValue().textValue());
+                    }
+                    else
+                    {
+                        reset++;
+                    }
+                }
+                values.put(node.getKey(), retained);
+            }
+        }
+        catch(IOException | RuntimeException exception)
+        {
+            values.clear();
+            reset = 1;
+        }
 
-                        if(normalized.startsWith(relocation.source()))
+        String targetJson;
+        try
+        {
+            reset = Math.addExact(reset, sanitizeReceiverPreferences(values));
+            targetJson = OBJECT_MAPPER.writeValueAsString(values);
+            try
+            {
+                Format5WebStateValidator.validateCurrentPortablePreferences(targetJson);
+            }
+            catch(SQLException invalidReceiverSettings)
+            {
+                Map<String,String> nowPlaying = values.get(NOW_PLAYING_PREFERENCES_NODE);
+                if(nowPlaying != null)
+                {
+                    for(String key: RECEIVER_PREFERENCE_KEYS)
+                    {
+                        if(nowPlaying.remove(key) != null)
                         {
-                            Path updated = relocation.target().resolve(relocation.source().relativize(normalized))
-                                .normalize();
-                            entry.setValue(updated.toString());
-                            rebased++;
+                            reset++;
                         }
                     }
                 }
-                catch(InvalidPathException e)
+                targetJson = OBJECT_MAPPER.writeValueAsString(values);
+                try
                 {
-                    // Leave an unrelated or platform-specific preference untouched.
+                    Format5WebStateValidator.validateCurrentPortablePreferences(targetJson);
+                }
+                catch(SQLException stillInvalid)
+                {
+                    values.clear();
+                    reset++;
+                    targetJson = "{}";
+                    Format5WebStateValidator.validateCurrentPortablePreferences(targetJson);
+                }
+            }
+        }
+        catch(IOException exception)
+        {
+            throw new SQLException("Portable preferences could not be serialized safely.", exception);
+        }
+        if(!sourceDocumentValid && reset == 0)
+        {
+            //For example, strict duplicate detection can require a canonical rewrite even when every surviving
+            //node and value is independently usable.
+            reset = 1;
+        }
+
+        int rebased = 0;
+        boolean relocate = relocation != null && !relocation.source().equals(relocation.target());
+        if(relocate)
+        {
+            for(Map<String,String> node : values.values())
+            {
+                var entries = node.entrySet().iterator();
+                while(entries.hasNext())
+                {
+                    Map.Entry<String,String> entry = entries.next();
+                    String key = entry.getKey();
+                    if(!isPortablePathKey(key))
+                    {
+                        continue;
+                    }
+
+                    String value = entry.getValue();
+                    if(value == null || value.isBlank())
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        Path stored = Path.of(value);
+
+                        if(stored.isAbsolute())
+                        {
+                            Path normalized = stored.normalize();
+
+                            if(normalized.startsWith(relocation.source()))
+                            {
+                                Path updated = relocation.target().resolve(
+                                    relocation.source().relativize(normalized)).normalize();
+                                entry.setValue(updated.toString());
+                                String candidateJson;
+                                try
+                                {
+                                    candidateJson = OBJECT_MAPPER.writeValueAsString(values);
+                                }
+                                catch(IOException exception)
+                                {
+                                    throw new SQLException("Portable preferences could not be serialized safely.",
+                                        exception);
+                                }
+                                try
+                                {
+                                    Format5WebStateValidator.validateCurrentPortablePreferences(candidateJson);
+                                    targetJson = candidateJson;
+                                    rebased++;
+                                }
+                                catch(SQLException invalidRebase)
+                                {
+                                    //A much longer target root can push an otherwise valid document past its
+                                    //storage bound. Drop only that stale path so every other preference survives.
+                                    entries.remove();
+                                    reset++;
+                                    try
+                                    {
+                                        targetJson = OBJECT_MAPPER.writeValueAsString(values);
+                                        Format5WebStateValidator.validateCurrentPortablePreferences(targetJson);
+                                    }
+                                    catch(IOException exception)
+                                    {
+                                        throw new SQLException(
+                                            "Portable preferences could not be serialized safely.", exception);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch(InvalidPathException e)
+                    {
+                        // Leave an unrelated or platform-specific preference untouched.
+                    }
                 }
             }
         }
 
-        if(rebased > 0)
+        if(rebased > 0 || reset > 0)
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 UPDATE application_settings SET settings_json=?, updated_at_ms=? WHERE key=?
-                """))
+            """))
             {
-                try
-                {
-                    statement.setString(1, OBJECT_MAPPER.writeValueAsString(values));
-                }
-                catch(IOException e)
-                {
-                    throw new SQLException("Portable directory preferences could not be serialized safely.", e);
-                }
+                statement.setString(1, targetJson);
                 statement.setLong(2, System.currentTimeMillis());
                 statement.setString(3, PORTABLE_PREFERENCES_KEY);
                 statement.executeUpdate();
             }
         }
 
-        return rebased;
+        return new PortablePreferenceResult(rebased, reset);
+    }
+
+    /** Preserves independent receiver preferences and defaults only malformed keys in that small component. */
+    private static int sanitizeReceiverPreferences(Map<String,Map<String,String>> values)
+    {
+        Map<String,String> nowPlaying = values.get(NOW_PLAYING_PREFERENCES_NODE);
+        if(nowPlaying == null)
+        {
+            return 0;
+        }
+
+        int reset = 0;
+        if(nowPlaying.remove("site.settings.revision") != null)
+        {
+            reset++;
+        }
+        String revision = nowPlaying.get("receiver.settings.revision");
+        if(revision != null && !validCanonicalLong(revision, 1, Long.MAX_VALUE - 2))
+        {
+            nowPlaying.remove("receiver.settings.revision");
+            revision = null;
+            reset++;
+        }
+        //These shared presentation settings moved into each web user's preference document and are no longer
+        //receiver-wide state. Remove them even when their old values are well-formed.
+        for(String key: List.of("retain.idle.call.details", "clear.voice.decode.quality.on.call.end"))
+        {
+            if(nowPlaying.remove(key) != null)
+            {
+                reset++;
+            }
+        }
+        String ageOut = nowPlaying.get("traffic.grant.age.out.milliseconds");
+        if(ageOut != null && !validCanonicalLong(ageOut, 100, 15_000))
+        {
+            nowPlaying.remove("traffic.grant.age.out.milliseconds");
+            reset++;
+        }
+        boolean hasReceiverValue = nowPlaying.containsKey("traffic.grant.age.out.milliseconds");
+        if(hasReceiverValue && revision == null)
+        {
+            nowPlaying.put("receiver.settings.revision", "1");
+            reset++;
+        }
+        return reset;
+    }
+
+    private static boolean validCanonicalLong(String text, long minimum, long maximum)
+    {
+        try
+        {
+            long value = Long.parseLong(text);
+            return value >= minimum && value <= maximum && Long.toString(value).equals(text);
+        }
+        catch(NumberFormatException ignored)
+        {
+            return false;
+        }
     }
 
     private static boolean isPortablePathKey(String key)
@@ -490,19 +739,68 @@ public final class ApplicationDatabaseMigrator
         output.println("Migration plan: format " + report.source().version() + " [" + report.source().id() +
             "] -> format " + report.target().version() + " [" + report.target().id() + "] through " +
             report.steps().size() + " step(s).");
+    }
 
-        for(DatabaseMigrationChain.StepPreflight step: report.steps())
+    private static void printCompletion(PrintStream output, MigrationSummary migration)
+    {
+        DatabaseMigrationChain.MigrationReport report = migration.chainReport();
+        boolean portableRepairRan = report.source().version() < DatabaseFormatCatalog.CURRENT_VERSION ||
+            migration.resetPortablePreferenceEntries() > 0 || migration.rebasedDirectories() > 0;
+        long recoveryChanges = recoveryChangeCount(migration, portableRepairRan);
+        if(recoveryChanges > 0)
         {
-            output.println("PLAN STEP: " + step.sourceVersion() + " -> " + step.targetVersion() + " [" +
-                step.id() + "] " + step.description());
-            for(DatabaseMigrationEffect effect: step.effects())
-            {
-                output.println("  " + formatEffect(effect));
-            }
+            //The itemized effects can overlap and some count JSON preference components instead of table rows.
+            //Do not present their sum as a row count.
+            output.println("OUTCOME: Migration completed with itemized repairs, resets, or skipped items. " +
+                "Usable independent data was preserved.");
+        }
+        else
+        {
+            output.println("OUTCOME: Migration completed without row-level repairs, resets, or skipped items.");
+        }
+        if(report.source().version() == DatabaseFormatCatalog.CURRENT_VERSION)
+        {
+            printPortableCompletion(output, migration, portableRepairRan);
+            printAdministrativeCompletion(output, migration.administrativeRepair());
+            printDerivedStateCompletion(output, migration.derivedStateRepair());
+            printCurrentConfigurationCompletion(output, migration.currentRepair());
+            printIdentityCompletion(output, migration.identityRepair(), report.source().version());
+            printChainCompletion(output, report);
+        }
+        else
+        {
+            printIdentityCompletion(output, migration.identityRepair(), report.source().version());
+            printChainCompletion(output, report);
+            printPortableCompletion(output, migration, portableRepairRan);
+        }
+        boolean sameFormatWork = report.steps().isEmpty() && (migration.currentRepair().requiresRepair() ||
+            migration.administrativeRepair().requiresRepair() || migration.derivedStateRepair().requiresRepair() ||
+            migration.identityRepair().requiresRepair() ||
+            migration.rebasedDirectories() > 0 ||
+            migration.resetPortablePreferenceEntries() > 0);
+        int supplementalSteps = (migration.currentRepair().requiresRepair() ? 1 : 0) +
+            (migration.administrativeRepair().requiresRepair() ? 1 : 0) +
+            (migration.derivedStateRepair().requiresRepair() ? 1 : 0) +
+            (migration.identityRepair().requiresRepair() ? 1 : 0) + (portableRepairRan ? 1 : 0);
+        if(sameFormatWork)
+        {
+            output.println("Database format was already current at " + report.target().version() +
+                "; the itemized same-format updates above were applied.");
+        }
+        else if(supplementalSteps > 0)
+        {
+            int completedSteps = report.steps().size() + supplementalSteps;
+            output.println("Migrated database format " + report.source().version() + " [" + report.source().id() +
+                "] to " + report.target().version() + " [" + report.target().id() + "] through " + completedSteps +
+                " step(s). See the itemized completion counts above.");
+        }
+        else
+        {
+            output.println(report.releaseSummary());
         }
     }
 
-    private static void printCompletion(PrintStream output, DatabaseMigrationChain.MigrationReport report)
+    private static void printChainCompletion(PrintStream output, DatabaseMigrationChain.MigrationReport report)
     {
         for(DatabaseMigrationChain.StepReport step: report.steps())
         {
@@ -510,11 +808,84 @@ public final class ApplicationDatabaseMigrator
                 step.id() + "] " + step.description());
             for(DatabaseMigrationEffect effect: step.effects())
             {
-                output.println("  " + formatEffect(effect));
+                printNonzeroEffect(output, effect);
             }
         }
+    }
 
-        output.println(report.releaseSummary());
+    private static void printPortableCompletion(PrintStream output, MigrationSummary migration,
+                                                boolean portableRepairRan)
+    {
+        if(portableRepairRan)
+        {
+            output.println("COMPLETED STEP: 15 -> 15 [repair-portable-preferences] " +
+                "Validate and independently repair portable preference components");
+            output.println("  TRANSFORM portable directory preferences: " + migration.rebasedDirectories() +
+                " preference component(s) - Updated only stored paths that pointed inside the copied portable profile");
+            if(migration.resetPortablePreferenceEntries() > 0)
+            {
+                output.println("  RESET unusable portable preference components: " +
+                    migration.resetPortablePreferenceEntries() + " preference component(s) - Preserved usable " +
+                    "entries and removed or reset only malformed, obsolete, or invalid components");
+            }
+        }
+    }
+
+    private static void printAdministrativeCompletion(PrintStream output,
+            CurrentDatabaseAdministrativeRepair.Inspection repair)
+    {
+        if(repair.requiresRepair())
+        {
+            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseAdministrativeRepair.STEP_ID +
+                "] Repair recoverable current-format administrative components independently");
+            for(DatabaseMigrationEffect effect: CurrentDatabaseAdministrativeRepair.effects(repair))
+            {
+                printNonzeroEffect(output, effect);
+            }
+        }
+    }
+
+    private static void printCurrentConfigurationCompletion(PrintStream output,
+            CurrentDatabaseBestEffortRepair.Inspection repair)
+    {
+        if(repair.requiresRepair())
+        {
+            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseBestEffortRepair.STEP_ID +
+                "] Repair unusable current-format configuration items independently");
+            for(DatabaseMigrationEffect effect: CurrentDatabaseBestEffortRepair.effects(repair))
+            {
+                printNonzeroEffect(output, effect);
+            }
+        }
+    }
+
+    private static void printDerivedStateCompletion(PrintStream output,
+            CurrentDatabaseDerivedStateRepair.Inspection repair)
+    {
+        if(repair.requiresRepair())
+        {
+            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseDerivedStateRepair.STEP_ID +
+                "] Reset damaged reproducible receiver activity and statistics state");
+            for(DatabaseMigrationEffect effect: CurrentDatabaseDerivedStateRepair.effects(repair))
+            {
+                printNonzeroEffect(output, effect);
+            }
+        }
+    }
+
+    private static void printIdentityCompletion(PrintStream output, SqliteIdentityRepair.Inspection repair,
+                                                int version)
+    {
+        if(repair.requiresRepair())
+        {
+            output.println("COMPLETED STEP: " + version + " -> " + version + " [" +
+                SqliteIdentityRepair.STEP_ID + "] Normalize recoverable SQLite configuration identities and " +
+                "allocator state");
+            for(DatabaseMigrationEffect effect: SqliteIdentityRepair.effects(repair))
+            {
+                printNonzeroEffect(output, effect);
+            }
+        }
     }
 
     private static String formatEffect(DatabaseMigrationEffect effect)
@@ -522,6 +893,41 @@ public final class ApplicationDatabaseMigrator
         String count = effect.affectedRows() >= 0 ? effect.affectedRows() + " row(s)" :
             "count determined during migration";
         return effect.kind() + " " + effect.subject() + ": " + count + " - " + effect.detail();
+    }
+
+    private static void printNonzeroEffect(PrintStream output, DatabaseMigrationEffect effect)
+    {
+        if(effect.affectedRows() != 0)
+        {
+            output.println("  " + formatEffect(effect));
+        }
+    }
+
+    private static long recoveryChangeCount(MigrationSummary migration, boolean portableRepairRan)
+    {
+        long count = portableRepairRan ? migration.resetPortablePreferenceEntries() : 0;
+        count += recoveryEffectCount(CurrentDatabaseAdministrativeRepair.effects(migration.administrativeRepair()));
+        count += recoveryEffectCount(CurrentDatabaseDerivedStateRepair.effects(migration.derivedStateRepair()));
+        count += recoveryEffectCount(CurrentDatabaseBestEffortRepair.effects(migration.currentRepair()));
+        count += migration.currentRepair().repairedBroadcastRoutes();
+        count += migration.currentRepair().remappedScanListMemberships();
+        count += recoveryEffectCount(SqliteIdentityRepair.effects(migration.identityRepair()));
+        for(DatabaseMigrationChain.StepReport step: migration.chainReport().steps())
+        {
+            count += recoveryEffectCount(step.effects());
+        }
+        return count;
+    }
+
+    private static long recoveryEffectCount(List<DatabaseMigrationEffect> effects)
+    {
+        return effects.stream()
+            .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT ||
+                effect.kind() == DatabaseMigrationEffect.Kind.RESET ||
+                effect.kind() == DatabaseMigrationEffect.Kind.DROP)
+            .filter(effect -> effect.affectedRows() > 0)
+            .mapToLong(DatabaseMigrationEffect::affectedRows)
+            .sum();
     }
 
     static void validateCurrentDatabase(Connection connection) throws SQLException
@@ -538,6 +944,11 @@ public final class ApplicationDatabaseMigrator
         ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
     }
 
+    private static void validateConfiguration(Connection connection, Path database) throws IOException, SQLException
+    {
+        ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load(connection));
+    }
+
     private static Connection open(Path database) throws SQLException
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -549,16 +960,6 @@ public final class ApplicationDatabaseMigrator
         }
 
         return connection;
-    }
-
-    private static Connection openReadOnly(Path database) throws SQLException
-    {
-        SQLiteConfig config = new SQLiteConfig();
-        config.setReadOnly(true);
-        config.enforceForeignKeys(true);
-        config.setBusyTimeout(5000);
-        return DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath().normalize(),
-            config.toProperties());
     }
 
     private static void requireIntegrity(Connection connection, String pragma, String label) throws SQLException
@@ -583,6 +984,46 @@ public final class ApplicationDatabaseMigrator
         if(!foundResult || failures.length() > 0)
         {
             throw new SQLException(label + " failed" + (failures.length() > 0 ? ": " + failures : "."));
+        }
+    }
+
+    /**
+     * Checks physical SQLite structure without allowing a recoverable row CHECK violation to block staged repair.
+     * Every final migrated target uses the normal strict integrity check.
+     */
+    private static void requireSourceIntegrity(Connection connection, String pragma, String label) throws SQLException
+    {
+        SQLException failure = null;
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            try
+            {
+                requireIntegrity(connection, pragma, label);
+            }
+            catch(SQLException exception)
+            {
+                failure = exception;
+                throw exception;
+            }
+            finally
+            {
+                try
+                {
+                    statement.execute("PRAGMA ignore_check_constraints=OFF");
+                }
+                catch(SQLException restoreFailure)
+                {
+                    if(failure != null)
+                    {
+                        failure.addSuppressed(restoreFailure);
+                    }
+                    else
+                    {
+                        throw restoreFailure;
+                    }
+                }
+            }
         }
     }
 
@@ -639,7 +1080,16 @@ public final class ApplicationDatabaseMigrator
     {
     }
 
-    private record MigrationSummary(int rebasedDirectories, DatabaseMigrationChain.MigrationReport chainReport)
+    private record PortablePreferenceResult(int rebasedDirectories, int resetEntries)
+    {
+    }
+
+    private record MigrationSummary(int rebasedDirectories, int resetPortablePreferenceEntries,
+                                    CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair,
+                                    CurrentDatabaseBestEffortRepair.Inspection currentRepair,
+                                    CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair,
+                                    SqliteIdentityRepair.Inspection identityRepair,
+                                    DatabaseMigrationChain.MigrationReport chainReport)
     {
     }
 

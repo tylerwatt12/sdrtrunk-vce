@@ -53,6 +53,11 @@ final class Format8WebUserPreferencesCodec
         decode(json);
     }
 
+    static String defaults() throws IOException
+    {
+        return migrateFromFormat7(Format7WebUserPreferencesCodec.defaults());
+    }
+
     /** Converts one exact format-7 document into one exact format-8 document. */
     static String migrateFromFormat7(String json) throws IOException
     {

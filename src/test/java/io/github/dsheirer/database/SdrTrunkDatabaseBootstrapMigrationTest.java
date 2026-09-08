@@ -21,6 +21,7 @@ import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
 import io.github.dsheirer.database.upgrade.Format1TestDatabase;
 import io.github.dsheirer.database.upgrade.Format3TestDatabase;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -61,9 +62,11 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     {
         Path dataRoot = mTemporaryFolder.resolve("upgrade-current");
         Path database = createFormat1Database(dataRoot, "Migrated In Place");
+        Path passwordFile = passwordFile("upgrade-current-password.txt");
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
-            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true);
+            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--admin-password-file",
+                passwordFile.toString()}, dataRoot, true);
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
@@ -179,6 +182,43 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void headlessUpgradeKeepsMigratorPasswordResetForPresentAndAbsentMarkers() throws Exception
+    {
+        for(boolean markerPresent: new boolean[]{true, false})
+        {
+            Path dataRoot = mTemporaryFolder.resolve(markerPresent ?
+                "reset-invalid-admin-with-marker" : "reset-invalid-admin-without-marker");
+            Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+            SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+            new WebAccessService(database).provisionOrResetPrimaryAdmin("old unusable password".toCharArray());
+            try(Connection connection = open(database); Statement statement = connection.createStatement())
+            {
+                statement.execute("PRAGMA ignore_check_constraints=ON");
+                statement.executeUpdate("UPDATE web_user SET password_hash=x'01' WHERE primary_admin=1");
+                if(!markerPresent)
+                {
+                    statement.executeUpdate("DELETE FROM database_metadata WHERE key='initial_admin_setup'");
+                }
+                statement.execute("PRAGMA ignore_check_constraints=OFF");
+            }
+            Path passwordFile = passwordFile((markerPresent ? "present" : "absent") + "-new-password.txt");
+
+            SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
+                new String[]{"--upgrade-current", "--admin-password-file", passwordFile.toString()},
+                dataRoot, true);
+
+            assertTrue(result.startApplication());
+            assertEquals("complete", scalar(database, """
+                SELECT value FROM database_metadata WHERE key='initial_admin_setup'
+                """));
+            assertTrue(new WebAccessService(database)
+                .authenticate("admin", "migration admin password".toCharArray()).isPresent());
+            assertEquals("1", scalar(database,
+                "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
+        }
     }
 
     @Test

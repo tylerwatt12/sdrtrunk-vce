@@ -62,6 +62,11 @@ final class Format9WebUserPreferencesCodec
         Format8WebUserPreferencesCodec.validate(MAPPER.writeValueAsString(prior));
     }
 
+    static String defaults() throws IOException
+    {
+        return migrateFromFormat8(Format8WebUserPreferencesCodec.defaults(), false, false);
+    }
+
     /** Converts one exact format-8 document into one exact format-9 document. */
     static String migrateFromFormat8(String json, boolean retainLastCallOnIdleRows,
                                      boolean clearVoiceQualityWhenIdle) throws IOException

@@ -42,13 +42,61 @@ class Format13To14DatabaseMigrationTest
     }
 
     @Test
-    void rejectsUnexpectedPreexistingSelection() throws Exception
+    void preservesValidPreexistingSelection() throws Exception
     {
         Path path = Format13TestDatabase.create(temporary.resolve("unexpected.sqlite"));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path))
         {
             SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
-            assertThrows(SQLException.class, () -> new Format13To14DatabaseMigration().validateSource(connection));
+            Format13To14DatabaseMigration step = new Format13To14DatabaseMigration();
+            assertEquals(0, step.validateSource(connection).getFirst().affectedRows());
+            assertEquals(1, step.validateSource(connection).get(1).affectedRows());
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 14);
+            SpectrumSnapSettings selected = SpectrumSnapSettings.read(connection);
+            assertEquals(1, selected.revision());
+            assertEquals("US", selected.countryCode());
+        }
+    }
+
+    @Test
+    void defaultsOnlyAnUnusablePreexistingSelection() throws Exception
+    {
+        Path path = Format13TestDatabase.create(temporary.resolve("unusable.sqlite"));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+            var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('spectrum_snap_country', '{"country":"unknown"}', 1)
+                """);
+            Format13To14DatabaseMigration step = new Format13To14DatabaseMigration();
+            assertEquals(1, step.validateSource(connection).getFirst().affectedRows());
+            assertEquals(0, step.validateSource(connection).get(1).affectedRows());
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 14);
+            assertEquals("US", SpectrumSnapSettings.read(connection).countryCode());
+        }
+    }
+
+    @Test
+    void defaultsAnOversizedSpectrumSelectionWithoutReadingItsPayload() throws Exception
+    {
+        Path path = Format13TestDatabase.create(temporary.resolve("oversized.sqlite"));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+            var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('spectrum_snap_country',
+                        '{"padding":"' || hex(zeroblob(129)) || '"}', 1)
+                """);
+            Format13To14DatabaseMigration step = new Format13To14DatabaseMigration();
+            assertEquals(1, step.validateSource(connection).getFirst().affectedRows());
+            assertEquals(0, step.validateSource(connection).get(1).affectedRows());
+            step.migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 14);
+            assertEquals("US", SpectrumSnapSettings.read(connection).countryCode());
         }
     }
 }

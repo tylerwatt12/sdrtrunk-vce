@@ -105,12 +105,11 @@ contents, keeps existing configuration, renames imported name conflicts, and cre
 before applying the import. Your original
 XML remains unchanged and regular SDRTrunk can continue using it.
 
-To replace the active profile from a supported database after setup, use **Help > Setup Wizard…**, then
-**Replace settings from a SQLite database** on Starting point.
+To replace the active profile from a supported database after setup, use **File > Import SQLite Database…**.
 VCE shows the migration plan and an explicit replacement warning, retains the current database as a safety backup,
 migrates only a staged copy of the selected file, validates it, and restarts. This imports only SQLite contents; it
-does not copy files beside the selected database or remap stored portable paths. If the imported database has no
-administrator, setup asks for a new administrator password after restart. Every successful replacement returns to
+does not copy files beside the selected database or remap stored portable paths. If no usable administrator credential
+can be preserved, setup asks for a new administrator password after restart. Every successful replacement returns to
 setup to review the imported settings and output folders before receiving resumes. A failed replacement does not restart
 automatically when the final active-database state cannot be confirmed.
 
@@ -141,8 +140,10 @@ Recommended update steps:
 5. Select the old app or data folder if VCE does not find it automatically.
 6. Check your channels, tuners, JMBE library, file locations, web settings, and auto-start behavior.
 
-The Application Migrator copies the setup, creates a safety backup, updates a separate copy of the database, and checks
-it before the new version starts. The old installation is left unchanged, making it easy to go back.
+The Application Migrator copies the setup, updates a separate copy of the database, and checks it before the new
+version starts. Within a recognized older database it works component by component: valid channels,
+aliases, accounts, and providers can still migrate when an unrelated row is unusable. Safe defaults and skipped rows
+are listed with counts in the completion report. The old installation is left unchanged, making it easy to go back.
 
 Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
 Check the saved folder locations before deleting an old version.
@@ -150,8 +151,11 @@ Check the saved folder locations before deleting an old version.
 > **Database compatibility in this source:** The bundled Application Migrator supports every verified successfully
 > published database format from Alpha 8 through the current format across alpha and nightly builds, without
 > installing skipped releases first. It refuses pre-Alpha 8, retired `webfirst`, known-unpublished developer,
-> unknown, mixed, and newer-than-the-app databases without changing the source. Older distributions retain the
-> compatibility documented by their own version-matched release notes. See the
+> unknown-schema, format-marker-mismatched, structurally mixed or partial, physically corrupt, and newer-than-the-app
+> databases without changing the source. A recognized older structure is migrated on a best-effort, per-component
+> basis and is installed only if the
+> result passes the exact current schema, integrity, configuration, and foreign-key checks. Older distributions retain
+> the compatibility documented by their own version-matched release notes. See the
 > [Database Migration Contract](docs/database-migration.md).
 
 Alpha and Nightly are different feature channels, not different database universes. Follow the exact version-matched

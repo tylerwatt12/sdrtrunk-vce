@@ -45,10 +45,10 @@ class Format3To4DatabaseMigrationTest
             DatabaseMigrationChain.StepPreflight step = report.steps().getFirst();
             assertEquals("format-3-to-4", step.id());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.PRESERVE,
-                "administrator configuration", true);
+                "administrator configuration", DatabaseMigrationEffect.UNKNOWN_COUNT);
             assertEquals(2, step.effects().size());
             assertEffect(step.effects(), DatabaseMigrationEffect.Kind.RESET,
-                "receiver-derived activity and counters", true);
+                "receiver-derived activity and counters", DatabaseMigrationEffect.UNKNOWN_COUNT);
         }
     }
 

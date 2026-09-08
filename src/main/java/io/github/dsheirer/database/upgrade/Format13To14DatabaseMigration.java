@@ -7,6 +7,7 @@ package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -19,34 +20,75 @@ final class Format13To14DatabaseMigration implements DatabaseMigrationStep
     public int targetVersion() { return 14; }
     public List<DatabaseMigrationEffect> declaredEffects()
     {
-        return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
-            "spectrum frequency-scope country selection", 1,
-            "Select the United States built-in frequency scopes and snap rules for existing profiles"));
+        return effects(DatabaseMigrationEffect.UNKNOWN_COUNT, DatabaseMigrationEffect.UNKNOWN_COUNT);
     }
 
     public List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException
     {
-        if(DatabaseFormatCatalog.inspect(connection).version() != 13)
-        {
-            throw new SQLException("Expected format 13");
-        }
-        try(var query = connection.prepareStatement("SELECT COUNT(*) FROM application_settings WHERE key=?"))
-        {
-            query.setString(1, SpectrumSnapSettings.KEY);
-            try(var rows = query.executeQuery())
-            {
-                if(rows.next() && rows.getInt(1) != 0)
-                {
-                    throw new SQLException("Unexpected spectrum-snap country selection in format 13");
-                }
-            }
-        }
-        return declaredEffects();
+        requireSourceFormat(connection);
+        SettingInspection inspection = inspectSetting(connection);
+        return effects(inspection.preserved() ? 0 : 1, inspection.preserved() ? 1 : 0);
     }
 
     public void migrate(Connection connection) throws SQLException
     {
-        validateSource(connection);
-        SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
+        requireSourceFormat(connection);
+        SettingInspection inspection = inspectSetting(connection);
+        if(!inspection.preserved())
+        {
+            SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
+        }
     }
+
+    private static void requireSourceFormat(Connection connection) throws SQLException
+    {
+        if(DatabaseFormatCatalog.inspectForMigration(connection).version() != 13)
+        {
+            throw new SQLException("Expected format 13");
+        }
+    }
+
+    private static SettingInspection inspectSetting(Connection connection) throws SQLException
+    {
+        try(var query = connection.prepareStatement("""
+            SELECT CASE WHEN typeof(settings_json)='text'
+                              AND length(CAST(settings_json AS BLOB)) <= 256
+                        THEN settings_json END AS settings_json
+            FROM application_settings WHERE key=?
+            """))
+        {
+            query.setString(1, SpectrumSnapSettings.KEY);
+            try(ResultSet rows = query.executeQuery())
+            {
+                if(rows.next())
+                {
+                    try
+                    {
+                        SpectrumSnapSettings.decode(rows.getString(1));
+                        return new SettingInspection(true);
+                    }
+                    catch(SQLException ignored)
+                    {
+                        //A damaged or premature setting is safe to replace with the built-in default.
+                    }
+                }
+            }
+        }
+
+        return new SettingInspection(false);
+    }
+
+    private static List<DatabaseMigrationEffect> effects(long defaulted, long preserved)
+    {
+        return List.of(
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
+                "spectrum frequency-scope country selection", defaulted,
+                "Select the United States built-in frequency scopes and snap rules when the old selection is " +
+                    "missing or unusable"),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.PRESERVE,
+                "existing spectrum frequency-scope country selection", preserved,
+                "Keep an already usable selection without rewriting it"));
+    }
+
+    private record SettingInspection(boolean preserved) {}
 }

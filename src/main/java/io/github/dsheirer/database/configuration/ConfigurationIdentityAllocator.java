@@ -97,7 +97,7 @@ public final class ConfigurationIdentityAllocator
                 exception);
         }
 
-        if(highest > JSON_SAFE_INTEGER_MAXIMUM - count)
+        if(highest >= JSON_SAFE_INTEGER_MAXIMUM - count)
         {
             throw new IllegalStateException(entity.label() + " identities have reached the JSON-safe range");
         }

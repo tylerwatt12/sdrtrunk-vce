@@ -53,6 +53,11 @@ final class Format7WebUserPreferencesCodec
         decode(json);
     }
 
+    static String defaults() throws IOException
+    {
+        return migrateFromFormat6(Format6WebUserPreferencesCodec.defaults());
+    }
+
     /** Converts one exact format-6 document into one exact format-7 document. */
     static String migrateFromFormat6(String json) throws IOException
     {
@@ -73,6 +78,29 @@ final class Format7WebUserPreferencesCodec
         playback.put("conversation_grouping", true);
         playback.put("conversation_burst_limit", DEFAULT_CONVERSATION_BURST_LIMIT);
         return encode(decode(MAPPER.writeValueAsString(target)));
+    }
+
+    /**
+     * Converts a valid format-6 document while resetting only a scan-list selection that exceeds format 7's bound.
+     * Every unrelated preference remains subject to the exact format-6-to-7 conversion above.
+     */
+    static MigrationResult migrateFromFormat6BestEffort(String json) throws IOException
+    {
+        try
+        {
+            return new MigrationResult(migrateFromFormat6(json), false);
+        }
+        catch(SelectedScanListLimitException ignored)
+        {
+            JsonNode parsed = MAPPER.readTree(json);
+            if(!(parsed instanceof ObjectNode target) || !(target.get("playback") instanceof ObjectNode playback))
+            {
+                throw new IOException("Version-1 web user preferences are not a complete object");
+            }
+
+            playback.putArray("selected_scan_list_ids");
+            return new MigrationResult(migrateFromFormat6(MAPPER.writeValueAsString(target)), true);
+        }
     }
 
     private static Document decode(String json) throws IOException
@@ -334,5 +362,9 @@ final class Format7WebUserPreferencesCodec
         {
             return mMaximum;
         }
+    }
+
+    record MigrationResult(String json, boolean defaultedSelectedScanLists)
+    {
     }
 }
