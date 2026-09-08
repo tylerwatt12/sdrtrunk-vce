@@ -1428,13 +1428,22 @@ class ApplicationDatabaseMigratorTest
     {
         Path database = newStagedDatabase();
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        Path source = Path.of("/s");
-        Path target = Path.of("/" + "target".repeat(512));
+        Path source = mTemporaryFolder.resolve("source").toAbsolutePath();
+        Path target = mTemporaryFolder.resolve("target".repeat(512)).toAbsolutePath();
 
+        int maximumBytes = 4_194_304;
+        String emptyJson = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
+            "directories", java.util.Map.of("directory.recording", source.resolve("recordings").toString()),
+            "preserved", java.util.Map.of("large.preference", "")));
+        int preservedLength = maximumBytes - emptyJson.getBytes(StandardCharsets.UTF_8).length - 128;
         String json = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
             "directories", java.util.Map.of("directory.recording", source.resolve("recordings").toString()),
-            "preserved", java.util.Map.of("large.preference", "x".repeat(4_194_000))));
-        assertTrue(json.getBytes(StandardCharsets.UTF_8).length < 4_194_304);
+            "preserved", java.util.Map.of("large.preference", "x".repeat(preservedLength))));
+        assertEquals(maximumBytes - 128, json.getBytes(StandardCharsets.UTF_8).length);
+        String relocatedJson = OBJECT_MAPPER.writeValueAsString(java.util.Map.of(
+            "directories", java.util.Map.of("directory.recording", target.resolve("recordings").toString()),
+            "preserved", java.util.Map.of("large.preference", "x".repeat(preservedLength))));
+        assertTrue(relocatedJson.getBytes(StandardCharsets.UTF_8).length > maximumBytes);
         try(Connection connection = open(database); var statement = connection.prepareStatement("""
             INSERT INTO application_settings(key, settings_json, updated_at_ms)
             VALUES ('portable_java_preferences_v1', ?, 1)
@@ -1453,7 +1462,7 @@ class ApplicationDatabaseMigratorTest
             SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
             """));
         assertFalse(settings.path("directories").has("directory.recording"));
-        assertEquals(4_194_000, settings.path("preserved").path("large.preference").asText().length());
+        assertEquals(preservedLength, settings.path("preserved").path("large.preference").asText().length());
     }
 
     @Test
