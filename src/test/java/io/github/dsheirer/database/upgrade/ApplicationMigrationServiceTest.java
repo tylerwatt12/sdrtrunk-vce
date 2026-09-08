@@ -995,7 +995,10 @@ class ApplicationMigrationServiceTest
         assertTrue(plan.requiresMigration());
         assertEquals(1, plan.steps().size());
         assertEquals("repair-portable-preferences", plan.steps().getFirst().id());
-        assertTrue(ApplicationMigrationService.describePlan(plan).contains("unusable portable preference components"));
+        String description = ApplicationMigrationService.describePlan(plan);
+        assertTrue(description.contains("\n\nValidate and independently repair portable preference components"));
+        assertTrue(description.contains("\n  - reset unusable portable preference components"));
+        assertFalse(description.contains("; "));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertFalse(Files.exists(Path.of(sourceDatabase + "-wal")));
         assertFalse(Files.exists(Path.of(sourceDatabase + "-shm")));

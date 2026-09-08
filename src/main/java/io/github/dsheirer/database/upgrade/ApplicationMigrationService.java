@@ -750,11 +750,11 @@ public final class ApplicationMigrationService
 
         for(DatabaseMigrationChain.StepPreflight step: plan.steps())
         {
-            description.append("; ").append(step.description());
+            description.append("\n\n").append(step.description());
 
             for(DatabaseMigrationEffect effect: step.effects())
             {
-                description.append("; ").append(effect.kind().name().toLowerCase()).append(' ')
+                description.append("\n  - ").append(effect.kind().name().toLowerCase()).append(' ')
                     .append(effect.subject());
                 if(effect.affectedRows() >= 0)
                 {
