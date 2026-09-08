@@ -922,7 +922,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 completed = true;
                 broadcast(tracker);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
-                P25EncryptionRepeatDiagnostic.complete(tracker.getEvent(), timestamp);
             }
         }
         finally
@@ -959,7 +958,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 completed = true;
                 broadcast(tracker);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
-                P25EncryptionRepeatDiagnostic.complete(tracker.getEvent(), timestamp);
             }
         }
         finally
@@ -1003,9 +1001,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 if(identifier instanceof EncryptionKeyIdentifier encryptionKeyIdentifier)
                 {
                     P25EncryptionConfirmationTracker.observe(tracker.getEvent(), encryptionKeyIdentifier, timestamp);
-                    P25EncryptionRepeatDiagnostic.observe(P25EncryptionRepeatDiagnostic.Phase.PHASE_2,
-                        P25EncryptionRepeatDiagnostic.ObservationSource.ESS, tracker.getEvent(),
-                        encryptionKeyIdentifier, timestamp);
                 }
 
                 tracker.addIdentifierIfMissing(identifier);
@@ -1223,9 +1218,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             identifiers.getEncryptionIdentifier() instanceof EncryptionKeyIdentifier encryptionKeyIdentifier)
         {
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), encryptionKeyIdentifier, timestamp);
-            P25EncryptionRepeatDiagnostic.observe(P25EncryptionRepeatDiagnostic.Phase.PHASE_2,
-                P25EncryptionRepeatDiagnostic.ObservationSource.PUSH_TO_TALK, tracker.getEvent(),
-                encryptionKeyIdentifier, timestamp);
         }
     }
 
@@ -1366,7 +1358,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             if(tracker != null && tracker.isStarted())
             {
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
-                P25EncryptionRepeatDiagnostic.complete(tracker.getEvent(), timestamp);
                 removeTracker(frequency, TimeslotMessage.TIMESLOT_1);
                 tracker = null;
             }
@@ -1394,8 +1385,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             }
 
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
-            P25EncryptionRepeatDiagnostic.observe(P25EncryptionRepeatDiagnostic.Phase.PHASE_1,
-                P25EncryptionRepeatDiagnostic.ObservationSource.HDU, tracker.getEvent(), eki, timestamp);
             broadcast(tracker);
         }
         finally
@@ -1463,8 +1452,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 if(identifier instanceof EncryptionKeyIdentifier eki && eki.isEncrypted())
                 {
                     P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
-                    P25EncryptionRepeatDiagnostic.observe(P25EncryptionRepeatDiagnostic.Phase.PHASE_1,
-                        P25EncryptionRepeatDiagnostic.ObservationSource.LDU2, tracker.getEvent(), eki, timestamp);
                     tracker.addDetailsIfMissing(VoiceEncryptionDisplay.format(eki));
                 }
 
@@ -1802,7 +1789,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 completed = true;
                 broadcast(tracker);
                 P25EncryptionConfirmationTracker.complete(tracker.getEvent(), timestamp);
-                P25EncryptionRepeatDiagnostic.complete(tracker.getEvent(), timestamp);
             }
         }
         finally

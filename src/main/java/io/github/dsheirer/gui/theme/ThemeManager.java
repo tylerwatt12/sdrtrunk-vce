@@ -21,8 +21,6 @@ package io.github.dsheirer.gui.theme;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import com.google.common.eventbus.Subscribe;
-import com.jidesoft.plaf.LookAndFeelFactory;
-import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
@@ -42,7 +40,6 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIDefaults;
 import javax.swing.UIManager;
 import javax.swing.plaf.ColorUIResource;
-import javax.swing.plaf.metal.MetalLookAndFeel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,13 +51,6 @@ import org.slf4j.LoggerFactory;
  * theme is applied:
  * <ul>
  *   <li>The Swing LAF is installed (reflected from {@link Theme#getLafClassName()}).</li>
- *   <li>JIDE's LAF extension is reinstalled with an explicit Metal LAF for type detection so
- *       JIDE's compile-time {@code WindowsLookAndFeel} {@code instanceof} checks do not hit
- *       the missing-class branch on Linux/macOS JDKs.</li>
- *   <li>FlatLaf's standard defaults are re-applied on top of JIDE's clobber, and a set of
- *       JIDE-specific colour keys (JideTabbedPane.*, JideSplitPane.*, JideButton.*) are seeded
- *       from FlatLaf's just-installed values so each theme's palette propagates to JIDE widgets
- *       automatically.</li>
  *   <li>The dark JavaFX stylesheet is applied to (or removed from) every registered Scene
  *       depending on the theme's dark flag.</li>
  * </ul>
@@ -593,50 +583,6 @@ public class ThemeManager
             return;
         }
 
-        try
-        {
-            //JIDE 3.6.18 has compile-time `instanceof WindowsLookAndFeel` checks throughout
-            //LookAndFeelFactory.  The 3-arg overload lets us hand JIDE an explicit Metal LAF
-            //instance for type detection while leaving the real (FlatLaf) defaults table in place;
-            //JIDE's Metal branch matches first.
-            LookAndFeelFactory.installJideExtension(UIManager.getLookAndFeelDefaults(),
-                    new MetalLookAndFeel(), LookAndFeelFactory.VSNET_STYLE);
-        }
-        catch(Throwable t)
-        {
-            mLog.warn("Unable to install JIDE LAF extension after theme change", t);
-        }
-
-        //JIDE's Metal-flavored extension overwrites FlatLaf's color/font/border defaults for
-        //standard Swing component keys.  Re-apply FlatLaf's defaults on top of JIDE's install so
-        //the inner panels pick up the right colours.  JIDE's UI delegate registrations live under
-        //Jide-prefixed keys that FlatLaf does not define, so they survive untouched.
-        try
-        {
-            UIDefaults flatFresh = instantiate(theme).getDefaults();
-            UIDefaults active = UIManager.getLookAndFeelDefaults();
-            for(java.util.Map.Entry<Object, Object> entry: flatFresh.entrySet())
-            {
-                Object key = entry.getKey();
-                Object value = entry.getValue();
-                String keyName = String.valueOf(key);
-
-                if(keyName.startsWith("Jide") || keyName.contains(".Jide"))
-                {
-                    continue;
-                }
-
-                if(value != null)
-                {
-                    active.put(key, value);
-                }
-            }
-        }
-        catch(Throwable t)
-        {
-            mLog.warn("Unable to re-apply FlatLaf defaults after JIDE install", t);
-        }
-
         //Brute-force the standard component colour keys via UIManager.put which writes to the
         //user-defaults layer that takes precedence over the LAF defaults.  Colours are read from
         //the FlatLaf-installed defaults so each theme contributes its own palette.
@@ -778,8 +724,8 @@ public class ThemeManager
         ColorUIResource altRow = uir(laf.getColor("Table.alternateRowColor"),
                 darkMode ? 0x353739 : 0xfafafa);
 
-        //Use a slightly brighter foreground than FlatLaf's default in dark mode so text reads
-        //sharper on the JIDE-flavoured surfaces.  Light themes keep their own contrast.
+        //Use a slightly brighter foreground than FlatLaf's default in dark mode so text remains
+        //easy to read. Light themes keep their own contrast.
         if(darkMode && fgPrimary.getRed() < 0xd0)
         {
             fgPrimary = new ColorUIResource(0xe6e6e6);
@@ -864,39 +810,6 @@ public class ThemeManager
         UIManager.put("ToolTip.background", bgRaised);
         UIManager.put("ToolTip.foreground", fgPrimary);
 
-        //JIDE components read their colours from JIDE-specific UIManager keys, not the standard
-        //Swing keys.  Seed those from the same palette so JIDE widgets follow the theme.
-        UIManager.put("JideTabbedPane.background", bgPanel);
-        UIManager.put("JideTabbedPane.foreground", fgPrimary);
-        UIManager.put("JideTabbedPane.tabAreaBackground", bgPanel);
-        UIManager.put("JideTabbedPane.selectedTabBackground", bgRaised);
-        UIManager.put("JideTabbedPane.activeTabBackground", bgRaised);
-        UIManager.put("JideTabbedPane.tabListBackground", bgRaised);
-        UIManager.put("JideTabbedPane.selectedTabTextForeground", fgPrimary);
-        UIManager.put("JideTabbedPane.unselectedTabTextForeground", fgPrimary);
-        UIManager.put("JideTabbedPane.activeTabTextForeground", fgPrimary);
-        UIManager.put("JideTabbedPane.shadow", border);
-        UIManager.put("JideTabbedPane.darkShadow", border);
-        UIManager.put("JideTabbedPane.light", bgRaised);
-        UIManager.put("JideTabbedPane.highlight", bgRaised);
-        UIManager.put("JideTabbedPane.defaultTabShape", JideTabbedPane.SHAPE_BOX);
-        UIManager.put("JideTabbedPane.defaultTabBorderShadowColor", border);
-
-        UIManager.put("JideSplitPane.background", bgPanel);
-        UIManager.put("JideSplitPaneDivider.background", bgPanel);
-        UIManager.put("JideSplitPane.dividerColor", border);
-
-        UIManager.put("JideButton.background", bgRaised);
-        UIManager.put("JideButton.foreground", fgPrimary);
-        UIManager.put("JideButton.selectedBackground", bgSelection);
-        UIManager.put("JideButton.selectedForeground", fgSelection);
-        UIManager.put("JideButton.shadow", border);
-        UIManager.put("JideButton.darkShadow", border);
-        UIManager.put("JideButton.light", bgRaised);
-        UIManager.put("JideButton.highlight", bgRaised);
-
-        UIManager.put("JideLabel.background", bgPanel);
-        UIManager.put("JideLabel.foreground", fgPrimary);
     }
 
     /**

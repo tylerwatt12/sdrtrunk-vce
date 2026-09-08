@@ -265,7 +265,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 return CompletableFuture.completedFuture(USB_RESCAN_UNAVAILABLE);
             }
 
-            if(mUsbRescan != null)
+            if(mUsbRescan != null && !mUsbRescan.isDone())
             {
                 return mUsbRescan;
             }
