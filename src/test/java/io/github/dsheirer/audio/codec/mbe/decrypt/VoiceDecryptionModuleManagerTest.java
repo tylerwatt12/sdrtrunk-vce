@@ -24,19 +24,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class VoiceDecryptionModuleManagerTest
 {
     @Test
-    void loadsExternalModuleWhenTestJarIsProvided()
+    void inspectsExternalModuleWhenTestJarIsProvided()
     {
         String moduleJar = System.getenv("SDRTRUNK_DECRYPTION_MODULE_TEST_JAR");
         Assumptions.assumeTrue(moduleJar != null && Files.isRegularFile(Path.of(moduleJar)));
 
         try(VoiceDecryptionModuleManager manager = new VoiceDecryptionModuleManager())
         {
-            assertTrue(manager.load(Path.of(moduleJar)), manager.getStatus());
-            assertFalse(manager.getProviders().isEmpty());
-            assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.APCO25)
-                .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
-            assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.DMR)
-                .contains(VoiceEncryptionAlgorithm.DMR_DMRA_AES_256));
+            assertTrue(manager.isCompatible(Path.of(moduleJar)), manager.getStatus());
+            assertFalse(manager.isLoaded());
+
+            String requestId = System.getenv("SDRTRUNK_MODULE_TEST_REQUEST_ID");
+            String key = System.getenv("SDRTRUNK_MODULE_TEST_KEY");
+
+            if(requestId != null && !requestId.isBlank() && key != null && !key.isBlank())
+            {
+                assertFalse(manager.load(Path.of(moduleJar), requestId, key + "x"));
+                assertFalse(manager.isLoaded());
+                assertTrue(manager.load(Path.of(moduleJar), requestId, key), manager.getStatus());
+                assertFalse(manager.getProviders().isEmpty());
+                assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.APCO25)
+                    .contains(VoiceEncryptionAlgorithm.APCO25_AES_256));
+                assertTrue(manager.getSupportedAlgorithms(VoiceEncryptionProtocol.DMR)
+                    .contains(VoiceEncryptionAlgorithm.DMR_DMRA_AES_256));
+                assertFalse(manager.load(Path.of(moduleJar), requestId, key + "x"));
+                assertTrue(manager.isLoaded());
+            }
         }
     }
 }
