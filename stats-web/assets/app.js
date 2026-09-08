@@ -17977,7 +17977,6 @@ function renderCredits() {
     ['JTransforms', 'https://github.com/wendykierp/JTransforms'],
     ['usb4java', 'https://usb4java.org/'],
     ['ControlsFX', 'https://github.com/controlsfx/controlsfx'],
-    ['JIDE OSS', 'https://github.com/jidesoft/jide-oss'],
     ['OP25', 'https://github.com/boatbod/op25'],
     ['DSD-FME', 'https://github.com/lwvmobile/dsd-fme']
   ].forEach(([label, target]) => {

@@ -19,7 +19,6 @@
 package io.github.dsheirer.controller;
 
 import com.google.common.eventbus.Subscribe;
-import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
@@ -37,6 +36,7 @@ import java.awt.Dimension;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 
 public class ControllerPanel extends JPanel
 {
@@ -44,7 +44,7 @@ public class ControllerPanel extends JPanel
 
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
-    private JideTabbedPane mTabbedPane;
+    private JTabbedPane mTabbedPane;
     private UserPreferences mUserPreferences;
 
     public ControllerPanel(ConfigurationManager configurationManager, IconModel iconModel, MapService mapService,
@@ -98,7 +98,7 @@ public class ControllerPanel extends JPanel
     {
         setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[grow,fill]"));
 
-        mTabbedPane = new JideTabbedPane();
+        mTabbedPane = new JTabbedPane();
         mTabbedPane.setFont(this.getFont());
         refreshTabs();
 

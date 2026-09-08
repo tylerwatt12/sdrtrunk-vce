@@ -18,13 +18,11 @@
  */
 
 import java.text.SimpleDateFormat
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.jar.JarInputStream
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
 
 
 
@@ -32,29 +30,19 @@ import java.util.zip.ZipInputStream
  * Instructions for building/compiling the sdrtrunk application.
  *
  * Prerequisites:
- * Install and configure an OpenJDK version 22+ that includes the JavaFX modules (e.g. Bellsoft Liberica JDK)
+ * Install and configure a Java 25 JDK that includes JavaFX modules (for example, BellSoft Liberica JDK Full)
  * - Optional: install and configure Gradle 8.10+
  *
  * Scenario 1: run the application via gradle command line from the source code root directory:
  * command: ./gradlew run
  *
- * Scenario 2: create an application release for the current operating system
- * command: ./gradlew runtimeZipCurrent
- * Note: release image is located in the /build/image/ directory
- *
- * Scenario 3: create releases for Linux and OSX operating systems using downloaded JDKs
- * command: ./gradlew runtimeZipOthers
- * Note: release images are located in the /build/image/ directory
- *
- * Scenario 4: create release for Windows operating system using downloaded JDK
- * command: ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
- * Note: release image is located in the /build/image/ directory
+ * Scenario 2: create all supported release archives
+ * command: ./gradlew clean runtimeZipAll
+ * Note: release archives are located in the /build/image/ directory
  */
 plugins {
     id 'application'
-    id 'java'
     id 'idea'
-    id 'org.beryx.runtime' version '2.0.1'
 }
 
 repositories {
@@ -66,24 +54,6 @@ def javafxVersion = "25.0.1"
 def bouncyCastleVersion = "1.84"
 def currentJavafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isWindows() ? "win" :
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
-def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlatform
-def requestedTaskNames = gradle.startParameter.taskNames.collect { taskName ->
-    taskName.tokenize(':').last()
-}
-def configurationCacheRequested = gradle.startParameter.configurationCacheRequested
-
-if(requestedTaskNames.contains('runtimeZipWindows') &&
-        (javafxPlatform != 'win' || configurationCacheRequested ||
-                requestedTaskNames != ['clean', 'runtimeZipWindows'])) {
-    throw new GradleException('runtimeZipWindows must run by itself as a clean Windows-target invocation: ' +
-            './gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win ...')
-}
-
-//JIDE 3.6.18 references the Windows look-and-feel class directly.  Non-Windows JDKs need the
-//compatibility stub, while Windows must use the real java.desktop class to avoid a split package.
-if(javafxPlatform == "win") {
-    sourceSets.main.java.exclude 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.java'
-}
 
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
@@ -220,8 +190,7 @@ tasks.register('verifyApprovedReleaseNotes') {
 }
 
 def publicPackagingTasks = [
-    'distTar', 'distZip', 'runtimeZip', 'runtimeZipCurrent',
-    'runtimeZipWindows', 'runtimeZipOthers'
+    'distTar', 'distZip', 'runtimeZipAll'
 ] as Set
 tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
@@ -238,35 +207,24 @@ java {
     }
 }
 
-sourceSets {
-    main.java.srcDirs 'src/main/java'
-    test.java.srcDirs 'src/test/java'
-}
-
 processResources {
     from('LICENSE') {
         rename 'LICENSE', 'GPL-3.0.txt'
     }
 }
 
-test {
-    useJUnitPlatform()
-    systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/test').get().asFile.absolutePath
-}
-
 dependencies {
     // JavaFX is used directly in public APIs and UI code, so declare it explicitly instead of
     // relying on a specific JDK distribution to bundle the modules.
-    implementation "org.openjfx:javafx-base:${javafxVersion}:${javafxPlatform}"
-    implementation "org.openjfx:javafx-graphics:${javafxVersion}:${javafxPlatform}"
-    implementation "org.openjfx:javafx-controls:${javafxVersion}:${javafxPlatform}"
-    implementation "org.openjfx:javafx-swing:${javafxVersion}:${javafxPlatform}"
+    implementation "org.openjfx:javafx-base:${javafxVersion}:${currentJavafxPlatform}"
+    implementation "org.openjfx:javafx-graphics:${javafxVersion}:${currentJavafxPlatform}"
+    implementation "org.openjfx:javafx-controls:${javafxVersion}:${currentJavafxPlatform}"
+    implementation "org.openjfx:javafx-swing:${javafxVersion}:${currentJavafxPlatform}"
 
     // JUnit Tests
     testImplementation(platform("org.junit:junit-bom:6.0.1"))
     testImplementation 'org.junit.jupiter:junit-jupiter-api:6.0.1'
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:6.0.1")
-    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:6.0.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     //Jitpack imports
@@ -288,11 +246,9 @@ dependencies {
     implementation 'com.github.wendykierp:JTransforms:3.1'
     implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'com.google.guava:guava:33.5.0-jre'
-    implementation 'com.jidesoft:jide-oss:3.6.18'
     implementation 'com.miglayout:miglayout-swing:11.4.2'
     implementation 'com.mpatric:mp3agic:0.9.1'
     implementation 'commons-io:commons-io:2.21.0'
-    implementation 'eu.hansolo:charts:1.0.5'
     implementation 'io.github.dsheirer:radio-reference-api:18.0.0'
     implementation 'io.github.dsheirer:usb4java-native-libraries:1.3.3' //OSX & Windows aarch64 native libs
     implementation('io.github.dsheirer:usb4java:1.3.5') { //Fork with Loader support for OSX Multi-Version
@@ -306,7 +262,6 @@ dependencies {
         exclude group: 'org.apiguardian'
     }
     implementation 'javax.usb:usb-api:1.0.2'
-    implementation 'net.coderazzi:tablefilter-swing:5.5.4'
     implementation 'org.apache.commons:commons-lang3:3.19.0'
     implementation 'org.apache.commons:commons-math3:3.6.1'
     implementation 'org.apache.commons:commons-csv:1.14.1'
@@ -327,38 +282,7 @@ configurations.runtimeClasspath {
     exclude group: 'org.openjfx'
 }
 
-def os = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem
-
 def compileModules = ['jdk.incubator.vector', 'jdk.httpserver']
-def runtimeModules = [
-        'java.base',
-        'java.datatransfer',
-        'java.desktop',
-        'java.logging',
-        'java.management',
-        'java.naming',
-        'java.net.http',
-        'java.prefs',
-        'java.security.jgss',
-        'java.security.sasl',
-        'java.sql',
-        'java.sql.rowset',
-        'java.transaction.xa',
-        'javafx.base',
-        'javafx.controls',
-        'javafx.graphics',
-        'javafx.media',
-        'javafx.swing',
-        'jdk.accessibility',
-        'jdk.charsets',
-        'jdk.crypto.ec',
-        'jdk.httpserver',
-        'jdk.incubator.vector',
-        'jdk.jfr',
-        'jdk.management',
-        'jdk.unsupported',
-        'jdk.unsupported.desktop'
-]
 def commonPerformanceJvmArgs = ['-Xmx2g', '-XX:+UseCompactObjectHeaders']
 
 tasks.withType(JavaCompile) {
@@ -375,32 +299,9 @@ def jvmArgsClasspath =
          '--enable-native-access=javafx.graphics'] + //JDK24 - suppress restricted java.lang.System calls
         commonPerformanceJvmArgs
 
-/**
- * JVM Arguments for running the application on Windows.
- */
-def jvmArgsWindows = jvmArgsClasspath +
-        ['--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED', //windows users for JIDE
-         '-Djava.library.path=c:\\Program Files\\SDRplay\\API\\x64'] //SDRPlay API library path
-
-/**
- * JVM Arguments for running the application on Linux.
- */
-def jvmArgsLinux = jvmArgsClasspath
-
-/**
- * JVM Arguments for running the application on macOS.
- */
-def jvmArgsMac = jvmArgsLinux
-
-/**
- * JVM arguments for application-plugin launchers.  This must follow the requested JavaFX target platform instead
- * of the host build OS so cross-built Windows distributions include the Windows/JIDE exports.
- */
-def applicationJvmArgs = javafxPlatform == "win" ? jvmArgsWindows : (javafxPlatform == "mac" ? jvmArgsMac : jvmArgsLinux)
-
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
-    applicationDefaultJvmArgs = applicationJvmArgs
+    applicationDefaultJvmArgs = jvmArgsClasspath
 }
 
 distributions {
@@ -416,17 +317,12 @@ distributions {
 }
 
 test {
-    jvmArgs = applicationJvmArgs
+    useJUnitPlatform()
+    systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/test').get().asFile.absolutePath
+    jvmArgs = jvmArgsClasspath
 }
 
 jar {
-    inputs.property('javafxPlatform', javafxPlatform)
-
-    if(javafxPlatform == 'win') {
-        //A stale non-Windows compilation must never place this compatibility class in a Windows application JAR.
-        exclude 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.class'
-    }
-
     manifest {
         attributes (
                 'Implementation-Title'  : 'sdrtrunk-vce project',
@@ -547,666 +443,525 @@ String targetOsxX86_64 = 'osx-x86_64-v' + version
 String targetWindowsX86_64 = 'windows-x86_64-v' + version
 String targetWindowsAarch64 = 'windows-aarch64-v' + version
 
-/**
- * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU. Set SDRTRUNK_JDK_BASE to override the
- * default Gradle-user-home cache location.
- */
-String jdk_base = (System.getenv('SDRTRUNK_JDK_BASE') ?:
-        new File(gradle.gradleUserHomeDir, 'sdrtrunk-vce-jdks').absolutePath) + File.separator
-String jdk_linux_aarch64 = jdk_base + 'linux-arm64/jdk-25.0.1-full'
-String jdk_linux_x86_64 = jdk_base + 'linux-x64/jdk-25.0.1-full'
-String jdk_osx_x86_64 = jdk_base + 'osx-x64/jdk-25.0.1-full.jdk'
-String jdk_osx_aarch64 = jdk_base + 'osx-arm64/jdk-25.0.1-full.jdk'
-String jdk_windows_x86_64 = jdk_base + 'windows-x64/jdk-25.0.1-full'
-String jdk_windows_aarch64 = jdk_base + 'windows-arm64/jdk-25.0.1-full'
+def libericaRuntimeVersion = '25.0.1+11'
+def libericaRuntimeFolder = 'jre-25.0.1-full'
+def packagedApplicationName = project.name
+def runtimeCacheDirectory = file(System.getenv('SDRTRUNK_RUNTIME_CACHE') ?:
+        new File(gradle.gradleUserHomeDir,
+                "caches/sdrtrunk-vce/liberica-jre-full-${libericaRuntimeVersion.replace('+', '_')}").absolutePath)
 
 /**
- * Download URLs to download the JDK as part of the gradle build packaging process
+ * The six packages all use the pinned official BellSoft Liberica JRE Full contents. The downloads live outside
+ * build/ so clean builds reuse them. SDRTRUNK_RUNTIME_CACHE can override the cache location.
  */
-def jdk_download_base = "https://download.bell-sw.com/java/25.0.1+11/bellsoft-jdk25.0.1+11-"
-def jdk_download_suffix = "-full.tar.gz"
-def jdk_download_linux_aarch64 = jdk_download_base + "linux-aarch64" + jdk_download_suffix
-def jdk_download_linux_x86_64 = jdk_download_base + "linux-amd64" + jdk_download_suffix
-def jdk_download_osx_x86_64 = jdk_download_base + "macos-amd64" + jdk_download_suffix
-def jdk_download_osx_aarch64 = jdk_download_base + "macos-aarch64" + jdk_download_suffix
-def jdk_download_windows_x86_64 = jdk_download_base + "windows-amd64-full.zip"
-def jdk_download_windows_aarch64 = jdk_download_base + "windows-aarch64-full.zip"
-def java25Home = javaToolchains.launcherFor {
-    languageVersion = JavaLanguageVersion.of(25)
-}.map {
-    it.metadata.installationPath.asFile.absolutePath
-}
-
-/**
- * Configures the runtime zip task with additional options/settings.
- * @param rt task to configure
- * @param jvmArgs to use (windows or linux)
- * @param windowsTarget true when jlink is creating a Windows runtime image
- * @return configured task.
- */
-def runtimeJlinkOptions = { boolean windowsTarget ->
-    [
-        windowsTarget ? '--strip-java-debug-attributes' : '--strip-debug',
-        '--compress', 'zip-6',
-        '--no-header-files',
-        '--no-man-pages'
-    ]
-}
-
-def configureRuntime = { def task, List<String> jvmArgs, boolean windowsTarget ->
-    //Use the correct set of JVM arguments
-    task.extension.launcherData.get().jvmArgs = jvmArgs
-
-    task.extension.addModules(*runtimeModules)
-
-    //Use auto-detected modules and 'add' any specified modules.
-    task.extension.additive.set(true)
-
-    /*
-     * Native debug stripping can alter Windows PE content before signed source-JDK files are overlaid. Strip only
-     * Java debug attributes for Windows targets so the Authenticode equivalence check remains fail-closed.
-     */
-    task.extension.options.set(runtimeJlinkOptions(windowsTarget))
-}
-
-def configure = { org.beryx.runtime.RuntimeZipTask rt, List<String> jvmArgs, boolean windowsTarget ->
-    configureRuntime(rt, jvmArgs, windowsTarget)
-
-    //Runtime images have auto appended version in image zip name.  Override to include version in single target image.
-    rt.extension.imageZip.set(layout.buildDirectory.file('image/sdrtrunk-vce.zip'))
-}
-
-runtime {
-    distDir.set(layout.buildDirectory.dir('install/sdrtrunk-vce'))
-    javaHome.set(java25Home)
-
-    launcher {
-        jvmArgs = applicationJvmArgs
-    }
-
-    addModules(*runtimeModules)
-    additive.set(true)
-    options.set(runtimeJlinkOptions(os.isWindows()))
-
-}
-
-/**
- * Reads the Portable Executable fields that participate in an Authenticode signature.  Windows JDK vendors sign the
- * loose native files in the JDK, but those signatures may not be present on the corresponding native payloads stored
- * in the JMOD files consumed by jlink.
- */
-def readPortableExecutable = { File executable ->
-    byte[] bytes = Files.readAllBytes(executable.toPath())
-
-    if(bytes.length < 64 || Byte.toUnsignedInt(bytes[0]) != 0x4D || Byte.toUnsignedInt(bytes[1]) != 0x5A) {
-        throw new GradleException("Not a Portable Executable: ${executable}")
-    }
-
-    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-    long peOffsetValue = Integer.toUnsignedLong(buffer.getInt(0x3C))
-
-    if(peOffsetValue > bytes.length - 24) {
-        throw new GradleException("Invalid Portable Executable header offset in ${executable}")
-    }
-
-    int peOffset = (int)peOffsetValue
-
-    if(buffer.getInt(peOffset) != 0x00004550) {
-        throw new GradleException("Invalid Portable Executable signature in ${executable}")
-    }
-
-    int optionalHeaderSize = Short.toUnsignedInt(buffer.getShort(peOffset + 20))
-    int optionalHeaderOffset = peOffset + 24
-    int optionalHeaderEnd = optionalHeaderOffset + optionalHeaderSize
-
-    if(optionalHeaderEnd > bytes.length || optionalHeaderSize < 2) {
-        throw new GradleException("Invalid Portable Executable optional header in ${executable}")
-    }
-
-    int optionalHeaderMagic = Short.toUnsignedInt(buffer.getShort(optionalHeaderOffset))
-    int dataDirectoryOffset
-    int dataDirectoryCountOffset
-
-    if(optionalHeaderMagic == 0x20B) {
-        dataDirectoryOffset = optionalHeaderOffset + 112
-        dataDirectoryCountOffset = optionalHeaderOffset + 108
-    }
-    else if(optionalHeaderMagic == 0x10B) {
-        dataDirectoryOffset = optionalHeaderOffset + 96
-        dataDirectoryCountOffset = optionalHeaderOffset + 92
-    }
-    else {
-        throw new GradleException("Unsupported Portable Executable optional header in ${executable}")
-    }
-
-    if(dataDirectoryCountOffset + 4 > optionalHeaderEnd ||
-        Integer.toUnsignedLong(buffer.getInt(dataDirectoryCountOffset)) < 5) {
-        throw new GradleException("Portable Executable has no certificate table directory: ${executable}")
-    }
-
-    int checksumOffset = optionalHeaderOffset + 64
-    int certificateDirectoryOffset = dataDirectoryOffset + (4 * 8)
-
-    if(checksumOffset + 4 > optionalHeaderEnd || certificateDirectoryOffset + 8 > optionalHeaderEnd) {
-        throw new GradleException("Truncated Portable Executable optional header in ${executable}")
-    }
-
-    long certificateOffsetValue = Integer.toUnsignedLong(buffer.getInt(certificateDirectoryOffset))
-    long certificateSizeValue = Integer.toUnsignedLong(buffer.getInt(certificateDirectoryOffset + 4))
-
-    if((certificateOffsetValue == 0) != (certificateSizeValue == 0)) {
-        throw new GradleException("Invalid Portable Executable certificate table in ${executable}")
-    }
-
-    if(certificateSizeValue > 0) {
-        if(certificateOffsetValue % 8 != 0 || certificateSizeValue < 8 ||
-            certificateOffsetValue > bytes.length - certificateSizeValue) {
-            throw new GradleException("Out-of-bounds Portable Executable certificate table in ${executable}")
-        }
-
-        int certificateOffset = (int)certificateOffsetValue
-        long certificateLength = Integer.toUnsignedLong(buffer.getInt(certificateOffset))
-        int certificateType = Short.toUnsignedInt(buffer.getShort(certificateOffset + 6))
-
-        if(certificateLength < 8 || certificateLength > certificateSizeValue || certificateType != 0x0002) {
-            throw new GradleException("Invalid Authenticode certificate record in ${executable}")
-        }
-    }
-
-    [
-        bytes: bytes,
-        machine: Short.toUnsignedInt(buffer.getShort(peOffset + 4)),
-        checksumOffset: checksumOffset,
-        certificateDirectoryOffset: certificateDirectoryOffset,
-        certificateOffset: (int)certificateOffsetValue,
-        certificateSize: (int)certificateSizeValue
-    ]
-}
-
-/**
- * Computes a PE digest after removing only the fields Authenticode is permitted to change.  This is not a signature
- * validation routine; it proves that a signed loose-JDK native file and the jlink output contain identical code and
- * data before the signed source replaces the unsigned output.
- */
-def normalizedPortableExecutableDigest = { File executable ->
-    def pe = readPortableExecutable(executable)
-    byte[] normalized = pe.bytes.clone()
-    Arrays.fill(normalized, pe.checksumOffset, pe.checksumOffset + 4, (byte)0)
-    Arrays.fill(normalized, pe.certificateDirectoryOffset, pe.certificateDirectoryOffset + 8, (byte)0)
-
-    MessageDigest digest = MessageDigest.getInstance('SHA-256')
-
-    if(pe.certificateSize > 0) {
-        digest.update(normalized, 0, pe.certificateOffset)
-        int bytesAfterCertificate = normalized.length - pe.certificateOffset - pe.certificateSize
-
-        if(bytesAfterCertificate > 0) {
-            digest.update(normalized, pe.certificateOffset + pe.certificateSize, bytesAfterCertificate)
-        }
-    }
-    else {
-        digest.update(normalized)
-    }
-
-    digest.digest()
-}
-
-def sha256 = { InputStream input ->
-    MessageDigest digest = MessageDigest.getInstance('SHA-256')
-    byte[] buffer = new byte[64 * 1024]
-    int count
-
-    while((count = input.read(buffer)) >= 0) {
-        if(count > 0) {
-            digest.update(buffer, 0, count)
-        }
-    }
-
-    digest.digest()
-}
-
-def windowsRuntimeMachineByTarget = [
-    (targetWindowsX86_64): 0x8664,
-    (targetWindowsAarch64): 0xAA64
+def libericaReleaseBase = "https://github.com/bell-sw/Liberica/releases/download/${libericaRuntimeVersion}"
+def runtimeTargets = [
+        [
+                id: 'LinuxAarch64',
+                targetName: targetLinuxAarch64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-linux-aarch64-full.tar.gz",
+                archiveRoot: libericaRuntimeFolder,
+                archiveType: 'tar.gz',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-linux-aarch64-full.tar.gz",
+                size: 145580094L,
+                sha256: '3f28b269a6e29a77187546da32eb2474fd4b8f4c8b73b7bb1c934d5f9b98bb8f',
+                releaseArchitecture: 'aarch64',
+                windows: false
+        ],
+        [
+                id: 'LinuxX86_64',
+                targetName: targetLinuxX86_64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-linux-amd64-full.tar.gz",
+                archiveRoot: libericaRuntimeFolder,
+                archiveType: 'tar.gz',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-linux-amd64-full.tar.gz",
+                size: 142411056L,
+                sha256: '5dd2f7ef72c66b095f3c29ba1c2944e3b651870d534f4745ef46936d3d3447c8',
+                releaseArchitecture: 'x86_64',
+                windows: false
+        ],
+        [
+                id: 'OsxAarch64',
+                targetName: targetOsxAarch64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-macos-aarch64-full.tar.gz",
+                archiveRoot: "${libericaRuntimeFolder}.jre",
+                archiveType: 'tar.gz',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-macos-aarch64-full.tar.gz",
+                size: 122063016L,
+                sha256: '72442fad43060b0e2f94b6559d5b375ccb45182b1b291d2e03c74eb7672c8383',
+                releaseArchitecture: 'aarch64',
+                windows: false
+        ],
+        [
+                id: 'OsxX86_64',
+                targetName: targetOsxX86_64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-macos-amd64-full.tar.gz",
+                archiveRoot: "${libericaRuntimeFolder}.jre",
+                archiveType: 'tar.gz',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-macos-amd64-full.tar.gz",
+                size: 127114406L,
+                sha256: 'f928dd4a3d3b726645a03d2b987803b9163592c8a29a5e4cf0598136daa6a04e',
+                releaseArchitecture: 'x86_64',
+                windows: false
+        ],
+        [
+                id: 'WindowsAarch64',
+                targetName: targetWindowsAarch64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-windows-aarch64-full.zip",
+                archiveRoot: libericaRuntimeFolder,
+                archiveType: 'zip',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-windows-aarch64-full.zip",
+                size: 48590725L,
+                sha256: '2276f80f1a4dbbe531379a38cf00cb91ed79ce057dbc70f5cf2b53f5d24402ee',
+                releaseArchitecture: 'aarch64',
+                windows: true
+        ],
+        [
+                id: 'WindowsX86_64',
+                targetName: targetWindowsX86_64,
+                archiveName: "bellsoft-jre${libericaRuntimeVersion}-windows-amd64-full.zip",
+                archiveRoot: libericaRuntimeFolder,
+                archiveType: 'zip',
+                url: "${libericaReleaseBase}/bellsoft-jre${libericaRuntimeVersion}-windows-amd64-full.zip",
+                size: 118973801L,
+                sha256: '0d855829d51b49dd7a54bf0be930408ebbff8bbd487fdac287237468f2cd33c0',
+                releaseArchitecture: 'x86_64',
+                windows: true
+        ]
 ]
 
-def currentWindowsRuntimeMachine = {
-    String architecture = System.getProperty('os.arch', '').toLowerCase(Locale.ROOT)
-
-    if(architecture in ['amd64', 'x86_64']) {
-        return 0x8664
-    }
-
-    if(architecture in ['aarch64', 'arm64']) {
-        return 0xAA64
-    }
-
-    throw new GradleException("Unsupported Windows runtime architecture: ${architecture}")
+runtimeTargets.each { target ->
+    target.archiveFile = new File(runtimeCacheDirectory, target.archiveName as String)
+    target.packageRoot = "${packagedApplicationName}-${target.targetName}"
 }
 
-def windowsJreDescriptors = { org.beryx.runtime.JreTask jreTask ->
-    Map<String, org.beryx.runtime.data.TargetPlatform> targetPlatforms = jreTask.targetPlatforms.get()
-    List<Map<String, Object>> descriptors = targetPlatforms.findAll { platformName, platform ->
-        windowsRuntimeMachineByTarget.containsKey(platformName)
-    }.collect { platformName, platform ->
+def fileDigest = { File source, String algorithm ->
+    MessageDigest digest = MessageDigest.getInstance(algorithm)
+    byte[] buffer = new byte[64 * 1024]
+
+    source.withInputStream { input ->
+        int count
+
+        while((count = input.read(buffer)) >= 0) {
+            if(count > 0) {
+                digest.update(buffer, 0, count)
+            }
+        }
+    }
+
+    digest.digest().encodeHex().toString()
+}
+
+def cachedRuntimeIsValid = { Map target ->
+    File archive = target.archiveFile as File
+    archive.isFile() && archive.length() == (target.size as long) &&
+            fileDigest(archive, 'SHA-256') == target.sha256
+}
+
+def runtimeArchiveTree = { Map target ->
+    File archive = target.archiveFile as File
+    target.archiveType == 'zip' ? zipTree(archive) : tarTree(resources.gzip(archive))
+}
+
+//Gradle expands TAR symlinks as empty files. Materialize BellSoft's legal-file links so every notice remains readable.
+def legalLinkSourceByName = [
+        'ADDITIONAL_LICENSE_INFO': 'legal/java.base/ADDITIONAL_LICENSE_INFO',
+        'ASSEMBLY_EXCEPTION': 'legal/java.base/ASSEMBLY_EXCEPTION',
+        'LICENSE': 'legal/java.base/LICENSE',
+        'cldr.md': 'legal/java.base/cldr.md',
+        'mesa3d.md': 'legal/java.desktop/mesa3d.md',
+        'pipewire.md': 'legal/java.desktop/pipewire.md'
+]
+def expectedMaterializedLegalLinks = 174
+
+
+def archiveEntryBytes = { ZipFile zip, String entryName ->
+    def entry = zip.getEntry(entryName)
+
+    if(entry == null || entry.directory) {
+        throw new GradleException("Required package entry is missing: ${entryName}")
+    }
+
+    zip.getInputStream(entry).withCloseable { input -> input.readAllBytes() }
+}
+
+def archiveEntryText = { ZipFile zip, String entryName ->
+    new String(archiveEntryBytes(zip, entryName), java.nio.charset.StandardCharsets.UTF_8)
+}
+
+def verifyRuntimePackage = { Map target, File archive ->
+    if(!archive.isFile() || archive.length() == 0) {
+        throw new GradleException("Runtime package is missing or empty: ${archive}")
+    }
+
+    String root = target.packageRoot as String
+
+    if(archive.name != "${root}.zip") {
+        throw new GradleException("Package root ${root} does not match archive ${archive.name}")
+    }
+    String runtimeLauncher = "${root}/bin/java${target.windows ? '.exe' : ''}"
+    String applicationJar = "${root}/lib/${packagedApplicationName}-${releaseVersion}.jar"
+    ZipFile zip = new ZipFile(archive)
+
+    try {
+        def entries = zip.entries().toList()
+        def outsideRoot = entries.findAll { entry ->
+            entry.name != "${root}/" && !entry.name.startsWith("${root}/")
+        }
+
+        if(!outsideRoot.isEmpty()) {
+            throw new GradleException("Package contains entries outside ${root}: ${outsideRoot*.name}")
+        }
+
+        def vendorRootEntries = entries.findAll { entry ->
+            entry.name.startsWith("${root}/${target.archiveRoot}/")
+        }
+
+        if(!vendorRootEntries.isEmpty()) {
+            throw new GradleException("Package retains the vendor archive root: ${vendorRootEntries*.name}")
+        }
+
+        def emptyLegalFiles = entries.findAll { entry ->
+            !entry.directory && entry.name.startsWith("${root}/legal/") && entry.size == 0
+        }
+
+        if(!emptyLegalFiles.isEmpty()) {
+            throw new GradleException("Package contains empty vendor legal files: ${emptyLegalFiles*.name}")
+        }
+
+        def packagedFileNames = entries.findAll { !it.directory }*.name
+        def emptyDirectories = entries.findAll { directory ->
+            directory.directory && !packagedFileNames.any { it.startsWith(directory.name) }
+        }
+
+        if(!emptyDirectories.isEmpty()) {
+            throw new GradleException("Package contains empty directories: ${emptyDirectories*.name}")
+        }
+
         [
-            label: platformName,
-            sourceJdkHome: new File(platform.jdkHome.get()),
-            runtimeRoot: new File(jreTask.jreDirAsFile, "${project.name}-${platformName}"),
-            expectedMachine: windowsRuntimeMachineByTarget.get(platformName)
-        ]
-    }
+                runtimeLauncher,
+                "${root}/bin/${packagedApplicationName}",
+                "${root}/bin/${packagedApplicationName}.bat",
+                applicationJar,
+                "${root}/stats-web/index.html",
+                "${root}/LICENSE",
+                "${root}/RUNTIME-LICENSE",
+                "${root}/NOTICE",
+                "${root}/release"
+        ].each { archiveEntryBytes(zip, it) }
 
-    if(descriptors.isEmpty() && targetPlatforms.isEmpty() && os.isWindows()) {
-        descriptors.add([
-            label: 'windows-current',
-            sourceJdkHome: new File(jreTask.javaHome),
-            runtimeRoot: jreTask.jreDirAsFile,
-            expectedMachine: currentWindowsRuntimeMachine()
-        ])
-    }
-
-    descriptors
-}
-
-def windowsRuntimeSourceNatives = { List<Map<String, Object>> descriptors ->
-    descriptors.collectMany { descriptor ->
-        fileTree(new File(descriptor.sourceJdkHome as File, 'bin')) {
-            include '**/*.exe'
-            include '**/*.dll'
-        }.files
-    }
-}
-
-/*
- * jre -> runtime -> runtimeZip is the runtime plugin's dependency chain.  Appending this action to jre replaces only
- * native files already selected by jlink, before runtime copies the JRE and before any RuntimeZipTask creates a ZIP.
- */
-tasks.named('jre', org.beryx.runtime.JreTask) { jreTask ->
-    inputs.property('windowsAuthenticodeOverlayFormat', 1)
-    inputs.files(providers.provider {
-        windowsRuntimeSourceNatives(windowsJreDescriptors(jreTask))
-    }).withPropertyName('signedWindowsRuntimeNatives')
-        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
-
-    doFirst {
-        if(!windowsJreDescriptors(jreTask).isEmpty() &&
-            (jreTask.options.contains('--strip-debug') ||
-                !jreTask.options.contains('--strip-java-debug-attributes'))) {
-            throw new GradleException('Windows runtime jlink options must preserve native PE content')
+        if(zip.getEntry("${root}/bin/javac") != null || zip.getEntry("${root}/bin/javac.exe") != null) {
+            throw new GradleException("Package ${archive.name} contains a JDK instead of the smaller JRE")
         }
-    }
 
-    doLast {
-        windowsJreDescriptors(jreTask).each { descriptor ->
-            File sourceBin = new File(descriptor.sourceJdkHome as File, 'bin')
-            File runtimeBin = new File(descriptor.runtimeRoot as File, 'bin')
+        String releaseText = archiveEntryText(zip, "${root}/release")
 
-            if(!sourceBin.isDirectory()) {
-                throw new GradleException("Windows source JDK bin directory is missing: ${sourceBin}")
-            }
-
-            if(!runtimeBin.isDirectory()) {
-                throw new GradleException("Windows jlink runtime bin directory is missing: ${runtimeBin}")
-            }
-
-            List<File> runtimeNatives = fileTree(runtimeBin) {
-                include '**/*.exe'
-                include '**/*.dll'
-            }.files.sort { left, right -> left.absolutePath <=> right.absolutePath }
-
-            if(runtimeNatives.isEmpty()) {
-                throw new GradleException("Windows jlink runtime contains no native files: ${runtimeBin}")
-            }
-
-            File sourceLauncher = new File(sourceBin, 'java.exe')
-            File runtimeLauncher = new File(runtimeBin, 'java.exe')
-
-            if(!sourceLauncher.isFile() || !runtimeLauncher.isFile()) {
-                throw new GradleException("Windows Java launcher is missing for ${descriptor.label}")
-            }
-
-            int expectedMachine = descriptor.expectedMachine as int
-
-            if(readPortableExecutable(sourceLauncher).machine != expectedMachine ||
-                readPortableExecutable(runtimeLauncher).machine != expectedMachine) {
-                throw new GradleException("Windows Java launcher architecture does not match ${descriptor.label}")
-            }
-
-            int overlaid = 0
-            int alreadyIdentical = 0
-
-            runtimeNatives.each { runtimeNative ->
-                def relativePath = runtimeBin.toPath().relativize(runtimeNative.toPath())
-                File sourceNative = sourceBin.toPath().resolve(relativePath).toFile()
-
-                if(!sourceNative.isFile()) {
-                    throw new GradleException("Signed source JDK native file is missing for ${runtimeNative}: ${sourceNative}")
-                }
-
-                def sourcePe = readPortableExecutable(sourceNative)
-                def runtimePe = readPortableExecutable(runtimeNative)
-
-                if(sourcePe.certificateSize == 0) {
-                    throw new GradleException("Source JDK native file is not Authenticode signed: ${sourceNative}")
-                }
-
-                if(sourcePe.machine != runtimePe.machine) {
-                    throw new GradleException("Portable Executable machine mismatch for ${runtimeNative}")
-                }
-
-                if(Files.mismatch(sourceNative.toPath(), runtimeNative.toPath()) == -1) {
-                    alreadyIdentical++
-                }
-                else {
-                    byte[] sourceDigest = normalizedPortableExecutableDigest(sourceNative)
-                    byte[] runtimeDigest = normalizedPortableExecutableDigest(runtimeNative)
-
-                    if(!MessageDigest.isEqual(sourceDigest, runtimeDigest)) {
-                        throw new GradleException("Signed source and jlink native content differ beyond Authenticode metadata: ${runtimeNative}")
-                    }
-
-                    Files.copy(sourceNative.toPath(), runtimeNative.toPath(), StandardCopyOption.REPLACE_EXISTING,
-                        StandardCopyOption.COPY_ATTRIBUTES)
-
-                    if(Files.mismatch(sourceNative.toPath(), runtimeNative.toPath()) != -1) {
-                        throw new GradleException("Failed to overlay signed source JDK native file: ${runtimeNative}")
-                    }
-
-                    overlaid++
-                }
-            }
-
-            logger.lifecycle("Windows Authenticode overlay ${descriptor.label}: ${overlaid} replaced, " +
-                "${alreadyIdentical} already identical")
+        if(!releaseText.contains('IMPLEMENTOR="BellSoft"') ||
+                !releaseText.contains('JAVA_VERSION="25.0.1"') ||
+                !releaseText.contains("OS_ARCH=\"${target.releaseArchitecture}\"")) {
+            throw new GradleException("Package ${archive.name} has unexpected Liberica runtime metadata")
         }
-    }
-}
 
-def windowsArchiveDescriptors = { org.beryx.runtime.RuntimeZipTask runtimeZipTask ->
-    Map<String, org.beryx.runtime.data.TargetPlatform> targetPlatforms = runtimeZipTask.targetPlatforms.get()
-    File configuredArchive = runtimeZipTask.extension.imageZip.get().asFile
-    int extensionSeparator = configuredArchive.name.lastIndexOf('.')
-    String archiveExtension = extensionSeparator > 0 ?
-        configuredArchive.name.substring(extensionSeparator + 1) : 'zip'
-    String archiveBaseName = extensionSeparator > 0 ?
-        configuredArchive.name.substring(0, extensionSeparator) : configuredArchive.name
-    List<Map<String, Object>> descriptors = targetPlatforms.findAll { platformName, platform ->
-        windowsRuntimeMachineByTarget.containsKey(platformName)
-    }.collect { platformName, platform ->
-        [
-            label: platformName,
-            sourceJdkHome: new File(platform.jdkHome.get()),
-            archive: new File(configuredArchive.parentFile, "${archiveBaseName}-${platformName}.${archiveExtension}"),
-            archiveRuntimeRoot: "${project.name}-${platformName}/bin/"
-        ]
-    }
+        ["${root}/bin/${packagedApplicationName}", "${root}/bin/${packagedApplicationName}.bat"].each { launcherName ->
+            String launcher = archiveEntryText(zip, launcherName)
 
-    if(descriptors.isEmpty() && targetPlatforms.isEmpty() && os.isWindows()) {
-        descriptors.add([
-            label: 'windows-current',
-            sourceJdkHome: new File(runtimeZipTask.javaHomeOrDefault),
-            archive: configuredArchive,
-            archiveRuntimeRoot: "${runtimeZipTask.imageDir.asFile.name}/bin/"
-        ])
-    }
-
-    descriptors
-}
-
-def verifyWindowsApplicationArchive = { ZipFile zip, Map<String, Object> descriptor ->
-    String archiveRuntimeRoot = descriptor.archiveRuntimeRoot as String
-    String archiveApplicationRoot = archiveRuntimeRoot.substring(0,
-            archiveRuntimeRoot.length() - 'bin/'.length())
-    String launcherEntryName = "${archiveApplicationRoot}bin/${project.name}.bat"
-    def launcherEntry = zip.getEntry(launcherEntryName)
-
-    if(launcherEntry == null || launcherEntry.directory) {
-        throw new GradleException("Windows launcher is missing from ZIP: ${launcherEntryName}")
-    }
-
-    String launcherText
-    zip.getInputStream(launcherEntry).withCloseable { input ->
-        launcherText = input.getText('UTF-8')
-    }
-
-    [
-        '--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED',
-        '-Djava.library.path=c:\\Program Files\\SDRplay\\API\\x64'
-    ].each { requiredArgument ->
-        if(!launcherText.contains(requiredArgument)) {
-            throw new GradleException("Windows launcher ${launcherEntryName} is missing ${requiredArgument}")
-        }
-    }
-
-    String applicationJarEntryName = "${archiveApplicationRoot}lib/${project.name}-${version}.jar"
-    def applicationJarEntry = zip.getEntry(applicationJarEntryName)
-
-    if(applicationJarEntry == null || applicationJarEntry.directory) {
-        throw new GradleException("Windows application JAR is missing from ZIP: ${applicationJarEntryName}")
-    }
-
-    String compatibilityEntryName = 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.class'
-    zip.getInputStream(applicationJarEntry).withCloseable { input ->
-        new ZipInputStream(input).withCloseable { applicationJar ->
-            def nestedEntry
-
-            while((nestedEntry = applicationJar.nextEntry) != null) {
-                if(nestedEntry.name == compatibilityEntryName) {
-                    throw new GradleException("Windows application JAR contains non-Windows compatibility class: " +
-                            compatibilityEntryName)
+            [
+                    '--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED',
+                    '--add-modules=jdk.incubator.vector,jdk.httpserver',
+                    '--enable-native-access=ALL-UNNAMED',
+                    '--enable-native-access=javafx.graphics',
+                    '-Xmx2g',
+                    '-XX:+UseCompactObjectHeaders'
+            ].each { requiredArgument ->
+                if(!launcher.contains(requiredArgument)) {
+                    throw new GradleException("Launcher ${launcherName} is missing ${requiredArgument}")
                 }
+            }
+
+            if(launcherName.endsWith('.bat')) {
+                if(!launcher.contains('set JAVA_HOME=%APP_HOME%') ||
+                        !launcher.contains('set JAVA_EXE=%JAVA_HOME%/bin/java.exe')) {
+                    throw new GradleException("Launcher ${launcherName} does not use its bundled Java runtime")
+                }
+            }
+            else if(!launcher.contains('JAVA_HOME=$APP_HOME') ||
+                    !launcher.contains('JAVACMD=$JAVA_HOME/bin/java')) {
+                throw new GradleException("Launcher ${launcherName} does not use its bundled Java runtime")
+            }
+
+        }
+
+        byte[] applicationJarBytes = archiveEntryBytes(zip, applicationJar)
+        new JarInputStream(new ByteArrayInputStream(applicationJarBytes)).withCloseable { applicationJarInput ->
+            def manifest = applicationJarInput.manifest
+
+            if(manifest == null ||
+                    manifest.mainAttributes.getValue('Implementation-Version') != releaseVersion ||
+                    manifest.mainAttributes.getValue('Update-Track') != updateTrack ||
+                    manifest.mainAttributes.getValue('Update-Build') != updateBuild) {
+                throw new GradleException("Application metadata does not match package ${archive.name}")
             }
         }
+
+    }
+    finally {
+        zip.close()
     }
 }
 
-/* Verify the bytes that were actually written to each Windows archive, not only the intermediate runtime image. */
-tasks.withType(org.beryx.runtime.RuntimeZipTask).configureEach { runtimeZipTask ->
-    inputs.files(providers.provider {
-        windowsRuntimeSourceNatives(windowsArchiveDescriptors(runtimeZipTask))
-    }).withPropertyName('signedWindowsRuntimeNatives')
-        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
+runtimeTargets.each { target ->
+    def downloadTask = tasks.register("downloadLiberica${target.id}") {
+        group = 'distribution'
+        description = "Downloads the pinned BellSoft JRE for ${target.targetName}."
+        inputs.property('url', target.url)
+        inputs.property('size', target.size)
+        inputs.property('sha256', target.sha256)
+        outputs.file(target.archiveFile)
+        outputs.upToDateWhen { cachedRuntimeIsValid(target) }
 
-    doLast {
-        windowsArchiveDescriptors(runtimeZipTask).each { descriptor ->
-            File archive = descriptor.archive as File
-            File sourceBin = new File(descriptor.sourceJdkHome as File, 'bin')
-            String archiveRuntimeRoot = descriptor.archiveRuntimeRoot as String
-            int verified = 0
-
-            if(!archive.isFile()) {
-                throw new GradleException("Windows runtime archive is missing: ${archive}")
+        doLast {
+            if(cachedRuntimeIsValid(target)) {
+                return
             }
 
-            ZipFile zip = new ZipFile(archive)
+            File destination = target.archiveFile as File
+            destination.parentFile.mkdirs()
+            File partial = new File(destination.parentFile,
+                    "${destination.name}.part-${ProcessHandle.current().pid()}-${Thread.currentThread().id}")
 
             try {
-                verifyWindowsApplicationArchive(zip, descriptor)
+                Files.deleteIfExists(partial.toPath())
+                def connection = new URI(target.url as String).toURL().openConnection()
+                connection.connectTimeout = 30_000
+                connection.readTimeout = 120_000
+                connection.setRequestProperty('User-Agent', 'sdrtrunk-vce Gradle packager')
 
-                zip.entries().toList().findAll { entry ->
-                    !entry.directory && entry.name.startsWith(archiveRuntimeRoot) &&
-                        (entry.name.toLowerCase(Locale.ROOT).endsWith('.exe') ||
-                            entry.name.toLowerCase(Locale.ROOT).endsWith('.dll'))
-                }.each { entry ->
-                    String relativePath = entry.name.substring(archiveRuntimeRoot.length())
-                    File sourceNative = new File(sourceBin, relativePath.replace('/', File.separator))
-
-                    if(!sourceNative.isFile()) {
-                        throw new GradleException("Signed source JDK native file is missing for ZIP entry ${entry.name}")
-                    }
-
-                    byte[] archiveDigest
-                    zip.getInputStream(entry).withCloseable { input -> archiveDigest = sha256(input) }
-                    byte[] sourceDigest
-                    sourceNative.withInputStream { input -> sourceDigest = sha256(input) }
-
-                    if(!MessageDigest.isEqual(sourceDigest, archiveDigest)) {
-                        throw new GradleException("Windows runtime ZIP native file differs from signed source: ${entry.name}")
-                    }
-
-                    verified++
+                connection.getInputStream().withCloseable { input ->
+                    partial.withOutputStream { output -> input.transferTo(output) }
                 }
+
+                if(partial.length() != (target.size as long) ||
+                        fileDigest(partial, 'SHA-256') != target.sha256) {
+                    throw new GradleException("Downloaded runtime failed size or checksum verification: ${target.url}")
+                }
+
+                try {
+                    Files.move(partial.toPath(), destination.toPath(),
+                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                }
+                catch(java.nio.file.AtomicMoveNotSupportedException ignored) {
+                    Files.move(partial.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+
+                logger.lifecycle("Cached ${target.archiveName} in ${runtimeCacheDirectory}")
             }
             finally {
-                zip.close()
+                Files.deleteIfExists(partial.toPath())
+            }
+        }
+    }
+
+    target.downloadTask = downloadTask
+}
+
+runtimeTargets.findAll { !it.windows }.each { target ->
+    def materializedDirectory = layout.buildDirectory.dir("generated/runtime-legal/${target.id}")
+    def materializeTask = tasks.register("materializeRuntimeLegalLinks${target.id}") {
+        dependsOn(target.downloadTask)
+        inputs.file(target.archiveFile)
+        inputs.property('archiveRoot', target.archiveRoot)
+        inputs.property('legalLinkSources', legalLinkSourceByName)
+        inputs.property('expectedLegalLinks', expectedMaterializedLegalLinks)
+        outputs.dir(materializedDirectory)
+
+        doLast {
+            File outputDirectory = materializedDirectory.get().asFile
+
+            if(outputDirectory.exists()) {
+                Files.walk(outputDirectory.toPath()).withCloseable { paths ->
+                    paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+                }
             }
 
-            if(verified == 0) {
-                throw new GradleException("Windows runtime archive contains no native files: ${archive}")
+            Map<String, byte[]> sourceContents = [:]
+            List<String> linkPaths = []
+
+            runtimeArchiveTree(target).visit { details ->
+                if(details.directory) {
+                    return
+                }
+
+                String[] segments = details.relativePath.segments
+
+                if(segments.length < 2 || segments[0] != target.archiveRoot) {
+                    throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
+                }
+
+                String relativePath = segments.drop(1).join('/')
+
+                if(legalLinkSourceByName.values().contains(relativePath)) {
+                    sourceContents[relativePath] = Files.readAllBytes(details.file.toPath())
+                }
+
+                if(relativePath.startsWith('legal/') && details.file.length() == 0) {
+                    linkPaths.add(relativePath)
+                }
             }
 
-            logger.lifecycle("Windows Authenticode archive verification ${descriptor.label}: ${verified} native files")
+            if(linkPaths.size() != expectedMaterializedLegalLinks) {
+                throw new GradleException("Expected ${expectedMaterializedLegalLinks} vendor legal links in " +
+                        "${target.archiveName}, found ${linkPaths.size()}")
+            }
+
+            linkPaths.each { linkPath ->
+                String fileName = linkPath.tokenize('/').last()
+                String sourcePath = legalLinkSourceByName[fileName]
+                byte[] contents = sourceContents[sourcePath]
+
+                if(sourcePath == null || contents == null || contents.length == 0) {
+                    throw new GradleException("Cannot materialize vendor legal link ${linkPath} in ${target.archiveName}")
+                }
+
+                File destination = new File(outputDirectory, linkPath)
+                Files.createDirectories(destination.parentFile.toPath())
+                Files.write(destination.toPath(), contents)
+            }
         }
+    }
+
+    target.materializedLegalDirectory = materializedDirectory
+    target.materializeLegalTask = materializeTask
+}
+
+tasks.named('startScripts') { startScriptsTask ->
+    doLast {
+        File unixLauncher = new File(startScriptsTask.outputDir, packagedApplicationName)
+        File windowsLauncher = new File(startScriptsTask.outputDir, "${packagedApplicationName}.bat")
+        String unixMarker = '# Use the maximum available, or set MAX_FD != -1 to use that value.'
+        String windowsMarker = '@rem Add default JVM options here.'
+        String unixText = unixLauncher.getText('UTF-8')
+        String windowsText = windowsLauncher.getText('UTF-8')
+
+        if(unixText.count(unixMarker) != 1 || windowsText.count(windowsMarker) != 1) {
+            throw new GradleException('Gradle launcher format changed; refusing to create a package that ignores its bundled Java runtime')
+        }
+
+        unixLauncher.setText(unixText.replace(unixMarker,
+                "JAVA_HOME=\$APP_HOME\n\n${unixMarker}"), 'UTF-8')
+        windowsLauncher.setText(windowsText.replace(windowsMarker,
+                "set JAVA_HOME=%APP_HOME%\r\n\r\n${windowsMarker}"), 'UTF-8')
     }
 }
 
-/**
- * Creates a release package for the current operating system.
- *
- * Usage: gradle runtimeZipCurrent
- * Usage: gradlew runtimeZipCurrent   (windows - using gradlew)
- * Usage: ./gradlew runtimeZipCurrent   (linux/macos - using gradlew)
- */
-tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
-    def arch = System.properties.getProperty("os.arch")
-    def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
+def applicationInstallDirectory = layout.buildDirectory.dir("install/${packagedApplicationName}")
+def packageTasks = []
 
-    if(os.isWindows()) {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetWindowsX86_64, javaHome)
+runtimeTargets.each { target ->
+    def packageTask = tasks.register("runtimeZip${target.id}", Zip) {
+        description = "Packages ${target.targetName} with its complete BellSoft JRE."
+        dependsOn(target.downloadTask)
+        dependsOn(tasks.named('installDist'))
+        dependsOn('verifyApprovedReleaseNotes')
+        dependsOn('verifyBundledApplicationDatabaseMigrator')
+        dependsOn('verifyUpdateChannelMetadata')
+
+        if(!target.windows) {
+            dependsOn(target.materializeLegalTask)
         }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
+
+        archiveFileName = "${packagedApplicationName}-${target.targetName}.zip"
+        destinationDirectory = layout.buildDirectory.dir('image')
+        duplicatesStrategy = DuplicatesStrategy.FAIL
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+        includeEmptyDirs = false
+        zip64 = true
+
+        from(runtimeArchiveTree(target)) {
+            into(target.packageRoot)
+
+            eachFile { details ->
+                String[] segments = details.relativePath.segments
+
+                if(segments.length < 2 || segments[0] != target.packageRoot ||
+                        segments[1] != target.archiveRoot) {
+                    throw new GradleException("Unexpected top-level entry in ${target.archiveName}: ${details.path}")
+                }
+
+                if(segments.length == 2) {
+                    details.exclude()
+                    return
+                }
+
+                String[] strippedSegments = segments.drop(2) as String[]
+
+                if(!target.windows && strippedSegments[0] == 'legal' && details.file.length() == 0) {
+                    details.exclude()
+                    return
+                }
+
+                //The package root keeps the project GPL; retain the runtime's separate license under a clear name.
+                if(strippedSegments.length == 1 && strippedSegments[0] == 'LICENSE') {
+                    strippedSegments = ['RUNTIME-LICENSE'] as String[]
+                }
+
+                List<String> outputSegments = [target.packageRoot.toString()] + strippedSegments.toList()
+                details.relativePath = new org.gradle.api.file.RelativePath(
+                        details.relativePath.isFile(), outputSegments as String[])
+
+                if(!target.windows) {
+                    String strippedPath = strippedSegments.join('/')
+
+                    if(strippedPath.startsWith('bin/') ||
+                            strippedPath == 'lib/jexec' ||
+                            strippedPath == 'lib/jspawnhelper') {
+                        details.permissions { unix('rwxr-xr-x') }
+                    }
+                }
+            }
         }
-        configure(rt, jvmArgsWindows, true)
+
+        if(!target.windows) {
+            from(target.materializedLegalDirectory) {
+                into(target.packageRoot)
+            }
+        }
+
+        from(applicationInstallDirectory) {
+            into(target.packageRoot)
+
+            eachFile { details ->
+                if(details.relativePath.pathString.endsWith("/bin/${packagedApplicationName}")) {
+                    details.permissions { unix('rwxr-xr-x') }
+                }
+            }
+        }
+
+        doLast {
+            verifyRuntimePackage(target, archiveFile.get().asFile)
+        }
     }
-    else if(os.isLinux())
-    {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetLinuxX86_64, javaHome)
-        }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
-        }
-        configure(rt, jvmArgsLinux, false)
-    }
-    else if(os.isMacOsX())
-    {
-        if(arch.equals("amd64")) {
-            rt.extension.targetPlatform(targetOsxX86_64, javaHome)
-        }
-        else if(arch.equals("aarch64")) {
-            rt.extension.targetPlatform(targetOsxAarch64, javaHome)
-        }
-        configure(rt, jvmArgsMac, false)
-    }
+
+    packageTasks.add(packageTask)
 }
 
+tasks.register('runtimeZipAll') {
+    group = 'distribution'
+    description = 'Builds one application distribution and packages all six supported OS/CPU archives.'
+    dependsOn(packageTasks)
 
-/**
- * Creates a Windows release package.
- *
- * Note: you cannot create both Windows and Linux releases at the same time due to limitations of the Runtime plugin
- *
- * Usage: gradle --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win
- * Usage: gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win   (windows)
- * Usage: ./gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win   (linux/macOS)
- */
-tasks.register('runtimeZipWindows', org.beryx.runtime.RuntimeZipTask) {rt ->
-    outputs.upToDateWhen { false }
-    mustRunAfter(tasks.named('clean'))
+    doLast {
+        Set<String> expected = runtimeTargets.collect {
+            "${packagedApplicationName}-${it.targetName}.zip"
+        } as Set
+        Set<String> actual = fileTree(layout.buildDirectory.dir('image')) {
+            include "${packagedApplicationName}-*-v${releaseVersion}.zip"
+        }.files.collect { it.name } as Set
 
-    //Windows aarch64
-    if(file(jdk_windows_aarch64).exists()) {
-        rt.extension.targetPlatform(targetWindowsAarch64, jdk_windows_aarch64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetWindowsAarch64) {
-            jdkHome = jdkDownload(jdk_download_windows_aarch64)
-        }
-    }
-    //Windows x86-64
-    if(file(jdk_windows_x86_64).exists()) {
-        rt.extension.targetPlatform(targetWindowsX86_64, jdk_windows_x86_64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetWindowsX86_64) {
-            jdkHome = jdkDownload(jdk_download_windows_x86_64)
-        }
-    }
-
-    configure(rt, jvmArgsWindows, true)
-
-    doFirst {
-        def cleanTask = tasks.named('clean').get()
-
-        if(javafxPlatform != 'win' || configurationCacheRequested ||
-                requestedTaskNames != ['clean', 'runtimeZipWindows'] ||
-                !cleanTask.state.executed || cleanTask.state.failure != null) {
-            throw new GradleException('runtimeZipWindows must run by itself as a clean Windows-target invocation: ' +
-                    './gradlew --no-configuration-cache clean runtimeZipWindows -PjavafxPlatform=win ...')
+        if(actual != expected) {
+            throw new GradleException("Expected exactly six release archives. Expected ${expected}; found ${actual}")
         }
 
-        Set<String> expectedTargets = [targetWindowsAarch64, targetWindowsX86_64] as Set
-        Set<String> actualTargets = rt.extension.targetPlatforms.get().keySet() as Set
-
-        if(actualTargets != expectedTargets) {
-            throw new GradleException("runtimeZipWindows has unexpected target platforms: ${actualTargets}")
-        }
-
-        if(rt.extension.launcherData.get().jvmArgsOrDefault != jvmArgsWindows) {
-            throw new GradleException('runtimeZipWindows does not contain the required Windows launcher arguments')
-        }
+        logger.lifecycle("Created and verified all six release archives in ${layout.buildDirectory.dir('image').get()}")
     }
-}
-
-/**
- * Creates Linux & OSX release packages.
- *
- * Note: you cannot create both Windows and Linux releases at the same time due to limitations of the Runtime plugin
- *
- * Usage: gradle runtimeZipOthers
- * Usage: gradlew runtimeZipOthers   (windows - using gradlew)
- * Usage: ./gradlew runtimeZipOthers   (linux - using gradlew)
- */
-tasks.register('runtimeZipOthers', org.beryx.runtime.RuntimeZipTask) {rt ->
-    //Linux aarch64
-    if(file(jdk_linux_aarch64).exists()) {
-        rt.extension.targetPlatform(targetLinuxAarch64, jdk_linux_aarch64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetLinuxAarch64) {
-            jdkHome = jdkDownload(jdk_download_linux_aarch64)
-        }
-    }
-    //Linux x86-64
-    if(file(jdk_linux_x86_64).exists()) {
-        rt.extension.targetPlatform(targetLinuxX86_64, jdk_linux_x86_64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetLinuxX86_64) {
-            jdkHome = jdkDownload(jdk_download_linux_x86_64)
-        }
-    }
-    //OSX aarch64
-    if(file(jdk_osx_aarch64).exists()) {
-        rt.extension.targetPlatform(targetOsxAarch64, jdk_osx_aarch64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetOsxAarch64) {
-            jdkHome = jdkDownload(jdk_download_osx_aarch64)
-        }
-    }
-    //OSX x86-64
-    if(file(jdk_osx_x86_64).exists()) {
-        rt.extension.targetPlatform(targetOsxX86_64, jdk_osx_x86_64, [])
-    }
-    else {
-        rt.extension.targetPlatform(targetOsxX86_64) {
-            jdkHome = jdkDownload(jdk_download_osx_x86_64)
-        }
-    }
-
-    configure(rt, jvmArgsLinux, false)
 }

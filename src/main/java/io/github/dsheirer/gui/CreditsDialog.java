@@ -77,7 +77,7 @@ public class CreditsDialog extends JDialog
             It is provided without warranty. The complete license appears on the GNU GPL v3 tab.</p>
             <h2 style="font-size:16px">Open-source components</h2>
             <p>This application builds on many open-source projects, including JMBE, JavaFX, SQLite JDBC, Jackson,
-            Guava, JTransforms, usb4java, ControlsFX, JIDE OSS, LAME, and the Java ecosystem around them. Each project
+            Guava, JTransforms, usb4java, ControlsFX, LAME, and the Java ecosystem around them. Each project
             remains copyright its respective authors and is distributed under its respective license.</p>
             <p>Protocol and decoder work also benefits from the broader open-source radio community, including
             <a href="https://github.com/boatbod/op25">OP25</a> and
