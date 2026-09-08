@@ -138,6 +138,22 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
+            case "radio-system-talker-aliases" -> List.of(
+                text("protocol", "protocol"), text("system_name", "system_name"),
+                text("radio_system_key", "radio_system_key"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                number("system_id", "system_id"), number("network_id", "network_id"),
+                text("variant", StatsCsvExport::radioSystemVariant),
+                text("model", StatsCsvExport::dmrRadioSystemModel),
+                text("location_category", StatsCsvExport::nxdnRadioSystemLocationCategory),
+                text("identity_key", "identity_key"), number("native_id", "native_id"),
+                text("address_domain", StatsCsvExport::addressDomain),
+                text("formatted_native_id", row -> nxdnDisplay(row, "native_id")),
+                text("talker_alias", "last_talker_alias"), text("alias", "alias_name"),
+                number("logical_calls", "logical_call_count"),
+                number("encrypted_logical_calls", "encrypted_logical_call_count"),
+                time("talker_alias_seen_utc", "last_talker_alias_seen_ms")
+            );
             case "channel-frequencies" -> List.of(
                 text("protocol", "protocol"), text("system_name", "system_name"),
                 text("radio_system_key", "radio_system_key"), text("configuration_id", "configuration_id"),

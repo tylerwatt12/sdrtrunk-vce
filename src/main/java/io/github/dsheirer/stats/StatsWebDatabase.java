@@ -696,9 +696,9 @@ class StatsWebDatabase
      */
     StatsCsvExport csvExport(String dataset, StatsRequest request)
     {
-        if(!List.of("radio-system-group-identities", "radio-system-radios", "channel-frequencies", "channel-neighbors",
-            "channels", "channel-group-identities", "channel-radios", "signal-health",
-            "channel-quality", "aliases").contains(dataset))
+        if(!List.of("radio-system-group-identities", "radio-system-radios", "radio-system-talker-aliases",
+            "channel-frequencies", "channel-neighbors", "channels", "channel-group-identities", "channel-radios",
+            "signal-health", "channel-quality", "aliases").contains(dataset))
         {
             throw new StatsApiException(400, "Unsupported CSV dataset");
         }
@@ -725,6 +725,16 @@ class StatsWebDatabase
                     String radioSystemKey = request.requiredText("radio_system_key");
                     Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
                     rows = queryRadioSystemRadios(connection, radioSystemKey, request, queryLimit, 0);
+                    addExportMetadata(rows, Map.of(
+                        "system_name", textValue(radioSystem.get("system_name")),
+                        "radio_system_key", textValue(radioSystem.get("radio_system_key"))));
+                    fileScope = exportLabel(radioSystem, "system_name", "radio_system_key");
+                }
+                case "radio-system-talker-aliases" ->
+                {
+                    String radioSystemKey = request.requiredText("radio_system_key");
+                    Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
+                    rows = queryRadioSystemTalkerAliases(connection, radioSystemKey, request, queryLimit, 0);
                     addExportMetadata(rows, Map.of(
                         "system_name", textValue(radioSystem.get("system_name")),
                         "radio_system_key", textValue(radioSystem.get("radio_system_key"))));
@@ -1970,7 +1980,19 @@ class StatsWebDatabase
     {
         return readSnapshot(connection -> {
             requireRadioSystem(connection, radioSystemKey);
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = queryRadioSystemTalkerAliases(connection, radioSystemKey, request,
+                request.limit() + 1, request.offset());
+            Map<String,Object> response = page(rows, request);
+            response.put("total_count", countRadioSystemTalkerAliases(connection, radioSystemKey, request));
+            return response;
+        });
+    }
+
+    private List<Map<String,Object>> queryRadioSystemTalkerAliases(Connection connection, String radioSystemKey,
+                                                                   StatsRequest request, int limit, int offset)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
                     CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
@@ -1983,27 +2005,24 @@ class StatsWebDatabase
                   AND summary.last_talker_alias IS NOT NULL
                   AND trim(summary.last_talker_alias) <> ''
                 """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL,
-                TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
-            List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
+            TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
+        List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
 
-            addTalkerAliasSearch(sql, parameters, request.search());
+        addTalkerAliasSearch(sql, parameters, request.search());
 
-            sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
-                .append(", summary.identity_id LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
+        sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
+            .append(", summary.identity_id LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
 
-            for(Map<String,Object> row: rows)
-            {
-                WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
-                    textValue(row.get("identity_key"))));
-            }
+        for(Map<String,Object> row: rows)
+        {
+            WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
+                textValue(row.get("identity_key"))));
+        }
 
-            Map<String,Object> response = page(rows, request);
-            response.put("total_count", countRadioSystemTalkerAliases(connection, radioSystemKey, request));
-            return response;
-        });
+        return rows;
     }
 
     private static long countRadioSystemTalkerAliases(Connection connection, String radioSystemKey,

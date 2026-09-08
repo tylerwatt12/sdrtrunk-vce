@@ -436,8 +436,9 @@ final class StatsApiV1Controller
     {
         return switch(dataset)
         {
-            case "radio-system-group-identities", "radio-system-radios", "channels", "channel-frequencies",
-                 "channel-group-identities", "channel-radios", "channel-neighbors", "channel-quality" ->
+            case "radio-system-group-identities", "radio-system-radios", "radio-system-talker-aliases", "channels",
+                 "channel-frequencies", "channel-group-identities", "channel-radios", "channel-neighbors",
+                 "channel-quality" ->
                 WebCapability.RADIO_VIEW;
             case "signal-health" -> WebCapability.DASHBOARD_VIEW;
             case "aliases" -> WebCapability.ADMIN_ALIASES;
@@ -454,7 +455,7 @@ final class StatsApiV1Controller
     {
         switch(dataset)
         {
-            case "radio-system-group-identities" ->
+            case "radio-system-group-identities", "radio-system-talker-aliases" ->
                 request.requireOnly("radio_system_key", "q", "sort", "direction");
             case "radio-system-radios" ->
                 request.requireOnly("radio_system_key", "q", "affiliated", "configuration_id", "sort",
