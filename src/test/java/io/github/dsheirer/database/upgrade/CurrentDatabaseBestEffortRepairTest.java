@@ -13,7 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -43,7 +43,7 @@ class CurrentDatabaseBestEffortRepairTest
     void currentFormatInspectionRunsWithSqliteWritesDisabled() throws Exception
     {
         Path database = mTemporaryFolder.resolve("query-only-current-inspection.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA query_only=ON");
@@ -55,7 +55,7 @@ class CurrentDatabaseBestEffortRepairTest
     void rejectsOversizedCurrentChannelAndProviderDocumentsBeforeJacksonParsing() throws Exception
     {
         Path database = mTemporaryFolder.resolve("oversized-current-configuration.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String oversizedPadding = "x".repeat(CONFIGURATION_JSON_LIMIT);
 
         try(Connection connection = open(database))
@@ -125,7 +125,7 @@ class CurrentDatabaseBestEffortRepairTest
     void dropsOnlyCurrentAliasesWithMissingOwnersOrInvalidMatchers() throws Exception
     {
         Path database = mTemporaryFolder.resolve("invalid-current-aliases.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {
@@ -183,7 +183,7 @@ class CurrentDatabaseBestEffortRepairTest
     void defaultsMalformedOptionalAliasFieldsWithoutDroppingTheAlias() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-optional-alias-field-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {
@@ -240,7 +240,7 @@ class CurrentDatabaseBestEffortRepairTest
     void repairsListsIndependentlyAndSeparatesNamesThatCollideAfterTrimming() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-list-row-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {
@@ -315,7 +315,7 @@ class CurrentDatabaseBestEffortRepairTest
     void recoversUnicodeBlankCurrentAliasListNameWithoutBlockingOtherConfiguration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-unicode-blank-alias-list.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {
@@ -347,7 +347,7 @@ class CurrentDatabaseBestEffortRepairTest
     void createsOneDefaultScanListWhenEverySavedScanListIsUnusable() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-all-scan-lists-unusable.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "PRAGMA foreign_keys=ON");
@@ -400,7 +400,7 @@ class CurrentDatabaseBestEffortRepairTest
     void remapsOnlyDiscardedDefaultMembershipsWhenAnUnrelatedScanListSurvives() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-discarded-default-membership-recovery.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "PRAGMA foreign_keys=ON");
@@ -450,7 +450,7 @@ class CurrentDatabaseBestEffortRepairTest
     void repairsProviderBookkeepingWithoutDroppingItsRoutes() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-provider-local-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             RdioScannerConfiguration provider = new RdioScannerConfiguration();
@@ -503,7 +503,7 @@ class CurrentDatabaseBestEffortRepairTest
     void canonicalizesRecoverableCurrentConfigurationIdentifiersWithoutDroppingRoutes() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-configuration-uuid-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             Channel channel = new Channel("Keep uppercase-ID channel");
@@ -602,7 +602,7 @@ class CurrentDatabaseBestEffortRepairTest
     void separatesCanonicalUuidCollisionsBeforeRepairingProvidersChannelsAndRoutes() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-configuration-uuid-collisions.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             Channel channel = new Channel("Keep duplicate-spelling channels");
@@ -715,7 +715,7 @@ class CurrentDatabaseBestEffortRepairTest
     void repairsBlankAliasNamesAndInactiveMatcherColumnsInPlace() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-alias-canonical-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             long p25List = number(connection, "SELECT id FROM alias_list WHERE family='P25' LIMIT 1");
@@ -751,7 +751,7 @@ class CurrentDatabaseBestEffortRepairTest
     void clearsWrongStorageFromInactiveAliasMatcherFields() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-alias-inactive-storage-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             long p25List = number(connection, "SELECT id FROM alias_list WHERE family='P25' LIMIT 1");
@@ -782,7 +782,7 @@ class CurrentDatabaseBestEffortRepairTest
     void dropsOnlyMalformedOptionalChannelSubdocuments() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-channel-optional-component-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             Channel channel = new Channel("Keep core channel");
@@ -832,7 +832,7 @@ class CurrentDatabaseBestEffortRepairTest
     void remapsAnInvalidScanListTargetToTheExistingDefault() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-existing-default-membership-repair.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             long p25List = number(connection, "SELECT id FROM alias_list WHERE family='P25' LIMIT 1");

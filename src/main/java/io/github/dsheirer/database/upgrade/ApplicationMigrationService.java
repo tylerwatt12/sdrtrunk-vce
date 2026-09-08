@@ -79,6 +79,13 @@ public final class ApplicationMigrationService
             true, true);
     }
 
+    ApplicationMigrationService(MigrationRunner migrationRunner)
+    {
+        this(SqliteDatabaseSnapshot::createExternal, SqliteDatabaseSnapshot::create, migrationRunner,
+            ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validateGlobalDatabase,
+            true, true);
+    }
+
     ApplicationMigrationService(Snapshotter snapshotter, MigrationRunner migrationRunner)
     {
         this(snapshotter, snapshotter, migrationRunner, ApplicationMigrationService::moveAtomically,

@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -40,7 +40,7 @@ class CurrentDatabaseDerivedStateRepairTest
     void resetsTheWholeDerivedComponentForOneCheckViolationAndPreservesTheChannel() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-derived-check.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String configurationId;
 
         try(Connection connection = open(database))
@@ -111,7 +111,7 @@ class CurrentDatabaseDerivedStateRepairTest
     void resetsDerivedStateAndEveryDerivedAllocatorWhenOneSequenceIsExhausted() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-derived-exhausted-sequence.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {
@@ -167,7 +167,7 @@ class CurrentDatabaseDerivedStateRepairTest
     void resetsDerivedStateForAnOrphanWithoutAdmittingUnknownForeignKeyDamage() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-derived-foreign-key.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String missingConfiguration = UUID.randomUUID().toString();
 
         try(Connection connection = open(database))
@@ -195,7 +195,7 @@ class CurrentDatabaseDerivedStateRepairTest
     void repairsOnlyInvalidMetricBoundariesWithoutClearingHealthyDerivedState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-derived-boundaries.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database))
         {

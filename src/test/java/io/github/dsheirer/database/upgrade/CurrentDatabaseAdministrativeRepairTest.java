@@ -12,7 +12,7 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.settings.WebUserPreferences;
 import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
@@ -37,7 +37,7 @@ class CurrentDatabaseAdministrativeRepairTest
     void retainsOnlyTheBoundedUsableWebAccountSet() throws Exception
     {
         Path database = mTemporaryFolder.resolve("bounded-web-users.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         int excessUsers = 32;
         try(Connection connection = open(database))
         {
@@ -64,7 +64,7 @@ class CurrentDatabaseAdministrativeRepairTest
     void preservesCredentialsAndPreferencesWhenOnlyAccountBookkeepingIsDamaged() throws Exception
     {
         Path database = mTemporaryFolder.resolve("repairable-web-account-bookkeeping.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             insertUser(connection, 1, "admin", "ADMIN", true);
@@ -97,7 +97,7 @@ class CurrentDatabaseAdministrativeRepairTest
     void preservesValidAdministrativePayloadsWhenOnlyTheirTimestampsAreDamaged() throws Exception
     {
         Path database = mTemporaryFolder.resolve("repairable-administrative-timestamps.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "PRAGMA ignore_check_constraints=ON");
@@ -137,7 +137,7 @@ class CurrentDatabaseAdministrativeRepairTest
     void clearsInitializationMarkerWhenMalformedDefaultIconKeyIsDiscarded() throws Exception
     {
         Path database = mTemporaryFolder.resolve("malformed-default-icon-key.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "DELETE FROM application_icons");

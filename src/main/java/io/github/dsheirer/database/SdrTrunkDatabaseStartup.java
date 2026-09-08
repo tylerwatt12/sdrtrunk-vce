@@ -53,24 +53,42 @@ public final class SdrTrunkDatabaseStartup
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
         {
             configure(connection);
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
-            InitialAdminSetup.markRequired(connection);
-            io.github.dsheirer.gui.setup.SetupProgress.write(connection,
-                new io.github.dsheirer.gui.setup.SetupProgress(false, false));
-            SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
-            //The whole-file marker is authoritative only after every current schema, seed row, and required
-            //fresh-profile marker has been installed successfully.
-            DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
-            requireMainTrackDatabase(connection);
-            SdrTrunkDatabaseSchema.validate(connection);
-            ReceiverActivitySchema.validate(connection);
-            DmrActivitySchema.validate(connection);
-            TrunkedSiteSchema.validate(connection);
-            DatabaseFormatCatalog.requireCurrent(connection);
+            connection.setAutoCommit(false);
+
+            try
+            {
+                SdrTrunkDatabaseSchema.create(connection);
+                SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
+                ReceiverActivitySchema.create(connection);
+                DmrActivitySchema.create(connection);
+                TrunkedSiteSchema.create(connection);
+                InitialAdminSetup.markRequired(connection);
+                io.github.dsheirer.gui.setup.SetupProgress.write(connection,
+                    new io.github.dsheirer.gui.setup.SetupProgress(false, false));
+                SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
+                //The whole-file marker is authoritative only after every current schema, seed row, and required
+                //fresh-profile marker has been installed successfully.
+                DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
+                requireMainTrackDatabase(connection);
+                SdrTrunkDatabaseSchema.validate(connection);
+                ReceiverActivitySchema.validate(connection);
+                DmrActivitySchema.validate(connection);
+                TrunkedSiteSchema.validate(connection);
+                DatabaseFormatCatalog.requireCurrent(connection);
+                connection.commit();
+            }
+            catch(SQLException | RuntimeException | Error exception)
+            {
+                try
+                {
+                    connection.rollback();
+                }
+                catch(SQLException rollbackFailure)
+                {
+                    exception.addSuppressed(rollbackFailure);
+                }
+                throw exception;
+            }
         }
     }
 

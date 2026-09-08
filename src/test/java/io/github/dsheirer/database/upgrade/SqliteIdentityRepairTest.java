@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -34,7 +34,7 @@ class SqliteIdentityRepairTest
     void normalizesDuplicateMalformedAndExhaustedCurrentAllocatorRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-sequence-damage.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long retainedMaximum;
 
         try(Connection connection = open(database))
@@ -64,7 +64,7 @@ class SqliteIdentityRepairTest
     void currentApplicationMigrationDoesNotTreatExhaustedSequenceAsANoOp() throws Exception
     {
         Path database = stagedDatabase("current-exhausted-sequence");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "DELETE FROM sqlite_sequence WHERE name='alias'");
@@ -86,7 +86,7 @@ class SqliteIdentityRepairTest
     void runtimeAllocatorNeverReturnsTheJsonSafeCeiling() throws Exception
     {
         Path database = mTemporaryFolder.resolve("allocator-ceiling.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             execute(connection, "DELETE FROM sqlite_sequence WHERE name='alias'");
@@ -102,7 +102,7 @@ class SqliteIdentityRepairTest
     void preservesRetainedJsonSafeRowAtTheLastAllocatableIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("retained-last-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long retainedId = SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM - 1;
         try(Connection connection = open(database))
         {
@@ -127,7 +127,7 @@ class SqliteIdentityRepairTest
     void isolatesOnlyConfigurationRowsAtTheExhaustedJsonSafeBoundary() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-unsafe-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         long owningList;
 
         try(Connection connection = open(database))
@@ -157,7 +157,7 @@ class SqliteIdentityRepairTest
     void currentComponentRepairClassifiesJsonUnsafeAliasAsOneBadItem() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-component-unsafe-identity.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database))
         {
             long owningList = number(connection, "SELECT id FROM alias_list ORDER BY id LIMIT 1");
