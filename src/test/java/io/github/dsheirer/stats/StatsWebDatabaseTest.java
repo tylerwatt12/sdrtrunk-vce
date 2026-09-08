@@ -1617,6 +1617,36 @@ class StatsWebDatabaseTest
         assertTrue(groups.fileName().startsWith("sdrtrunk-radio-system-group-identities-"));
     }
 
+    @Test
+    void talkerAliasCsvExportsOnlyNonblankAliases() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_talker_alias = 'Unit 202 OTA', last_talker_alias_seen_ms = 6000,
+                    encrypted_logical_call_count = 1
+                WHERE id = 7102
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7104, 71, 2, 0xBEE00, 0x49F, 204, 1000, 4000, 1)
+                """);
+        }
+
+        StatsCsvExport export = mDatabase.csvExport("radio-system-talker-aliases",
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY));
+        String csv = new String(export.content(), StandardCharsets.UTF_8);
+        assertEquals(1, export.rowCount());
+        assertTrue(export.fileName().startsWith("sdrtrunk-radio-system-talker-aliases-"));
+        assertTrue(csv.contains("Unit 202 OTA"));
+        assertTrue(csv.contains("talker_alias_seen_utc"));
+        assertFalse(csv.contains("v1-r-bee00-49f-204"));
+    }
+
     private void assertQualityChannel(String configurationId, String radioSystemKey, String protocol,
                                       long expectedHealth)
     {
