@@ -231,7 +231,9 @@ class ReceiverActivityWriterTest
             writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, now + index));
         }
 
-        awaitWritten(writer, 100);
+        //Windows CI can spend more than five seconds on the bounded startup retention pass before it reaches the
+        //already-queued live observations.  This test verifies ordering, not a host-specific SQLite latency target.
+        awaitWritten(writer, 100, 30);
         assertEquals(100, writer.getWrittenRecords());
         assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
         writer.close();
@@ -434,7 +436,12 @@ class ReceiverActivityWriterTest
 
     private static void awaitWritten(ReceiverActivityWriter writer, long count) throws Exception
     {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        awaitWritten(writer, count, 5);
+    }
+
+    private static void awaitWritten(ReceiverActivityWriter writer, long count, long timeoutSeconds) throws Exception
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         while(writer.getWrittenRecords() < count && System.nanoTime() < deadline)
         {
             Thread.sleep(10);
