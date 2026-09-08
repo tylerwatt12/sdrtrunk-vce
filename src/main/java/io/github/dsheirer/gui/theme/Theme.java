@@ -24,9 +24,7 @@ package io.github.dsheirer.gui.theme;
  *
  * <p>Each theme pairs a FlatLaf Swing look-and-feel class with a flag indicating whether the
  * palette is dark.  The dark flag drives whether the dark JavaFX stylesheet is applied to
- * registered Scenes.  Other per-theme values (colours used to seed JIDE-specific UIManager
- * keys) are read at runtime from {@link javax.swing.UIManager} after the LAF installs, so each
- * theme automatically contributes its own palette to JIDE components.
+ * registered Scenes.
  */
 public enum Theme
 {

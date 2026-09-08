@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.ui;
 
-import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
@@ -46,6 +45,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
@@ -201,11 +201,8 @@ public class TunerViewPanel extends JPanel
         JScrollPane editorScroller = new JScrollPane(mDiscoveredTunerEditor);
         editorScroller.setPreferredSize(new Dimension(200, 200));
 
-        JideSplitPane splitPane = new JideSplitPane();
-        splitPane.setOrientation(JideSplitPane.VERTICAL_SPLIT);
-        splitPane.setShowGripper(true);
-        splitPane.add(tunerTablePanel);
-        splitPane.add(editorScroller);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tunerTablePanel, editorScroller);
+        splitPane.setResizeWeight(0.5);
 
         add(splitPane);
     }

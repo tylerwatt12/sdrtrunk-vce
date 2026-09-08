@@ -19,7 +19,6 @@
 package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
-import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
@@ -124,6 +123,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
+import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
 import javax.swing.WindowConstants;
 
@@ -162,7 +162,7 @@ public class SDRTrunk
     private ConfigurationManager mConfigurationManager;
     private SettingsManager mSettingsManager;
     private JFrame mMainGui;
-    private JideSplitPane mSplitPane;
+    private JSplitPane mSplitPane;
     private JavaFxWindowManager mJavaFxWindowManager;
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
@@ -470,15 +470,16 @@ public class SDRTrunk
         {
             mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
         }
-        mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
+        mSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
         mSplitPane.setDividerSize(5);
-        mSplitPane.add(mControllerPanel);
+        mSplitPane.setResizeWeight(1.0);
+        mSplitPane.setTopComponent(mControllerPanel);
         mBroadcastStatusVisible = mPreferences.getBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, false);
 
         //Show broadcast status panel when user requests - disabled by default
         if(mBroadcastStatusVisible)
         {
-            mSplitPane.add(getBroadcastStatusPanel());
+            mSplitPane.setBottomComponent(getBroadcastStatusPanel());
         }
 
         mMainGui.add(getMainControlPanel(), "cell 0 0,growx");
@@ -1333,11 +1334,11 @@ public class SDRTrunk
                 EventQueue.invokeLater(() -> {
                     if(mBroadcastStatusVisible)
                     {
-                        mSplitPane.add(getBroadcastStatusPanel());
+                        mSplitPane.setBottomComponent(getBroadcastStatusPanel());
                     }
                     else
                     {
-                        mSplitPane.remove(getBroadcastStatusPanel());
+                        mSplitPane.setBottomComponent(null);
                     }
                     mMainGui.revalidate();
                 });
