@@ -24,6 +24,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -57,7 +58,7 @@ class ApplicationDatabaseMigratorTest
     void validatesExactCurrentStagedDatabaseWithoutChangingSchema() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         CommandResult result = run(database);
 
@@ -85,7 +86,7 @@ class ApplicationDatabaseMigratorTest
     void repairsWrongShapePortablePreferencesInCurrentStagedDatabase() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -109,7 +110,7 @@ class ApplicationDatabaseMigratorTest
     void normalizesCurrentPortablePreferenceStorageMetadata() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA ignore_check_constraints=ON");
@@ -139,7 +140,7 @@ class ApplicationDatabaseMigratorTest
     void repairsPortablePreferenceComponentsIndependently() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -186,7 +187,7 @@ class ApplicationDatabaseMigratorTest
     void repairsPreferencesBeforeAdoptingAMissingCurrentMarker() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -221,7 +222,7 @@ class ApplicationDatabaseMigratorTest
     void repairsDamagedCurrentAdministrativeComponentsIndependently() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA ignore_check_constraints=ON");
@@ -297,7 +298,7 @@ class ApplicationDatabaseMigratorTest
     void defaultsBrokenWebPreferencesWithoutDiscardingTheCredential() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         char[] password = "preserve this verifier".toCharArray();
         new WebAccessService(database).provisionOrResetPrimaryAdmin(password);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -330,7 +331,7 @@ class ApplicationDatabaseMigratorTest
     void resetsOnlyTheWebAccessComponentWhenThePrimaryCredentialIsUnusable() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         new WebAccessService(database).provisionOrResetPrimaryAdmin("broken verifier".toCharArray());
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -359,7 +360,7 @@ class ApplicationDatabaseMigratorTest
     void dropsOnlyCurrentAliasRoutesWhoseBroadcastProviderIsMissing() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String providerId;
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -428,7 +429,7 @@ class ApplicationDatabaseMigratorTest
     void resetsDamagedCurrentDerivedStateWithoutDiscardingAdministratorAliases() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String missingConfiguration = UUID.randomUUID().toString();
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -485,7 +486,7 @@ class ApplicationDatabaseMigratorTest
     void skipsMalformedCurrentChannelsAndProvidersWithoutLosingUsableConfiguration() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String validProviderId;
         String invalidProviderId = "00000000-0000-4000-8000-000000017501";
         String invalidChannelId = "00000000-0000-4000-8000-000000017502";
@@ -572,7 +573,7 @@ class ApplicationDatabaseMigratorTest
     void repairsCurrentAliasAndScanListNamesThatCollideAfterTrimming() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -612,7 +613,7 @@ class ApplicationDatabaseMigratorTest
     void keepsCurrentChannelButClearsAnIncompatibleAliasListAssignment() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         String configurationId;
         try(Connection connection = open(database))
         {
@@ -682,7 +683,7 @@ class ApplicationDatabaseMigratorTest
     void adoptsMarkerForExactMarkerlessCurrentLayout() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database); var statement = connection.prepareStatement(
             "DELETE FROM database_metadata WHERE key=?"))
@@ -704,7 +705,7 @@ class ApplicationDatabaseMigratorTest
     void repairsRetiredMetadataBeforeAdoptingAMissingCurrentMarker() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -817,7 +818,7 @@ class ApplicationDatabaseMigratorTest
     void leavesReusableFreePagesInsteadOfRunningRiskyMigrationTimeCompaction() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -1212,7 +1213,7 @@ class ApplicationDatabaseMigratorTest
         }
 
         Path exactCurrent = mTemporaryFolder.resolve("exact-current.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(exactCurrent);
+        SdrTrunkTestDatabase.create(exactCurrent);
         try(Connection migrated = open(database); Connection current = open(exactCurrent))
         {
             assertEquals(SqliteSchemaValidator.fingerprint(current), SqliteSchemaValidator.fingerprint(migrated),
@@ -1369,7 +1370,7 @@ class ApplicationDatabaseMigratorTest
     void rebasesPortableDirectoriesWithoutChangingSchema() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Path source = mTemporaryFolder.resolve("source-data").toAbsolutePath();
         Path target = mTemporaryFolder.resolve("target-data").toAbsolutePath();
 
@@ -1427,7 +1428,7 @@ class ApplicationDatabaseMigratorTest
     void dropsOnlyAPathWhoseLongerRelocationWouldOverflowPortablePreferences() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Path source = mTemporaryFolder.resolve("source").toAbsolutePath();
         Path target = mTemporaryFolder.resolve("target".repeat(512)).toAbsolutePath();
 
@@ -1469,7 +1470,7 @@ class ApplicationDatabaseMigratorTest
     void refusesIncompleteCurrentSchemaWithoutRepairingIt() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -1515,7 +1516,7 @@ class ApplicationDatabaseMigratorTest
     void malformedCurrentPortablePreferencesAreResetWithoutBlockingMigration() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         Path source = mTemporaryFolder.resolve("source-data").toAbsolutePath();
         Path target = mTemporaryFolder.resolve("target-data").toAbsolutePath();
 
@@ -1591,7 +1592,7 @@ class ApplicationDatabaseMigratorTest
     {
         Path dataRoot = mTemporaryFolder.resolve("live-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        SdrTrunkTestDatabase.create(database);
         byte[] before = Files.readAllBytes(database);
 
         CommandResult result = runArguments(database.toString());
@@ -1606,7 +1607,7 @@ class ApplicationDatabaseMigratorTest
     {
         Path dataRoot = mTemporaryFolder.resolve("live-symlink-data");
         Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        SdrTrunkTestDatabase.create(liveDatabase);
         byte[] before = Files.readAllBytes(liveDatabase);
         Path stagedLink = newStagedDatabase();
 
@@ -1631,7 +1632,7 @@ class ApplicationDatabaseMigratorTest
     {
         Path dataRoot = mTemporaryFolder.resolve("live-ancestor-data");
         Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        SdrTrunkTestDatabase.create(liveDatabase);
         byte[] before = Files.readAllBytes(liveDatabase);
         Path deceptiveStageRoot = mTemporaryFolder.resolve(".live-ancestor-data.migration-" + UUID.randomUUID());
 
@@ -1658,7 +1659,7 @@ class ApplicationDatabaseMigratorTest
     {
         Path dataRoot = mTemporaryFolder.resolve("live-hard-link-data");
         Path liveDatabase = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(liveDatabase);
+        SdrTrunkTestDatabase.create(liveDatabase);
         byte[] before = Files.readAllBytes(liveDatabase);
         Path stagedLink = newStagedDatabase();
 

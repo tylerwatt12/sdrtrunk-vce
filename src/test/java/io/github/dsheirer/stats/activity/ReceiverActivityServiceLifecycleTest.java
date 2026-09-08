@@ -110,9 +110,9 @@ class ReceiverActivityServiceLifecycleTest
 {
     private static final String ACTIVITY_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
     private static final String LEARNED_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000902";
-    private static final ReceiverActivityService.WriterFactory IMMEDIATE_WRITER_FACTORY =
+    private static final ReceiverActivityService.WriterFactory FAST_WRITER_FACTORY =
         (databasePath, retentionDays, detailedHistory) ->
-            new ReceiverActivityWriter(databasePath, retentionDays, detailedHistory, 10_000, 1_250, 0);
+            new ReceiverActivityWriter(databasePath, retentionDays, detailedHistory, 10_000, 1_250, 25);
 
     @TempDir
     Path mTemporaryFolder;
@@ -165,7 +165,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
 
         disposeAndAwait(service);
         service.preferenceUpdated(PreferenceType.APPLICATION);
@@ -182,7 +182,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Observer isolation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -246,7 +246,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -354,7 +354,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long now = System.currentTimeMillis();
@@ -455,7 +455,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -566,7 +566,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         CountDownLatch projectionEntered = new CountDownLatch(1);
         CountDownLatch releaseProjection = new CountDownLatch(1);
         long start = System.currentTimeMillis();
@@ -674,7 +674,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Drain barrier saturation", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -715,7 +715,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Interrupted drain barrier", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -760,7 +760,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         Channel channel = new Channel("Retired drain epoch", Channel.ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -870,7 +870,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         Channel blockerChannel = new Channel("Logical output saturation", Channel.ChannelType.STANDARD);
         blockerChannel.setDecodeConfiguration(new DecodeConfigNBFM());
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -1031,7 +1031,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot, null, IMMEDIATE_WRITER_FACTORY);
+            pauseAfterSnapshot, null, FAST_WRITER_FACTORY);
         long oldTimestamp = System.currentTimeMillis();
         long disabledTimestamp = oldTimestamp + 5_000L;
         long newTimestamp = oldTimestamp + 10_000L;
@@ -1133,7 +1133,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot, null, IMMEDIATE_WRITER_FACTORY);
+            pauseAfterSnapshot, null, FAST_WRITER_FACTORY);
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
         DecodeEvent context = DecodeEvent.builder(DecodeEventType.CALL, start)
@@ -1251,7 +1251,7 @@ class ReceiverActivityServiceLifecycleTest
             }
         };
         ReceiverActivityService service = new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS,
-            pauseAfterSnapshot, pauseBeforeActivation, IMMEDIATE_WRITER_FACTORY);
+            pauseAfterSnapshot, pauseBeforeActivation, FAST_WRITER_FACTORY);
         long start = System.currentTimeMillis();
         DecodeEvent oldActive = conventionalEvent(start);
         DecodeEvent inactive = conventionalEvent(start + 5_000L);
@@ -1663,7 +1663,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -1704,7 +1704,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = new ReceiverActivityService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
         long frequency = 154_310_000L;
         long start = System.currentTimeMillis();
 
@@ -1775,7 +1775,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
 
         try
         {
@@ -1839,7 +1839,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(false, 30);
         TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(mTemporaryFolder.resolve("missing-portable-data")));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
 
         try
         {
@@ -1871,7 +1871,7 @@ class ReceiverActivityServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30);
         TestUserPreferences userPreferences =
             new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
-        ReceiverActivityService service = immediateWriterService(userPreferences);
+        ReceiverActivityService service = fastWriterService(userPreferences);
 
         try
         {
@@ -2148,10 +2148,10 @@ class ReceiverActivityServiceLifecycleTest
         }
     }
 
-    private static ReceiverActivityService immediateWriterService(UserPreferences userPreferences)
+    private static ReceiverActivityService fastWriterService(UserPreferences userPreferences)
     {
         return new ReceiverActivityService(userPreferences, 2, TimeUnit.SECONDS, null, null,
-            IMMEDIATE_WRITER_FACTORY);
+            FAST_WRITER_FACTORY);
     }
 
     private static class TestUserPreferences extends UserPreferences

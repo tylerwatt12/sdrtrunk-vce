@@ -251,6 +251,7 @@ processResources {
 
 test {
     useJUnitPlatform()
+    systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/test').get().asFile.absolutePath
 }
 
 dependencies {

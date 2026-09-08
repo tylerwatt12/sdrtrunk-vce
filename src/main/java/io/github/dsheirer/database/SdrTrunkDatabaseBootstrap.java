@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.Arrays;
+import java.util.Objects;
 
 /** Noninteractive bootstrap. Graphical orchestration belongs exclusively to SetupWizard. */
 public final class SdrTrunkDatabaseBootstrap
@@ -31,6 +32,14 @@ public final class SdrTrunkDatabaseBootstrap
     static BootstrapResult run(String[] args, Path dataRoot, boolean headless)
         throws IOException, SQLException, InterruptedException
     {
+        return run(args, dataRoot, headless, new ApplicationMigrationService());
+    }
+
+    static BootstrapResult run(String[] args, Path dataRoot, boolean headless,
+                               ApplicationMigrationService migrationService)
+        throws IOException, SQLException, InterruptedException
+    {
+        Objects.requireNonNull(migrationService, "migrationService cannot be null");
         if(!headless) throw new IOException("Use SetupWizard for graphical setup");
         if(Arrays.asList(args).contains("--setup-wizard"))
             throw new IOException("--setup-wizard requires a graphical desktop");
@@ -48,7 +57,7 @@ public final class SdrTrunkDatabaseBootstrap
                     ApplicationMigrationService.describePlan(plan) +
                     ". Start once with --upgrade-current to create a safety backup and migrate it.");
                 var approval = ApplicationMigrationService.readMigrationApproval(database, database.getParent());
-                var result = new ApplicationMigrationService().migrateCurrent(normalized, approval,
+                var result = migrationService.migrateCurrent(normalized, approval,
                     System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
                 if(result.safetyBackup() != null)
@@ -71,7 +80,7 @@ public final class SdrTrunkDatabaseBootstrap
             {
                 var source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
                     new IOException("The selected location does not contain portable sdrtrunk-vce data: " + options.upgradeData()));
-                var result = new ApplicationMigrationService().importPrevious(source, normalized, System.out::println);
+                var result = migrationService.importPrevious(source, normalized, System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
             }
             else throw new IOException("No portable SDRTrunk database exists at " + database +
