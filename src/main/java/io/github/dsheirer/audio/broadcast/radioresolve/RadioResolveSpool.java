@@ -40,8 +40,8 @@ final class RadioResolveSpool
     static final long MAXIMUM_BYTES = 2L * 1024L * 1024L * 1024L;
     static final long PRUNE_INTERVAL_MILLISECONDS = TimeUnit.MINUTES.toMillis(1);
     private static final Comparator<Entry> FRESH_CALL_ORDER = Comparator
-        .comparingLong(RadioResolveSpool::startedAt)
-        .thenComparingLong(entry -> entry.manifest().envelope().completedAtMs())
+        .comparingLong(RadioResolveSpool::receiverLocalStartedAt)
+        .thenComparingLong(RadioResolveSpool::receiverLocalCompletedAt)
         .thenComparingLong(entry -> entry.manifest().enqueuedAtMs())
         .thenComparing(entry -> entry.manifest().envelope().submissionId());
     private static final String MANIFEST_SUFFIX = ".json";
@@ -227,7 +227,7 @@ final class RadioResolveSpool
                 String submissionId = iterator.next();
                 Entry entry = mState.entries.get(submissionId);
 
-                if(entry == null || entry.manifest().envelope().completedAtMs() < cutoff)
+                if(entry == null || receiverLocalCompletedAt(entry) < cutoff)
                 {
                     iterator.remove();
                 }
@@ -673,10 +673,23 @@ final class RadioResolveSpool
         return entry.manifest().envelope().submissionId();
     }
 
-    private static long startedAt(Entry entry)
+    private static long receiverLocalStartedAt(Entry entry)
     {
         RadioResolveCallEnvelope.CallFacts call = entry.manifest().envelope().call();
-        return call != null ? call.startedAtMs() : entry.manifest().envelope().completedAtMs();
+        return receiverLocalTimestamp(entry,
+            call != null ? call.startedAtMs() : entry.manifest().envelope().completedAtMs());
+    }
+
+    private static long receiverLocalCompletedAt(Entry entry)
+    {
+        return receiverLocalTimestamp(entry, entry.manifest().envelope().completedAtMs());
+    }
+
+    /** The durable envelope is server-normalized before upload; lane selection remains on the receiver clock. */
+    private static long receiverLocalTimestamp(Entry entry, long timestamp)
+    {
+        Long offset = entry.manifest().appliedServerClockOffsetMs();
+        return offset != null ? Math.subtractExact(timestamp, offset) : timestamp;
     }
 
     private void rebuildReadinessIndexesLocked()

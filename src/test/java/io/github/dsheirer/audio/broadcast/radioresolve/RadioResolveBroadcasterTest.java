@@ -543,6 +543,36 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
+    void clockAdjustedRetryStaysAheadOfRawNewerCall(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-clock-adjusted-order");
+        Path audio = directory.resolve("call.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        RadioResolveCallEnvelope older = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(20), "00000000-0000-4000-8000-000000000031");
+        RadioResolveSpool.Entry queuedOlder = spool.enqueue(audio, older,
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveSpool.Entry adjustedOlder = spool.applyServerClockOffset(queuedOlder,
+            TimeUnit.SECONDS.toMillis(15));
+        long retryReadyAt = System.currentTimeMillis() + 1_000L;
+        spool.retry(adjustedOlder, retryReadyAt);
+        RadioResolveCallEnvelope newer = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(10), "00000000-0000-4000-8000-000000000032");
+        spool.enqueue(audio, newer, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
+
+        RadioResolveSpool.Entry candidate = broadcaster.nextUploadCandidate(retryReadyAt + 1L);
+
+        assertNotNull(candidate);
+        assertEquals(older.submissionId(), candidate.manifest().envelope().submissionId(),
+            "server clock normalization must not let later receiver-local speech leapfrog a retry");
+        broadcaster.dispose();
+    }
+
+    @Test
     void unresolvedOlderCallBlocksNewerReadyCallUntilItsPlacementDeadline(@TempDir Path directory) throws Exception
     {
         long now = System.currentTimeMillis();

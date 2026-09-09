@@ -136,6 +136,22 @@ class RadioResolveSpoolTest
     }
 
     @Test
+    void serverClockAdjustmentDoesNotChangeFreshLaneEligibility(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path audio = audio(directory.resolve("source.mp3"), 64);
+        RadioResolveCallEnvelope envelope = RadioResolveTestFixtures.readyEnvelope(audio, now - 3_000L, uuid(1));
+        RadioResolveSpool spool = new RadioResolveSpool(directory.resolve("spool"));
+        spool.open();
+        RadioResolveSpool.Entry queued = spool.enqueue(audio, envelope,
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveSpool.Entry adjusted = spool.applyServerClockOffset(queued, -TimeUnit.MINUTES.toMillis(4L));
+
+        assertEquals(adjusted, spool.firstFresh(now,
+            RadioResolveBroadcaster.LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS));
+    }
+
+    @Test
     void clockAdjustmentDoesNotShortenTheLocalTwentyFourHourOwnershipWindow(@TempDir Path directory)
         throws Exception
     {
