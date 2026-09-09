@@ -779,6 +779,41 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void channelDirectoryIncludesStoredCallCountsAndSortsThemBeforePagination() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (711, 71, 1, 1, 1000, 4000),
+                         (712, 71, 1, 2, 1000, 4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_bucket (
+                    radio_system_id, learned_site_id, bucket_start_ms,
+                    observed_call_count, encrypted_observed_call_count
+                ) VALUES (71, 711, 3600000, 7, 0),
+                         (71, 712, 3600000, 2, 0)
+                """);
+        }
+
+        Map<String,Object> directory = mDatabase.channelDirectory(request(
+            "/?sort=logical_call_count&direction=desc&limit=3"));
+        assertEquals(4, number(directory.get("total_count")));
+        assertTrue((Boolean)directory.get("has_more"));
+        assertEquals(List.of(P25_CHANNEL_A, ANALOG_CHANNEL, P25_CHANNEL_B), rows(directory).stream()
+            .map(row -> String.valueOf(row.get("configuration_id"))).toList());
+        assertEquals(List.of(7L, 5L, 2L), rows(directory).stream()
+            .map(row -> number(row.get("logical_call_count"))).toList());
+
+        List<Map<String,Object>> byFrequency = rows(mDatabase.channelDirectory(request(
+            "/?sort=frequency&direction=asc")));
+        assertEquals(ANALOG_CHANNEL, byFrequency.getFirst().get("configuration_id"));
+    }
+
+    @Test
     void csvIgnoresPageControlsButKeepsFiltersAndSortOrder()
     {
         StatsCsvExport export = mDatabase.csvExport("channels", request(

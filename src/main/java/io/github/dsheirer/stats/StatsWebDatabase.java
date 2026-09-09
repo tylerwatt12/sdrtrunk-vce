@@ -523,8 +523,8 @@ class StatsWebDatabase
         Map.entry("site", "lower(coalesce(configured.site_name, ''))"),
         Map.entry("type", "configured.channel_kind"),
         Map.entry("protocol", "lower(configured.decoder)"),
-        Map.entry("frequency", "coalesce(configured.observed_primary_frequency_hz, " +
-            "configured.primary_frequency_hz, 0)"),
+        Map.entry("frequency", "coalesce(configured.primary_frequency_hz, 0)"),
+        Map.entry("logical_call_count", "logical_call_count"),
         Map.entry("first_seen", "configured.first_seen_ms"),
         Map.entry("last_seen", "configured.last_seen_ms")
     );
@@ -3949,8 +3949,34 @@ class StatsWebDatabase
     private static List<Map<String,Object>> queryChannelDirectory(Connection connection, StatsRequest request,
                                                                    int limit, int offset) throws SQLException
     {
-        StringBuilder sql = new StringBuilder("SELECT configured.* FROM (" +
-            WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + ") configured WHERE 1=1");
+        StringBuilder sql = new StringBuilder("""
+            SELECT configured.*,
+                CASE
+                    WHEN configured.channel_kind = 'CONVENTIONAL' THEN coalesce((
+                        SELECT SUM(summary.call_count)
+                        FROM conventional_activity_summary summary
+                        WHERE summary.channel_id = configured.channel_id
+                    ), 0)
+                    WHEN configured.radio_system_protocol_code = 1 THEN coalesce((
+                        SELECT SUM(bucket.observed_call_count)
+                        FROM p25_site_snapshot site
+                        JOIN p25_learned_site learned
+                          ON learned.radio_system_id = configured.radio_system_id
+                         AND learned.rfss = site.rfss AND learned.site = site.site
+                        JOIN p25_site_call_bucket bucket
+                          ON bucket.radio_system_id = learned.radio_system_id
+                         AND bucket.learned_site_id = learned.learned_site_id
+                        WHERE site.channel_id = configured.channel_id
+                    ), 0)
+                    WHEN configured.configuration_id = configured.radio_system_configuration_id THEN coalesce((
+                        SELECT SUM(bucket.logical_call_count)
+                        FROM trunked_logical_call_bucket bucket
+                        WHERE bucket.radio_system_id = configured.radio_system_id
+                    ), 0)
+                    ELSE 0
+                END AS logical_call_count
+            FROM (
+            """ + WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + ") configured WHERE 1=1");
         List<Object> parameters = new ArrayList<>();
 
         addChannelDirectoryFilters(sql, parameters, request);
@@ -3963,7 +3989,10 @@ class StatsWebDatabase
 
         for(Map<String,Object> row: rows)
         {
-            presented.add(new LinkedHashMap<>(WebConfiguredEntityRepository.configuredChannel(row).toApiMap()));
+            Map<String,Object> channel = new LinkedHashMap<>(
+                WebConfiguredEntityRepository.configuredChannel(row).toApiMap());
+            channel.put("logical_call_count", number(row.get("logical_call_count")));
+            presented.add(channel);
         }
 
         return presented;
