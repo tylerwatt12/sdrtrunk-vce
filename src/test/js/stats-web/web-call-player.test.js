@@ -225,7 +225,7 @@ async function main() {
     });
     notice.recordSkippedCallNotice();
     notice.recordSkippedCallNotice();
-    assert.equal(notice.ui.status.textContent, 'Waiting · Some calls were skipped',
+    assert.equal(notice.ui.status.textContent, 'Waiting · Some calls could not be played',
       'Feed resets and queue overflow use one generic notice instead of an exact count');
     const resetPoll = Object.assign(Object.create(WebCallPlayer.prototype), {
       feedActive: true,
@@ -245,7 +245,7 @@ async function main() {
     });
     await resetPoll.pollFeed(7);
     assert.equal(resetPoll.feedCursor, '20');
-    assert.equal(resetPoll.ui.status.textContent, 'Waiting · Some calls were skipped');
+    assert.equal(resetPoll.ui.status.textContent, 'Waiting · Some calls could not be played');
 
     const stopped = Object.assign(Object.create(WebCallPlayer.prototype), {
       stopped: false,
@@ -486,7 +486,7 @@ async function main() {
     });
     assert.equal(collecting.queuedCount, 100);
     assert.equal(collecting.queuedCalls[0]._callId, 'overflow-5');
-    assert.equal(collecting.ui.status.textContent, 'Paused — 100 calls queued · Some calls were skipped');
+    assert.equal(collecting.ui.status.textContent, 'Paused — 100 calls queued · Some calls could not be played');
     collecting.skip();
     assert.equal(collecting.queuedCount, 99);
     assert.equal(collecting.paused, true);

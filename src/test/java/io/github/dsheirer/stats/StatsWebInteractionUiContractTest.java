@@ -1071,8 +1071,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("epoch === streamEpoch && transportReady"));
         assertTrue(messages.contains("stream.onopen = () =>"));
         assertTrue(events.contains("stream.onopen = () =>"));
-        assertTrue(messages.contains("additional messages may have been missed"));
-        assertTrue(events.contains("additional events may have been missed"));
+        assertTrue(messages.contains("Messages during that time are not shown"));
+        assertTrue(events.contains("Events during that time are not shown"));
         assertFalse(messages.contains("parameters.timeslot"));
         assertFalse(messages.contains("addEventListener('snapshot'"));
         assertFalse(events.contains("addEventListener('snapshot'"));

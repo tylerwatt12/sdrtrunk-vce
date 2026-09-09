@@ -829,7 +829,7 @@ export class WebCallPlayer {
       if (token === this.loadToken) {
         this.recordSkippedCallNotice();
         this.stopCurrent();
-        this.setStatus('Skipped unavailable call');
+        this.setStatus('Call could not be played — continuing');
         setTimeout(() => {
           if (this.stopped || this.paused) {
             this.setStatus('Ready');
@@ -1126,7 +1126,7 @@ export class WebCallPlayer {
   renderStatus() {
     if (!this.ui.status) return;
     const status = this.paused ? `Paused — ${this.queuedCount} calls queued` : this.statusValue;
-    this.ui.status.textContent = [status, this.skippedNotice ? 'Some calls were skipped' : '']
+    this.ui.status.textContent = [status, this.skippedNotice ? 'Some calls could not be played' : '']
       .filter(Boolean).join(' · ');
   }
 

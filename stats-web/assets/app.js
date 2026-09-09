@@ -10103,7 +10103,7 @@ function liveDetailFilterController(options) {
     if (!catalog) return;
     const modalBody = node('div', 'live-filter-editor');
     modalBody.append(node('p', 'modal-lead',
-      `Choose which ${options.noun} appear. New items are filtered in this browser only.`));
+      `Choose which ${options.noun} to show. Filters only change what you see here.`));
     const typeSection = node('section', 'live-filter-section');
     typeSection.append(node('h3', '', options.typeHeading || 'Types'));
     const typeActions = node('div', 'live-filter-type-actions');
@@ -10369,7 +10369,7 @@ function liveMessagesPane() {
     const rows = order.map((id) => messages.get(id)).filter((message) => message && matches(message))
       .slice(0, liveDetailMatchingRowLimit());
     messagesTable.tableController.setEmptyText(!selection ? 'Select a live row above' :
-      (selection.bindingFrequencyHz ? 'No matching messages received since this tab was opened' :
+      (selection.bindingFrequencyHz ? 'No matching messages have appeared in this view' :
         'Select an active channel'));
     messagesTable.tableController.replaceRows(selection ? rows : []);
   };
@@ -10386,9 +10386,11 @@ function liveMessagesPane() {
   const updateGapNotice = () => {
     const notices = [];
     if (missed > 0) {
-      notices.push(`${number(missed)} live message${missed === 1 ? '' : 's'} skipped while the viewer was open.`);
+      notices.push(`${number(missed)} live message${missed === 1 ? '' : 's'} could not be shown.`);
     }
-    if (possibleGap) notices.push('The live source reconnected or changed; additional messages may have been missed.');
+    if (possibleGap) {
+      notices.push('Live updates resumed after this view was inactive. Messages during that time are not shown.');
+    }
     gap.textContent = notices.join(' ');
     gap.hidden = !notices.length;
   };
@@ -13353,7 +13355,7 @@ function liveEventsPanel(onCollapse) {
     const rows = order.map((id) => events.get(id)).filter((event) => event && eventMatches(event))
       .slice(0, liveDetailMatchingRowLimit());
     eventsTable.tableController.setEmptyText(selection ?
-      'No matching events received since this tab was opened' : 'Select a live row above');
+      'No matching events have appeared in this view' : 'Select a live row above');
     eventsTable.tableController.replaceRows(selection ? rows : []);
   };
 
@@ -13370,9 +13372,11 @@ function liveEventsPanel(onCollapse) {
   const updateGapNotice = () => {
     const notices = [];
     if (missed > 0) {
-      notices.push(`${number(missed)} live event${missed === 1 ? '' : 's'} skipped while the viewer was open.`);
+      notices.push(`${number(missed)} live event${missed === 1 ? '' : 's'} could not be shown.`);
     }
-    if (possibleGap) notices.push('The live source reconnected; additional events may have been missed.');
+    if (possibleGap) {
+      notices.push('Live updates resumed after this view was inactive. Events during that time are not shown.');
+    }
     eventGap.textContent = notices.join(' ');
     eventGap.hidden = !notices.length;
   };

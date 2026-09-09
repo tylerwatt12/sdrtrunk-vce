@@ -198,7 +198,7 @@ callbacks. A paused scanner that continues collecting calls keeps this shared wo
 active listener does; pausing does not create a separate server-side audio archive. When no browser is requesting
 calls, completed calls bypass that browser worker and ring entirely. Receiver decoding,
 the bounded handoff, the shared ring, and the network are separately bounded, so the 100-call browser limit is not an
-end-to-end delivery guarantee. When the feed detects a gap, the browser says only that some calls were skipped and
+end-to-end delivery guarantee. When the feed detects a gap, the browser says that some calls could not be played and
 continues with valid new calls. See [Web API v1](api-v1.md) for the technical limits.
 
 ## Example: A Cleveland Scan List
