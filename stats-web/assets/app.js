@@ -10307,7 +10307,6 @@ function liveMessagesPane() {
   let renderTimer = null;
   let lastRenderAt = 0;
   let missed = 0;
-  let possibleGap = false;
   let expectedSubscriptionId = null;
   let transportReady = false;
   let scheduleRender = () => {};
@@ -10388,9 +10387,6 @@ function liveMessagesPane() {
     if (missed > 0) {
       notices.push(`${number(missed)} live message${missed === 1 ? '' : 's'} could not be shown.`);
     }
-    if (possibleGap) {
-      notices.push('Live updates resumed after this view was inactive. Messages during that time are not shown.');
-    }
     gap.textContent = notices.join(' ');
     gap.hidden = !notices.length;
   };
@@ -10398,7 +10394,6 @@ function liveMessagesPane() {
     messages.clear();
     order.length = 0;
     missed = 0;
-    possibleGap = false;
     updateGapNotice();
     scheduleRender();
   };
@@ -10439,18 +10434,7 @@ function liveMessagesPane() {
     expectedSubscriptionId = randomLiveClientId();
     parameters.subscription_id = expectedSubscriptionId;
     transportReady = false;
-    let opened = document.hidden;
-    let sourceStatusSeen = false;
-    let sourceEverBound = false;
     stream = liveConnection('decode_messages', parameters);
-    stream.onopen = () => {
-      if (epoch !== streamEpoch) return;
-      if (opened) {
-        possibleGap = true;
-        updateGapNotice();
-      }
-      opened = true;
-    };
     stream.addEventListener('decode_message', (event) => {
       if (epoch === streamEpoch && transportReady) addMessage(JSON.parse(event.data));
     });
@@ -10464,14 +10448,6 @@ function liveMessagesPane() {
       if (!liveMessageSourceMatchesSelection(selection, expectedSubscriptionId, change)) return;
       transportReady = true;
       filters.setCatalog(change?.filter_catalog);
-      const bound = change?.bound === true;
-      if (!sourceStatusSeen) {
-        sourceStatusSeen = true;
-        sourceEverBound = bound;
-      } else if (sourceEverBound) {
-        possibleGap = true;
-        updateGapNotice();
-      } else if (bound) sourceEverBound = true;
     });
   };
   const select = (nextSelection) => {
@@ -10484,10 +10460,6 @@ function liveMessagesPane() {
       clearSession();
     } else if (transportChanged) {
       transportReady = false;
-      if (stream) {
-        possibleGap = true;
-        updateGapNotice();
-      }
       const parameters = liveDetailTransportParameters(selection);
       if (stream && parameters) {
         expectedSubscriptionId = randomLiveClientId();
@@ -10498,13 +10470,7 @@ function liveMessagesPane() {
     }
     sync();
   };
-  const onVisibilityChange = () => {
-    if (document.hidden && stream) {
-      possibleGap = true;
-      updateGapNotice();
-    }
-    sync();
-  };
+  const onVisibilityChange = () => sync();
   document.addEventListener('visibilitychange', onVisibilityChange);
   render();
   return {
@@ -10512,19 +10478,11 @@ function liveMessagesPane() {
     select,
     setActive(value) {
       const next = value === true;
-      if (active && !next) {
-        possibleGap = Boolean(selection);
-        updateGapNotice();
-        closeStream();
-      }
+      if (active && !next) closeStream();
       active = next;
       sync();
     },
     setCollapsed(value) {
-      if (!collapsed && value === true && stream) {
-        possibleGap = true;
-        updateGapNotice();
-      }
       collapsed = value;
       sync();
     },
@@ -13253,7 +13211,6 @@ function liveEventsPanel(onCollapse) {
   let renderTimer = null;
   let lastRenderAt = 0;
   let missed = 0;
-  let possibleGap = false;
   let transportReady = false;
   let expectedSubscriptionId = null;
   let scheduleRender = () => {};
@@ -13374,9 +13331,6 @@ function liveEventsPanel(onCollapse) {
     if (missed > 0) {
       notices.push(`${number(missed)} live event${missed === 1 ? '' : 's'} could not be shown.`);
     }
-    if (possibleGap) {
-      notices.push('Live updates resumed after this view was inactive. Events during that time are not shown.');
-    }
     eventGap.textContent = notices.join(' ');
     eventGap.hidden = !notices.length;
   };
@@ -13407,7 +13361,6 @@ function liveEventsPanel(onCollapse) {
     events.clear();
     order.length = 0;
     missed = 0;
-    possibleGap = false;
     updateGapNotice();
     scheduleRender();
   };
@@ -13435,16 +13388,7 @@ function liveEventsPanel(onCollapse) {
     parameters.subscription_id = subscriptionId;
     expectedSubscriptionId = subscriptionId;
     transportReady = false;
-    let opened = document.hidden;
     stream = liveConnection('decode_events', parameters);
-    stream.onopen = () => {
-      if (epoch !== streamEpoch) return;
-      if (opened) {
-        possibleGap = true;
-        updateGapNotice();
-      }
-      opened = true;
-    };
     stream.addEventListener('decode_event', (event) => {
       if (epoch !== streamEpoch || !transportReady) return;
       const value = JSON.parse(event.data);
@@ -13491,8 +13435,6 @@ function liveEventsPanel(onCollapse) {
       channelController.setActive(id === 'channel');
       const nextEventsActive = id === 'events';
       if (eventsActive && !nextEventsActive) {
-        possibleGap = Boolean(selection);
-        updateGapNotice();
         closeStream();
       }
       eventsActive = nextEventsActive;
@@ -13506,10 +13448,6 @@ function liveEventsPanel(onCollapse) {
 
   collapse.addEventListener('click', () => {
     collapsed = !panel.classList.contains('collapsed');
-    if (collapsed && stream) {
-      possibleGap = true;
-      updateGapNotice();
-    }
     panel.classList.toggle('collapsed', collapsed);
     collapse.textContent = collapsed ? 'Expand' : 'Collapse';
     collapse.setAttribute('aria-expanded', String(!collapsed));

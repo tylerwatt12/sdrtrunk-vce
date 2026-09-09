@@ -217,16 +217,6 @@ async function main() {
     await Promise.resolve();
     assert.equal(feedPlayer.firstRestartUrl, '/api/v1/calls/feed?scan_list_id=1&scan_list_id=2');
 
-    const notice = Object.assign(Object.create(WebCallPlayer.prototype), {
-      skippedNotice: false,
-      statusValue: 'Waiting',
-      ui: { status: { textContent: '' } },
-      stateObservers: new Set()
-    });
-    notice.recordSkippedCallNotice();
-    notice.recordSkippedCallNotice();
-    assert.equal(notice.ui.status.textContent, 'Waiting · Some calls could not be played',
-      'Feed resets and queue overflow use one generic notice instead of an exact count');
     const resetPoll = Object.assign(Object.create(WebCallPlayer.prototype), {
       feedActive: true,
       stopped: false,
@@ -235,7 +225,6 @@ async function main() {
       feedCursor: '10',
       current: null,
       queuedCount: 0,
-      skippedNotice: false,
       statusValue: '',
       ui: { status: { textContent: '' } },
       stateObservers: new Set(),
@@ -245,7 +234,7 @@ async function main() {
     });
     await resetPoll.pollFeed(7);
     assert.equal(resetPoll.feedCursor, '20');
-    assert.equal(resetPoll.ui.status.textContent, 'Waiting · Some calls could not be played');
+    assert.equal(resetPoll.ui.status.textContent, 'Waiting');
 
     const stopped = Object.assign(Object.create(WebCallPlayer.prototype), {
       stopped: false,
@@ -263,7 +252,6 @@ async function main() {
       stopFeed() { this.feedStopped++; },
       clearQueuedCalls() { this.queueCleared++; },
       stopCurrent() { this.currentStopped++; },
-      clearLossNotice() {},
       setStatus(value) { this.status = value; },
       render() {}
     });
@@ -291,7 +279,6 @@ async function main() {
         transportToken: 0,
         preferenceWrites: 0,
         feedStarts: 0,
-        clearLossNotice() {},
         writePreferences() { this.preferenceWrites++; },
         updateScanListStatus() {},
         filterQueueForSelectedLists() {},
@@ -333,7 +320,7 @@ async function main() {
       stopped: true,
       toggleCount: 0,
       togglePlayback() { this.toggleCount++; },
-      clearLossNotice() {}, writePreferences() {}, updateScanListStatus() {}, filterQueueForSelectedLists() {},
+      writePreferences() {}, updateScanListStatus() {}, filterQueueForSelectedLists() {},
       renderScanLists() {},
       ensureConnected() { this.feedStartCount = (this.feedStartCount || 0) + 1; return true; },
       stopFeed() {}, setStatus() {}, render() {}
@@ -420,7 +407,7 @@ async function main() {
         maximumSelectedScanLists: 16, scanListCatalogReady: true,
         feedActive: true, feedGeneration: 1, feedCursor: '10', feedTimer: null,
         feedController: null, feedUrl: '/api/v1/calls/feed',
-        skippedNotice: false, statusValue: 'Waiting', stateObservers: new Set(),
+        statusValue: 'Waiting', stateObservers: new Set(),
         ui: { status: { textContent: '' } }, progressStarts: 0, progressStops: 0,
         ensureAudioContext() {}, clearIdleDisplay() {}, renderScanLists() {},
         writePreferences() {}, updateScanListStatus() {},
@@ -486,7 +473,7 @@ async function main() {
     });
     assert.equal(collecting.queuedCount, 100);
     assert.equal(collecting.queuedCalls[0]._callId, 'overflow-5');
-    assert.equal(collecting.ui.status.textContent, 'Paused — 100 calls queued · Some calls could not be played');
+    assert.equal(collecting.ui.status.textContent, 'Paused — 100 calls queued');
     collecting.skip();
     assert.equal(collecting.queuedCount, 99);
     assert.equal(collecting.paused, true);
@@ -545,7 +532,6 @@ async function main() {
       expired.current = expired.normalizeCall(overlap);
       await expired.togglePause();
       await expired.loadCurrent();
-      assert.equal(expired.skippedNotice, true);
       assert.equal(expired.current, null);
       assert.equal(expired.paused, true, 'Expired audio must not resume playback');
     } finally {
@@ -578,7 +564,8 @@ async function main() {
     assert.equal(rejectedResume.paused, true, 'Rejected resume must remain paused');
 
     assert.doesNotMatch(source, /Recent Calls|recentCalls|recentReplay|live_gap|conversationLanes|playbackOffset/);
-    assert.match(source, /feedCursor|recordSkippedCallNotice/);
+    assert.match(source, /feedCursor/);
+    assert.doesNotMatch(source, /recordSkippedCallNotice|skippedNotice|clearLossNotice/);
   } finally {
     Date.now = originalNow;
     global.window = originalWindow;

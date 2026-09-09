@@ -701,7 +701,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(ensureConnected.contains("this.feedCursor = null"));
         assertTrue(requestFeed.contains("this.feedRequestUrl()"));
         assertTrue(requestFeed.contains("typeof value?.reset !== 'boolean'"));
-        assertTrue(pollFeed.contains("if (response.reset) this.recordSkippedCallNotice()"));
+        assertFalse(pollFeed.contains("recordSkippedCallNotice"));
         assertTrue(pollFeed.contains("this.setStatus('Reconnecting')"));
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
         assertTrue(enqueue.contains("this.rememberCallId(normalized._callId)"));
@@ -1069,10 +1069,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("parameters.subscription_id = subscriptionId"));
         assertTrue(events.contains("epoch !== streamEpoch || !transportReady"));
         assertTrue(events.contains("epoch === streamEpoch && transportReady"));
-        assertTrue(messages.contains("stream.onopen = () =>"));
-        assertTrue(events.contains("stream.onopen = () =>"));
-        assertTrue(messages.contains("Messages during that time are not shown"));
-        assertTrue(events.contains("Events during that time are not shown"));
+        assertFalse(messages.contains("stream.onopen = () =>"));
+        assertFalse(events.contains("stream.onopen = () =>"));
         assertFalse(messages.contains("parameters.timeslot"));
         assertFalse(messages.contains("addEventListener('snapshot'"));
         assertFalse(events.contains("addEventListener('snapshot'"));
@@ -1685,8 +1683,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
         assertTrue(messages.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(messages.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
-        assertTrue(messages.contains("if (document.hidden && stream)"));
-        assertTrue(messages.contains("possibleGap = true"));
+        assertTrue(messages.contains("const onVisibilityChange = () => sync()"));
+        assertFalse(messages.contains("possibleGap"));
         assertTrue(messages.contains("setPaused(value) { paused = value; if (!paused) scheduleRender(); }"));
         assertFalse(messages.contains("badge('Waiting'"));
         assertFalse(messages.contains("setStatus("));
