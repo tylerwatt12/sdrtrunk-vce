@@ -1,0 +1,152 @@
+{
+  "schema_version": 3,
+  "submission_id": "11111111-2222-4333-8444-555555555555",
+  "completed_at_ms": 1700000002000,
+  "agent_version": "sdrtrunk-vce",
+  "call": {
+    "system": {
+      "protocol": "p25",
+      "wacn": 781824,
+      "system_id": 840
+    },
+    "voice_protocol": "p25_phase2",
+    "started_at_ms": 1700000000000,
+    "ended_at_ms": 1700000002000,
+    "duration_ms": 2000,
+    "destination": {
+      "type": "talkgroup",
+      "local_id": 4400,
+      "canonical_id": 12345,
+      "home_wacn": 703710,
+      "home_system_id": 801,
+      "members": []
+    },
+    "source": {
+      "type": "radio",
+      "local_id": 700001,
+      "canonical_id": 900001,
+      "home_wacn": 781824,
+      "home_system_id": 840,
+      "members": []
+    },
+    "encryption_state": "encrypted",
+    "encryption_algorithm_id": 132,
+    "encryption_key_id": 4660
+  },
+  "reception": {
+    "placement": {
+      "kind": "trunked_site",
+      "protocol": "p25",
+      "wacn": 781824,
+      "system_id": 840,
+      "rfss_id": 2,
+      "site_id": 1,
+      "nac": 840
+    },
+    "frequency_hz": 854087500,
+    "timeslot": 2,
+    "destination": {
+      "type": "talkgroup",
+      "local_id": 4400,
+      "canonical_id": 12345,
+      "home_wacn": 703710,
+      "home_system_id": 801,
+      "members": []
+    },
+    "source": {
+      "type": "radio",
+      "local_id": 700001,
+      "canonical_id": 900001,
+      "home_wacn": 781824,
+      "home_system_id": 840,
+      "members": []
+    },
+    "quality": {
+      "method_version": 1,
+      "decoded_frames": 90,
+      "repeated_frames": 2,
+      "concealed_frames": 3,
+      "missing_frames": 15,
+      "expected_frames": 110,
+      "fec_errors": 12,
+      "fec_protected_bits": 7200,
+      "retained_audio_samples": 16000,
+      "ingress_loss": true,
+      "audio_truncated": true
+    },
+    "fingerprints": {
+      "method_version": "p25_vocoder_fnv1a64_v1",
+      "frames": [
+        [0, "1111111111111111"],
+        [20, "2222222222222222"],
+        [60, "4444444444444444"]
+      ]
+    },
+    "physical_legs": [
+      {
+        "selected_audio": true,
+        "placement": {
+          "kind": "trunked_site",
+          "protocol": "p25",
+          "wacn": 781824,
+          "system_id": 840,
+          "rfss_id": 2,
+          "site_id": 1,
+          "nac": 840
+        },
+        "started_at_ms": 1700000000000,
+        "ended_at_ms": 1700000002000,
+        "frequency_hz": 854087500,
+        "timeslot": 2,
+        "quality": {
+          "method_version": 1,
+          "decoded_frames": 90,
+          "repeated_frames": 2,
+          "concealed_frames": 3,
+          "missing_frames": 5,
+          "expected_frames": 100,
+          "fec_errors": 12,
+          "fec_protected_bits": 7200,
+          "retained_audio_samples": 16000,
+          "ingress_loss": true,
+          "audio_truncated": true
+        }
+      },
+      {
+        "selected_audio": false,
+        "placement": {
+          "kind": "trunked_site",
+          "protocol": "p25",
+          "wacn": 781824,
+          "system_id": 840,
+          "rfss_id": 3,
+          "site_id": 4,
+          "nac": 840
+        },
+        "started_at_ms": 1700000000040,
+        "ended_at_ms": 1700000001980,
+        "frequency_hz": 855012500,
+        "timeslot": 1,
+        "quality": {
+          "method_version": 1,
+          "retained_audio_samples": 8000,
+          "ingress_loss": true,
+          "audio_truncated": true
+        }
+      }
+    ]
+  },
+  "observations": {
+    "configured_destination": {
+      "observed_name": "Dispatch",
+      "observed_description": "Primary dispatch",
+      "observed_category": "Fire"
+    },
+    "configured_source": {
+      "observed_name": "Engine 7",
+      "observed_description": "Portable",
+      "observed_category": "Operations"
+    },
+    "talker_alias": "OTA UNIT 7"
+  }
+}

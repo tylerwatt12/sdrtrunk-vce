@@ -1,0 +1,119 @@
+{
+  "schema_version": 3,
+  "submission_id": "11111111-2222-4333-8444-555555555555",
+  "completed_at_ms": 1700000002000,
+  "agent_version": "sdrtrunk-vce",
+  "call": {
+    "voice_protocol": "p25_phase1",
+    "started_at_ms": 1700000000000,
+    "ended_at_ms": 1700000002000,
+    "duration_ms": 2000,
+    "destination": {
+      "type": "talkgroup",
+      "local_id": 4400,
+      "canonical_id": 12345,
+      "home_wacn": 703710,
+      "home_system_id": 801,
+      "members": []
+    },
+    "source": {
+      "type": "radio",
+      "local_id": 700001,
+      "canonical_id": 900001,
+      "home_wacn": 781824,
+      "home_system_id": 840,
+      "members": []
+    },
+    "encryption_state": "clear"
+  },
+  "reception": {
+    "placement": {
+      "kind": "conventional_channel",
+      "protocol": "p25",
+      "channel_uuid": "12345678-9abc-4def-8123-456789abcdef",
+      "nac": 659
+    },
+    "frequency_hz": 854087500,
+    "destination": {
+      "type": "talkgroup",
+      "local_id": 4400,
+      "canonical_id": 12345,
+      "home_wacn": 703710,
+      "home_system_id": 801,
+      "members": []
+    },
+    "source": {
+      "type": "radio",
+      "local_id": 700001,
+      "canonical_id": 900001,
+      "home_wacn": 781824,
+      "home_system_id": 840,
+      "members": []
+    },
+    "quality": {
+      "method_version": 1,
+      "decoded_frames": 80,
+      "repeated_frames": 1,
+      "concealed_frames": 2,
+      "missing_frames": 3,
+      "expected_frames": 86,
+      "fec_errors": 4,
+      "fec_protected_bits": 3200,
+      "retained_audio_samples": 16000,
+      "ingress_loss": false,
+      "audio_truncated": false
+    },
+    "fingerprints": {
+      "method_version": "p25_vocoder_fnv1a64_v1",
+      "frames": [
+        [0, "5555555555555555"],
+        [20, "6666666666666666"]
+      ]
+    },
+    "physical_legs": [
+      {
+        "selected_audio": true,
+        "placement": {
+          "kind": "conventional_channel",
+          "protocol": "p25",
+          "channel_uuid": "12345678-9abc-4def-8123-456789abcdef",
+          "nac": 659
+        },
+        "started_at_ms": 1700000000000,
+        "ended_at_ms": 1700000002000,
+        "frequency_hz": 854087500,
+        "quality": {
+          "method_version": 1,
+          "decoded_frames": 80,
+          "repeated_frames": 1,
+          "concealed_frames": 2,
+          "missing_frames": 3,
+          "expected_frames": 86,
+          "fec_errors": 4,
+          "fec_protected_bits": 3200,
+          "retained_audio_samples": 16000,
+          "ingress_loss": false,
+          "audio_truncated": false
+        }
+      }
+    ]
+  },
+  "observations": {
+    "configured_channel": {
+      "observed_name": "County Fire Dispatch",
+      "system_name": "County Public Safety",
+      "site_name": "North Conventional"
+    },
+    "configured_destination": {
+      "observed_name": "Dispatch",
+      "observed_description": "Primary dispatch",
+      "observed_category": "Fire"
+    },
+    "configured_source": {
+      "observed_name": "Engine 7",
+      "observed_description": "Portable",
+      "observed_category": "Operations"
+    },
+    "talker_alias": "CONVENTIONAL UNIT 7"
+  }
+}

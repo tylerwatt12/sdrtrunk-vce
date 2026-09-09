@@ -1608,7 +1608,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
                 case MOTOROLA_OSP_GROUP_REGROUP_DELETE:
                     mPatchGroupManager.removePatchGroups(tsbk.getIdentifiers());
-                    mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(tsbk.getIdentifiers());
+                    mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(tsbk.getIdentifiers(),
+                        tsbk.getTimestamp());
                     break;
 
                 //L3HARRIS PATCH GROUP OPCODES
@@ -1625,7 +1626,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         else
                         {
                             mPatchGroupManager.removePatchGroup(regroup.getPatchGroup());
-                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup());
+                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup(),
+                                tsbk.getTimestamp());
                         }
                     }
                     break;
@@ -1990,7 +1992,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             else if(mefc.isSupergroupCancel())
             {
                 mPatchGroupManager.removePatchGroup(mefc.getSuperGroup());
-                mNetworkConfigurationStabilizer.removePatchGroup(mefc.getSuperGroup());
+                mNetworkConfigurationStabilizer.removePatchGroup(mefc.getSuperGroup(), tsbk.getTimestamp());
                 broadcastEvent(tsbk, DecodeEventType.COMMAND, "CANCEL SUPERGROUP:" + mefc.getSuperGroup());
             }
             else
@@ -2273,7 +2275,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 break;
             case MOTOROLA_GROUP_REGROUP_DELETE:
                 mPatchGroupManager.removePatchGroups(lcw.getIdentifiers());
-                mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(lcw.getIdentifiers());
+                mNetworkConfigurationStabilizer.removePatchGroupsFromIdentifiers(lcw.getIdentifiers(), timestamp);
                 break;
             case MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_UPDATE:
                 //Voice Channel Update message - indicates calls in-progress on another channel - ignored

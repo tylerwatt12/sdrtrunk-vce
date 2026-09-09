@@ -27,9 +27,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +47,9 @@ public class P25NetworkConfigurationStabilizer
     static final long DYNAMIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
+    static final long PATCH_GROUP_FRESHNESS_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
     static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 8;
+    private static final int MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS = 2;
     private static final int MAXIMUM_REJECTED_CONTROL_CHANNEL_FREQUENCIES = 64;
     private static final FactConfirmationPolicy IMMEDIATE_DISCOVERY_POLICY =
         new FactConfirmationPolicy(1, 0, CANDIDATE_EXPIRATION_MILLISECONDS, true);
@@ -58,6 +61,7 @@ public class P25NetworkConfigurationStabilizer
             CANDIDATE_EXPIRATION_MILLISECONDS, false);
 
     private final String mDecoder;
+    private final Runnable mSnapshotCopyHook;
     private final StableFactTracker<P25NetworkConfigurationSnapshot.Network,
         P25NetworkConfigurationSnapshot.Network> mNetwork = tracker();
     private final StableFactTracker<P25NetworkConfigurationSnapshot.CurrentSite,
@@ -65,24 +69,27 @@ public class P25NetworkConfigurationStabilizer
     private final StableFactTracker<P25NetworkConfigurationSnapshot.SiteStatus,
         P25NetworkConfigurationSnapshot.SiteStatus> mSiteStatus = tracker();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.Channel,
-        P25NetworkConfigurationSnapshot.Channel>> mChannels = new TreeMap<>();
+        P25NetworkConfigurationSnapshot.Channel>> mChannels = new ConcurrentSkipListMap<>();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.NeighborSite,
         P25NetworkConfigurationSnapshot.NeighborSite>> mNeighborSites =
-        new TreeMap<>();
+        new ConcurrentSkipListMap<>();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.FrequencyBand,
         P25NetworkConfigurationSnapshot.FrequencyBand>> mFrequencyBands =
-        new TreeMap<>();
+        new ConcurrentSkipListMap<>();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.ForeignSystemBand,
         P25NetworkConfigurationSnapshot.ForeignSystemBand>>
-        mForeignSystemBands = new TreeMap<>();
+        mForeignSystemBands = new ConcurrentSkipListMap<>();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.PatchGroup,
         P25NetworkConfigurationSnapshot.PatchGroup>> mPatchGroups =
-        new TreeMap<>();
+        new ConcurrentSkipListMap<>();
     private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias,
         P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
-        new TreeMap<>();
+        new ConcurrentSkipListMap<>();
     private final Set<Long> mRejectedControlChannelFrequencies = new LinkedHashSet<>();
     private long mDiscoveryStartedAt;
+    private volatile PatchCompleteness mPatchCompleteness = PatchCompleteness.EMPTY;
+    private volatile long mMutationEpoch;
+    private int mMutationDepth;
 
     /**
      * Constructs a stabilizer for the decoder.
@@ -90,7 +97,14 @@ public class P25NetworkConfigurationStabilizer
      */
     public P25NetworkConfigurationStabilizer(String decoder)
     {
+        this(decoder, () -> {});
+    }
+
+    /** Test seam for proving observer-side projection never owns the decoder monitor. */
+    P25NetworkConfigurationStabilizer(String decoder, Runnable snapshotCopyHook)
+    {
         mDecoder = decoder;
+        mSnapshotCopyHook = snapshotCopyHook != null ? snapshotCopyHook : () -> {};
     }
 
     /**
@@ -98,17 +112,27 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void reset()
     {
-        mNetwork.reset();
-        mCurrentSite.reset();
-        mSiteStatus.reset();
-        mChannels.clear();
-        mNeighborSites.clear();
-        mFrequencyBands.clear();
-        mForeignSystemBands.clear();
-        mPatchGroups.clear();
-        mTalkerAliases.clear();
-        mRejectedControlChannelFrequencies.clear();
-        mDiscoveryStartedAt = 0;
+        beginMutation();
+
+        try
+        {
+            mNetwork.reset();
+            mCurrentSite.reset();
+            mSiteStatus.reset();
+            mChannels.clear();
+            mNeighborSites.clear();
+            mFrequencyBands.clear();
+            mForeignSystemBands.clear();
+            mPatchGroups.clear();
+            mTalkerAliases.clear();
+            mRejectedControlChannelFrequencies.clear();
+            mDiscoveryStartedAt = 0;
+            resetPatchCompleteness();
+        }
+        finally
+        {
+            endMutation();
+        }
     }
 
     /**
@@ -118,15 +142,25 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void resetCandidates()
     {
-        mNetwork.resetCandidate();
-        mCurrentSite.resetCandidate();
-        mSiteStatus.resetCandidate();
-        resetCandidates(mChannels);
-        resetCandidates(mNeighborSites);
-        resetCandidates(mFrequencyBands);
-        resetCandidates(mForeignSystemBands);
-        resetCandidates(mPatchGroups);
-        resetCandidates(mTalkerAliases);
+        beginMutation();
+
+        try
+        {
+            mNetwork.resetCandidate();
+            mCurrentSite.resetCandidate();
+            mSiteStatus.resetCandidate();
+            resetCandidates(mChannels);
+            resetCandidates(mNeighborSites);
+            resetCandidates(mFrequencyBands);
+            resetCandidates(mForeignSystemBands);
+            resetCandidates(mPatchGroups);
+            resetCandidates(mTalkerAliases);
+            resetPatchCompleteness();
+        }
+        finally
+        {
+            endMutation();
+        }
     }
 
     /**
@@ -136,55 +170,69 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void observe(P25NetworkConfigurationSnapshot observation, long timestamp)
     {
-        timestamp = observationTimestamp(timestamp);
-        expireCandidates(timestamp);
+        beginMutation();
 
-        if(observation == null)
+        try
         {
-            return;
+            timestamp = observationTimestamp(timestamp);
+            expireCandidates(timestamp);
+
+            if(observation == null)
+            {
+                return;
+            }
+
+            noteFreshPatchScopeObservation(timestamp);
+
+            observeIdentity(mNetwork, observation.network(), timestamp);
+            observeIdentity(mCurrentSite, observation.currentSite(), timestamp);
+
+            if(observation.siteStatus() != null)
+            {
+                //Phase 2 timeslots have separate monitors, so merge their partial latest-value status into the shared
+                //stable snapshot before replacing it.
+                P25NetworkConfigurationSnapshot.SiteStatus currentStatus = mSiteStatus.getStableValue();
+                P25NetworkConfigurationSnapshot.SiteStatus latestStatus = currentStatus == null ?
+                    observation.siteStatus() : currentStatus.merge(observation.siteStatus());
+                mSiteStatus.reset();
+                mSiteStatus.observe(latestStatus, timestamp, IMMEDIATE_DISCOVERY_POLICY, ignored -> true);
+            }
+
+            for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
+            {
+                observeChannel(channel, timestamp);
+            }
+
+            for(P25NetworkConfigurationSnapshot.NeighborSite neighborSite: list(observation.neighborSites()))
+            {
+                P25NetworkConfigurationSnapshot.NeighborSite fact = neighborSite.withoutObservedAt();
+                observeGuarded(mNeighborSites, neighborSiteKey(fact), fact, timestamp);
+            }
+
+            for(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand: list(observation.frequencyBands()))
+            {
+                P25NetworkConfigurationSnapshot.FrequencyBand fact = frequencyBand.withoutObservedAt();
+                observeGuarded(mFrequencyBands, frequencyBandKey(fact), fact, timestamp);
+            }
+
+            for(P25NetworkConfigurationSnapshot.ForeignSystemBand foreignSystemBand:
+                list(observation.foreignSystemBands()))
+            {
+                P25NetworkConfigurationSnapshot.ForeignSystemBand fact = foreignSystemBand.withoutObservedAt();
+                observeGuarded(mForeignSystemBands, foreignSystemBandKey(fact), fact,
+                    timestamp);
+            }
+
+            observePatchGroupsValue(observation.patchGroups(), timestamp);
+
+            for(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias: list(observation.talkerAliases()))
+            {
+                observeTalkerAlias(talkerAlias, timestamp);
+            }
         }
-
-        observeIdentity(mNetwork, observation.network(), timestamp);
-        observeIdentity(mCurrentSite, observation.currentSite(), timestamp);
-
-        if(observation.siteStatus() != null)
+        finally
         {
-            //Phase 2 timeslots have separate monitors, so merge their partial latest-value status into the shared
-            //stable snapshot before replacing it.
-            P25NetworkConfigurationSnapshot.SiteStatus currentStatus = mSiteStatus.getStableValue();
-            P25NetworkConfigurationSnapshot.SiteStatus latestStatus = currentStatus == null ?
-                observation.siteStatus() : currentStatus.merge(observation.siteStatus());
-            mSiteStatus.reset();
-            mSiteStatus.observe(latestStatus, timestamp, IMMEDIATE_DISCOVERY_POLICY, ignored -> true);
-        }
-
-        for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
-        {
-            observeChannel(channel, timestamp);
-        }
-
-        for(P25NetworkConfigurationSnapshot.NeighborSite neighborSite: list(observation.neighborSites()))
-        {
-            observeGuarded(mNeighborSites, neighborSiteKey(neighborSite), neighborSite, timestamp);
-        }
-
-        for(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand: list(observation.frequencyBands()))
-        {
-            observeGuarded(mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand, timestamp);
-        }
-
-        for(P25NetworkConfigurationSnapshot.ForeignSystemBand foreignSystemBand:
-            list(observation.foreignSystemBands()))
-        {
-            observeGuarded(mForeignSystemBands, foreignSystemBandKey(foreignSystemBand), foreignSystemBand,
-                timestamp);
-        }
-
-        observePatchGroups(observation.patchGroups(), timestamp);
-
-        for(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias: list(observation.talkerAliases()))
-        {
-            observeTalkerAlias(talkerAlias, timestamp);
+            endMutation();
         }
     }
 
@@ -194,12 +242,18 @@ public class P25NetworkConfigurationStabilizer
     public synchronized void observePatchGroups(List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
                                                 long timestamp)
     {
-        timestamp = observationTimestamp(timestamp);
-        expireCandidates(timestamp);
+        beginMutation();
 
-        for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
+        try
         {
-            observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
+            timestamp = observationTimestamp(timestamp);
+            expireCandidates(timestamp);
+            noteFreshPatchScopeObservation(timestamp);
+            observePatchGroupsValue(patchGroups, timestamp);
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -208,13 +262,25 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void observePatchGroup(PatchGroupIdentifier patchGroupIdentifier, long timestamp)
     {
-        if(patchGroupIdentifier != null)
+        beginMutation();
+
+        try
         {
-            P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
-            if(snapshot != null)
+            if(patchGroupIdentifier != null)
             {
-                observePatchGroups(List.of(snapshot), timestamp);
+                P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+                if(snapshot != null)
+                {
+                    timestamp = observationTimestamp(timestamp);
+                    expireCandidates(timestamp);
+                    noteFreshPatchScopeObservation(timestamp);
+                    observePatchGroupsValue(List.of(snapshot), timestamp);
+                }
             }
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -223,26 +289,38 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void observePatchGroupsFromIdentifiers(List<Identifier> identifiers, long timestamp)
     {
-        if(identifiers == null || identifiers.isEmpty())
-        {
-            return;
-        }
+        beginMutation();
 
-        List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups = new ArrayList<>();
-
-        for(Identifier identifier: identifiers)
+        try
         {
-            if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+            if(identifiers == null || identifiers.isEmpty())
             {
-                P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
-                if(snapshot != null)
+                return;
+            }
+
+            List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups = new ArrayList<>();
+
+            for(Identifier identifier: identifiers)
+            {
+                if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
                 {
-                    patchGroups.add(snapshot);
+                    P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+                    if(snapshot != null)
+                    {
+                        patchGroups.add(snapshot);
+                    }
                 }
             }
-        }
 
-        observePatchGroups(patchGroups, timestamp);
+            timestamp = observationTimestamp(timestamp);
+            expireCandidates(timestamp);
+            noteFreshPatchScopeObservation(timestamp);
+            observePatchGroupsValue(patchGroups, timestamp);
+        }
+        finally
+        {
+            endMutation();
+        }
     }
 
     /**
@@ -250,14 +328,36 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void removePatchGroup(PatchGroupIdentifier patchGroupIdentifier)
     {
-        if(patchGroupIdentifier != null)
+        beginMutation();
+
+        try
         {
-            P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
-            if(snapshot != null)
-            {
-                String key = patchGroupKey(snapshot);
-                mPatchGroups.remove(key);
-            }
+            removePatchGroupValue(patchGroupIdentifier);
+            resetPatchCompleteness();
+        }
+        finally
+        {
+            endMutation();
+        }
+    }
+
+    /**
+     * Removes a patch group using the decoded deactivation timestamp as the complete-snapshot watermark.
+     */
+    public synchronized void removePatchGroup(PatchGroupIdentifier patchGroupIdentifier, long timestamp)
+    {
+        beginMutation();
+
+        try
+        {
+            timestamp = observationTimestamp(timestamp);
+            expireCandidates(timestamp);
+            noteFreshPatchScopeObservation(timestamp);
+            removePatchGroupValue(patchGroupIdentifier);
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -266,17 +366,36 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void removePatchGroupsFromIdentifiers(List<Identifier> identifiers)
     {
-        if(identifiers == null || identifiers.isEmpty())
-        {
-            return;
-        }
+        beginMutation();
 
-        for(Identifier identifier: identifiers)
+        try
         {
-            if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
-            {
-                removePatchGroup(patchGroupIdentifier);
-            }
+            removePatchGroupsFromIdentifiersValue(identifiers);
+            resetPatchCompleteness();
+        }
+        finally
+        {
+            endMutation();
+        }
+    }
+
+    /**
+     * Removes patch groups using the decoded deactivation timestamp as the complete-snapshot watermark.
+     */
+    public synchronized void removePatchGroupsFromIdentifiers(List<Identifier> identifiers, long timestamp)
+    {
+        beginMutation();
+
+        try
+        {
+            timestamp = observationTimestamp(timestamp);
+            expireCandidates(timestamp);
+            noteFreshPatchScopeObservation(timestamp);
+            removePatchGroupsFromIdentifiersValue(identifiers);
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -285,10 +404,19 @@ public class P25NetworkConfigurationStabilizer
      */
     public synchronized void observeTalkerAlias(int radio, String alias, long timestamp)
     {
-        if(radio > 0 && alias != null && !alias.isBlank())
+        beginMutation();
+
+        try
         {
-            timestamp = observationTimestamp(timestamp);
-            observeTalkerAlias(new P25NetworkConfigurationSnapshot.TalkerAlias(radio, alias), timestamp);
+            if(radio > 0 && alias != null && !alias.isBlank())
+            {
+                timestamp = observationTimestamp(timestamp);
+                observeTalkerAlias(new P25NetworkConfigurationSnapshot.TalkerAlias(radio, alias), timestamp);
+            }
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -315,13 +443,59 @@ public class P25NetworkConfigurationStabilizer
 
     /**
      * Current stable snapshot.
+     * @return coherent snapshot, or null when decoder mutation overlaps both bounded projection attempts.
      */
-    public synchronized P25NetworkConfigurationSnapshot getSnapshot()
+    public P25NetworkConfigurationSnapshot getSnapshot()
     {
-        return new P25NetworkConfigurationSnapshot(mDecoder, mNetwork.getStableValue(), mCurrentSite.getStableValue(),
-            stableValues(mChannels), stableValues(mNeighborSites), stableValues(mFrequencyBands),
-            stableValues(mPatchGroups), stableValues(mTalkerAliases), mSiteStatus.getStableValue(),
-            stableValues(mForeignSystemBands));
+        //Snapshot projection runs on a bounded observer worker. Stable facts are immutable, atomically published
+        //values held in concurrent sorted maps, so no part of this potentially large copy owns the decoder monitor.
+        //A bounded optimistic epoch check rejects a mixed projection if a decoder mutation overlaps the copy.
+        for(int attempt = 0; attempt < MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS; attempt++)
+        {
+            long before = mMutationEpoch;
+
+            if((before & 1L) != 0)
+            {
+                continue;
+            }
+
+            P25NetworkConfigurationSnapshot snapshot = projectSnapshot();
+
+            if(before == mMutationEpoch)
+            {
+                return snapshot;
+            }
+        }
+
+        //Fail closed under sustained mutation. The metadata request drops a null snapshot and a later rate-limited
+        //request can retry without ever delaying the decoder callback.
+        return null;
+    }
+
+    private P25NetworkConfigurationSnapshot projectSnapshot()
+    {
+        P25NetworkConfigurationSnapshot.Network network = mNetwork.getStableValue();
+        P25NetworkConfigurationSnapshot.CurrentSite currentSite = mCurrentSite.getStableValue();
+        List<P25NetworkConfigurationSnapshot.Channel> channels =
+            stableValues(mChannels, P25NetworkConfigurationSnapshot.Channel::withObservedAt);
+        List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites =
+            stableValues(mNeighborSites, P25NetworkConfigurationSnapshot.NeighborSite::withObservedAt);
+        List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands =
+            stableValues(mFrequencyBands, P25NetworkConfigurationSnapshot.FrequencyBand::withObservedAt);
+        List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups = stableValues(mPatchGroups);
+
+        //Test seam deliberately sits between the patch list and completeness watermark so a concurrent mutation
+        //proves that an inconsistent authoritative active-patch snapshot is rejected by the epoch check.
+        mSnapshotCopyHook.run();
+
+        List<P25NetworkConfigurationSnapshot.TalkerAlias> talkerAliases =
+            stableValues(mTalkerAliases, P25NetworkConfigurationSnapshot.TalkerAlias::withObservedAt);
+        P25NetworkConfigurationSnapshot.SiteStatus siteStatus = mSiteStatus.getStableValue();
+        List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignSystemBands =
+            stableValues(mForeignSystemBands, P25NetworkConfigurationSnapshot.ForeignSystemBand::withObservedAt);
+        Long activePatchesObservedAt = activePatchesObservedAt();
+        return new P25NetworkConfigurationSnapshot(mDecoder, network, currentSite, channels, neighborSites,
+            frequencyBands, patchGroups, talkerAliases, siteStatus, foreignSystemBands, activePatchesObservedAt);
     }
 
     /**
@@ -370,8 +544,22 @@ public class P25NetworkConfigurationStabilizer
         }
     }
 
+    private void observePatchGroupsValue(List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
+                                         long timestamp)
+    {
+        for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
+        {
+            observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
+        }
+    }
+
     private void observeChannel(P25NetworkConfigurationSnapshot.Channel channel, long timestamp)
     {
+        if(channel != null)
+        {
+            channel = channel.withoutObservedAt();
+        }
+
         String key = channelKey(channel);
 
         if(key == null)
@@ -394,6 +582,11 @@ public class P25NetworkConfigurationStabilizer
 
     private void observeTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias, long timestamp)
     {
+        if(talkerAlias != null)
+        {
+            talkerAlias = talkerAlias.withoutObservedAt();
+        }
+
         observeDynamic(mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
     }
 
@@ -466,22 +659,77 @@ public class P25NetworkConfigurationStabilizer
         expireCandidates(mNeighborSites, timestamp);
         expireCandidates(mFrequencyBands, timestamp);
         expireCandidates(mForeignSystemBands, timestamp);
-        expireCandidates(mPatchGroups, timestamp);
+        expireStableBroadcastFacts(mPatchGroups, timestamp, PATCH_GROUP_FRESHNESS_MILLISECONDS);
         expireCandidates(mTalkerAliases, timestamp);
         expireStableBroadcastFacts(mChannels, timestamp);
         expireStableBroadcastFacts(mNeighborSites, timestamp);
         expireStableBroadcastFacts(mFrequencyBands, timestamp);
         expireStableBroadcastFacts(mForeignSystemBands, timestamp);
+        //Talker aliases are merge-only observations at RadioResolve. Once delivered, absence never deletes the
+        //canonical server fact, so retaining every radio ever heard in this receiver-side snapshot is unnecessary
+        //and would make callback-time snapshot copies grow without bound.
+        expireStableBroadcastFacts(mTalkerAliases, timestamp);
+        expirePatchCompleteness(timestamp);
     }
 
     private <T> void expireStableBroadcastFacts(Map<String,StableFactTracker<T,T>> trackers, long timestamp)
     {
+        expireStableBroadcastFacts(trackers, timestamp, STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS);
+    }
+
+    private <T> void expireStableBroadcastFacts(Map<String,StableFactTracker<T,T>> trackers, long timestamp,
+                                                long expirationMilliseconds)
+    {
         trackers.entrySet().removeIf(entry -> {
             StableFactTracker<T,T> tracker = entry.getValue();
             tracker.expireCandidate(timestamp, CANDIDATE_EXPIRATION_MILLISECONDS);
-            tracker.expireStable(timestamp, STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS);
+            tracker.expireStable(timestamp, expirationMilliseconds);
             return tracker.isEmpty();
         });
+    }
+
+    private void noteFreshPatchScopeObservation(long timestamp)
+    {
+        PatchCompleteness current = mPatchCompleteness;
+
+        if(timestamp <= 0 || timestamp <= current.lastFreshObservationAt())
+        {
+            return;
+        }
+
+        long startedAt = current.startedAt();
+
+        if(startedAt <= 0 || current.lastFreshObservationAt() <= 0 ||
+            timestamp - current.lastFreshObservationAt() > PATCH_GROUP_FRESHNESS_MILLISECONDS)
+        {
+            startedAt = timestamp;
+        }
+
+        mPatchCompleteness = new PatchCompleteness(startedAt, timestamp);
+    }
+
+    private void expirePatchCompleteness(long timestamp)
+    {
+        PatchCompleteness current = mPatchCompleteness;
+
+        if(current.lastFreshObservationAt() > 0 &&
+            timestamp - current.lastFreshObservationAt() > PATCH_GROUP_FRESHNESS_MILLISECONDS)
+        {
+            resetPatchCompleteness();
+        }
+    }
+
+    private void resetPatchCompleteness()
+    {
+        mPatchCompleteness = PatchCompleteness.EMPTY;
+    }
+
+    private Long activePatchesObservedAt()
+    {
+        PatchCompleteness current = mPatchCompleteness;
+        return current.startedAt() > 0 && current.lastFreshObservationAt() >= current.startedAt() &&
+            current.lastFreshObservationAt() - current.startedAt() >= DISCOVERY_WINDOW_MILLISECONDS ?
+            current.lastFreshObservationAt() : null;
     }
 
     private <T> void expireCandidates(Map<String,StableFactTracker<T,T>> trackers, long timestamp)
@@ -528,9 +776,11 @@ public class P25NetworkConfigurationStabilizer
             return null;
         }
 
-        if(isCurrentControlChannel(channel))
+        if(channel.descriptor() != null && !channel.descriptor().isBlank())
         {
-            return channel.role();
+            //The v3 canonical channel identity is the native descriptor. Role and resolved frequencies are mutable
+            //observations of that one channel and must never produce duplicate descriptor rows on the wire.
+            return channel.descriptor();
         }
 
         if(channel.downlink() != null)
@@ -544,6 +794,24 @@ public class P25NetworkConfigurationStabilizer
     private long observationTimestamp(long timestamp)
     {
         return timestamp > 0 ? timestamp : System.currentTimeMillis();
+    }
+
+    /** Marks the outermost decoder mutation as active for lock-free optimistic snapshot projection. */
+    private void beginMutation()
+    {
+        if(mMutationDepth++ == 0)
+        {
+            mMutationEpoch++;
+        }
+    }
+
+    /** Publishes the completion of the outermost decoder mutation. Caller owns this object's decoder monitor. */
+    private void endMutation()
+    {
+        if(--mMutationDepth == 0)
+        {
+            mMutationEpoch++;
+        }
     }
 
     private boolean isDiscoveryMode(long timestamp)
@@ -563,8 +831,10 @@ public class P25NetworkConfigurationStabilizer
             return null;
         }
 
+        //The v3 canonical neighbor identity is native system/RFSS/site. Its advertised channel can change and is
+        //therefore a value update, not a second neighbor.
         return value(neighborSite.system()) + ":" + value(neighborSite.rfss()) + ":" +
-            value(neighborSite.site()) + ":" + value(neighborSite.channel());
+            value(neighborSite.site());
     }
 
     private static String frequencyBandKey(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand)
@@ -626,6 +896,59 @@ public class P25NetworkConfigurationStabilizer
         }
 
         return values;
+    }
+
+    private static <T> List<T> stableValues(Map<String,StableFactTracker<T,T>> trackers,
+                                            BiFunction<T,Long,T> timestampProjector)
+    {
+        List<T> values = new ArrayList<>();
+
+        for(StableFactTracker<T,T> tracker: trackers.values())
+        {
+            StableFactTracker.StableObservation<T,T> stable = tracker.getStableObservation();
+            T value = stable.value();
+            long lastSeen = stable.lastSeenTimestamp();
+
+            if(value != null && lastSeen > 0)
+            {
+                values.add(timestampProjector.apply(value, lastSeen));
+            }
+        }
+
+        return values;
+    }
+
+    private record PatchCompleteness(long startedAt, long lastFreshObservationAt)
+    {
+        private static final PatchCompleteness EMPTY = new PatchCompleteness(0, 0);
+    }
+
+    private void removePatchGroupValue(PatchGroupIdentifier patchGroupIdentifier)
+    {
+        if(patchGroupIdentifier != null)
+        {
+            P25NetworkConfigurationSnapshot.PatchGroup snapshot = toSnapshot(patchGroupIdentifier);
+            if(snapshot != null)
+            {
+                mPatchGroups.remove(patchGroupKey(snapshot));
+            }
+        }
+    }
+
+    private void removePatchGroupsFromIdentifiersValue(List<Identifier> identifiers)
+    {
+        if(identifiers == null || identifiers.isEmpty())
+        {
+            return;
+        }
+
+        for(Identifier identifier: identifiers)
+        {
+            if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+            {
+                removePatchGroupValue(patchGroupIdentifier);
+            }
+        }
     }
 
     private static <T> List<T> list(List<T> values)

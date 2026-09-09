@@ -21,6 +21,7 @@ package io.github.dsheirer.controller.channel;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.SiteEvidenceProcessingIncarnationEvent;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
@@ -39,8 +40,10 @@ import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataSnapshotRequest;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshotRequest;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.DecoderFactory;
@@ -107,6 +110,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final int SITE_METADATA_INGRESS_CAPACITY = 256;
     private static final int SITE_METADATA_P25 = 1;
     private static final int SITE_METADATA_PROTOCOL = 2;
+    private static final int SITE_METADATA_P25_SNAPSHOT_REQUEST = 3;
+    private static final int SITE_METADATA_PROTOCOL_SNAPSHOT_REQUEST = 4;
     private static final AtomicLong PROCESSING_INCARNATION_SEQUENCE = new AtomicLong();
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
@@ -1318,6 +1323,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(addProcessingChain(channel, processingChain))
             {
+                long siteEvidenceIncarnation = channel.getSiteEvidenceProcessingIncarnation();
+                long siteEvidenceTuningGeneration = channel.getSiteEvidenceTuningGeneration();
+
+                if(siteEvidenceIncarnation > 0L && siteEvidenceTuningGeneration > 0L)
+                {
+                    processingChain.getEventBus().post(
+                        new SiteEvidenceProcessingIncarnationEvent(siteEvidenceIncarnation,
+                            siteEvidenceTuningGeneration));
+                }
+
                 if(strictFunctionalStartup || channel.isTrafficChannel())
                 {
                     processingChain.startStrict();
@@ -1892,6 +1907,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         submitSiteMetadata(SITE_METADATA_P25, event);
     }
 
+    /**
+     * Defers P25 snapshot construction to the same bounded observer worker that owns listener dispatch.
+     */
+    @Subscribe
+    public void process(SiteMetadataSnapshotRequest request)
+    {
+        submitSiteMetadata(SITE_METADATA_P25_SNAPSHOT_REQUEST, request);
+    }
+
     private void dispatchSiteMetadata(SiteMetadataEvent event)
     {
         if(event != null && !event.matchesCurrentChannel())
@@ -1919,6 +1943,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void process(ProtocolSiteMetadataEvent event)
     {
         submitSiteMetadata(SITE_METADATA_PROTOCOL, event);
+    }
+
+    /**
+     * Defers protocol-neutral snapshot construction to the bounded observer worker.
+     */
+    @Subscribe
+    public void process(ProtocolSiteMetadataSnapshotRequest request)
+    {
+        submitSiteMetadata(SITE_METADATA_PROTOCOL_SNAPSHOT_REQUEST, request);
     }
 
     /**
@@ -1979,6 +2012,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 else if(entry.type() == SITE_METADATA_PROTOCOL)
                 {
                     dispatchProtocolSiteMetadata((ProtocolSiteMetadataEvent)entry.event());
+                }
+                else if(entry.type() == SITE_METADATA_P25_SNAPSHOT_REQUEST)
+                {
+                    SiteMetadataEvent event = ((SiteMetadataSnapshotRequest)entry.event()).resolve();
+
+                    if(event != null)
+                    {
+                        dispatchSiteMetadata(event);
+                    }
+                }
+                else if(entry.type() == SITE_METADATA_PROTOCOL_SNAPSHOT_REQUEST)
+                {
+                    ProtocolSiteMetadataEvent event =
+                        ((ProtocolSiteMetadataSnapshotRequest)entry.event()).resolve();
+
+                    if(event != null)
+                    {
+                        dispatchProtocolSiteMetadata(event);
+                    }
                 }
             }
             catch(RuntimeException exception)

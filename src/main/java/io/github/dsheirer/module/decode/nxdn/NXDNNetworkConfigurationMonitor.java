@@ -41,18 +41,23 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.LocationID;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.Service;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.StationIDOption;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Processes NXDN Layer 3 messages to assemble a snapshot of the site's broadcast configuration details
  */
 public class NXDNNetworkConfigurationMonitor
 {
+    private static final int MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS = 2;
     private ControlChannelInformation mControlChannelInformation;
     private long mControlChannelInformationObservedAt;
     private DigitalStationIDInformation mDigitalStationIDInformation;
@@ -60,8 +65,8 @@ public class NXDNNetworkConfigurationMonitor
     private ServiceInformation mServiceInformation;
     private SiteInformation mSiteInformation;
     private long mSiteInformationObservedAt;
-    private Map<Integer, Neighbor> mNeighborMap = new HashMap<>();
-    private Map<Integer, Long> mNeighborObservedAtMap = new HashMap<>();
+    private Map<Integer, Neighbor> mNeighborMap = new ConcurrentHashMap<>();
+    private Map<Integer, Long> mNeighborObservedAtMap = new ConcurrentHashMap<>();
 
     private AdjacentSiteInformationTypeD mTypeDNeighborA;
     private long mTypeDNeighborAObservedAt;
@@ -69,36 +74,94 @@ public class NXDNNetworkConfigurationMonitor
     private long mTypeDNeighborBObservedAt;
     private Integer mTypeDRepeater;
     private String mTypeDRepeaterStatus;
-    private Map<Integer, Long> mTypeDObservedRepeaters = new HashMap<>();
+    private Map<Integer, Long> mTypeDObservedRepeaters = new ConcurrentHashMap<>();
     private SiteID mTypeDSiteID;
     private Integer mRAN;
     private long mRanObservedAt;
     private boolean mObservedTypeD;
+    private final Runnable mSnapshotCopyHook;
+    private final AtomicLong mMutationEpoch = new AtomicLong();
+    private final AtomicInteger mActiveMutations = new AtomicInteger();
+    private volatile TypeCSystemIdentity mTypeCSystemIdentity;
 
     /**
      * Constructs an instance
      */
     public NXDNNetworkConfigurationMonitor()
     {
+        this(() -> {});
+    }
+
+    /** Test seam for proving observer-side snapshot projection never owns decoder state. */
+    NXDNNetworkConfigurationMonitor(Runnable snapshotCopyHook)
+    {
+        mSnapshotCopyHook = snapshotCopyHook != null ? snapshotCopyHook : () -> {};
     }
 
     /** Clears cumulative facts at a decoder generation boundary. */
     public void reset()
     {
-        clearSiteGeneration();
-        mRAN = null;
-        mRanObservedAt = 0;
+        beginMutation();
+
+        try
+        {
+            clearSiteGeneration();
+            mRAN = null;
+            mRanObservedAt = 0;
+        }
+        finally
+        {
+            endMutation();
+        }
     }
 
     /**
      * Immutable structured snapshot of the network configuration observed so far.
+     * @return coherent snapshot, or null when decoder mutation overlaps both bounded projection attempts.
      */
     public NXDNNetworkConfigurationSnapshot getSnapshot()
+    {
+        for(int attempt = 0; attempt < MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS; attempt++)
+        {
+            if(mActiveMutations.get() != 0)
+            {
+                continue;
+            }
+
+            long before = mMutationEpoch.get();
+
+            NXDNNetworkConfigurationSnapshot snapshot = projectSnapshot();
+
+            if(mActiveMutations.get() == 0 && before == mMutationEpoch.get())
+            {
+                return snapshot;
+            }
+        }
+
+        //Never send a mixed site generation. The bounded observer heartbeat will retry on a later message.
+        return null;
+    }
+
+    /**
+     * Current complete Type-C radio-system key. This is a single immutable publication read by the decoder callback;
+     * it does not project or copy the observer snapshot collections.
+     */
+    String getTypeCRadioSystemKey()
+    {
+        TypeCSystemIdentity identity = mTypeCSystemIdentity;
+        return identity != null ? identity.radioSystemKey() : null;
+    }
+
+    private NXDNNetworkConfigurationSnapshot projectSnapshot()
     {
         LocationID currentLocation = getCurrentLocation();
         List<Service> services = getServices();
         List<String> restrictions = getRestrictions();
         List<NXDNNetworkConfigurationSnapshot.Channel> controlChannels = getControlChannels();
+
+        //Test seam between independent collection projections; an overlapping process/reset must invalidate them.
+        mSnapshotCopyHook.run();
+
         List<NXDNNetworkConfigurationSnapshot.NeighborSite> neighbors = getNeighbors();
         List<Integer> repeaters = mTypeDObservedRepeaters.keySet().stream().sorted().toList();
         NXDNNetworkConfigurationSnapshot.Station station = null;
@@ -430,6 +493,21 @@ public class NXDNNetworkConfigurationMonitor
 
     public void process(NXDNLayer3Message layer3)
     {
+        beginMutation();
+
+        try
+        {
+            processValue(layer3);
+            updateTypeCSystemIdentity();
+        }
+        finally
+        {
+            endMutation();
+        }
+    }
+
+    private void processValue(NXDNLayer3Message layer3)
+    {
         if(layer3.hasRAN())
         {
             int observedRan = layer3.getRAN();
@@ -624,6 +702,49 @@ public class NXDNNetworkConfigurationMonitor
         mTypeDObservedRepeaters.clear();
         mTypeDSiteID = null;
         mObservedTypeD = false;
+        mTypeCSystemIdentity = null;
+    }
+
+    /** Publishes only when native Type-C system identity changes, keeping full snapshot work off the decoder path. */
+    private void updateTypeCSystemIdentity()
+    {
+        if(mObservedTypeD)
+        {
+            mTypeCSystemIdentity = null;
+            return;
+        }
+
+        LocationID location = getCurrentLocation();
+
+        if(location == null)
+        {
+            mTypeCSystemIdentity = null;
+            return;
+        }
+
+        String category = location.getCategory().getValue();
+        int system = location.getSystem().getValue();
+        TypeCSystemIdentity current = mTypeCSystemIdentity;
+
+        if(current == null || current.system() != system || !Objects.equals(current.category(), category))
+        {
+            String key = RadioSystemKey.nxdnTypeC(category, system);
+            mTypeCSystemIdentity = key != null ? new TypeCSystemIdentity(category, system, key) : null;
+        }
+    }
+
+    /** Marks a decoder/lifecycle mutation without acquiring a lock that an observer can own. */
+    private void beginMutation()
+    {
+        mActiveMutations.incrementAndGet();
+        mMutationEpoch.incrementAndGet();
+    }
+
+    /** Publishes a completed mutation for bounded optimistic observer projection. */
+    private void endMutation()
+    {
+        mMutationEpoch.incrementAndGet();
+        mActiveMutations.decrementAndGet();
     }
 
     private void addObservedRepeater(int repeater, long observedAtEpochMilliseconds)
@@ -641,5 +762,9 @@ public class NXDNNetworkConfigurationMonitor
             mNeighborMap.put(neighbor.id(), neighbor);
             mNeighborObservedAtMap.put(neighbor.id(), observedAtEpochMilliseconds);
         }
+    }
+
+    private record TypeCSystemIdentity(String category, int system, String radioSystemKey)
+    {
     }
 }

@@ -1,0 +1,106 @@
+{
+  "schema_version": 3,
+  "agent_version": "sdrtrunk-vce",
+  "observed_at_ms": 1700000010000,
+  "observed_control_frequency_hz": 854087500,
+  "system": {
+    "protocol": "p25",
+    "wacn": 781824,
+    "system_id": 840,
+    "nac": 840,
+    "lra": 5
+  },
+  "site": {
+    "system_id": 840,
+    "nac": 840,
+    "rfss_id": 2,
+    "site_id": 1,
+    "lra": 5,
+    "active_rfss_network_connection": true
+  },
+  "channels": [
+    {
+      "role": "primary_control",
+      "channel_descriptor": "0-493",
+      "downlink_frequency_hz": 854087500,
+      "uplink_frequency_hz": 809087500,
+      "tdma": false,
+      "timeslots": 1,
+      "callsign": "WXYZ",
+      "observed_at_ms": 1700000001000
+    }
+  ],
+  "neighbors": [
+    {
+      "system_id": 840,
+      "nac": 841,
+      "rfss_id": 3,
+      "site_id": 2,
+      "lra": 6,
+      "channel_descriptor": "0-500",
+      "downlink_frequency_hz": 854131250,
+      "uplink_frequency_hz": 809131250,
+      "status": "active",
+      "observed_at_ms": 1700000002000
+    }
+  ],
+  "bandplans": [
+    {
+      "band_id": 0,
+      "tdma": false,
+      "base_frequency_hz": 851006250,
+      "bandwidth_hz": 12500,
+      "channel_spacing_hz": 6250,
+      "transmit_offset_hz": -45000000,
+      "timeslots": 1,
+      "observed_at_ms": 1700000003000
+    }
+  ],
+  "foreign_bandplans": [
+    {
+      "wacn": 703710,
+      "system_id": 801,
+      "band_id": 2,
+      "channel_type": 4,
+      "base_frequency_hz": 762006250,
+      "channel_spacing_hz": 6250,
+      "transmit_offset_hz": 30000000,
+      "observed_at_ms": 1700000004000
+    }
+  ],
+  "active_patches": [
+    {
+      "local_patch_group_id": 4500,
+      "version": 7,
+      "local_talkgroup_ids": [4400, 4401],
+      "local_radio_ids": [700001]
+    }
+  ],
+  "active_patches_observed_at_ms": 1700000009000,
+  "talker_aliases": [
+    {
+      "local_radio_id": 700001,
+      "talker_alias": "OTA UNIT 7",
+      "observed_at_ms": 1700000005000
+    }
+  ],
+  "site_status": {
+    "data_service": true,
+    "data_access": "allowed",
+    "wuid_lease_minutes": 30,
+    "registration_service": true,
+    "mfid": 0,
+    "voice_service": true
+  },
+  "observation_modes": {
+    "system": "merge",
+    "site": "merge",
+    "channels": "merge",
+    "neighbors": "merge",
+    "bandplans": "merge",
+    "foreign_bandplans": "merge",
+    "active_patches": "complete_site_scope",
+    "talker_aliases": "merge",
+    "site_status": "merge"
+  }
+}

@@ -44,6 +44,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
@@ -93,6 +94,10 @@ public class Channel extends Configuration
     /** Manager-owned transient identity for the currently mapped processing-chain run. */
     private transient volatile long mProcessingIncarnation;
     private transient volatile boolean mProcessingIncarnationActive;
+    /** Parent control-channel incarnation that can authorize delayed site identity for a temporary traffic channel. */
+    private transient volatile long mSiteEvidenceProcessingIncarnation;
+    /** Control-source tuning epoch; standard channels own it and traffic channels inherit it per allocation. */
+    private final transient AtomicLong mSiteEvidenceTuningGeneration = new AtomicLong();
     private BooleanProperty mAutoStart = new SimpleBooleanProperty();
     private IntegerProperty mAutoStartOrder = new SimpleIntegerProperty();
     private boolean mSelected;
@@ -646,6 +651,47 @@ public class Channel extends Configuration
         return mProcessingIncarnation;
     }
 
+    /**
+     * Processing incarnation whose verified control-channel metadata applies to calls produced by this channel.
+     * Standard channels use their own incarnation. A pooled traffic channel receives its parent control-channel
+     * incarnation immediately before each allocation.
+     */
+    @JsonIgnore
+    public long getSiteEvidenceProcessingIncarnation()
+    {
+        long parent = mSiteEvidenceProcessingIncarnation;
+        return parent != 0L ? parent : mProcessingIncarnation;
+    }
+
+    /** Assigns the current parent control-channel incarnation to a temporary traffic channel. */
+    @JsonIgnore
+    public void setSiteEvidenceProcessingIncarnation(long processingIncarnation)
+    {
+        mSiteEvidenceProcessingIncarnation = Math.max(0L, processingIncarnation);
+    }
+
+    /** Exact control-source tuning generation paired with the processing incarnation for call placement. */
+    @JsonIgnore
+    public long getSiteEvidenceTuningGeneration()
+    {
+        return mSiteEvidenceTuningGeneration.get();
+    }
+
+    /** Assigns the parent control channel's current tuning generation to a pooled traffic channel. */
+    @JsonIgnore
+    public void setSiteEvidenceTuningGeneration(long generation)
+    {
+        mSiteEvidenceTuningGeneration.set(Math.max(0L, generation));
+    }
+
+    /** Advances authority before facts learned from a different control source can be used. */
+    @JsonIgnore
+    public long advanceSiteEvidenceTuningGeneration()
+    {
+        return mSiteEvidenceTuningGeneration.updateAndGet(current -> current == Long.MAX_VALUE ? 1L :
+            Math.max(1L, current + 1L));
+    }
+
     /** True while the current transient processing incarnation owns an authoritative manager mapping. */
     @JsonIgnore
     public boolean isProcessingIncarnationActive()
@@ -680,6 +726,12 @@ public class Channel extends Configuration
 
         mProcessingIncarnationActive = false;
         mProcessingIncarnation = incarnation;
+
+        if(isStandardChannel())
+        {
+            mSiteEvidenceTuningGeneration.set(1L);
+        }
+
         mProcessingIncarnationActive = true;
     }
 

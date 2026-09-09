@@ -14,6 +14,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataSnapshotRequest;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.grant.TalkgroupVoiceChannelGrant;
@@ -43,9 +44,10 @@ class DMRDecoderStateSiteMetadataTest
 
         decoderState.receive(new ControlChannelSystemParameters(bits, 1_000, 1));
 
-        assertNotNull(collector.event);
+        ProtocolSiteMetadataEvent event = collector.resolve();
+        assertNotNull(event);
         DMRNetworkConfigurationSnapshot snapshot =
-            (DMRNetworkConfigurationSnapshot)collector.event.snapshot();
+            (DMRNetworkConfigurationSnapshot)event.snapshot();
         assertEquals(257, snapshot.network());
         assertEquals(5, snapshot.site());
         assertEquals("TIER_III", snapshot.variant());
@@ -68,7 +70,7 @@ class DMRDecoderStateSiteMetadataTest
 
         decoderState.receive(new ControlChannelSystemParameters(bits, 1_000, 1));
 
-        assertNull(collector.event);
+        assertNull(collector.resolve());
     }
 
     @Test
@@ -98,9 +100,10 @@ class DMRDecoderStateSiteMetadataTest
 
         decoderState.receive(grant);
 
-        assertNotNull(collector.event);
+        ProtocolSiteMetadataEvent event = collector.resolve();
+        assertNotNull(event);
         DMRNetworkConfigurationSnapshot snapshot =
-            (DMRNetworkConfigurationSnapshot)collector.event.snapshot();
+            (DMRNetworkConfigurationSnapshot)event.snapshot();
         assertEquals(1, snapshot.channels().size());
         assertEquals(802, snapshot.channels().getFirst().logicalChannelNumber());
         assertEquals(2, snapshot.channels().getFirst().timeslot());
@@ -132,11 +135,12 @@ class DMRDecoderStateSiteMetadataTest
 
         decoderState.receive(new ControlChannelSystemParameters(identity, 1_000, 1));
 
+        ProtocolSiteMetadataEvent identityEvent = collector.resolve();
         assertEquals("dmr:tier3:tiny:257", manager.getNativeRadioSystemKey());
-        assertEquals(257, ((DMRNetworkConfigurationSnapshot)collector.event.snapshot()).network());
+        assertEquals(257, ((DMRNetworkConfigurationSnapshot)identityEvent.snapshot()).network());
 
         decoderState.reset();
-        collector.event = null;
+        collector.request = null;
         CorrectedBinaryMessage grantBits = new CorrectedBinaryMessage(80);
         grantBits.load(16, 12, 802);
         grantBits.set(28);
@@ -146,18 +150,23 @@ class DMRDecoderStateSiteMetadataTest
             grantBits, null, new SlotType(slotBits), 7_000L, 2));
 
         assertNull(manager.getNativeRadioSystemKey());
-        assertNull(collector.event,
+        assertNull(collector.resolve(),
             "reset must not bypass the bounded site-metadata publication interval");
     }
 
     private static class EventCollector
     {
-        private ProtocolSiteMetadataEvent event;
+        private ProtocolSiteMetadataSnapshotRequest request;
 
         @Subscribe
-        public void receive(ProtocolSiteMetadataEvent metadataEvent)
+        public void receive(ProtocolSiteMetadataSnapshotRequest snapshotRequest)
         {
-            event = metadataEvent;
+            request = snapshotRequest;
+        }
+
+        private ProtocolSiteMetadataEvent resolve()
+        {
+            return request != null ? request.resolve() : null;
         }
     }
 }

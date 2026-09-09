@@ -67,12 +67,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tracks the network configuration details of a DMR network from the broadcast messages
  */
 public class DMRNetworkConfigurationMonitor
 {
+    private static final int MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS = 2;
     private static final FactConfirmationPolicy INITIAL_FAMILY_POLICY =
         new FactConfirmationPolicy(1, 0L, 60_000L, true);
     private static final FactConfirmationPolicy REPLACEMENT_FAMILY_POLICY =
@@ -91,9 +93,9 @@ public class DMRNetworkConfigurationMonitor
     private static final String CHANNEL_TYPE_CONTROL = "Control";
     private static final String CHANNEL_TYPE_TRAFFIC = "Traffic";
 
-    private Map<Integer,ObservedValue<SiteIdentifier>> mNeighborSites = new HashMap<>();
-    private Map<Integer,ObservedValue<AdjacentSiteInformation>> mTier3NeighborSites = new HashMap<>();
-    private Map<ChannelKey,ObservedChannel> mObservedChannelMap = new HashMap<>();
+    private Map<Integer,ObservedValue<SiteIdentifier>> mNeighborSites = new ConcurrentHashMap<>();
+    private Map<Integer,ObservedValue<AdjacentSiteInformation>> mTier3NeighborSites = new ConcurrentHashMap<>();
+    private Map<ChannelKey,ObservedChannel> mObservedChannelMap = new ConcurrentHashMap<>();
     private Map<ChannelKey,StableFactTracker<ObservedChannel,ChannelFactKey>> mChannelFactTrackers = new HashMap<>();
     private Map<Integer,LearnedFrequency> mOverTheAirFrequencyMap = new HashMap<>();
     private final List<TimeslotFrequency> mTimeslotFrequencies;
@@ -109,6 +111,9 @@ public class DMRNetworkConfigurationMonitor
     private long mTier3IdentityObservedAt;
     private final StableFactTracker<NetworkFamily,NetworkFamily> mNetworkFamilyTracker =
         new StableFactTracker<>(family -> family);
+    private final Runnable mSnapshotCopyHook;
+    private volatile long mMutationEpoch;
+    private int mMutationDepth;
 
     public DMRNetworkConfigurationMonitor()
     {
@@ -120,27 +125,66 @@ public class DMRNetworkConfigurationMonitor
      */
     public DMRNetworkConfigurationMonitor(List<TimeslotFrequency> timeslotFrequencies)
     {
+        this(timeslotFrequencies, () -> {});
+    }
+
+    /** Test seam for proving observer-side snapshot projection never owns the decoder monitor. */
+    DMRNetworkConfigurationMonitor(List<TimeslotFrequency> timeslotFrequencies, Runnable snapshotCopyHook)
+    {
         mTimeslotFrequencies = timeslotFrequencies == null ? List.of() : timeslotFrequencies.stream()
             .filter(frequency -> frequency != null)
             .map(TimeslotFrequency::copy)
             .toList();
+        mSnapshotCopyHook = snapshotCopyHook != null ? snapshotCopyHook : () -> {};
     }
 
     /** Clears all learned and candidate state before this monitor is reused for another decoder generation. */
     public synchronized void reset()
     {
-        mNetworkFamilyTracker.reset();
-        clearFamilySpecificFacts();
-        mTier3Identity = null;
-        mTier3IdentityObservedAt = 0;
-        mColorCodeTS1 = null;
-        mColorCodeTS2 = null;
+        beginMutation();
+
+        try
+        {
+            mNetworkFamilyTracker.reset();
+            clearFamilySpecificFacts();
+            mTier3Identity = null;
+            mTier3IdentityObservedAt = 0;
+            mColorCodeTS1 = null;
+            mColorCodeTS2 = null;
+        }
+        finally
+        {
+            endMutation();
+        }
     }
 
     /**
      * Immutable structured snapshot of the network configuration observed so far.
+     * @return coherent snapshot, or null when decoder mutation overlaps both bounded projection attempts.
      */
-    public synchronized DMRNetworkConfigurationSnapshot getSnapshot()
+    public DMRNetworkConfigurationSnapshot getSnapshot()
+    {
+        for(int attempt = 0; attempt < MAXIMUM_SNAPSHOT_PROJECTION_ATTEMPTS; attempt++)
+        {
+            long before = mMutationEpoch;
+
+            if((before & 1L) != 0)
+            {
+                continue;
+            }
+
+            DMRNetworkConfigurationSnapshot snapshot = projectSnapshot();
+
+            if(before == mMutationEpoch)
+            {
+                return snapshot;
+            }
+        }
+
+        return null;
+    }
+
+    private DMRNetworkConfigurationSnapshot projectSnapshot()
     {
         List<DMRNetworkConfigurationSnapshot.Channel> channels = mObservedChannelMap.values().stream()
             .sorted(Comparator.comparingInt((ObservedChannel observed) -> observed.channel().getChannelNumber())
@@ -151,6 +195,11 @@ public class DMRNetworkConfigurationMonitor
                 positive(observed.channel().getUplinkFrequency()), observed.roles(), observed.frequencySource(),
                 observed.observedAtEpochMilliseconds()))
             .toList();
+
+        //The test seam sits between independent collections to prove an overlapping decoder reset/process cannot
+        //produce a mixed snapshot. The epoch check rejects that projection without acquiring the decoder monitor.
+        mSnapshotCopyHook.run();
+
         List<DMRNetworkConfigurationSnapshot.NeighborSite> neighbors = new ArrayList<>();
 
         mNeighborSites.values().stream()
@@ -183,55 +232,64 @@ public class DMRNetworkConfigurationMonitor
 
     /**
      * Imports immutable state learned by the preceding Capacity Plus rest-channel chain.  This runs once on the
-     * lifecycle worker before the replacement decoder starts, so snapshot creation on the decoder callback retains
-     * its original bounded work and never merges an additional transferred collection.
+     * lifecycle worker before the replacement decoder starts and never merges a transferred collection on a decoder
+     * callback.
      */
     public synchronized void seed(DMRNetworkConfigurationSnapshot snapshot)
     {
-        if(snapshot == null)
-        {
-            return;
-        }
+        beginMutation();
 
-        NetworkFamily family = networkFamily(snapshot.variant());
-
-        if(family != null)
+        try
         {
-            mNetworkFamilyTracker.observeAuthoritative(family, latestObservation(snapshot), ignored -> true);
-        }
-
-        mDMRNetwork = snapshot.network() != null ? DMRNetwork.create(snapshot.network()) : null;
-        mDMRSite = snapshot.site() != null ? DMRSite.create(snapshot.site()) : null;
-        mTier3Model = model(snapshot.model());
-        if(isTier3Family(family) && mTier3Model != null && mDMRNetwork != null && mDMRSite != null)
-        {
-            mTier3Identity = new Tier3Identity(mTier3Model, mDMRNetwork.getValue(), mDMRSite.getValue());
-            mTier3IdentityObservedAt = latestObservation(snapshot);
-        }
-        mBrand = snapshot.brand();
-        mMode = snapshot.mode();
-        mChannelType = snapshot.channelType();
-        mColorCodeTS1 = snapshot.colorCodeTimeslot1();
-        mColorCodeTS2 = snapshot.colorCodeTimeslot2();
-
-        for(DMRNetworkConfigurationSnapshot.Channel channel: snapshot.channels())
-        {
-            if(channel != null && channel.logicalChannelNumber() != null && channel.logicalChannelNumber() > 0 &&
-                channel.timeslot() != null && channel.timeslot() >= 1 && channel.timeslot() <= 2)
+            if(snapshot == null)
             {
-                DMRChannel dmrChannel = seededChannel(channel);
-                ObservedChannel observed = new ObservedChannel(channel.descriptor(), dmrChannel, channel.roles(),
-                    channel.frequencySource(), channel.observedAtEpochMilliseconds());
-                ChannelKey key = new ChannelKey(channel.logicalChannelNumber(), channel.timeslot());
-                mObservedChannelMap.merge(key, observed, ObservedChannel::merge);
+                return;
+            }
 
-                if(channel.frequencySource() == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR &&
-                    (dmrChannel.getDownlinkFrequency() > 0 || dmrChannel.getUplinkFrequency() > 0))
+            NetworkFamily family = networkFamily(snapshot.variant());
+
+            if(family != null)
+            {
+                mNetworkFamilyTracker.observeAuthoritative(family, latestObservation(snapshot), ignored -> true);
+            }
+
+            mDMRNetwork = snapshot.network() != null ? DMRNetwork.create(snapshot.network()) : null;
+            mDMRSite = snapshot.site() != null ? DMRSite.create(snapshot.site()) : null;
+            mTier3Model = model(snapshot.model());
+            if(isTier3Family(family) && mTier3Model != null && mDMRNetwork != null && mDMRSite != null)
+            {
+                mTier3Identity = new Tier3Identity(mTier3Model, mDMRNetwork.getValue(), mDMRSite.getValue());
+                mTier3IdentityObservedAt = latestObservation(snapshot);
+            }
+            mBrand = snapshot.brand();
+            mMode = snapshot.mode();
+            mChannelType = snapshot.channelType();
+            mColorCodeTS1 = snapshot.colorCodeTimeslot1();
+            mColorCodeTS2 = snapshot.colorCodeTimeslot2();
+
+            for(DMRNetworkConfigurationSnapshot.Channel channel: snapshot.channels())
+            {
+                if(channel != null && channel.logicalChannelNumber() != null && channel.logicalChannelNumber() > 0 &&
+                    channel.timeslot() != null && channel.timeslot() >= 1 && channel.timeslot() <= 2)
                 {
-                    mOverTheAirFrequencyMap.put(channel.logicalChannelNumber(),
-                        new LearnedFrequency(dmrChannel.getDownlinkFrequency(), dmrChannel.getUplinkFrequency()));
+                    DMRChannel dmrChannel = seededChannel(channel);
+                    ObservedChannel observed = new ObservedChannel(channel.descriptor(), dmrChannel, channel.roles(),
+                        channel.frequencySource(), channel.observedAtEpochMilliseconds());
+                    ChannelKey key = new ChannelKey(channel.logicalChannelNumber(), channel.timeslot());
+                    mObservedChannelMap.merge(key, observed, ObservedChannel::merge);
+
+                    if(channel.frequencySource() == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR &&
+                        (dmrChannel.getDownlinkFrequency() > 0 || dmrChannel.getUplinkFrequency() > 0))
+                    {
+                        mOverTheAirFrequencyMap.put(channel.logicalChannelNumber(),
+                            new LearnedFrequency(dmrChannel.getDownlinkFrequency(), dmrChannel.getUplinkFrequency()));
+                    }
                 }
             }
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -335,18 +393,27 @@ public class DMRNetworkConfigurationMonitor
      */
     public synchronized void process(DMRMessage message)
     {
-        if(message instanceof CSBKMessage csbk)
-        {
-            process(csbk);
-        }
-        else if(message instanceof LCMessage lc)
-        {
-            process(lc);
-        }
+        beginMutation();
 
-        if(message instanceof DataMessage dm)
+        try
         {
-            process(dm);
+            if(message instanceof CSBKMessage csbk)
+            {
+                process(csbk);
+            }
+            else if(message instanceof LCMessage lc)
+            {
+                process(lc);
+            }
+
+            if(message instanceof DataMessage dm)
+            {
+                process(dm);
+            }
+        }
+        finally
+        {
+            endMutation();
         }
     }
 
@@ -356,13 +423,22 @@ public class DMRNetworkConfigurationMonitor
      */
     public synchronized void process(DataMessage dm)
     {
-        if(dm.getTimeslot() == 1)
+        beginMutation();
+
+        try
         {
-            mColorCodeTS1 = dm.getSlotType().getColorCode();
+            if(dm.getTimeslot() == 1)
+            {
+                mColorCodeTS1 = dm.getSlotType().getColorCode();
+            }
+            else if(dm.getTimeslot() == 2)
+            {
+                mColorCodeTS2 = dm.getSlotType().getColorCode();
+            }
         }
-        else if(dm.getTimeslot() == 2)
+        finally
         {
-            mColorCodeTS2 = dm.getSlotType().getColorCode();
+            endMutation();
         }
     }
 
@@ -370,6 +446,20 @@ public class DMRNetworkConfigurationMonitor
      * Processes link control messages
      */
     public synchronized void process(LCMessage linkControl)
+    {
+        beginMutation();
+
+        try
+        {
+            processLinkControl(linkControl);
+        }
+        finally
+        {
+            endMutation();
+        }
+    }
+
+    private void processLinkControl(LCMessage linkControl)
     {
         if(!acceptFamily(classify(linkControl), linkControl.getTimestamp()))
         {
@@ -457,6 +547,20 @@ public class DMRNetworkConfigurationMonitor
      * Processes Control Signalling Blocks (CSBK)
      */
     public synchronized void process(CSBKMessage csbk)
+    {
+        beginMutation();
+
+        try
+        {
+            processCsbk(csbk);
+        }
+        finally
+        {
+            endMutation();
+        }
+    }
+
+    private void processCsbk(CSBKMessage csbk)
     {
         if(!acceptFamily(classify(csbk), csbk.getTimestamp()))
         {
@@ -891,6 +995,24 @@ public class DMRNetworkConfigurationMonitor
     {
         return family == NetworkFamily.TIER_III || family == NetworkFamily.CAPACITY_MAX ||
             family == NetworkFamily.HYTERA_TIER_III;
+    }
+
+    /** Marks the outermost decoder mutation as active for lock-free optimistic snapshot projection. */
+    private void beginMutation()
+    {
+        if(mMutationDepth++ == 0)
+        {
+            mMutationEpoch++;
+        }
+    }
+
+    /** Publishes completion of the outermost decoder mutation. Caller owns this monitor's decoder lock. */
+    private void endMutation()
+    {
+        if(--mMutationDepth == 0)
+        {
+            mMutationEpoch++;
+        }
     }
 
     private static NetworkFamily classify(LCMessage message)

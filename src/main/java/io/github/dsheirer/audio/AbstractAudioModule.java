@@ -32,6 +32,7 @@ import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
+import io.github.dsheirer.audio.call.SiteEvidenceProcessingIncarnationEvent;
 import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.identifier.Identifier;
@@ -80,6 +81,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private CallLegId mPreviousCallLegId;
     private final AtomicReference<CurrentCallSource> mCurrentCallSource = new AtomicReference<>();
     private final AtomicReference<RadioSystemKeyEvent> mPendingCallSystemKey = new AtomicReference<>();
+    private final AtomicReference<SiteEvidenceProcessingIncarnationEvent> mPendingSiteEvidenceGeneration =
+        new AtomicReference<>();
     private final AtomicBoolean mCurrentCallClosing = new AtomicBoolean();
     private CallLegSource mPreviousCallLegSource;
     private boolean mLinkNextAudioCallToPrevious;
@@ -195,6 +198,19 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         }
     }
 
+    /** Applies the lifecycle-owned lookup token used by verified site-metadata observations. */
+    @Subscribe
+    public void siteEvidenceProcessingIncarnationChanged(SiteEvidenceProcessingIncarnationEvent event)
+    {
+        if(event != null)
+        {
+            mCallLegSourceTemplate.updateAndGet(source ->
+                source.withSiteEvidenceGeneration(event.processingIncarnation(), event.tuningGeneration()));
+            mPendingSiteEvidenceGeneration.set(event);
+            tryApplySiteEvidenceGeneration(event);
+        }
+    }
+
     /**
      * Closes the current audio segment
      */
@@ -212,6 +228,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             mCurrentCallClosing.set(true);
             applyPendingCallSystemKey();
+            applyPendingSiteEvidenceGeneration();
 
             if(mCurrentAudioCall != null)
             {
@@ -245,6 +262,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         synchronized(this)
         {
             applyPendingCallSystemKey();
+            applyPendingSiteEvidenceGeneration();
 
             if(mCurrentAudioCall == null)
             {
@@ -261,6 +279,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mCurrentCallSource.set(new CurrentCallSource(mCurrentAudioCallId,
                     mCurrentAudioCall.getStartTimestamp(), linkedContinuation, callLegSource));
                 applyPendingCallSystemKey();
+                applyPendingSiteEvidenceGeneration();
                 mLinkNextAudioCallToPrevious = false;
                 mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
                 if(mRecordAudioOverride)
@@ -626,6 +645,53 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             //Force the next observer event to carry the corrected immutable source snapshot.
             mLastPublishedAudioCallSnapshot = null;
         }
+    }
+
+    /** Runs only while the audio producer already owns this module's monitor. */
+    private void applyPendingSiteEvidenceGeneration()
+    {
+        SiteEvidenceProcessingIncarnationEvent event = mPendingSiteEvidenceGeneration.getAndSet(null);
+
+        if(event == null)
+        {
+            return;
+        }
+
+        if(mPreviousCallLegSource != null)
+        {
+            mPreviousCallLegSource = mPreviousCallLegSource.withSiteEvidenceGeneration(
+                event.processingIncarnation(), event.tuningGeneration());
+        }
+
+        if(tryApplySiteEvidenceGeneration(event))
+        {
+            mLastPublishedAudioCallSnapshot = null;
+        }
+    }
+
+    /** Fixed-attempt compare-and-set; the lifecycle callback never waits for the audio producer. */
+    private boolean tryApplySiteEvidenceGeneration(SiteEvidenceProcessingIncarnationEvent event)
+    {
+        for(int attempt = 0; attempt < 2; attempt++)
+        {
+            CurrentCallSource current = mCurrentCallSource.get();
+
+            if(current == null)
+            {
+                return false;
+            }
+
+            CallLegSource updated = current.source().withSiteEvidenceGeneration(event.processingIncarnation(),
+                event.tuningGeneration());
+
+            if(updated.equals(current.source()) || mCurrentCallSource.compareAndSet(current,
+                current.withSource(updated)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

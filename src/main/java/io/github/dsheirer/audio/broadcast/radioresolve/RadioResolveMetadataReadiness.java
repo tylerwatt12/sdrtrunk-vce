@@ -18,15 +18,19 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
  */
 public record RadioResolveMetadataReadiness(boolean ready, String message)
 {
+    /** V3 uses native P25 identity; no external RadioResolve GUID participates in readiness. */
+    public static RadioResolveMetadataReadiness evaluate(P25NetworkConfigurationSnapshot snapshot)
+    {
+        return evaluate(null, snapshot);
+    }
+
+    /**
+     * Compatibility overload. The v2 RadioResolve identifier is deliberately ignored by the v3 readiness rule.
+     */
     public static RadioResolveMetadataReadiness evaluate(String radioResolveId,
                                                          P25NetworkConfigurationSnapshot snapshot)
     {
         StringBuilder missing = new StringBuilder();
-
-        if(radioResolveId == null || radioResolveId.isBlank())
-        {
-            appendMissing(missing, "RadioResolve ID");
-        }
 
         if(snapshot == null || snapshot.decoder() == null || snapshot.decoder().isBlank())
         {
@@ -101,7 +105,8 @@ public record RadioResolveMetadataReadiness(boolean ready, String message)
 
     private static boolean isCurrentControl(String role)
     {
-        return "primary_control".equals(role) || "current_control".equals(role);
+        return "primary_control".equals(role) || "current_control".equals(role) ||
+            "secondary_control".equals(role);
     }
 
     private static void appendMissing(StringBuilder missing, String value)

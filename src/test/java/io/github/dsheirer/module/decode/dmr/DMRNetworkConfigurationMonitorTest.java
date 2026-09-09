@@ -26,10 +26,90 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DMRNetworkConfigurationMonitorTest
 {
+    @Test
+    void blockedObserverProjectionNeverDelaysDecoderProcessResetOrSeed() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicBoolean blockFirstProjection = new AtomicBoolean(true);
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor(List.of(), () -> {
+            if(blockFirstProjection.compareAndSet(true, false))
+            {
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        monitor.process(tierThreeIdentity(257, 5, 1_000L));
+        ExecutorService observer = Executors.newSingleThreadExecutor();
+        ExecutorService decoder = Executors.newSingleThreadExecutor();
+
+        try
+        {
+            Future<DMRNetworkConfigurationSnapshot> projected = observer.submit(monitor::getSnapshot);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+            DMRNetworkConfigurationSnapshot replacement = new DMRNetworkConfigurationSnapshot("DMR", "TIER_III",
+                258, 6, "Tier III Trunking", "TINY", null, "Control", 1, 2, List.of(), List.of());
+            Future<?> decoderWork = decoder.submit(() -> {
+                for(int index = 0; index < 1_000; index++)
+                {
+                    monitor.process(grant(802 + index % 8, index % 2 + 1, 2_000L + index));
+                }
+
+                monitor.reset();
+                monitor.seed(replacement);
+            });
+
+            decoderWork.get(2, TimeUnit.SECONDS);
+            releaseProjection.countDown();
+            DMRNetworkConfigurationSnapshot snapshot = projected.get(2, TimeUnit.SECONDS);
+            assertEquals(258, snapshot.network());
+            assertEquals(6, snapshot.site());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            observer.shutdownNow();
+            decoder.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentResetFailsClosedInsteadOfPublishingMixedDmrState()
+    {
+        AtomicReference<DMRNetworkConfigurationMonitor> reference = new AtomicReference<>();
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor(List.of(),
+            () -> reference.get().reset());
+        reference.set(monitor);
+        monitor.process(tierThreeIdentity(257, 5, 1_000L));
+        monitor.process(grant(802, 1, 2_000L));
+        monitor.process(grant(802, 1, 7_000L));
+
+        DMRNetworkConfigurationSnapshot snapshot = monitor.getSnapshot();
+
+        assertNull(snapshot,
+            "bounded optimistic retries must fail closed while every projection overlaps decoder reset");
+    }
+
     @Test
     void extractsTierThreeIdentityIntoImmutableSnapshot()
     {

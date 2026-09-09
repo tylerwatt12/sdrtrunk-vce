@@ -19,6 +19,7 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * Immutable provenance and quality summary for one physical receiver leg in a resolved logical call.  Audio is held
@@ -31,7 +32,9 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                              CallEncryptionEvidence callEncryptionEvidence,
                              P25IdentityObservation p25SourceIdentity,
                              P25IdentityObservation p25DestinationIdentity,
-                             List<P25IdentityObservation> p25PatchMemberIdentities)
+                             List<P25IdentityObservation> p25PatchMemberIdentities,
+                             List<TimestampedVoiceFingerprint> voiceFrameFingerprints,
+                             Long frequencyHz, Integer timeslot)
 {
     public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
                           VoiceCallQuality voiceCallQuality, long retainedAudioSampleCount,
@@ -39,7 +42,8 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
                           CallEncryptionEvidence callEncryptionEvidence)
     {
         this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
-            ingressLoss, audioTruncated, winner, callEncryptionEvidence, null, null, List.of());
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, null, null, List.of(), List.of(), null,
+            null);
     }
 
     public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
@@ -51,7 +55,34 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
             ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
             observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
-            patchMembers(destinationIdentifier));
+            patchMembers(destinationIdentifier), List.of(), null, null);
+    }
+
+    public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
+                          VoiceCallQuality voiceCallQuality, long retainedAudioSampleCount,
+                          boolean ingressLoss, boolean audioTruncated, boolean winner,
+                          CallEncryptionEvidence callEncryptionEvidence, Identifier<?> sourceIdentifier,
+                          Identifier<?> destinationIdentifier,
+                          List<TimestampedVoiceFingerprint> voiceFrameFingerprints)
+    {
+        this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
+            observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
+            patchMembers(destinationIdentifier), voiceFrameFingerprints, null, null);
+    }
+
+    public CallLegSummary(CallLegId callLegId, CallLegSource source, long startTimestamp, long endTimestamp,
+                          VoiceCallQuality voiceCallQuality, long retainedAudioSampleCount,
+                          boolean ingressLoss, boolean audioTruncated, boolean winner,
+                          CallEncryptionEvidence callEncryptionEvidence, Identifier<?> sourceIdentifier,
+                          Identifier<?> destinationIdentifier,
+                          List<TimestampedVoiceFingerprint> voiceFrameFingerprints,
+                          Long frequencyHz, Integer timeslot)
+    {
+        this(callLegId, source, startTimestamp, endTimestamp, voiceCallQuality, retainedAudioSampleCount,
+            ingressLoss, audioTruncated, winner, callEncryptionEvidence, observation(sourceIdentifier, false),
+            observation(destinationIdentifier, destinationIdentifier instanceof PatchGroupIdentifier),
+            patchMembers(destinationIdentifier), voiceFrameFingerprints, frequencyHz, timeslot);
     }
 
     public CallLegSummary
@@ -68,6 +99,9 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         retainedAudioSampleCount = Math.max(0L, retainedAudioSampleCount);
         p25PatchMemberIdentities = p25PatchMemberIdentities != null ?
             List.copyOf(p25PatchMemberIdentities) : List.of();
+        voiceFrameFingerprints = voiceFrameFingerprints != null ? List.copyOf(voiceFrameFingerprints) : List.of();
+        frequencyHz = frequencyHz != null && frequencyHz > 0L ? frequencyHz : null;
+        timeslot = timeslot != null && timeslot > 0 ? timeslot : null;
     }
 
     private static P25IdentityObservation observation(Identifier<?> identifier, boolean patch)
@@ -110,7 +144,8 @@ public record CallLegSummary(CallLegId callLegId, CallLegSource source, long sta
         }
 
         PatchGroup patchGroup = patchIdentifier.getValue();
-        return patchGroup.getPatchedTalkgroupIdentifiers().stream()
+        return Stream.concat(patchGroup.getPatchedTalkgroupIdentifiers().stream(),
+                patchGroup.getPatchedRadioIdentifiers().stream())
             .map(member -> observation(member, false)).filter(java.util.Objects::nonNull).distinct().toList();
     }
 

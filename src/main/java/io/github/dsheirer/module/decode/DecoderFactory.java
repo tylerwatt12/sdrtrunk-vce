@@ -377,12 +377,14 @@ public class DecoderFactory
         return new CallLegSource(decodeConfiguration != null ? decodeConfiguration.getDecoderType() : null,
             ChannelConfigurationKey.configured(channel),
             channel != null ? channel.getName() : null,
-            channel != null ? channel.getRadioResolveId() : null,
+            channel != null && channel.hasRadioResolveId() ? channel.getRadioResolveId() : null,
             aliasList != null ? aliasList.getId() : 0L,
             channel != null ? channel.getP25SiteIdentity() : null,
             identityDomain,
             channel != null ? ChannelConfigurationPolicy.requireChannelKind(channel) : null,
-            channel != null && channel.getChannelType() == ChannelType.TRAFFIC);
+            channel != null && channel.getChannelType() == ChannelType.TRAFFIC, null,
+            channel != null ? channel.getSiteEvidenceProcessingIncarnation() : 0L,
+            channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L);
     }
 
     private static boolean shouldAddP25ControlChannelRotationMonitor(Channel channel,

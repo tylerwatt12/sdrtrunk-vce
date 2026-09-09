@@ -83,7 +83,9 @@ public class BroadcastFactory
                         inputAudioFormat, mp3Setting, aliasModel);
                 case RADIORESOLVE:
                     return new RadioResolveBroadcaster((RadioResolveConfiguration)configuration,
-                        inputAudioFormat, mp3Setting, aliasModel);
+                        inputAudioFormat, mp3Setting, aliasModel,
+                        userPreferences.getDirectoryPreference().getDirectoryApplicationRoot()
+                            .resolve("radioresolve-spool").resolve(configuration.getConfigurationId()));
                 case BROADCASTIFY:
                     return new IcecastTCPAudioBroadcaster((BroadcastifyFeedConfiguration) configuration,
                             inputAudioFormat, mp3Setting, aliasModel);

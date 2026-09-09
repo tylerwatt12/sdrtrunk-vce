@@ -553,6 +553,9 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        //Invalidate placement authority before any facts or traffic grants from the new control source can escape.
+        parentChannel.advanceSiteEvidenceTuningGeneration();
+
         List<Channel> trafficChannelsToDisable;
         ChannelActivityModel channelActivityModel;
         mLock.lock();
@@ -660,6 +663,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         trafficChannel.setConfigurationId(mParentChannel.getConfigurationId());
         trafficChannel.setRadioResolveId(mParentChannel.getRadioResolveId());
         trafficChannel.setP25SiteIdentity(mParentChannel.getP25SiteIdentity());
+        trafficChannel.setSiteEvidenceProcessingIncarnation(mParentChannel.getProcessingIncarnation());
+        trafficChannel.setSiteEvidenceTuningGeneration(mParentChannel.getSiteEvidenceTuningGeneration());
         trafficChannel.setEventLogConfiguration(mParentChannel.getEventLogConfiguration());
         trafficChannel.setRecordConfiguration(mParentChannel.getRecordConfiguration());
     }

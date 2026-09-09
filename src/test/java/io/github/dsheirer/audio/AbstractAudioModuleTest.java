@@ -24,6 +24,7 @@ import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
 import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.SiteEvidenceProcessingIncarnationEvent;
 import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
@@ -318,6 +319,48 @@ class AbstractAudioModuleTest
         AudioCallEvent completion = events.stream()
             .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).findFirst().orElseThrow();
         assertEquals("dmr:tier3:small:42", completion.snapshot().callLegSource().radioSystemKey());
+    }
+
+    @Test
+    void siteEvidenceGenerationHandoffDoesNotWaitForAudioMonitor() throws Exception
+    {
+        CallLegSource initialSource = new CallLegSource(DecoderType.P25_PHASE2, "configuration-id", "Site",
+            null, 1L, null, io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
+            io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, true);
+        TestAudioModule module = new TestAudioModule(AliasList.empty("Test"), 2_000, initialSource);
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+        module.beginAt(1_100L);
+        CountDownLatch monitorHeld = new CountDownLatch(1);
+        CountDownLatch releaseMonitor = new CountDownLatch(1);
+        CountDownLatch updateReturned = new CountDownLatch(1);
+        Thread holder = new Thread(() -> module.holdMonitor(monitorHeld, releaseMonitor));
+        Thread updater = new Thread(() -> {
+            module.siteEvidenceProcessingIncarnationChanged(
+                new SiteEvidenceProcessingIncarnationEvent(17L, 3L));
+            updateReturned.countDown();
+        });
+        holder.start();
+        assertTrue(monitorHeld.await(2, TimeUnit.SECONDS));
+
+        try
+        {
+            updater.start();
+            assertTrue(updateReturned.await(500, TimeUnit.MILLISECONDS),
+                "the lifecycle callback must not wait for the audio producer's monitor");
+        }
+        finally
+        {
+            releaseMonitor.countDown();
+            holder.join(2_000L);
+            updater.join(2_000L);
+        }
+
+        module.closeAt(1_200L);
+        AudioCallEvent completion = events.stream()
+            .filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED).findFirst().orElseThrow();
+        assertEquals(17L, completion.snapshot().callLegSource().siteEvidenceProcessingIncarnation());
+        assertEquals(3L, completion.snapshot().callLegSource().siteEvidenceTuningGeneration());
     }
 
     @Test

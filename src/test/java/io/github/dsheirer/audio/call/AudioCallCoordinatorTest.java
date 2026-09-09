@@ -94,6 +94,13 @@ class AudioCallCoordinatorTest
             assertEquals(3, call.callLegSummaries().stream()
                 .map(summary -> summary.source().p25SiteIdentity()).distinct().count());
             assertEquals(1, call.callLegSummaries().stream().filter(CallLegSummary::winner).count());
+            assertTrue(call.callLegSummaries().stream()
+                .allMatch(summary -> summary.voiceFrameFingerprints().size() == 3),
+                "each immutable physical-leg summary must retain its bounded exact frame evidence");
+            CallLegSummary first = call.callLegSummaries().stream()
+                .filter(summary -> summary.callLegId().producerId() == 1L).findFirst().orElseThrow();
+            assertEquals(new TimestampedVoiceFingerprint(11L, 1_000L),
+                first.voiceFrameFingerprints().getFirst());
         }
         finally
         {
