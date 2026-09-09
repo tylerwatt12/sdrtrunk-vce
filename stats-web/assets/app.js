@@ -1885,17 +1885,13 @@ function databaseLoggingNotice(view) {
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
   if (serviceStatusWarningRequired()) return node('div', 'logging-notice warning',
-    'Logging status is unavailable. Database-backed views may not be current.');
+    'Saved statistics couldn’t be checked. This page may show older information.');
   if (!logging.available) return null;
   if (!logging.summaryActive) {
-    const state = logging.summaryConfigured && logging.state ? ` (${logging.state.toLowerCase()})` : '';
-    const message = logging.summaryConfigured ?
-      `Summary logging is not running${state}. Database-backed views remain available but are not updating.` :
-      'Summary logging is off. Database-backed views remain available but are not updating.';
-    const detail = logging.summaryConfigured && logging.lastError ? ` ${logging.lastError}` : '';
     const lastWrite = logging.lastSuccessfulWriteMs ?
-      ` Last successful summary write: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
-    return node('div', 'logging-notice warning', `${message}${detail}${lastWrite}`);
+      ` Last update: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
+    return node('div', 'logging-notice warning',
+      `Saved statistics are not updating. This page may show older information.${lastWrite}`);
   }
   return null;
 }
@@ -6858,7 +6854,7 @@ async function signalHealthSection() {
   if (logging.available && !logging.summaryActive) {
     currentToolbar.hidden = true;
     const message = node('div', 'empty signal-disabled');
-    message.append('Signal health requires Stats Logging.');
+    message.append('Saved signal history is turned off.');
     if (capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) {
       message.append(' ', anchor('Open Live signal levels', href('live')), '.');
     }
@@ -6955,7 +6951,7 @@ async function channelSignalHistorySection(channel) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Control channel quality history requires Stats Logging.'));
+    host.append(node('div', 'empty', 'Saved control-channel quality history is turned off.'));
   } else {
     await load(rangeControl.buttons, true, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
@@ -7017,7 +7013,7 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Group activity history requires Stats Logging.'));
+    host.append(node('div', 'empty', 'Saved group activity history is turned off.'));
   } else {
     await load(rangeControl.buttons, true, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
@@ -7090,7 +7086,7 @@ async function channelTopGroupsSection(channel) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Group activity requires Stats Logging.'));
+    host.append(node('div', 'empty', 'Saved group activity is turned off.'));
   } else {
     await load(rangeControl.buttons, true, true);
   }
@@ -7334,11 +7330,11 @@ class ReceiverHealthController {
       this.snapshot = normalizeReceiverHealthSnapshot(response);
       this.stale = this.snapshot.generated_at_ms <= 0 ||
         Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
-      this.lastError = this.stale ? 'The receiver health sampler has not produced a recent snapshot.' : '';
+      this.lastError = this.stale ? 'Receiver health hasn’t updated recently.' : '';
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;
       this.stale = true;
-      this.lastError = error?.message || 'Receiver health status is unavailable.';
+      this.lastError = 'Receiver health is temporarily unavailable. Try Refresh now.';
     } finally {
       if (this.requestController === controller) this.requestController = null;
       if (this.desktopEnabled()) {
@@ -7379,14 +7375,14 @@ class ReceiverHealthController {
       className = 'stale';
       if (accountAlerts.critical_count > 0) {
         const count = accountAlerts.critical_count || accountAlerts.enabled_count;
-        label = `Stale · Critical ${number(count)}`;
+        label = `Update delayed · Critical ${number(count)}`;
       } else if (accountAlerts.warning_count > 0) {
         const count = accountAlerts.warning_count || accountAlerts.enabled_count;
-        label = `Stale · Warning ${number(count)}`;
+        label = `Update delayed · Warning ${number(count)}`;
       } else {
-        label = 'Stale';
+        label = 'Update delayed';
       }
-      detail = this.lastError || 'Receiver health status is stale.';
+      detail = this.lastError || 'Receiver health hasn’t updated recently.';
     } else if (accountAlerts.critical_count > 0) {
       className = 'critical';
       const count = accountAlerts.critical_count || accountAlerts.enabled_count;
@@ -17178,7 +17174,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   const focusedControl = receiverHealthFocusedControl(host);
   host.replaceChildren();
   if (!snapshot) {
-    const message = stale ? (lastError || 'Receiver health status is unavailable.') :
+    const message = stale ? (lastError || 'Receiver health is temporarily unavailable. Try Refresh now.') :
       'Loading receiver health status…';
     const body = node('div', 'admin-section-body');
     body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
@@ -17188,7 +17184,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   }
 
   const summary = snapshot.summary;
-  const stateLabel = stale ? 'Stale' : summary.severity === 'critical' ? 'Critical' :
+  const stateLabel = stale ? 'Update delayed' : summary.severity === 'critical' ? 'Critical' :
     summary.severity === 'warning' ? 'Warning' : 'Healthy';
   const overview = node('div', 'receiver-health-overview');
   const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
@@ -17210,7 +17206,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   });
   overview.append(timing);
   if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
-    `Showing the last receiver health snapshot. ${lastError || 'The latest refresh failed.'}`));
+    'Showing the most recent receiver health information available.'));
 
   host.append(receiverHealthHostResourceOverview(snapshot),
     receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),

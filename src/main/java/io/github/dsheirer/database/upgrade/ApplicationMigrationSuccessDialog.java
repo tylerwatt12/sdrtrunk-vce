@@ -143,44 +143,37 @@ public final class ApplicationMigrationSuccessDialog
     public static String currentDatabaseReport(ApplicationMigrationService.MigrationResult migration)
     {
         String result = migration.completedWithRepairsOrSkippedItems() ?
-            "Your database migration completed with itemized repairs, resets, or skipped items. " +
-                "Usable independent settings were preserved." :
-            "Your database was migrated successfully without row-level repairs, resets, or skipped items.";
+            "Your database was updated successfully. Some items were repaired, reset, or skipped. " +
+                "Details are listed below." :
+            "Your database was updated successfully.";
         return result + "\n\n" + migration.helperOutput() +
-            "\n\nSafety backup:\n" + migration.safetyBackup();
+            "\n\nBackup of your previous database:\n" + migration.safetyBackup();
     }
 
     public static String previousImportReport(ApplicationMigrationService.MigrationResult migration)
     {
         String result = migration.completedWithRepairsOrSkippedItems() ?
-            "Migration completed with itemized repairs, resets, or skipped items. Usable independent settings " +
-                "were preserved." :
-            "Migration completed without row-level repairs, resets, or skipped items.";
+            " Some items were repaired, reset, or skipped." : "";
         return migration.inputScope() == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
-            result + " The database was migrated and each usable optional profile item was imported " +
-                "separately. Eligible stored paths were checked and remapped where applicable. Your previous " +
-                "installation and its data were left unchanged. Review the itemized " +
-                "optional-profile results below.\n\n" +
+            "Your previous installation was imported successfully. The original installation was not changed." +
+                result + " Details about copied files and any items needing attention are listed below.\n\n" +
                 migration.helperOutput() :
-            result + " Only the selected SQLite database was imported. The source database and its " +
-                "neighboring files were left unchanged.\n\n" + migration.helperOutput();
+            "The selected database was imported successfully. The original file and nearby files were not " +
+                "changed. Files outside the database were not copied." + result + "\n\n" + migration.helperOutput();
     }
 
     public static String replacementImportReport(ApplicationMigrationService.MigrationResult migration,
                                                  Path sourceDatabase)
     {
         String result = migration.completedWithRepairsOrSkippedItems() ?
-            "SQLite database import completed with itemized repairs, resets, or skipped items. Usable independent " +
-                "settings were preserved." :
-            "SQLite database import completed without row-level repairs, resets, or skipped items.";
-        return result + " The selected database replaced the active database after staged " +
-            "migration and validation. The selected source file and its neighboring files were left unchanged.\n\n" +
-            "Stored portable paths were not remapped. If no usable administrator credential could be preserved, " +
-            "setup will request a new administrator password after restart.\n\n" + migration.helperOutput() +
+            " Some items were repaired, reset, or skipped." : "";
+        return "The selected database was imported successfully and is now in use. The original file was not " +
+            "changed. Files outside the database were not copied." + result + "\n\n" +
+            "If the administrator account could not be kept, setup will ask you to create a new administrator " +
+            "password after restart.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
-            "\n\nPrevious active database backup:\n" + migration.safetyBackup() +
-            "\n\nSDRTrunk will restart automatically into setup. Review the imported settings and output folders " +
-            "before starting reception.";
+            "\n\nBackup of the database that was replaced:\n" + migration.safetyBackup() +
+            "\n\nSDRTrunk will restart so you can review the imported settings before receiving.";
     }
 
     /** Lightweight view kept separate from the top-level window so button and countdown wiring is testable headless. */
