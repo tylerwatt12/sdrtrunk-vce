@@ -499,6 +499,50 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
+    void freshCallsBypassRestartedBacklogInChronologicalOrderThenBacklogDrains(@TempDir Path directory)
+        throws Exception
+    {
+        assertEquals(TimeUnit.SECONDS.toMillis(180),
+            RadioResolveBroadcaster.LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS);
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-fresh-priority");
+        Path audio = directory.resolve("call.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveSpool beforeRestart = new RadioResolveSpool(spoolDirectory);
+        beforeRestart.open();
+        RadioResolveCallEnvelope oldestBacklog = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.HOURS.toMillis(3), "00000000-0000-4000-8000-000000000021");
+        RadioResolveCallEnvelope newestBacklog = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.HOURS.toMillis(2), "00000000-0000-4000-8000-000000000022");
+        RadioResolveCallEnvelope newestFresh = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(10), "00000000-0000-4000-8000-000000000024");
+        RadioResolveCallEnvelope oldestFresh = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(20), "00000000-0000-4000-8000-000000000023");
+        beforeRestart.enqueue(audio, oldestBacklog, RadioResolveCallEnvelope.HoldContext.EMPTY, now);
+        beforeRestart.enqueue(audio, newestBacklog, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
+        beforeRestart.enqueue(audio, newestFresh, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 2L);
+        beforeRestart.enqueue(audio, oldestFresh, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 3L);
+
+        RadioResolveBroadcaster restarted = broadcaster(spoolDirectory);
+        RadioResolveSpool afterRestart = new RadioResolveSpool(spoolDirectory);
+        afterRestart.open();
+        List<String> expectedOrder = List.of(oldestFresh.submissionId(), newestFresh.submissionId(),
+            oldestBacklog.submissionId(), newestBacklog.submissionId());
+
+        for(String submissionId : expectedOrder)
+        {
+            RadioResolveSpool.Entry candidate = restarted.nextUploadCandidate(now + 4L);
+            assertNotNull(candidate);
+            assertEquals(submissionId, candidate.manifest().envelope().submissionId());
+            afterRestart.remove(candidate);
+        }
+
+        assertNull(restarted.nextUploadCandidate(now + 4L));
+        assertEquals(0, afterRestart.size());
+        restarted.dispose();
+    }
+
+    @Test
     void unresolvedOlderCallBlocksNewerReadyCallUntilItsPlacementDeadline(@TempDir Path directory) throws Exception
     {
         long now = System.currentTimeMillis();

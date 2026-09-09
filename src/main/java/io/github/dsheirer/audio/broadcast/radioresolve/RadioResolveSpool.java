@@ -39,6 +39,11 @@ final class RadioResolveSpool
     static final long MAXIMUM_AGE_MILLISECONDS = TimeUnit.HOURS.toMillis(24);
     static final long MAXIMUM_BYTES = 2L * 1024L * 1024L * 1024L;
     static final long PRUNE_INTERVAL_MILLISECONDS = TimeUnit.MINUTES.toMillis(1);
+    private static final Comparator<Entry> FRESH_CALL_ORDER = Comparator
+        .comparingLong(RadioResolveSpool::startedAt)
+        .thenComparingLong(entry -> entry.manifest().envelope().completedAtMs())
+        .thenComparingLong(entry -> entry.manifest().enqueuedAtMs())
+        .thenComparing(entry -> entry.manifest().envelope().submissionId());
     private static final String MANIFEST_SUFFIX = ".json";
     private static final String AUDIO_SUFFIX = ".mp3";
     private static final Map<SpoolKey,SharedDirectoryState> SHARED_DIRECTORY_STATES = new ConcurrentHashMap<>();
@@ -178,7 +183,7 @@ final class RadioResolveSpool
             forceDirectory();
             entry = new Entry(manifestPath, audio, manifest, Files.size(manifestPath) + Files.size(audio));
             mState.entries.put(envelope.submissionId(), entry);
-            indexReadinessLocked(entry);
+            indexEntryLocked(entry);
             mState.sizeBytes += entry.sizeBytes();
         }
         catch(IOException exception)
@@ -202,6 +207,37 @@ final class RadioResolveSpool
         synchronized(mState)
         {
             return mState.entries.isEmpty() ? null : mState.entries.values().iterator().next();
+        }
+    }
+
+    /**
+     * Oldest call that is still within the supplied fresh-upload window. The candidate set sheds historical calls
+     * once, so a large outage backlog is not rescanned on every processor tick.
+     */
+    Entry firstFresh(long now, long freshnessMilliseconds)
+    {
+        synchronized(mState)
+        {
+            long cutoff = now - Math.max(0L, freshnessMilliseconds);
+            Entry oldest = null;
+            var iterator = mState.freshLaneCandidateSubmissionIds.iterator();
+
+            while(iterator.hasNext())
+            {
+                String submissionId = iterator.next();
+                Entry entry = mState.entries.get(submissionId);
+
+                if(entry == null || entry.manifest().envelope().completedAtMs() < cutoff)
+                {
+                    iterator.remove();
+                }
+                else if(oldest == null || FRESH_CALL_ORDER.compare(entry, oldest) < 0)
+                {
+                    oldest = entry;
+                }
+            }
+
+            return oldest;
         }
     }
 
@@ -420,6 +456,7 @@ final class RadioResolveSpool
         mState.entries.remove(submissionId);
         mState.readySubmissionIds.remove(submissionId);
         mState.heldSubmissionIds.remove(submissionId);
+        mState.freshLaneCandidateSubmissionIds.remove(submissionId);
         mState.protectedSubmissionIds.remove(submissionId);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - current.sizeBytes());
         forceDirectory();
@@ -558,7 +595,7 @@ final class RadioResolveSpool
         }
 
         mState.entries.put(submissionId, entry);
-        indexReadinessLocked(entry);
+        indexEntryLocked(entry);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - (existing != null ? existing.sizeBytes() : 0L)) + size;
         return true;
     }
@@ -573,7 +610,7 @@ final class RadioResolveSpool
         long updatedSize = Files.size(current.manifestPath()) + Files.size(current.audioPath());
         Entry replacement = new Entry(current.manifestPath(), current.audioPath(), updated, updatedSize);
         mState.entries.put(submissionId(current), replacement);
-        indexReadinessLocked(replacement);
+        indexEntryLocked(replacement);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - current.sizeBytes()) + updatedSize;
         return replacement;
     }
@@ -624,6 +661,7 @@ final class RadioResolveSpool
                 iterator.remove();
                 mState.readySubmissionIds.remove(indexed.getKey());
                 mState.heldSubmissionIds.remove(indexed.getKey());
+                mState.freshLaneCandidateSubmissionIds.remove(indexed.getKey());
                 mState.protectedSubmissionIds.remove(indexed.getKey());
                 mState.sizeBytes = Math.max(0L, mState.sizeBytes - entry.sizeBytes());
             }
@@ -635,15 +673,22 @@ final class RadioResolveSpool
         return entry.manifest().envelope().submissionId();
     }
 
+    private static long startedAt(Entry entry)
+    {
+        RadioResolveCallEnvelope.CallFacts call = entry.manifest().envelope().call();
+        return call != null ? call.startedAtMs() : entry.manifest().envelope().completedAtMs();
+    }
+
     private void rebuildReadinessIndexesLocked()
     {
         mState.readySubmissionIds.clear();
         mState.heldSubmissionIds.clear();
-        mState.entries.values().forEach(this::indexReadinessLocked);
+        mState.freshLaneCandidateSubmissionIds.clear();
+        mState.entries.values().forEach(this::indexEntryLocked);
         mState.protectedSubmissionIds.removeIf(submissionId -> !mState.entries.containsKey(submissionId));
     }
 
-    private void indexReadinessLocked(Entry entry)
+    private void indexEntryLocked(Entry entry)
     {
         if(entry == null)
         {
@@ -651,6 +696,8 @@ final class RadioResolveSpool
         }
 
         String submissionId = submissionId(entry);
+        mState.freshLaneCandidateSubmissionIds.add(submissionId);
+
         if(entry.manifest().envelope().isReady())
         {
             mState.heldSubmissionIds.remove(submissionId);
@@ -714,6 +761,7 @@ final class RadioResolveSpool
         private final LinkedHashMap<String,Entry> entries = new LinkedHashMap<>();
         private final LinkedHashSet<String> readySubmissionIds = new LinkedHashSet<>();
         private final LinkedHashSet<String> heldSubmissionIds = new LinkedHashSet<>();
+        private final LinkedHashSet<String> freshLaneCandidateSubmissionIds = new LinkedHashSet<>();
         private final Set<String> protectedSubmissionIds = new HashSet<>();
         private long sizeBytes;
         private long lastPruneAtMs;

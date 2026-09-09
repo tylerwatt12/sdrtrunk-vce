@@ -70,6 +70,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-vce";
     static final long METADATA_HOLD_MILLISECONDS = TimeUnit.MINUTES.toMillis(2);
+    /** Mirrors RadioResolve's default Live admission window for upload priority; the server remains authoritative. */
+    static final long LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS = TimeUnit.MINUTES.toMillis(3);
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
     private static final Duration CALL_UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
@@ -627,8 +629,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     }
 
     /**
-     * Returns the oldest durable entry only when it is upload-ready. A held call is an ordering barrier: letting a
-     * newer call leapfrog it would make the server's terminal Live cursor suppress or play the older call late.
+     * Prioritizes the oldest call that can still enter Live, then resumes the durable backlog. Within the fresh lane,
+     * a held or retry-delayed call remains an ordering barrier so later speech cannot play first.
      */
     RadioResolveSpool.Entry nextUploadCandidate(long now) throws IOException
     {
@@ -659,7 +661,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             }
         }
 
-        RadioResolveSpool.Entry candidate = mSpool.first();
+        RadioResolveSpool.Entry candidate = mSpool.firstFresh(now, LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS);
+
+        if(candidate == null)
+        {
+            candidate = mSpool.first();
+        }
 
         if(candidate == null || !candidate.manifest().envelope().isReady() || mSpool.isProtected(candidate) ||
             candidate.manifest().nextAttemptAtMs() > now)
