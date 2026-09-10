@@ -11,12 +11,14 @@ receiver features that already exist in Nightly.
 ## Nightly
 
 The [rolling Nightly release](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly) is built from current
-`main` after its automated checks pass. It contains the newest completed features and fixes, so its behavior can change
-more often than the numbered Alpha line.
+`main` after its automated checks pass and a maintainer explicitly approves publication. Pushing to `main` does not
+publish a Nightly by itself. It contains the newest completed features and fixes, so its behavior can change more often
+than the numbered Alpha line.
 
-Because Nightly is a rolling release, it does not require a version-matched What's New document or a separate
-release-note approval. Its GitHub release body stays evergreen. Use the documentation bundled with the downloaded
-build and read the Application Migrator's preflight and completion reports before replacing existing data.
+Because Nightly is a rolling release, it does not require a version-matched What's New document. Its GitHub release
+body stays evergreen, but every publication requires a manual approval after the pending changes and test results have
+been reviewed. Use the documentation bundled with the downloaded build and read the Application Migrator's preflight
+and completion reports before replacing existing data.
 
 ## Updates Stay On Their Channel
 

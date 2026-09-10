@@ -1,9 +1,15 @@
-# Package and publish the already-tested main branch.
+# Package and publish the already-tested main branch after explicit approval.
 name: Nightly Release
+run-name: Publish approved Nightly from ${{ github.ref_name }}
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      confirm_publication:
+        description: I approve publishing the current main branch as the new Nightly
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -17,6 +23,7 @@ permissions:
 jobs:
   package-and-publish:
     name: Package and publish nightly
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_publication }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
