@@ -18,17 +18,7 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
  */
 public record RadioResolveMetadataReadiness(boolean ready, String message)
 {
-    /** V3 uses native P25 identity; no external RadioResolve GUID participates in readiness. */
     public static RadioResolveMetadataReadiness evaluate(P25NetworkConfigurationSnapshot snapshot)
-    {
-        return evaluate(null, snapshot);
-    }
-
-    /**
-     * Compatibility overload. The v2 RadioResolve identifier is deliberately ignored by the v3 readiness rule.
-     */
-    public static RadioResolveMetadataReadiness evaluate(String radioResolveId,
-                                                         P25NetworkConfigurationSnapshot snapshot)
     {
         StringBuilder missing = new StringBuilder();
 

@@ -23,7 +23,7 @@ public class RadioResolveMetadataReadinessTest
     @Test
     public void missingLegacyRadioResolveIdDoesNotBlockNativeP25Facts()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(null,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             snapshot(completeNetwork(), completeSite(), List.of(primaryControl()), List.of(frequencyBand())));
 
         assertTrue(readiness.ready());
