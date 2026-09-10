@@ -1,2 +1,3 @@
 @echo off
-@"%~dp0bin\sdrtrunk-vce.bat" %*
+call "%~dp0bin\sdrtrunk-vce.bat" %*
+if errorlevel 1 pause
