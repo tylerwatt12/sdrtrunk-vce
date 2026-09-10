@@ -20,6 +20,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -365,6 +366,32 @@ class RadioResolveSpoolTest
         oldProvider.remove(queued);
         oldProvider.unprotect(queued);
         assertNull(replacement.first(), "the replacement shares removal state with the completing provider");
+    }
+
+    @Test
+    void replacementCannotClaimAnyPartOfAnActiveBatch(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path source = audio(directory.resolve("source.mp3"), 32);
+        Path spoolDirectory = directory.resolve("batch-claim");
+        RadioResolveSpool firstProvider = new RadioResolveSpool(spoolDirectory);
+        firstProvider.open();
+        RadioResolveSpool.Entry first = firstProvider.enqueue(source,
+            RadioResolveTestFixtures.readyEnvelope(source, now - 3_000L, uuid(1)),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveSpool.Entry second = firstProvider.enqueue(source,
+            RadioResolveTestFixtures.readyEnvelope(source, now - 2_000L, uuid(2)),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L).entry();
+        assertTrue(firstProvider.protectAll(List.of(first, second)));
+
+        RadioResolveSpool replacement = new RadioResolveSpool(spoolDirectory);
+        replacement.open();
+        assertFalse(replacement.protectAll(replacement.entries()));
+        assertTrue(replacement.entries().stream().allMatch(replacement::isProtected));
+
+        firstProvider.unprotectAll(List.of(first, second));
+        assertTrue(replacement.protectAll(replacement.entries()));
+        replacement.unprotectAll(replacement.entries());
     }
 
     @Test

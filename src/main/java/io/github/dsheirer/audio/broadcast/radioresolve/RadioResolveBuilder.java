@@ -37,21 +37,20 @@ public class RadioResolveBuilder
     private static final String CRLF = "\r\n";
     private final String mBoundary = "sdrtrunk-vce-" + UUID.randomUUID();
     private List<Part> mParts = new ArrayList<>();
-    private Path mAudioPath;
-    private String mAudioName = "audio.mp3";
+    private final List<FilePart> mFiles = new ArrayList<>();
 
     public String getBoundary()
     {
         return mBoundary;
     }
 
-    public RadioResolveBuilder addFile(Path path, String audioName)
+    /** Adds a streaming file part without first copying its contents into heap memory. */
+    public RadioResolveBuilder addFile(String key, Path path, String audioName)
     {
-        mAudioPath = path;
-
-        if(audioName != null && !audioName.isBlank())
+        if(key != null && !key.isBlank() && path != null)
         {
-            mAudioName = audioName;
+            mFiles.add(new FilePart(key, path,
+                audioName != null && !audioName.isBlank() ? audioName : "audio.mp3"));
         }
 
         return this;
@@ -91,25 +90,26 @@ public class RadioResolveBuilder
     public HttpRequest.BodyPublisher build() throws IOException
     {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        List<HttpRequest.BodyPublisher> publishers = new ArrayList<>();
 
         for(Part part: mParts)
         {
             outputStream.write(formatPart(part).getBytes(StandardCharsets.UTF_8));
         }
 
-        if(mAudioPath != null)
+        for(FilePart filePart : mFiles)
         {
-            outputStream.write(formatFilePart().getBytes(StandardCharsets.UTF_8));
-            HttpRequest.BodyPublisher prefix = HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray());
-            HttpRequest.BodyPublisher file = HttpRequest.BodyPublishers.ofFile(mAudioPath);
-            HttpRequest.BodyPublisher suffix = HttpRequest.BodyPublishers.ofString(CRLF + getClosingBoundary(),
-                StandardCharsets.UTF_8);
-            return HttpRequest.BodyPublishers.concat(prefix, file, suffix);
+            outputStream.write(formatFilePart(filePart).getBytes(StandardCharsets.UTF_8));
+            publishers.add(HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray()));
+            publishers.add(HttpRequest.BodyPublishers.ofFile(filePart.path()));
+            outputStream.reset();
+            outputStream.write(CRLF.getBytes(StandardCharsets.UTF_8));
         }
 
         outputStream.write(getClosingBoundary().getBytes(StandardCharsets.UTF_8));
+        publishers.add(HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray()));
 
-        return HttpRequest.BodyPublishers.ofByteArray(outputStream.toByteArray());
+        return HttpRequest.BodyPublishers.concat(publishers.toArray(HttpRequest.BodyPublisher[]::new));
     }
 
     private String formatPart(Part part)
@@ -128,11 +128,12 @@ public class RadioResolveBuilder
         return sb.toString();
     }
 
-    private String formatFilePart()
+    private String formatFilePart(FilePart filePart)
     {
         StringBuilder sb = new StringBuilder();
         sb.append(DASH_DASH).append(mBoundary).append(CRLF);
-        sb.append("Content-Disposition: form-data; name=\"audio\"; filename=\"").append(mAudioName).append("\"").append(CRLF);
+        sb.append("Content-Disposition: form-data; name=\"").append(filePart.key())
+            .append("\"; filename=\"").append(filePart.audioName()).append("\"").append(CRLF);
         sb.append("Content-Type: audio/mpeg").append(CRLF);
         sb.append(CRLF);
         return sb.toString();
@@ -144,6 +145,10 @@ public class RadioResolveBuilder
     }
 
     private record Part(String mKey, String mValue, String mContentType)
+    {
+    }
+
+    private record FilePart(String key, Path path, String audioName)
     {
     }
 }

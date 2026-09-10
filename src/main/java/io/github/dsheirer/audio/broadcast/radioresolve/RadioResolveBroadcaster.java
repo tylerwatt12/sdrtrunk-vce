@@ -11,6 +11,8 @@
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
 import com.google.common.net.HttpHeaders;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.dsheirer.alias.AliasModel;
@@ -65,13 +67,16 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     implements SiteMetadataListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(RadioResolveBroadcaster.class);
-    public static final String UPLOAD_PATH = "/api/node/v3/upload-call";
+    public static final String UPLOAD_PATH = "/api/node/v3/upload-calls";
     public static final String METADATA_PATH = "/api/node/v3/metadata";
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-vce";
     static final long METADATA_HOLD_MILLISECONDS = TimeUnit.MINUTES.toMillis(2);
     /** Mirrors RadioResolve's default Live admission window for upload priority; the server remains authoritative. */
     static final long LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS = TimeUnit.MINUTES.toMillis(3);
+    static final int MAXIMUM_CALLS_PER_UPLOAD = 8;
+    static final long MAXIMUM_CALL_AUDIO_BYTES = 25L * 1024L * 1024L;
+    static final long MAXIMUM_UPLOAD_BYTES = 32L * 1024L * 1024L;
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
     private static final Duration CALL_UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
@@ -576,9 +581,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 return;
             }
 
-            RadioResolveSpool.Entry entry = nextUploadCandidate(System.currentTimeMillis());
+            List<RadioResolveSpool.Entry> entries = nextUploadBatch(System.currentTimeMillis());
 
-            if(entry == null)
+            if(entries.isEmpty())
             {
                 return;
             }
@@ -588,14 +593,23 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 return;
             }
 
-            RadioResolveSpool.Entry uploadEntry = prepareUploadEntry(entry);
+            List<RadioResolveSpool.Entry> preparedEntries = prepareUploadEntries(entries);
 
-            if(uploadEntry == null || !mUploadInFlight.compareAndSet(false, true))
+            if(preparedEntries.isEmpty())
             {
                 return;
             }
 
-            if(!mSpool.protect(uploadEntry))
+            PreparedUpload preparedUpload = createBoundedUploadRequest(preparedEntries);
+
+            if(preparedUpload == null || !mUploadInFlight.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            List<RadioResolveSpool.Entry> uploadEntries = preparedUpload.entries();
+
+            if(!mSpool.protectAll(uploadEntries))
             {
                 mUploadInFlight.set(false);
                 return;
@@ -603,14 +617,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             try
             {
-                HttpRequest request = createUploadRequest(getBroadcastConfiguration(), uploadEntry.audioPath(),
-                    uploadEntry.manifest().envelope());
-                mHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .whenComplete((response, throwable) -> handleUploadResponse(uploadEntry, response, throwable));
+                mHttpClient.sendAsync(preparedUpload.request(), HttpResponse.BodyHandlers.ofString())
+                    .whenComplete((response, throwable) -> handleUploadResponse(uploadEntries, response, throwable));
             }
             catch(Exception exception)
             {
-                handleUploadResponse(uploadEntry, null, exception);
+                handleUploadResponse(uploadEntries, null, exception);
             }
         }
         catch(Exception exception)
@@ -621,18 +633,92 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
     }
 
-    /** Returns a byte-stable, durably clock-normalized entry, or null while no bounded clock proof is available. */
-    RadioResolveSpool.Entry prepareUploadEntry(RadioResolveSpool.Entry entry) throws IOException
+    /** Freezes the same current clock proof into each byte-stable manifest before the batch is claimed. */
+    List<RadioResolveSpool.Entry> prepareUploadEntries(List<RadioResolveSpool.Entry> entries) throws IOException
     {
         RadioResolveClockSynchronizer.ClockProof clockProof = mClockSynchronizer.currentProof();
-        return clockProof != null ? mSpool.applyServerClockOffset(entry, clockProof.offsetMilliseconds()) : null;
+
+        if(clockProof == null || entries == null || entries.isEmpty())
+        {
+            return List.of();
+        }
+
+        List<RadioResolveSpool.Entry> prepared = new ArrayList<>(entries.size());
+
+        for(RadioResolveSpool.Entry entry : entries)
+        {
+            RadioResolveSpool.Entry adjusted = mSpool.applyServerClockOffset(entry,
+                clockProof.offsetMilliseconds());
+
+            if(adjusted == null)
+            {
+                return List.of();
+            }
+
+            prepared.add(adjusted);
+        }
+
+        return List.copyOf(prepared);
+    }
+
+    /** Builds the largest oldest-first prefix whose exact multipart Content-Length fits the server contract. */
+    PreparedUpload createBoundedUploadRequest(List<RadioResolveSpool.Entry> entries) throws IOException
+    {
+        List<RadioResolveSpool.Entry> prefix = new ArrayList<>(entries);
+
+        while(!prefix.isEmpty())
+        {
+            try
+            {
+                List<RadioResolveSpool.Entry> immutablePrefix = List.copyOf(prefix);
+                return new PreparedUpload(immutablePrefix,
+                    createUploadRequest(getBroadcastConfiguration(), immutablePrefix));
+            }
+            catch(CallAudioTooLargeException exception)
+            {
+                RadioResolveSpool.Entry oversized = exception.entry();
+                prefix.removeIf(entry -> entry.manifest().envelope().submissionId().equals(
+                    oversized.manifest().envelope().submissionId()));
+                discardOversizedCall(oversized, "its audio exceeds 25 MiB");
+            }
+            catch(UploadBatchTooLargeException exception)
+            {
+                if(prefix.size() > 1)
+                {
+                    prefix.removeLast();
+                    continue;
+                }
+
+                RadioResolveSpool.Entry oversized = prefix.getFirst();
+                discardOversizedCall(oversized, "its multipart upload exceeds 32 MiB");
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private void discardOversizedCall(RadioResolveSpool.Entry entry, String reason) throws IOException
+    {
+        mSpool.remove(entry);
+        incrementErrorAudioCount();
+        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+        mLog.error("RadioResolve v3 discarded call {} because {}",
+            entry.manifest().envelope().submissionId(), reason);
     }
 
     /**
      * Prioritizes the oldest call that can still enter Live, then resumes the durable backlog. Within the fresh lane,
      * a held or retry-delayed call remains an ordering barrier so later speech cannot play first.
      */
-    RadioResolveSpool.Entry nextUploadCandidate(long now) throws IOException
+    List<RadioResolveSpool.Entry> nextUploadBatch(long now) throws IOException
+    {
+        return nextUploadBatch(now, MAXIMUM_CALLS_PER_UPLOAD, MAXIMUM_UPLOAD_BYTES);
+    }
+
+    List<RadioResolveSpool.Entry> nextUploadBatch(long now, int maximumEntries, long maximumBytes)
+        throws IOException
     {
         for(RadioResolveSpool.Entry candidate : mSpool.heldEntries())
         {
@@ -661,30 +747,17 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             }
         }
 
-        RadioResolveSpool.Entry candidate = mSpool.firstFresh(now, LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS);
-
-        if(candidate == null)
-        {
-            candidate = mSpool.first();
-        }
-
-        if(candidate == null || !candidate.manifest().envelope().isReady() || mSpool.isProtected(candidate) ||
-            candidate.manifest().nextAttemptAtMs() > now)
-        {
-            return null;
-        }
-
-        return candidate;
+        return mSpool.uploadBatch(now, LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS, maximumEntries, maximumBytes);
     }
 
-    private void handleUploadResponse(RadioResolveSpool.Entry entry, HttpResponse<String> response,
+    private void handleUploadResponse(List<RadioResolveSpool.Entry> entries, HttpResponse<String> response,
                                       Throwable throwable)
     {
         try
         {
             if(throwable != null)
             {
-                retry(entry, "temporary upload failure");
+                retry(entries, "temporary batch upload failure");
                 return;
             }
 
@@ -692,10 +765,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             if(status >= 200 && status < 300)
             {
-                mSpool.remove(entry);
                 recordConnectionSuccess();
-                incrementStreamedAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
+                applyBatchUploadResponse(entries, status, response.body());
             }
             else if(status == 401 || status == 403)
             {
@@ -704,30 +775,15 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
                 mLog.error("RadioResolve v3 upload rejected: invalid API key or access denied");
             }
-            else if(isPermanentCallRejectionStatus(status))
-            {
-                mSpool.remove(entry);
-                incrementErrorAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-
-                if(status == 410 || status == 422)
-                {
-                    incrementAgedOffAudioCount();
-                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-                }
-
-                mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
-                    entry.manifest().envelope().submissionId(), status);
-            }
             else
             {
-                //A staggered deployment can briefly return 404/405/501, and proxies can introduce other status
-                //codes. Preserve the only durable call copy unless the v3 contract says the payload is terminal.
+                //Only a matched per-call result can discard durable data. A whole-request error has an uncertain
+                //per-call outcome, including when a proxy replaces the server response.
                 setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-                retry(entry, "unexpected HTTP " + status);
+                retry(entries, "unexpected batch HTTP " + status);
             }
         }
-        catch(IOException exception)
+        catch(RuntimeException exception)
         {
             incrementErrorAudioCount();
             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
@@ -737,7 +793,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         {
             try
             {
-                int evicted = mSpool.unprotect(entry);
+                int evicted = mSpool.unprotectAll(entries);
 
                 if(evicted > 0)
                 {
@@ -763,20 +819,244 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
     }
 
-    private void retry(RadioResolveSpool.Entry entry, String reason) throws IOException
+    /** Applies only exact index/submission acknowledgements; every missing or uncertain item remains durable. */
+    void applyBatchUploadResponse(List<RadioResolveSpool.Entry> entries, int status, String responseBody)
+    {
+        List<String> submissionIds = entries.stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList();
+        BatchResponse batchResponse = classifyBatchResponse(submissionIds, status, responseBody);
+
+        if(!batchResponse.valid())
+        {
+            setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+        }
+
+        int retryCount = 0;
+
+        for(int index = 0; index < entries.size(); index++)
+        {
+            RadioResolveSpool.Entry entry = entries.get(index);
+            BatchUploadDecision decision = batchResponse.decisions().get(index);
+
+            try
+            {
+                if(decision.disposition() == UploadDisposition.ACCEPTED)
+                {
+                    mSpool.remove(entry);
+                    incrementStreamedAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
+                }
+                else if(decision.disposition() == UploadDisposition.TERMINAL_REJECTION)
+                {
+                    mSpool.remove(entry);
+                    incrementErrorAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+
+                    if(decision.httpStatus() == 410 || decision.httpStatus() == 422)
+                    {
+                        incrementAgedOffAudioCount();
+                        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                    }
+
+                    mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
+                        decision.submissionId(), decision.httpStatus());
+                }
+                else
+                {
+                    retry(entry);
+                    retryCount++;
+                }
+            }
+            catch(IOException exception)
+            {
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to update RadioResolve spool entry {}: {}", decision.submissionId(),
+                    safeMessage(exception));
+            }
+        }
+
+        if(retryCount > 0)
+        {
+            mLog.info("RadioResolve v3 retained {} of {} batched call(s) for retry", retryCount, entries.size());
+        }
+    }
+
+    private void retry(List<RadioResolveSpool.Entry> entries, String reason)
+    {
+        int retried = 0;
+
+        for(RadioResolveSpool.Entry entry : entries)
+        {
+            try
+            {
+                retry(entry);
+                retried++;
+            }
+            catch(IOException exception)
+            {
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to retain RadioResolve call {} for retry: {}",
+                    entry.manifest().envelope().submissionId(), safeMessage(exception));
+            }
+        }
+
+        if(retried > 0)
+        {
+            mLog.info("RadioResolve v3 will retry {} batched call(s) [{}]", retried, reason);
+        }
+    }
+
+    private void retry(RadioResolveSpool.Entry entry) throws IOException
     {
         int attempts = entry.manifest().attemptCount();
         long delay = RETRY_BACKOFF_MS[Math.min(attempts, RETRY_BACKOFF_MS.length - 1)];
         mSpool.retry(entry, System.currentTimeMillis() + delay);
         incrementErrorAudioCount();
         broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-        mLog.info("RadioResolve v3 will retry the oldest queued call in {} ms [{}]", delay, reason);
+    }
+
+    static BatchResponse classifyBatchResponse(List<String> submissionIds, int status, String responseBody)
+    {
+        List<BatchUploadDecision> retry = submissionIds.stream()
+            .map(submissionId -> new BatchUploadDecision(submissionId, status, UploadDisposition.RETRY)).toList();
+
+        if(status < 200 || status >= 300 || responseBody == null || responseBody.isBlank())
+        {
+            return new BatchResponse(retry, false);
+        }
+
+        try
+        {
+            JsonElement parsed = JsonParser.parseString(responseBody);
+
+            if(!parsed.isJsonObject())
+            {
+                return new BatchResponse(retry, false);
+            }
+
+            JsonObject root = parsed.getAsJsonObject();
+            JsonObject data = root.has("data") && root.get("data").isJsonObject() ?
+                root.getAsJsonObject("data") : null;
+            JsonArray results = data != null && data.has("results") && data.get("results").isJsonArray() ?
+                data.getAsJsonArray("results") : null;
+
+            if(results == null)
+            {
+                return new BatchResponse(retry, false);
+            }
+
+            List<BatchUploadDecision> decisions = new ArrayList<>(submissionIds.size());
+
+            for(int index = 0; index < submissionIds.size(); index++)
+            {
+                String submissionId = submissionIds.get(index);
+                JsonElement resultElement = index < results.size() ? results.get(index) : null;
+                JsonObject result = resultElement != null && resultElement.isJsonObject() ?
+                    resultElement.getAsJsonObject() : null;
+                Integer resultIndex = exactResultInteger(result, "index");
+                Integer resultStatus = result != null ? exactResultInteger(result, "http_status") : null;
+                String resultSubmissionId = result != null && result.has("submission_id") &&
+                    result.get("submission_id").isJsonPrimitive() ?
+                    result.get("submission_id").getAsString() : null;
+
+                if(resultIndex == null || resultIndex != index || resultStatus == null ||
+                    !submissionId.equalsIgnoreCase(resultSubmissionId))
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, status, UploadDisposition.RETRY));
+                }
+                else if(resultStatus >= 200 && resultStatus < 300)
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus,
+                        UploadDisposition.ACCEPTED));
+                }
+                else if(isPermanentCallRejectionStatus(resultStatus))
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus,
+                        UploadDisposition.TERMINAL_REJECTION));
+                }
+                else
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus, UploadDisposition.RETRY));
+                }
+            }
+
+            return new BatchResponse(List.copyOf(decisions), true);
+        }
+        catch(RuntimeException exception)
+        {
+            return new BatchResponse(retry, false);
+        }
+    }
+
+    private static Integer exactResultInteger(JsonObject result, String name)
+    {
+        if(result == null || !result.has(name) || !result.get(name).isJsonPrimitive() ||
+            !result.getAsJsonPrimitive(name).isNumber())
+        {
+            return null;
+        }
+
+        String value = result.get(name).getAsString();
+
+        if(!value.matches("0|[1-9][0-9]*"))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Integer.valueOf(value);
+        }
+        catch(NumberFormatException exception)
+        {
+            return null;
+        }
     }
 
     static boolean isPermanentCallRejectionStatus(int status)
     {
         return status == 400 || status == 409 || status == 410 || status == 413 || status == 415 ||
             status == 422;
+    }
+
+    enum UploadDisposition
+    {
+        ACCEPTED,
+        TERMINAL_REJECTION,
+        RETRY
+    }
+
+    record BatchUploadDecision(String submissionId, int httpStatus, UploadDisposition disposition)
+    {
+    }
+
+    record BatchResponse(List<BatchUploadDecision> decisions, boolean valid)
+    {
+    }
+
+    record PreparedUpload(List<RadioResolveSpool.Entry> entries, HttpRequest request)
+    {
+    }
+
+    private static class UploadBatchTooLargeException extends IOException
+    {
+    }
+
+    private static class CallAudioTooLargeException extends IOException
+    {
+        private final RadioResolveSpool.Entry mEntry;
+
+        private CallAudioTooLargeException(RadioResolveSpool.Entry entry)
+        {
+            mEntry = entry;
+        }
+
+        private RadioResolveSpool.Entry entry()
+        {
+            return mEntry;
+        }
     }
 
     private void sendSiteMetadata(SiteMetadataEvent event, String identityKey, String hash, long observedAt,
@@ -824,18 +1104,52 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
     }
 
-    static HttpRequest createUploadRequest(RadioResolveConfiguration configuration, Path audioPath,
-                                           RadioResolveCallEnvelope envelope) throws IOException
+    static HttpRequest createUploadRequest(RadioResolveConfiguration configuration,
+                                           List<RadioResolveSpool.Entry> entries) throws IOException
     {
-        if(audioPath == null || !Files.isRegularFile(audioPath))
+        if(entries == null || entries.isEmpty() || entries.size() > MAXIMUM_CALLS_PER_UPLOAD)
         {
-            throw new FileNotFoundException(String.valueOf(audioPath));
+            throw new IOException("RadioResolve upload batch must contain between one and eight calls");
         }
 
-        String filename = audioPath.getFileName() != null ? audioPath.getFileName().toString() : "call.mp3";
-        RadioResolveBuilder body = new RadioResolveBuilder()
-            .addJsonPart("call", RadioResolveJson.GSON.toJson(envelope))
-            .addFile(audioPath, filename);
+        JsonObject batch = new JsonObject();
+        batch.addProperty("schema_version", 3);
+        JsonArray items = new JsonArray();
+        RadioResolveBuilder body = new RadioResolveBuilder();
+
+        for(int index = 0; index < entries.size(); index++)
+        {
+            RadioResolveSpool.Entry entry = entries.get(index);
+            Path audioPath = entry != null ? entry.audioPath() : null;
+
+            if(audioPath == null || !Files.isRegularFile(audioPath))
+            {
+                throw new FileNotFoundException(String.valueOf(audioPath));
+            }
+
+            if(Files.size(audioPath) > MAXIMUM_CALL_AUDIO_BYTES)
+            {
+                throw new CallAudioTooLargeException(entry);
+            }
+
+            String audioPart = "audio-" + index;
+            JsonObject item = new JsonObject();
+            item.addProperty("audio_part", audioPart);
+            item.add("call", RadioResolveJson.GSON.toJsonTree(entry.manifest().envelope()));
+            items.add(item);
+            String filename = audioPath.getFileName() != null ? audioPath.getFileName().toString() : "call.mp3";
+            body.addFile(audioPart, audioPath, filename);
+        }
+
+        batch.add("items", items);
+        body.addJsonPart("batch", batch.toString());
+        HttpRequest.BodyPublisher publisher = body.build();
+
+        if(publisher.contentLength() < 0L || publisher.contentLength() > MAXIMUM_UPLOAD_BYTES)
+        {
+            throw new UploadBatchTooLargeException();
+        }
+
         return HttpRequest.newBuilder()
             .uri(createUri(configuration.getHost(), UPLOAD_PATH))
             .version(HttpClient.Version.HTTP_1_1)
@@ -843,7 +1157,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + body.getBoundary())
             .header(HttpHeaders.USER_AGENT, AGENT_VERSION)
-            .POST(body.build())
+            .POST(publisher)
             .build();
     }
 

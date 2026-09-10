@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -241,6 +242,100 @@ final class RadioResolveSpool
         }
     }
 
+    /**
+     * Selects one bounded oldest-first upload batch. Calls that can still enter Live lead the batch in call-time
+     * order, followed by the durable outage backlog in spool order. An unresolved or retry-delayed call remains an
+     * ordering barrier within its lane.
+     */
+    List<Entry> uploadBatch(long now, long freshnessMilliseconds, int maximumEntries, long maximumBytes)
+    {
+        synchronized(mState)
+        {
+            int entryLimit = Math.max(1, maximumEntries);
+            long byteLimit = Math.max(1L, maximumBytes);
+            long cutoff = now - Math.max(0L, freshnessMilliseconds);
+            List<Entry> fresh = new ArrayList<>();
+            Set<String> freshSubmissionIds = new HashSet<>();
+            var freshIterator = mState.freshLaneCandidateSubmissionIds.iterator();
+
+            while(freshIterator.hasNext())
+            {
+                String submissionId = freshIterator.next();
+                Entry entry = mState.entries.get(submissionId);
+
+                if(entry == null || receiverLocalCompletedAt(entry) < cutoff)
+                {
+                    freshIterator.remove();
+                }
+                else
+                {
+                    fresh.add(entry);
+                    freshSubmissionIds.add(submissionId);
+                }
+            }
+
+            fresh.sort(FRESH_CALL_ORDER);
+            List<Entry> selected = new ArrayList<>(Math.min(entryLimit, 16));
+            long selectedBytes = 0L;
+
+            for(Entry entry : fresh)
+            {
+                if(!isUploadReadyLocked(entry, now))
+                {
+                    return selected;
+                }
+
+                if(!appendWithinBounds(selected, entry, entryLimit, byteLimit, selectedBytes))
+                {
+                    return selected;
+                }
+
+                selectedBytes += entry.sizeBytes();
+            }
+
+            for(Entry entry : mState.entries.values())
+            {
+                if(freshSubmissionIds.contains(submissionId(entry)))
+                {
+                    continue;
+                }
+
+                if(!isUploadReadyLocked(entry, now))
+                {
+                    break;
+                }
+
+                if(!appendWithinBounds(selected, entry, entryLimit, byteLimit, selectedBytes))
+                {
+                    break;
+                }
+
+                selectedBytes += entry.sizeBytes();
+            }
+
+            return List.copyOf(selected);
+        }
+    }
+
+    private static boolean appendWithinBounds(List<Entry> selected, Entry entry, int maximumEntries,
+                                               long maximumBytes, long selectedBytes)
+    {
+        if(selected.size() >= maximumEntries || (!selected.isEmpty() &&
+            entry.sizeBytes() > maximumBytes - Math.min(maximumBytes, selectedBytes)))
+        {
+            return false;
+        }
+
+        selected.add(entry);
+        return true;
+    }
+
+    private boolean isUploadReadyLocked(Entry entry, long now)
+    {
+        return entry != null && entry.manifest().envelope().isReady() && !isProtectedLocked(entry) &&
+            entry.manifest().nextAttemptAtMs() <= now;
+    }
+
     List<Entry> entries()
     {
         synchronized(mState)
@@ -292,6 +387,35 @@ final class RadioResolveSpool
         }
     }
 
+    /** Claims a complete request batch atomically so provider replacement cannot upload only a subset twice. */
+    boolean protectAll(List<Entry> entries)
+    {
+        synchronized(mState)
+        {
+            if(entries == null || entries.isEmpty())
+            {
+                return false;
+            }
+
+            List<String> submissionIds = new ArrayList<>(entries.size());
+
+            for(Entry entry : entries)
+            {
+                Entry current = find(entry);
+
+                if(current == null || !Files.isRegularFile(current.audioPath()) ||
+                    !Files.isRegularFile(current.manifestPath()) || isProtectedLocked(current))
+                {
+                    return false;
+                }
+
+                submissionIds.add(submissionId(current));
+            }
+
+            return mState.protectedSubmissionIds.addAll(submissionIds);
+        }
+    }
+
     int unprotect(Entry entry) throws IOException
     {
         synchronized(mState)
@@ -299,6 +423,19 @@ final class RadioResolveSpool
             if(entry != null)
             {
                 mState.protectedSubmissionIds.remove(submissionId(entry));
+            }
+
+            return evictFor(0L, null);
+        }
+    }
+
+    int unprotectAll(List<Entry> entries) throws IOException
+    {
+        synchronized(mState)
+        {
+            if(entries != null)
+            {
+                entries.forEach(entry -> mState.protectedSubmissionIds.remove(submissionId(entry)));
             }
 
             return evictFor(0L, null);

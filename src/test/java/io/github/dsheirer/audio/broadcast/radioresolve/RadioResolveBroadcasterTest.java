@@ -30,16 +30,23 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStreamReader;
 import java.net.http.HttpRequest;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -108,21 +115,39 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
-    void uploadUsesV3MultipartContractAndBoundedTimeout(@TempDir Path directory) throws Exception
+    void uploadUsesBoundedV3BatchMultipartContract(@TempDir Path directory) throws Exception
     {
         Path audio = directory.resolve("call.mp3");
+        Path secondAudio = directory.resolve("second.mp3");
         Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        Files.write(secondAudio, new byte[] {0x49, 0x44, 0x34});
+        RadioResolveSpool spool = new RadioResolveSpool(directory.resolve("spool-request"));
+        spool.open();
+        RadioResolveSpool.Entry entry = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio), RadioResolveCallEnvelope.HoldContext.EMPTY,
+            RadioResolveTestFixtures.END).entry();
+        RadioResolveSpool.Entry secondEntry = spool.enqueue(secondAudio,
+            RadioResolveTestFixtures.readyEnvelope(secondAudio, RadioResolveTestFixtures.END - 1_000L,
+                "00000000-0000-4000-8000-000000000002"), RadioResolveCallEnvelope.HoldContext.EMPTY,
+            RadioResolveTestFixtures.END + 1L).entry();
         RadioResolveConfiguration configuration = new RadioResolveConfiguration();
         configuration.setHost("https://calls.example.com/");
         configuration.setApiKey("test-key");
-        HttpRequest request = RadioResolveBroadcaster.createUploadRequest(configuration, audio,
-            RadioResolveTestFixtures.readyEnvelope(audio));
+        HttpRequest request = RadioResolveBroadcaster.createUploadRequest(configuration, List.of(entry, secondEntry));
 
-        assertEquals("https://calls.example.com/api/node/v3/upload-call", request.uri().toString());
+        assertEquals("https://calls.example.com/api/node/v3/upload-calls", request.uri().toString());
         assertEquals(Optional.of(Duration.ofSeconds(30)), request.timeout());
         assertTrue(request.headers().firstValue("Content-Type").orElseThrow()
             .startsWith("multipart/form-data; boundary="));
         assertNotNull(request.bodyPublisher().orElse(null));
+        assertTrue(request.bodyPublisher().orElseThrow().contentLength() <=
+            RadioResolveBroadcaster.MAXIMUM_UPLOAD_BYTES);
+        String multipart = new String(collectBody(request), StandardCharsets.ISO_8859_1);
+        assertTrue(multipart.contains("name=\"batch\""));
+        assertTrue(multipart.contains("\"audio_part\":\"audio-0\""));
+        assertTrue(multipart.contains("\"audio_part\":\"audio-1\""));
+        assertTrue(multipart.contains("name=\"audio-0\""));
+        assertTrue(multipart.indexOf("name=\"audio-0\"") < multipart.indexOf("name=\"audio-1\""));
     }
 
     @Test
@@ -424,6 +449,36 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
+    void blockedBatchNetworkWorkerCannotBlockCompletedCallProducer(@TempDir Path directory) throws Exception
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
+        BlockingConnectionBroadcaster broadcaster = new BlockingConnectionBroadcaster(configuration,
+            directory.resolve("spool-producer-isolation"));
+        Path audio = directory.resolve("producer-call.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        AudioRecording recording = RadioResolveTestFixtures.recording(audio, System.currentTimeMillis() - 2_500L);
+        recording.addPendingReplay();
+        var producer = Executors.newSingleThreadExecutor();
+
+        try
+        {
+            broadcaster.start();
+            assertTrue(broadcaster.connectionEntered.await(2, TimeUnit.SECONDS));
+            producer.submit(() -> broadcaster.receive(recording)).get(1, TimeUnit.SECONDS);
+            assertEquals(1, broadcaster.getAudioQueueSize());
+            assertFalse(recording.hasPendingReplays());
+        }
+        finally
+        {
+            broadcaster.releaseConnection.countDown();
+            producer.shutdownNow();
+            broadcaster.stop();
+            broadcaster.dispose();
+        }
+    }
+
+    @Test
     void exactVerifiedGenerationPlacesCallAndOverridesPersistedStaleIdentity(@TempDir Path directory)
     {
         RadioResolveBroadcaster broadcaster = broadcaster(directory.resolve("spool-a"));
@@ -531,15 +586,174 @@ class RadioResolveBroadcasterTest
 
         for(String submissionId : expectedOrder)
         {
-            RadioResolveSpool.Entry candidate = restarted.nextUploadCandidate(now + 4L);
+            RadioResolveSpool.Entry candidate = firstUploadCandidate(restarted, now + 4L);
             assertNotNull(candidate);
             assertEquals(submissionId, candidate.manifest().envelope().submissionId());
             afterRestart.remove(candidate);
         }
 
-        assertNull(restarted.nextUploadCandidate(now + 4L));
+        assertNull(firstUploadCandidate(restarted, now + 4L));
         assertEquals(0, afterRestart.size());
         restarted.dispose();
+    }
+
+    @Test
+    void batchKeepsFreshCallOrderThenFillsWithOldestBacklog(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-batch-order");
+        Path audio = directory.resolve("batch-order.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        RadioResolveCallEnvelope oldestBacklog = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.HOURS.toMillis(3), "00000000-0000-4000-8000-000000000041");
+        RadioResolveCallEnvelope newerBacklog = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.HOURS.toMillis(2), "00000000-0000-4000-8000-000000000042");
+        RadioResolveCallEnvelope newerFresh = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(10), "00000000-0000-4000-8000-000000000044");
+        RadioResolveCallEnvelope oldestFresh = RadioResolveTestFixtures.readyEnvelope(audio,
+            now - TimeUnit.SECONDS.toMillis(20), "00000000-0000-4000-8000-000000000043");
+        spool.enqueue(audio, oldestBacklog, RadioResolveCallEnvelope.HoldContext.EMPTY, now);
+        spool.enqueue(audio, newerBacklog, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
+        spool.enqueue(audio, newerFresh, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 2L);
+        spool.enqueue(audio, oldestFresh, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 3L);
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+
+        List<String> actual = broadcaster.nextUploadBatch(now + 4L).stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList();
+
+        assertEquals(List.of(oldestFresh.submissionId(), newerFresh.submissionId(),
+            oldestBacklog.submissionId(), newerBacklog.submissionId()), actual);
+        broadcaster.dispose();
+    }
+
+    @Test
+    void batchSelectionHonorsCountAndByteBounds(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-batch-bounds");
+        Path audio = directory.resolve("batch-bounds.mp3");
+        Files.write(audio, new byte[256]);
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+
+        for(int index = 1; index <= 5; index++)
+        {
+            spool.enqueue(audio, RadioResolveTestFixtures.readyEnvelope(audio,
+                now - TimeUnit.HOURS.toMillis(2) + index,
+                String.format("00000000-0000-4000-8000-%012d", index)),
+                RadioResolveCallEnvelope.HoldContext.EMPTY, now + index);
+        }
+
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+        List<RadioResolveSpool.Entry> countBounded = broadcaster.nextUploadBatch(now + 10L, 3,
+            Long.MAX_VALUE);
+        assertEquals(3, countBounded.size());
+        long firstTwoBytes = countBounded.get(0).sizeBytes() + countBounded.get(1).sizeBytes();
+        List<RadioResolveSpool.Entry> byteBounded = broadcaster.nextUploadBatch(now + 10L, 8,
+            firstTwoBytes - 1L);
+
+        assertEquals(1, byteBounded.size());
+        assertEquals(countBounded.getFirst().manifest().envelope().submissionId(),
+            byteBounded.getFirst().manifest().envelope().submissionId());
+        broadcaster.dispose();
+    }
+
+    @Test
+    void audioAbovePerCallLimitIsTerminallyRemovedBeforeBatchUpload(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path audio = directory.resolve("oversized.mp3");
+
+        try(FileChannel channel = FileChannel.open(audio, StandardOpenOption.CREATE_NEW,
+            StandardOpenOption.WRITE))
+        {
+            channel.position(RadioResolveBroadcaster.MAXIMUM_CALL_AUDIO_BYTES);
+            channel.write(ByteBuffer.wrap(new byte[] {1}));
+        }
+
+        Path spoolDirectory = directory.resolve("spool-oversized-call");
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        RadioResolveSpool.Entry entry = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio, now - 3_000L,
+                "00000000-0000-4000-8000-000000000061"),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+
+        assertNull(broadcaster.createBoundedUploadRequest(List.of(entry)));
+        assertEquals(0, spool.size());
+        assertEquals(1, broadcaster.getAudioErrorCount());
+        assertTrue(Files.isRegularFile(audio), "the broadcaster removes only its durable spool copy");
+        broadcaster.dispose();
+    }
+
+    @Test
+    void partialBatchAcknowledgementDeletesOnlyCertainOutcomes(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-batch-results");
+        Path audio = directory.resolve("batch-results.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        List<RadioResolveSpool.Entry> entries = new java.util.ArrayList<>();
+
+        for(int index = 1; index <= 4; index++)
+        {
+            entries.add(spool.enqueue(audio, RadioResolveTestFixtures.readyEnvelope(audio, now - 3_000L + index,
+                String.format("00000000-0000-4000-8000-%012d", index)),
+                RadioResolveCallEnvelope.HoldContext.EMPTY, now + index).entry());
+        }
+
+        String body = "{\"data\":{\"results\":[" +
+            resultJson(0, entries.get(0), 201) + "," +
+            resultJson(1, entries.get(1), 422) + "," +
+            resultJson(2, entries.get(2), 503) + "]}}";
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+        broadcaster.applyBatchUploadResponse(entries, 200, body);
+        List<RadioResolveSpool.Entry> remaining = spool.entries();
+
+        assertEquals(2, remaining.size());
+        assertEquals(entries.get(2).manifest().envelope().submissionId(),
+            remaining.get(0).manifest().envelope().submissionId());
+        assertEquals(entries.get(3).manifest().envelope().submissionId(),
+            remaining.get(1).manifest().envelope().submissionId());
+        assertEquals(1, remaining.get(0).manifest().attemptCount(), "transient result retries");
+        assertEquals(1, remaining.get(1).manifest().attemptCount(), "missing result retries");
+        broadcaster.dispose();
+    }
+
+    @Test
+    void malformedOrMismatchedBatchResponseKeepsEveryCallAcrossRestart(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path spoolDirectory = directory.resolve("spool-batch-uncertain");
+        Path audio = directory.resolve("batch-uncertain.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        RadioResolveSpool.Entry first = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio, now - 3_000L,
+                "00000000-0000-4000-8000-000000000051"),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveSpool.Entry second = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio, now - 2_000L,
+                "00000000-0000-4000-8000-000000000052"),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L).entry();
+        String mismatched = "{\"data\":{\"results\":[{" +
+            "\"index\":0,\"submission_id\":\"00000000-0000-4000-8000-000000000099\"," +
+            "\"http_status\":201}]}}";
+        RadioResolveBroadcaster broadcaster = broadcaster(spoolDirectory);
+        broadcaster.applyBatchUploadResponse(List.of(first, second), 200, mismatched);
+        broadcaster.dispose();
+
+        RadioResolveSpool reopened = new RadioResolveSpool(spoolDirectory);
+        reopened.open();
+        assertEquals(2, reopened.size());
+        assertTrue(reopened.entries().stream().allMatch(entry -> entry.manifest().attemptCount() == 1));
+        assertTrue(reopened.entries().stream().allMatch(entry -> Files.isRegularFile(entry.audioPath())));
     }
 
     @Test
@@ -564,7 +778,7 @@ class RadioResolveBroadcasterTest
             now - TimeUnit.SECONDS.toMillis(10), "00000000-0000-4000-8000-000000000032");
         spool.enqueue(audio, newer, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
 
-        RadioResolveSpool.Entry candidate = broadcaster.nextUploadCandidate(retryReadyAt + 1L);
+        RadioResolveSpool.Entry candidate = firstUploadCandidate(broadcaster, retryReadyAt + 1L);
 
         assertNotNull(candidate);
         assertEquals(older.submissionId(), candidate.manifest().envelope().submissionId(),
@@ -590,12 +804,12 @@ class RadioResolveBroadcasterTest
             "00000000-0000-4000-8000-000000000002");
         spool.enqueue(audio, ready, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
 
-        RadioResolveSpool.Entry candidate = broadcaster.nextUploadCandidate(now + 2L);
+        RadioResolveSpool.Entry candidate = firstUploadCandidate(broadcaster, now + 2L);
 
         assertNull(candidate, "a newer call must not leapfrog an unresolved older call in Live playback order");
         assertEquals(2, spool.size(), "the unresolved call remains held until its own deadline");
 
-        candidate = broadcaster.nextUploadCandidate(
+        candidate = firstUploadCandidate(broadcaster,
             now + RadioResolveBroadcaster.METADATA_HOLD_MILLISECONDS + 1L);
         assertNotNull(candidate);
         assertEquals(ready.submissionId(), candidate.manifest().envelope().submissionId());
@@ -622,7 +836,7 @@ class RadioResolveBroadcasterTest
         spool.enqueue(audio, ready, RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L);
         broadcaster.rememberVerifiedSite(siteEvent(17L, 3L, completeSiteSnapshot(), now + 2L));
 
-        RadioResolveSpool.Entry candidate = broadcaster.nextUploadCandidate(now + 3L);
+        RadioResolveSpool.Entry candidate = firstUploadCandidate(broadcaster, now + 3L);
 
         assertNotNull(candidate);
         assertEquals(held.envelope().submissionId(), candidate.manifest().envelope().submissionId());
@@ -653,22 +867,78 @@ class RadioResolveBroadcasterTest
             "00000000-0000-4000-8000-000000000003");
         spool.enqueue(audio, envelope, RadioResolveCallEnvelope.HoldContext.EMPTY, now);
 
-        RadioResolveSpool.Entry candidate = broadcaster.nextUploadCandidate(
+        RadioResolveSpool.Entry candidate = firstUploadCandidate(broadcaster,
             now + RadioResolveBroadcaster.METADATA_HOLD_MILLISECONDS + 1L);
         assertNotNull(candidate, "clock uncertainty is not a placement failure");
-        assertNull(broadcaster.prepareUploadEntry(candidate));
+        assertNull(prepareFirst(broadcaster, candidate));
         assertEquals(1, spool.size(), "unsynchronized audio remains owned by the 24-hour durable spool");
 
         RadioResolveClockSynchronizer.RequestTiming request = clock.beginRequest();
         epochMilliseconds.addAndGet(10L);
         monotonicNanoseconds.addAndGet(TimeUnit.MILLISECONDS.toNanos(10L));
         assertTrue(clock.completeRequest(request, now + 130L));
-        RadioResolveSpool.Entry prepared = broadcaster.prepareUploadEntry(candidate);
+        RadioResolveSpool.Entry prepared = prepareFirst(broadcaster, candidate);
 
         assertNotNull(prepared);
         assertEquals(125L, prepared.manifest().appliedServerClockOffsetMs());
         assertEquals(envelope.completedAtMs() + 125L, prepared.manifest().envelope().completedAtMs());
         broadcaster.dispose();
+    }
+
+    private static String resultJson(int index, RadioResolveSpool.Entry entry, int httpStatus)
+    {
+        return "{\"index\":" + index + ",\"submission_id\":\"" +
+            entry.manifest().envelope().submissionId() + "\",\"http_status\":" + httpStatus + "}";
+    }
+
+    private static RadioResolveSpool.Entry firstUploadCandidate(RadioResolveBroadcaster broadcaster, long now)
+        throws Exception
+    {
+        List<RadioResolveSpool.Entry> batch = broadcaster.nextUploadBatch(now, 1,
+            RadioResolveBroadcaster.MAXIMUM_UPLOAD_BYTES);
+        return batch.isEmpty() ? null : batch.getFirst();
+    }
+
+    private static RadioResolveSpool.Entry prepareFirst(RadioResolveBroadcaster broadcaster,
+                                                         RadioResolveSpool.Entry entry) throws Exception
+    {
+        List<RadioResolveSpool.Entry> prepared = broadcaster.prepareUploadEntries(List.of(entry));
+        return prepared.isEmpty() ? null : prepared.getFirst();
+    }
+
+    private static byte[] collectBody(HttpRequest request) throws Exception
+    {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        CompletableFuture<byte[]> completed = new CompletableFuture<>();
+        request.bodyPublisher().orElseThrow().subscribe(new Flow.Subscriber<>()
+        {
+            @Override
+            public void onSubscribe(Flow.Subscription subscription)
+            {
+                subscription.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(ByteBuffer item)
+            {
+                byte[] bytes = new byte[item.remaining()];
+                item.get(bytes);
+                output.writeBytes(bytes);
+            }
+
+            @Override
+            public void onError(Throwable throwable)
+            {
+                completed.completeExceptionally(throwable);
+            }
+
+            @Override
+            public void onComplete()
+            {
+                completed.complete(output.toByteArray());
+            }
+        });
+        return completed.get(2, TimeUnit.SECONDS);
     }
 
     private static RadioResolveBroadcaster broadcaster(Path spool)
@@ -785,6 +1055,34 @@ class RadioResolveBroadcasterTest
             {
                 subsequentProcessed.countDown();
             }
+        }
+    }
+
+    private static class BlockingConnectionBroadcaster extends RadioResolveBroadcaster
+    {
+        private final CountDownLatch connectionEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseConnection = new CountDownLatch(1);
+
+        private BlockingConnectionBroadcaster(RadioResolveConfiguration configuration, Path spool)
+        {
+            super(configuration, null, null, null, spool);
+        }
+
+        @Override
+        boolean connected()
+        {
+            connectionEntered.countDown();
+
+            try
+            {
+                releaseConnection.await(2, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return false;
         }
     }
 
