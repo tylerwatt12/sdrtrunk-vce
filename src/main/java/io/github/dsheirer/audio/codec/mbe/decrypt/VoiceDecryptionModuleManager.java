@@ -44,43 +44,50 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
     private String mModuleName;
     private String mModuleVersion;
 
-    public synchronized boolean load(Path path)
+    /**
+     * Checks the module file and API without making it active.
+     */
+    public synchronized boolean isCompatible(Path path)
     {
-        if(path == null || !Files.isRegularFile(path))
-        {
-            setLoadError("Module file does not exist");
-            return false;
-        }
-
-        URLClassLoader candidateLoader = null;
+        ModuleCandidate candidate = null;
 
         try
         {
-            Path realPath = path.toRealPath();
-            candidateLoader = new URLClassLoader(new java.net.URL[]{realPath.toUri().toURL()},
-                VoiceDecryptionModule.class.getClassLoader());
-            List<VoiceDecryptionModule> modules = ServiceLoader.load(VoiceDecryptionModule.class, candidateLoader)
-                .stream().map(ServiceLoader.Provider::get).toList();
+            candidate = open(path);
+            mStatus.set("Module file accepted");
+            return true;
+        }
+        catch(Exception | LinkageError | java.util.ServiceConfigurationError e)
+        {
+            setLoadError(message(e));
+            mLog.warn("Unable to inspect optional module from {}: {}", path, mStatus.get());
+            return false;
+        }
+        finally
+        {
+            close(candidate);
+        }
+    }
 
-            if(modules.size() != 1)
+    public synchronized boolean load(Path path, String requestId, String key)
+    {
+        ModuleCandidate candidate = null;
+
+        try
+        {
+            candidate = open(path);
+            VoiceDecryptionModule module = candidate.module();
+
+            if(!module.verifyKey(requestId, key))
             {
-                throw new IllegalArgumentException("Expected one voice decryption module provider, found " +
-                    modules.size());
-            }
-
-            VoiceDecryptionModule module = modules.getFirst();
-
-            if(module.getApiVersion() != VoiceDecryptionModule.API_VERSION)
-            {
-                throw new IllegalArgumentException("Module API " + module.getApiVersion() +
-                    " is incompatible with SDRTrunk API " + VoiceDecryptionModule.API_VERSION);
+                throw new IllegalArgumentException("Key not accepted");
             }
 
             List<VoiceFrameDecryptorProvider> providers = List.copyOf(module.getProviders());
 
             if(providers.isEmpty() || providers.stream().anyMatch(java.util.Objects::isNull))
             {
-                throw new IllegalArgumentException("Module contains no usable decryption providers");
+                throw new IllegalArgumentException("Module contains no usable providers");
             }
 
             EnumSet<VoiceEncryptionAlgorithm> algorithms = EnumSet.noneOf(VoiceEncryptionAlgorithm.class);
@@ -92,24 +99,27 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
             }
 
             unloadCurrent();
-            mClassLoader = candidateLoader;
-            candidateLoader = null;
-            mPath = realPath;
+            mClassLoader = candidate.classLoader();
+            mPath = candidate.path();
             mModuleName = module.getName();
             mModuleVersion = module.getVersion();
             mProviders = providers;
             mSupportedAlgorithms = algorithms;
             mLoaded.set(true);
             mStatus.set(displayName() + " loaded");
-            mLog.info("Loaded optional voice decryption module {} from {}", displayName(), realPath);
+            mLog.info("Loaded optional module {} from {}", displayName(), mPath);
+            candidate = null;
             return true;
         }
         catch(Exception | LinkageError | java.util.ServiceConfigurationError e)
         {
-            close(candidateLoader);
-            setLoadError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-            mLog.warn("Unable to load optional voice decryption module from {}: {}", path, mStatus.get());
+            setLoadError(message(e));
+            mLog.warn("Unable to load optional module from {}: {}", path, mStatus.get());
             return false;
+        }
+        finally
+        {
+            close(candidate);
         }
     }
 
@@ -183,8 +193,51 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
 
     private String displayName()
     {
-        String name = mModuleName == null || mModuleName.isBlank() ? "Voice decryption module" : mModuleName;
+        String name = mModuleName == null || mModuleName.isBlank() ? "Optional module" : mModuleName;
         return mModuleVersion == null || mModuleVersion.isBlank() ? name : name + " " + mModuleVersion;
+    }
+
+    private ModuleCandidate open(Path path) throws Exception
+    {
+        if(path == null || !Files.isRegularFile(path))
+        {
+            throw new IllegalArgumentException("Module file does not exist");
+        }
+
+        Path realPath = path.toRealPath();
+        URLClassLoader loader = new URLClassLoader(new java.net.URL[]{realPath.toUri().toURL()},
+            VoiceDecryptionModule.class.getClassLoader());
+
+        try
+        {
+            List<VoiceDecryptionModule> modules = ServiceLoader.load(VoiceDecryptionModule.class, loader)
+                .stream().map(ServiceLoader.Provider::get).toList();
+
+            if(modules.size() != 1)
+            {
+                throw new IllegalArgumentException("Expected one optional module provider, found " + modules.size());
+            }
+
+            VoiceDecryptionModule module = modules.getFirst();
+
+            if(module.getApiVersion() != VoiceDecryptionModule.API_VERSION)
+            {
+                throw new IllegalArgumentException("Module API " + module.getApiVersion() +
+                    " is incompatible with SDRTrunk API " + VoiceDecryptionModule.API_VERSION);
+            }
+
+            return new ModuleCandidate(realPath, loader, module);
+        }
+        catch(Exception | LinkageError | java.util.ServiceConfigurationError e)
+        {
+            close(loader);
+            throw e;
+        }
+    }
+
+    private static String message(Throwable throwable)
+    {
+        return throwable.getMessage() == null ? throwable.getClass().getSimpleName() : throwable.getMessage();
     }
 
     private void unloadCurrent()
@@ -209,8 +262,18 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
             }
             catch(IOException e)
             {
-                mLog.debug("Unable to close voice decryption module class loader", e);
+                mLog.debug("Unable to close optional module class loader", e);
             }
         }
     }
+
+    private void close(ModuleCandidate candidate)
+    {
+        if(candidate != null)
+        {
+            close(candidate.classLoader());
+        }
+    }
+
+    private record ModuleCandidate(Path path, URLClassLoader classLoader, VoiceDecryptionModule module) {}
 }

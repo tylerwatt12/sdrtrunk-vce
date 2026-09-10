@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Plan SDR tuner center frequencies using sdrtrunk's device-specific edge guards, DC exclusion zones, channel bandwidths, and polyphase channelizer grid.">
+  <title>sdrtrunk Center Frequency Planner</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #071015;
+      --bg-grid: rgba(119, 219, 255, 0.035);
+      --panel: #0d1a21;
+      --panel-2: #12232c;
+      --panel-3: #172b35;
+      --line: #25414d;
+      --line-bright: #396170;
+      --text: #e8f4f6;
+      --muted: #91aab2;
+      --cyan: #70dcff;
+      --cyan-strong: #17b9ec;
+      --green: #64e8ac;
+      --orange: #ffbd69;
+      --red: #ff7782;
+      --guard: rgba(255, 189, 105, 0.15);
+      --dc: rgba(255, 119, 130, 0.34);
+      --channel: #70dcff;
+      --shadow: 0 24px 72px rgba(0, 0, 0, 0.32);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-height: 100%; background: var(--bg); }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        linear-gradient(var(--bg-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px),
+        radial-gradient(circle at 82% -8%, rgba(23, 185, 236, 0.18), transparent 34rem),
+        var(--bg);
+      background-size: 28px 28px, 28px 28px, auto, auto;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button, select, input { min-height: 44px; }
+    button { cursor: pointer; }
+
+    .shell { width: min(1440px, 100%); margin: 0 auto; padding: 28px; }
+
+    .masthead {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 9px;
+      color: var(--cyan);
+      font: 700 0.78rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 16px var(--green);
+      content: "";
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 800px;
+      margin-bottom: 10px;
+      font-size: clamp(2rem, 4vw, 3.35rem);
+      line-height: 0.98;
+      letter-spacing: -0.055em;
+    }
+
+    .intro { max-width: 760px; margin-bottom: 0; color: var(--muted); font-size: 1rem; line-height: 1.6; }
+
+    .compatibility {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+      padding: 9px 12px;
+      border: 1px solid rgba(100, 232, 172, 0.36);
+      border-radius: 999px;
+      color: var(--green);
+      background: rgba(100, 232, 172, 0.07);
+      font-size: 0.82rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .layout { display: grid; grid-template-columns: minmax(310px, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(18, 35, 44, 0.96), rgba(9, 22, 29, 0.98));
+      box-shadow: var(--shadow);
+    }
+
+    .controls { position: sticky; top: 20px; overflow: hidden; }
+    .panel-head { padding: 20px 22px 15px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin-bottom: 5px; font-size: 1.02rem; letter-spacing: -0.015em; }
+    .panel-head p { margin-bottom: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+    .form { display: grid; gap: 17px; padding: 20px 22px 22px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field { display: grid; gap: 7px; min-width: 0; }
+
+    label, .label {
+      color: #cde0e5;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line-bright);
+      border-radius: 10px;
+      outline: none;
+      color: var(--text);
+      background: #09171e;
+      transition: border-color 130ms ease, box-shadow 130ms ease, background 130ms ease;
+    }
+
+    input, select { padding: 0 12px; }
+    textarea {
+      min-height: 214px;
+      resize: vertical;
+      padding: 12px 13px;
+      font: 0.92rem/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      tab-size: 2;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--cyan-strong);
+      box-shadow: 0 0 0 3px rgba(23, 185, 236, 0.15);
+      background: #0b1b23;
+    }
+
+    .hint { color: var(--muted); font-size: 0.76rem; line-height: 1.45; }
+    .hint code { color: var(--orange); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .input-unit { position: relative; }
+    .input-unit input { padding-right: 52px; }
+    .input-unit span { position: absolute; right: 12px; top: 50%; color: var(--muted); font-size: 0.76rem; transform: translateY(-50%); pointer-events: none; }
+
+    details.advanced { border: 1px solid var(--line); border-radius: 11px; background: rgba(3, 13, 18, 0.3); }
+    details.advanced summary { padding: 12px 13px; color: var(--muted); font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+    .advanced-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 2px 13px 13px; }
+    .advanced-grid .wide { grid-column: 1 / -1; }
+
+    .tuner-pool { display: grid; gap: 10px; }
+    .tuner-pool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .tuner-list { display: grid; gap: 10px; }
+    .tuner-card { display: grid; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(3, 13, 18, 0.35); }
+    .tuner-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .tuner-card-title { display: flex; align-items: center; gap: 9px; min-width: 0; color: #dbecef; font-size: 0.83rem; font-weight: 760; }
+    .tuner-index { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid rgba(112, 220, 255, 0.35); border-radius: 8px; color: var(--cyan); background: rgba(112, 220, 255, 0.07); font: 700 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .tuner-actions { display: flex; gap: 6px; }
+    .tuner-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(118px, 0.62fr); gap: 9px; }
+    .tuner-spec { color: var(--muted); font: 0.69rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .custom-tuner-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding-top: 2px; }
+
+    .actions { display: flex; gap: 10px; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--line-bright);
+      border-radius: 10px;
+      padding: 0 15px;
+      color: var(--text);
+      background: var(--panel-3);
+      font-weight: 760;
+      transition: transform 110ms ease, border-color 110ms ease, background 110ms ease;
+    }
+    .button:hover { border-color: var(--cyan); background: #193744; }
+    .button:active { transform: translateY(1px); }
+    .button.primary { flex: 1; border-color: transparent; color: #031116; background: linear-gradient(135deg, #86e6ff, #38c7f3); }
+    .button.primary:hover { background: linear-gradient(135deg, #a3edff, #52d3fa); }
+    .button.small { min-height: 36px; padding: 0 11px; font-size: 0.78rem; }
+    .button.icon { min-height: 31px; padding: 0 8px; font-size: 0.7rem; }
+    .button.remove:hover { border-color: var(--red); color: #ffd0d4; background: rgba(255, 119, 130, 0.1); }
+    .button:disabled { cursor: not-allowed; opacity: 0.42; transform: none; }
+
+    .results { min-width: 0; }
+    .empty {
+      display: grid;
+      min-height: 520px;
+      place-items: center;
+      padding: 40px;
+      text-align: center;
+    }
+    .empty-mark { margin-bottom: 18px; color: var(--cyan); font: 700 3rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity: 0.9; }
+    .empty h2 { margin-bottom: 8px; font-size: 1.25rem; }
+    .empty p { max-width: 470px; margin-bottom: 0; color: var(--muted); line-height: 1.6; }
+
+    .result-stack { display: grid; gap: 16px; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+    .metric { padding: 18px 19px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .metric-label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+    .metric-value { display: block; overflow: hidden; font: 700 1.22rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+
+    .notice { display: flex; gap: 10px; padding: 13px 15px; border-radius: 12px; font-size: 0.84rem; line-height: 1.5; }
+    .notice.warning { border: 1px solid rgba(255, 189, 105, 0.35); color: #ffe0b5; background: rgba(255, 189, 105, 0.08); }
+    .notice.error { border: 1px solid rgba(255, 119, 130, 0.4); color: #ffc3c8; background: rgba(255, 119, 130, 0.09); }
+
+    .result-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+    .result-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .tuner-number { display: grid; flex: 0 0 auto; width: 36px; height: 36px; place-items: center; border: 1px solid rgba(112, 220, 255, 0.38); border-radius: 10px; color: var(--cyan); background: rgba(112, 220, 255, 0.07); font: 750 0.88rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .result-title h3 { margin-bottom: 3px; font-size: 0.96rem; }
+    .result-title p { margin-bottom: 0; color: var(--muted); font-size: 0.76rem; }
+
+    .center-value { padding: 19px 20px 5px; }
+    .center-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.74rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+    .center-frequency { display: flex; align-items: baseline; gap: 8px; color: var(--cyan); font: 750 clamp(1.7rem, 4vw, 2.55rem)/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: -0.045em; }
+    .center-frequency small { color: var(--muted); font-size: 0.8rem; letter-spacing: 0; }
+
+    .spectrum { padding: 17px 20px 20px; }
+    .spectrum-track { position: relative; height: 116px; overflow: hidden; border: 1px solid var(--line-bright); border-radius: 11px; background: #071219; }
+    .spectrum-track::after { position: absolute; inset: 0; z-index: 6; border-radius: inherit; box-shadow: inset 0 0 28px rgba(0, 0, 0, 0.3); content: ""; pointer-events: none; }
+    .usable-zone { position: absolute; top: 0; bottom: 0; z-index: 1; background: linear-gradient(180deg, rgba(100, 232, 172, 0.12), rgba(100, 232, 172, 0.04)); }
+    .edge-guard { position: absolute; top: 0; bottom: 0; z-index: 2; background: repeating-linear-gradient(135deg, rgba(255, 189, 105, 0.18), rgba(255, 189, 105, 0.18) 6px, rgba(255, 189, 105, 0.08) 6px, rgba(255, 189, 105, 0.08) 12px); }
+    .dc-zone { position: absolute; top: 0; bottom: 0; z-index: 4; min-width: 2px; background: repeating-linear-gradient(45deg, rgba(255, 119, 130, 0.46), rgba(255, 119, 130, 0.46) 5px, rgba(255, 119, 130, 0.27) 5px, rgba(255, 119, 130, 0.27) 10px); }
+    .center-line { position: absolute; top: 0; bottom: 0; left: 50%; z-index: 5; width: 1px; background: rgba(232, 244, 246, 0.5); }
+    .channel-band { position: absolute; z-index: 3; min-width: 3px; height: 22px; border: 1px solid rgba(7, 16, 21, 0.82); border-radius: 4px; background: var(--channel); box-shadow: 0 0 13px rgba(112, 220, 255, 0.32); transform: translateY(-50%); }
+    .channel-band::after { position: absolute; top: -4px; bottom: -4px; left: 50%; width: 1px; background: rgba(2, 18, 24, 0.65); content: ""; }
+    .spectrum-legend { display: flex; flex-wrap: wrap; gap: 8px 15px; margin-top: 11px; color: var(--muted); font-size: 0.72rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-swatch { width: 13px; height: 7px; border-radius: 2px; background: var(--green); }
+    .legend-swatch.guard { background: var(--orange); opacity: 0.7; }
+    .legend-swatch.dc { background: var(--red); opacity: 0.8; }
+    .legend-swatch.channel { background: var(--cyan); }
+
+    .band-labels { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; margin-top: 9px; color: var(--muted); font: 0.7rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .band-labels span:nth-child(2) { color: #c9dce1; text-align: center; }
+    .band-labels span:last-child { text-align: right; }
+
+    .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 0 20px 20px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--line); }
+    .detail { min-width: 0; padding: 11px 12px; background: rgba(7, 19, 25, 0.92); }
+    .detail span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 0.67rem; font-weight: 750; letter-spacing: 0.07em; text-transform: uppercase; }
+    .detail strong { display: block; overflow: hidden; color: #d8e9ed; font: 650 0.78rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+
+    .channels { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 20px 20px; }
+    .chip { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; color: #cce7ed; background: rgba(13, 31, 40, 0.8); font: 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .chip small { color: var(--muted); font-size: 0.64rem; }
+
+    .footer { display: flex; justify-content: space-between; gap: 20px; padding: 20px 2px 4px; color: var(--muted); font-size: 0.74rem; line-height: 1.5; }
+    .footer code { color: #bcd4da; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .self-test.pass { color: var(--green); }
+    .self-test.fail { color: var(--red); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 900px) {
+      .shell { padding: 20px; }
+      .masthead { display: block; }
+      .compatibility { margin-top: 18px; }
+      .layout { grid-template-columns: 1fr; }
+      .controls { position: static; }
+    }
+
+    @media (max-width: 620px) {
+      .shell { padding: 14px; }
+      .masthead { margin-bottom: 18px; }
+      .compatibility { white-space: normal; }
+      .row, .advanced-grid, .tuner-fields, .custom-tuner-fields { grid-template-columns: 1fr; }
+      .advanced-grid .wide { grid-column: auto; }
+      .summary { grid-template-columns: 1fr 1fr; }
+      .metric:nth-child(2) { border-right: 0; }
+      .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .result-head { align-items: flex-start; }
+      .detail-grid { grid-template-columns: 1fr; }
+      .footer { display: grid; }
+      .center-frequency { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <div class="eyebrow">sdrtrunk RF planning tool</div>
+        <h1>Center Frequency Planner</h1>
+        <p class="intro">Configure your tuner pool, then calculate simultaneous coverage with each device’s real edge guards, DC-spike exclusion, and channelizer behavior.</p>
+      </div>
+      <div class="compatibility" title="Select the center-placement behavior for either codebase.">✓ VCE + DSheirer modes</div>
+    </header>
+
+    <div class="layout">
+      <section class="panel controls" aria-labelledby="input-heading">
+        <header class="panel-head">
+          <h2 id="input-heading">Receiver setup</h2>
+          <p>Add the physical tuners available to this receiver.</p>
+        </header>
+
+        <form id="planner-form" class="form">
+          <div class="tuner-pool">
+            <div class="tuner-pool-head">
+              <span class="label">Available tuners</span>
+              <button class="button small" id="add-tuner" type="button">+ Add tuner</button>
+            </div>
+            <div id="tuner-list" class="tuner-list"></div>
+          </div>
+
+          <div class="field">
+            <label for="placement-engine">sdrtrunk behavior</label>
+            <select id="placement-engine">
+              <option value="vce" selected>sdrtrunk-vce · current main</option>
+              <option value="upstream">DSheirer/sdrtrunk · master</option>
+            </select>
+            <div class="hint">Both modes use the same device guards and DC exclusions. They differ in how a fresh center is chosen.</div>
+          </div>
+
+          <div class="field">
+            <label for="frequencies">Channel frequencies · MHz</label>
+            <textarea id="frequencies" spellcheck="false" placeholder="851.0125&#10;851.2625&#10;851.7750 @ 6.25k"></textarea>
+            <div class="hint">Frequency values are MHz only. Channels default to 12.5 kHz wide; override one with <code>851.7750 @ 6.25k</code>.</div>
+          </div>
+
+          <template id="tuner-template">
+            <section class="tuner-card">
+              <div class="tuner-card-head">
+                <div class="tuner-card-title"><span class="tuner-index"></span><span class="tuner-name"></span></div>
+                <div class="tuner-actions">
+                  <button class="button icon duplicate-tuner" type="button" title="Duplicate this tuner">Duplicate</button>
+                  <button class="button icon remove remove-tuner" type="button" title="Remove this tuner">Remove</button>
+                </div>
+              </div>
+              <div class="tuner-fields">
+                <div class="field">
+                  <label>Tuner model</label>
+                  <select class="tuner-profile"></select>
+                </div>
+                <div class="field">
+                  <label>Sample rate</label>
+                  <select class="tuner-rate"></select>
+                </div>
+              </div>
+              <div class="tuner-spec"></div>
+              <div class="custom-tuner-fields" hidden>
+                <div class="field">
+                  <label>Sample rate · Hz</label>
+                  <input class="custom-rate" type="number" min="50000" max="100000000" step="1" inputmode="numeric">
+                </div>
+                <div class="field">
+                  <label>Usable bandwidth · %</label>
+                  <input class="custom-usable" type="number" min="1" max="100" step="0.001" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label>DC half-width · Hz</label>
+                  <input class="custom-dc" type="number" min="0" max="10000000" step="1" inputmode="numeric">
+                </div>
+                <div class="field">
+                  <label>Tune range · MHz</label>
+                  <div class="row">
+                    <input class="custom-min" aria-label="Minimum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+                    <input class="custom-max" aria-label="Maximum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+
+          <div class="actions">
+            <button class="button" id="example-button" type="button">Load example</button>
+            <button class="button primary" type="submit">Calculate centers</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="results" class="results" aria-live="polite" aria-label="Calculation results">
+        <div class="panel empty">
+          <div>
+            <div class="empty-mark" aria-hidden="true">⌁</div>
+            <h2>Ready for a channel list</h2>
+            <p>The planner will assign the most channels it can across the tuners you add, then validate every channel edge against each device’s usable passband and center exclusion.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <span>Planning model verified against <code>sdrtrunk-vce main d7b81c501014</code> and <code>DSheirer/sdrtrunk master 80360029efb0</code>.</span>
+      <span id="self-test" class="self-test">Checking calculator…</span>
+    </footer>
+  </main>
+
+  <script>
+    "use strict";
+
+    const RTL_RATES = [230400, 240000, 256000, 288000, 300000, 960000, 1024000, 1200000, 1440000, 1600000, 1800000, 1920000, 2048000, 2304000, 2400000, 2560000, 2880000];
+    const HACKRF_RATES = [1750000, 2500000, 3500000, 5000000, 5500000, 6000000, 7000000, 8000000, 9000000, 10000000, 12000000, 14000000, 15000000, 20000000];
+    const AIRSPY_RATES = [2500000, 3000000, 6000000, 10000000];
+
+    const rspRates = [
+      [250000, 234000], [500000, 476000], [1000000, 900000], [1500000, 1360000],
+      [2048000, 1800000], [3000000, 2700000], [4000000, 3560000], [5000000, 4120000],
+      [6000000, 5200000], [7000000, 5960000], [8000000, 6940000], [9000000, 7380000],
+      [10000000, 8500000]
+    ];
+
+    const rspDuoRates = [[500000, 450000], [1000000, 950000], [1500000, 1500000], [2000000, 2000000]];
+
+    const PROFILES = {
+      "rtl-r8x": { label: "RTL-SDR · R8x", rates: RTL_RATES, defaultRate: 2400000, usable: 0.98, dc: 5000, min: 3180000, max: 1782030000 },
+      "rtl-e4k": { label: "RTL-SDR · E4000", rates: RTL_RATES, defaultRate: 2400000, usable: 0.95, dc: 15000, min: 52000000, max: 2200000000 },
+      "rtl-fc0013": { label: "RTL-SDR · FC0013", rates: RTL_RATES, defaultRate: 2400000, usable: 0.95, dc: 15000, min: 13500000, max: 1907999890 },
+      "airspy": { label: "Airspy / HydraSDR", rates: AIRSPY_RATES, defaultRate: 10000000, usableForRate: airspyUsable, dc: 0, min: 24000000, max: 1800000000 },
+      "airspy-hf": { label: "Airspy HF+", rates: [912000], defaultRate: 912000, usable: 0.90, dc: 3000, min: 500000, max: 260000000 },
+      "hackrf": { label: "HackRF", rates: HACKRF_RATES, defaultRate: 5000000, usable: 0.90, dc: 5000, min: 10000000, max: 6000000000 },
+      "sdrplay": { label: "SDRplay RSP · single tuner", rates: rspRates.map(row => row[0]), defaultRate: 8000000, usableHzForRate: rate => rspRates.find(row => row[0] === rate)?.[1], dc: 0, min: 100000, max: 2000000000 },
+      "sdrplay-duo": { label: "SDRplay RSPduo · dual mode", rates: rspDuoRates.map(row => row[0]), defaultRate: 2000000, usableHzForRate: rate => rspDuoRates.find(row => row[0] === rate)?.[1], dc: 0, min: 100000, max: 2000000000 },
+      "custom": { label: "Custom sdrtrunk profile", rates: [2400000], defaultRate: 2400000, usable: 0.98, dc: 5000, min: 0, max: 6000000000, custom: true }
+    };
+
+    const MAX_TUNERS = 10;
+    const DEFAULT_CHANNEL_BANDWIDTH = 12500;
+    const form = document.querySelector("#planner-form");
+    const tunerList = document.querySelector("#tuner-list");
+    const tunerTemplate = document.querySelector("#tuner-template");
+    const engineSelect = document.querySelector("#placement-engine");
+    const frequenciesInput = document.querySelector("#frequencies");
+    const results = document.querySelector("#results");
+    const selfTest = document.querySelector("#self-test");
+    let nextTunerId = 1;
+    let tunerConfigs = [createTuner("rtl-r8x")];
+
+    function airspyUsable(rate) {
+      if (rate === 2500000) return 0.60;
+      if (rate === 3000000) return 0.66;
+      if (rate === 6000000) return 0.83;
+      return 0.90;
+    }
+
+    function formatRate(rate) {
+      if (rate >= 1000000) return `${trimZeros((rate / 1000000).toFixed(3))} MHz`;
+      return `${trimZeros((rate / 1000).toFixed(3))} kHz`;
+    }
+
+    function formatMHz(hz, digits = 6) {
+      return trimZeros((hz / 1000000).toFixed(digits));
+    }
+
+    function trimZeros(value) {
+      return value.includes(".") ? value.replace(/0+$/, "").replace(/\.$/, "") : value;
+    }
+
+    function formatInteger(value) {
+      return Math.round(value).toLocaleString("en-US");
+    }
+
+    function createTuner(profileKey = "rtl-r8x", source = null) {
+      const profile = PROFILES[profileKey];
+      return {
+        id: nextTunerId++,
+        profileKey,
+        rate: source?.rate ?? profile.defaultRate,
+        customRate: source?.customRate ?? profile.defaultRate,
+        usablePercent: source?.usablePercent ?? (profile.usable * 100 || 98),
+        dcHalf: source?.dcHalf ?? profile.dc,
+        minMHz: source?.minMHz ?? profile.min / 1000000,
+        maxMHz: source?.maxMHz ?? profile.max / 1000000
+      };
+    }
+
+    function profileOptions(selectedKey) {
+      return Object.entries(PROFILES).map(([key, profile]) =>
+        `<option value="${key}"${key === selectedKey ? " selected" : ""}>${escapeHtml(profile.label)}</option>`
+      ).join("");
+    }
+
+    function renderTunerPool() {
+      tunerList.innerHTML = "";
+      tunerConfigs.forEach((tuner, index) => {
+        const profile = PROFILES[tuner.profileKey];
+        const fragment = tunerTemplate.content.cloneNode(true);
+        const card = fragment.querySelector(".tuner-card");
+        card.dataset.tunerId = String(tuner.id);
+        card.querySelector(".tuner-index").textContent = String(index + 1).padStart(2, "0");
+        card.querySelector(".tuner-name").textContent = `Tuner ${index + 1}`;
+        const profileSelect = card.querySelector(".tuner-profile");
+        profileSelect.innerHTML = profileOptions(tuner.profileKey);
+        const rateSelect = card.querySelector(".tuner-rate");
+        rateSelect.innerHTML = profile.rates.map(rate => `<option value="${rate}"${rate === tuner.rate ? " selected" : ""}>${formatRate(rate)}</option>`).join("");
+        rateSelect.disabled = profile.custom;
+        card.querySelector(".remove-tuner").disabled = tunerConfigs.length === 1;
+
+        const customFields = card.querySelector(".custom-tuner-fields");
+        customFields.hidden = !profile.custom;
+        card.querySelector(".custom-rate").value = String(tuner.customRate);
+        card.querySelector(".custom-usable").value = trimZeros(Number(tuner.usablePercent).toFixed(3));
+        card.querySelector(".custom-dc").value = String(tuner.dcHalf);
+        card.querySelector(".custom-min").value = trimZeros(Number(tuner.minMHz).toFixed(6));
+        card.querySelector(".custom-max").value = trimZeros(Number(tuner.maxMHz).toFixed(6));
+
+        const hardware = hardwareForTuner(tuner, index);
+        card.querySelector(".tuner-spec").textContent = `${formatRate(hardware.usableBandwidth)} usable · ${hardware.dcHalf > 0 ? `DC ±${formatRate(hardware.dcHalf)}` : "no DC exclusion"} · ${formatMHz(hardware.min)}–${formatMHz(hardware.max)} MHz`;
+        tunerList.appendChild(fragment);
+      });
+      document.querySelector("#add-tuner").disabled = tunerConfigs.length >= MAX_TUNERS;
+    }
+
+    function hardwareForTuner(tuner, index = 0) {
+      const profile = PROFILES[tuner.profileKey];
+      const rate = profile.custom ? Number(tuner.customRate) : Number(tuner.rate);
+      const exactUsableBandwidth = !profile.custom && profile.usableHzForRate ? profile.usableHzForRate(rate) : null;
+      const usablePercent = exactUsableBandwidth ? exactUsableBandwidth / rate : profile.custom ? Number(tuner.usablePercent) / 100 : (profile.usableForRate ? profile.usableForRate(rate) : profile.usable);
+      return {
+        tunerIndex: index,
+        key: tuner.profileKey,
+        label: profile.label,
+        rate,
+        usablePercent,
+        usableBandwidth: exactUsableBandwidth ?? Math.trunc(rate * usablePercent),
+        dcHalf: Math.max(0, Math.trunc(profile.custom ? Number(tuner.dcHalf) : profile.dc)),
+        min: Math.round((profile.custom ? Number(tuner.minMHz) : profile.min / 1000000) * 1000000),
+        max: Math.round((profile.custom ? Number(tuner.maxMHz) : profile.max / 1000000) * 1000000)
+      };
+    }
+
+    function parseScaledNumber(raw, defaultUnit = "hz") {
+      const match = String(raw).trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(mhz|khz|hz|m|k)?$/i);
+      if (!match) return NaN;
+      const value = Number(match[1]);
+      const explicit = (match[2] || "").toLowerCase();
+      let unit = explicit || defaultUnit;
+      if (unit === "m") unit = "mhz";
+      if (unit === "k") unit = "khz";
+      if (unit === "auto") unit = Math.abs(value) >= 100000 ? "hz" : Math.abs(value) >= 10000 ? "khz" : "mhz";
+      const scale = unit === "mhz" ? 1000000 : unit === "khz" ? 1000 : 1;
+      return Math.round(value * scale);
+    }
+
+    function parseFrequencyMHz(raw) {
+      const match = String(raw).trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(mhz)?$/i);
+      return match ? Math.round(Number(match[1]) * 1000000) : NaN;
+    }
+
+    function parseBandwidth(raw, defaultBandwidth) {
+      if (!raw || !raw.trim()) return defaultBandwidth;
+      const value = parseScaledNumber(raw, "hz");
+      return Number.isFinite(value) && value > 0 ? value : NaN;
+    }
+
+    function parseChannels(text, defaultBandwidth = DEFAULT_CHANNEL_BANDWIDTH) {
+      const warnings = [];
+      const byFrequency = new Map();
+      const invalid = [];
+
+      text.split(/\r?\n/).forEach((sourceLine, lineIndex) => {
+        const line = sourceLine.replace(/#.*$/, "").trim();
+        if (!line) return;
+        const parts = line.split("@");
+        if (parts.length > 2) {
+          invalid.push(`Line ${lineIndex + 1}: too many @ separators`);
+          return;
+        }
+        const bandwidth = parseBandwidth(parts[1] || "", defaultBandwidth);
+        if (!Number.isFinite(bandwidth)) {
+          invalid.push(`Line ${lineIndex + 1}: invalid channel width`);
+          return;
+        }
+        const tokens = parts[0].split(/[\s,;]+/).filter(Boolean);
+        if (!tokens.length) return;
+        tokens.forEach(token => {
+          const frequency = parseFrequencyMHz(token);
+          if (!Number.isFinite(frequency) || frequency <= 0) {
+            invalid.push(`Line ${lineIndex + 1}: “${token}” is not a frequency`);
+            return;
+          }
+          const existing = byFrequency.get(frequency);
+          if (existing) {
+            if (bandwidth > existing.bandwidth) existing.bandwidth = bandwidth;
+            warnings.push(`${formatMHz(frequency)} MHz appeared more than once; the widest channel definition was kept.`);
+          } else {
+            byFrequency.set(frequency, { frequency, bandwidth });
+          }
+        });
+      });
+
+      return {
+        channels: Array.from(byFrequency.values()).sort((a, b) => a.frequency - b.frequency),
+        warnings: Array.from(new Set(warnings)),
+        invalid
+      };
+    }
+
+    function channelMin(channel) { return channel.frequency - Math.trunc(channel.bandwidth / 2); }
+    function channelMax(channel) { return channel.frequency + Math.trunc(channel.bandwidth / 2); }
+    function setBandwidth(channels) { return channelMax(channels[channels.length - 1]) - channelMin(channels[0]); }
+    function javaMod(value, divisor) { return value % divisor; }
+
+    function channelizerGrid(sampleRate) {
+      let count = Math.trunc(sampleRate / 25000);
+      if (count % 2 !== 0) count--;
+      if (count < 2) return null;
+      return { count, exactStep: sampleRate / count, step: Math.trunc(sampleRate / count) };
+    }
+
+    function overlaps(channel, minimum, maximum) {
+      const min = channelMin(channel);
+      const max = channelMax(channel);
+      return (minimum <= min && min <= maximum) ||
+        (minimum <= max && max <= maximum) ||
+        (minimum <= min && max <= maximum) ||
+        (min <= minimum && maximum <= max);
+    }
+
+    function canTuneSet(channels, hardware) {
+      if (!channels.length) return false;
+      if (channels.some(channel => channelMin(channel) < hardware.min || channelMax(channel) > hardware.max)) return false;
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+
+      if (channels.length === 1) {
+        return hardware.dcHalf > 0 ? channels[0].bandwidth < usableHalf : channels[0].bandwidth < hardware.usableBandwidth;
+      }
+
+      const span = setBandwidth(channels);
+      if (span > hardware.usableBandwidth) return false;
+      if (hardware.dcHalf === 0 || span < usableHalf) return true;
+
+      let firstRight = null;
+      for (const channel of channels) {
+        if (!firstRight) {
+          const leftSpan = channelMax(channel) - channelMin(channels[0]);
+          if (leftSpan > usableHalf) {
+            if (channel.bandwidth > usableHalf) return false;
+            firstRight = channel;
+          }
+        } else if (channelMax(channel) - channelMin(firstRight) > usableHalf) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function isValidCenter(channels, center, hardware) {
+      const half = Math.trunc(hardware.usableBandwidth / 2);
+      if (center < hardware.min || center > hardware.max) return false;
+      return channels.every(channel => {
+        const fitsEdges = channelMin(channel) >= center - half && channelMax(channel) <= center + half;
+        if (!fitsEdges) return false;
+        if (hardware.dcHalf <= 0) return true;
+        return !overlaps(channel, center - hardware.dcHalf, center + hardware.dcHalf);
+      });
+    }
+
+    function integralFrequency(channels, exactGridStep) {
+      let bestFrequency = channels[0].frequency;
+      let bestScore = Number.POSITIVE_INFINITY;
+      if (channels.length === 1) return bestFrequency;
+
+      for (const first of channels) {
+        let score = 0;
+        for (const second of channels) {
+          if (first !== second) score += Math.abs(first.frequency - second.frequency) % exactGridStep;
+        }
+        if (score < bestScore) {
+          bestScore = score;
+          bestFrequency = first.frequency;
+        }
+      }
+      return bestFrequency;
+    }
+
+    function alignedToGrid(channel, center, gridStep) {
+      return Math.abs(channel.frequency - center) % gridStep === 0;
+    }
+
+    function findVceCenter(channels, hardware, currentCenter = 0) {
+      if (!channels.length || !canTuneSet(channels, hardware)) return null;
+      const grid = channelizerGrid(hardware.rate);
+      if (!grid) return null;
+      const span = setBandwidth(channels);
+      if (span > hardware.usableBandwidth) return null;
+
+      if (currentCenter > 0 && isValidCenter(channels, currentCenter, hardware) &&
+          (channels.length > 1 || alignedToGrid(channels[0], currentCenter, grid.step))) {
+        return { center: currentCenter, grid, strategy: "current" };
+      }
+
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+      const integral = integralFrequency(channels, grid.exactStep);
+      const lowest = channelMax(channels[channels.length - 1]) - usableHalf;
+      const highest = channelMin(channels[0]) + usableHalf;
+      let offset = javaMod(lowest - integral, grid.step);
+      if (offset < 0) offset += grid.step;
+      const firstGridCenter = lowest + (offset === 0 ? 0 : grid.step - offset);
+
+      if (firstGridCenter <= highest) {
+        const midpoint = Math.trunc((channelMin(channels[0]) + channelMax(channels[channels.length - 1])) / 2);
+        let idealOffset = javaMod(midpoint - integral, grid.step);
+        if (idealOffset < 0) idealOffset += grid.step;
+        const ideal = midpoint - idealOffset;
+        const candidate = Math.max(firstGridCenter, Math.min(ideal, highest));
+        const candidateAbove = candidate + grid.step;
+        const candidateValid = isValidCenter(channels, candidate, hardware);
+        const aboveValid = candidateAbove <= highest && isValidCenter(channels, candidateAbove, hardware);
+
+        if (candidateValid || aboveValid) {
+          const center = candidateValid && aboveValid
+            ? (Math.abs(candidate - midpoint) <= Math.abs(candidateAbove - midpoint) ? candidate : candidateAbove)
+            : (candidateValid ? candidate : candidateAbove);
+          return { center, grid, strategy: "grid" };
+        }
+
+        const lastGridCenter = highest - ((javaMod(highest - integral, grid.step) + grid.step) % grid.step);
+        for (let step = grid.step; firstGridCenter + step <= lastGridCenter; step += grid.step) {
+          const low = ideal - step;
+          const high = ideal + step;
+          if (low >= firstGridCenter && isValidCenter(channels, low, hardware)) return { center: low, grid, strategy: "grid-search" };
+          if (high <= lastGridCenter && isValidCenter(channels, high, hardware)) return { center: high, grid, strategy: "grid-search" };
+        }
+      }
+
+      const available = hardware.usableBandwidth - span;
+      let testFrequency = channelMin(channels[0]) + usableHalf;
+      const minimum = testFrequency - available;
+      if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+
+      while (testFrequency >= minimum) {
+        testFrequency--;
+        if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+      }
+      return null;
+    }
+
+    function findUpstreamCenter(channels, hardware, currentCenter = 0) {
+      if (!channels.length || !canTuneSet(channels, hardware)) return null;
+      const grid = channelizerGrid(hardware.rate);
+      if (!grid) return null;
+      const span = setBandwidth(channels);
+      if (span > hardware.usableBandwidth) return null;
+
+      if (currentCenter > 0 && isValidCenter(channels, currentCenter, hardware)) {
+        return { center: currentCenter, grid, strategy: "current" };
+      }
+
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+      const integral = integralFrequency(channels, grid.exactStep);
+      let start = channels[0].frequency - grid.step;
+      if (isValidCenter(channels, start, hardware)) return { center: start, grid, strategy: "upstream-step" };
+
+      while (start - channelMin(channels[0]) < usableHalf) {
+        start += grid.step;
+        if (isValidCenter(channels, start, hardware)) return { center: start, grid, strategy: "upstream-step" };
+      }
+
+      let startFrequency = channelMin(channels[0]) + usableHalf;
+      const adjustment = Math.abs(startFrequency - integral) % grid.exactStep;
+      startFrequency += adjustment;
+      const available = hardware.usableBandwidth - span;
+      const availableTestChannels = Math.trunc(available / grid.exactStep) + 1;
+      if (isValidCenter(channels, Math.trunc(startFrequency), hardware)) {
+        return { center: Math.trunc(startFrequency), grid, strategy: "upstream-grid" };
+      }
+      for (let channel = 1; channel <= availableTestChannels; channel++) {
+        const test = Math.trunc(startFrequency - channel * grid.exactStep);
+        if (isValidCenter(channels, test, hardware)) return { center: test, grid, strategy: "upstream-grid" };
+      }
+
+      let testFrequency = channelMin(channels[0]) + usableHalf;
+      const minimum = testFrequency - available;
+      if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+      while (testFrequency >= minimum) {
+        testFrequency--;
+        if (isValidCenter(channels, testFrequency, hardware)) return { center: testFrequency, grid, strategy: "exact" };
+      }
+      return null;
+    }
+
+    function findCenter(channels, hardware, currentCenter = 0, engine = "vce") {
+      return engine === "upstream"
+        ? findUpstreamCenter(channels, hardware, currentCenter)
+        : findVceCenter(channels, hardware, currentCenter);
+    }
+
+    function planTunerPool(channels, hardwares, engine = "vce") {
+      const placementCache = new Map();
+      const resultCache = new Map();
+
+      function placementFor(tunerIndex, start, end) {
+        const key = `${tunerIndex}:${start}:${end}:${engine}`;
+        if (!placementCache.has(key)) {
+          placementCache.set(key, findCenter(channels.slice(start, end + 1), hardwares[tunerIndex], 0, engine));
+        }
+        return placementCache.get(key);
+      }
+
+      function solve(start, usedMask) {
+        if (start >= channels.length) return { covered: 0, plans: [], rejected: [] };
+        const cacheKey = `${start}:${usedMask}`;
+        if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
+        const skippedTail = solve(start + 1, usedMask);
+        let best = { covered: skippedTail.covered, plans: skippedTail.plans, rejected: [channels[start], ...skippedTail.rejected] };
+
+        for (let tunerIndex = 0; tunerIndex < hardwares.length; tunerIndex++) {
+          if (usedMask & (1 << tunerIndex)) continue;
+          for (let end = start; end < channels.length; end++) {
+            const placement = placementFor(tunerIndex, start, end);
+            if (!placement) break;
+            const tail = solve(end + 1, usedMask | (1 << tunerIndex));
+            const plan = {
+              covered: end - start + 1 + tail.covered,
+              plans: [{ channels: channels.slice(start, end + 1), ...placement, hardware: hardwares[tunerIndex], tunerIndex }, ...tail.plans],
+              rejected: tail.rejected
+            };
+            if (plan.covered > best.covered || (plan.covered === best.covered && plan.plans.length < best.plans.length)) best = plan;
+          }
+        }
+        resultCache.set(cacheKey, best);
+        return best;
+      }
+
+      const best = solve(0, 0);
+      return { plans: best.plans, rejected: best.rejected };
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderNotice(messages, type = "warning") {
+      if (!messages.length) return "";
+      return `<div class="notice ${type}" role="${type === "error" ? "alert" : "status"}"><span aria-hidden="true">${type === "error" ? "×" : "!"}</span><div>${messages.map(escapeHtml).join("<br>")}</div></div>`;
+    }
+
+    function channelTop(index) {
+      return 23 + (index % 3) * 31;
+    }
+
+    function renderSpectrum(plan, hardware) {
+      const rawLow = plan.center - hardware.rate / 2;
+      const rawHigh = plan.center + hardware.rate / 2;
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+      const usableLow = plan.center - usableHalf;
+      const usableHigh = plan.center + usableHalf;
+      const toPercent = hz => Math.max(0, Math.min(100, (hz - rawLow) / hardware.rate * 100));
+      const lowGuardWidth = toPercent(usableLow);
+      const highGuardStart = toPercent(usableHigh);
+      const dcLeft = toPercent(plan.center - hardware.dcHalf);
+      const dcWidth = hardware.dcHalf > 0 ? Math.max(0.16, toPercent(plan.center + hardware.dcHalf) - dcLeft) : 0;
+      const channelBands = plan.channels.map((channel, index) => {
+        const left = toPercent(channelMin(channel));
+        const right = toPercent(channelMax(channel));
+        const title = `${formatMHz(channel.frequency)} MHz · ${formatRate(channel.bandwidth)} wide`;
+        return `<span class="channel-band" style="left:${left}%;width:${Math.max(0.22, right - left)}%;top:${channelTop(index)}px" title="${escapeHtml(title)}"></span>`;
+      }).join("");
+
+      return `
+        <div class="spectrum">
+          <div class="spectrum-track" role="img" aria-label="Tuner passband showing edge guards, center DC exclusion, and ${plan.channels.length} channels">
+            <span class="usable-zone" style="left:${lowGuardWidth}%;right:${100 - highGuardStart}%"></span>
+            <span class="edge-guard" style="left:0;width:${lowGuardWidth}%"></span>
+            <span class="edge-guard" style="left:${highGuardStart}%;right:0"></span>
+            ${hardware.dcHalf > 0 ? `<span class="dc-zone" style="left:${dcLeft}%;width:${dcWidth}%" title="DC exclusion ±${formatInteger(hardware.dcHalf)} Hz"></span>` : ""}
+            <span class="center-line"></span>
+            ${channelBands}
+          </div>
+          <div class="band-labels"><span>${formatMHz(rawLow, 4)} MHz</span><span>▲ ${formatMHz(plan.center, 6)}</span><span>${formatMHz(rawHigh, 4)} MHz</span></div>
+          <div class="spectrum-legend">
+            <span class="legend-item"><i class="legend-swatch channel"></i>Channel envelope</span>
+            <span class="legend-item"><i class="legend-swatch"></i>Usable passband</span>
+            <span class="legend-item"><i class="legend-swatch guard"></i>Edge guard</span>
+            ${hardware.dcHalf > 0 ? `<span class="legend-item"><i class="legend-swatch dc"></i>DC exclusion</span>` : ""}
+          </div>
+        </div>`;
+    }
+
+    function renderPlan(plan) {
+      const hardware = plan.hardware;
+      const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
+      const chips = plan.channels.map(channel => `<span class="chip">${formatMHz(channel.frequency)} <small>MHz · ${formatRate(channel.bandwidth)}</small></span>`).join("");
+      return `
+        <article class="panel tuner-result">
+          <header class="result-head">
+            <div class="result-title">
+              <span class="tuner-number">${String(plan.tunerIndex + 1).padStart(2, "0")}</span>
+              <div><h3>Tuner ${plan.tunerIndex + 1}</h3><p>${plan.channels.length} channel${plan.channels.length === 1 ? "" : "s"} · ${escapeHtml(hardware.label)} · ${formatRate(hardware.rate)}</p></div>
+            </div>
+            <button class="button small copy-center" type="button" data-center="${plan.center}">Copy center</button>
+          </header>
+          <div class="center-value">
+            <span class="center-label">Center frequency</span>
+            <div class="center-frequency">${formatMHz(plan.center, 6)} <small>MHz · ${formatInteger(plan.center)} Hz</small></div>
+          </div>
+          ${renderSpectrum(plan, hardware)}
+          <div class="detail-grid">
+            <div class="detail"><span>Usable range</span><strong>${formatMHz(plan.center - usableHalf, 5)}–${formatMHz(plan.center + usableHalf, 5)} MHz</strong></div>
+            <div class="detail"><span>Edge guard</span><strong>${formatRate((hardware.rate - hardware.usableBandwidth) / 2)} each side</strong></div>
+            <div class="detail"><span>DC exclusion</span><strong>${hardware.dcHalf > 0 ? `±${formatRate(hardware.dcHalf)}` : "None"}</strong></div>
+          </div>
+          <div class="channels" aria-label="Assigned channels">${chips}</div>
+        </article>`;
+    }
+
+    function renderResults(parsed, hardwares, engine) {
+      const errors = [...parsed.invalid];
+      if (!parsed.channels.length) errors.push("Enter at least one valid channel frequency.");
+      if (!hardwares.length) errors.push("Add at least one tuner.");
+      hardwares.forEach((hardware, index) => {
+        const prefix = `Tuner ${index + 1}:`;
+        if (!Number.isFinite(hardware.rate) || hardware.rate < 50000) errors.push(`${prefix} the effective sample rate must be at least 50 kHz.`);
+        if (!(hardware.usablePercent > 0 && hardware.usablePercent <= 1)) errors.push(`${prefix} usable bandwidth must be greater than 0% and no more than 100%.`);
+        if (!(hardware.min >= 0 && hardware.max > hardware.min)) errors.push(`${prefix} frequency limits are invalid.`);
+        if (!channelizerGrid(hardware.rate)) errors.push(`${prefix} sample rate is too low for sdrtrunk’s polyphase channelizer.`);
+      });
+
+      if (errors.length) {
+        results.innerHTML = `<div class="result-stack">${renderNotice(errors, "error")}</div>`;
+        return;
+      }
+
+      const { plans, rejected } = planTunerPool(parsed.channels, hardwares, engine);
+      const warnings = [...parsed.warnings];
+      if (rejected.length) {
+        warnings.push(`${rejected.length} channel${rejected.length === 1 ? "" : "s"} could not be assigned across the configured tuner pool: ${rejected.map(channel => `${formatMHz(channel.frequency)} MHz`).join(", ")}.`);
+      }
+      warnings.push("This is a static simultaneous-coverage plan. Live sdrtrunk allocation can differ when tuners already have active channels or valid center frequencies.");
+
+      const assigned = parsed.channels.length - rejected.length;
+      const engineLabel = engine === "upstream" ? "DSheirer" : "VCE main";
+      results.innerHTML = `
+        <div class="result-stack">
+          <section class="panel summary" aria-label="Plan summary">
+            <div class="metric"><span class="metric-label">Channels</span><span class="metric-value">${parsed.channels.length}</span></div>
+            <div class="metric"><span class="metric-label">Assigned</span><span class="metric-value">${assigned}</span></div>
+            <div class="metric"><span class="metric-label">Tuners used</span><span class="metric-value">${plans.length}/${hardwares.length}</span></div>
+            <div class="metric"><span class="metric-label">Engine</span><span class="metric-value">${engineLabel}</span></div>
+          </section>
+          ${renderNotice(warnings)}
+          ${plans.map(plan => renderPlan(plan)).join("")}
+          ${rejected.length ? renderNotice(["No complete plan is possible with the selected tuner limits and channel widths."], "error") : ""}
+        </div>`;
+
+      document.querySelectorAll(".copy-center").forEach(button => {
+        button.addEventListener("click", async () => {
+          const value = button.dataset.center;
+          const copied = await copyText(value);
+          const old = button.textContent;
+          button.textContent = copied ? "Copied Hz" : "Copy failed";
+          setTimeout(() => { button.textContent = old; }, 1400);
+        });
+      });
+    }
+
+    async function copyText(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_) {
+        const helper = document.createElement("textarea");
+        helper.value = value;
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.select();
+        const copied = document.execCommand("copy");
+        helper.remove();
+        return copied;
+      }
+    }
+
+    function calculate() {
+      const parsed = parseChannels(frequenciesInput.value);
+      const hardwares = tunerConfigs.map((tuner, index) => hardwareForTuner(tuner, index));
+      renderResults(parsed, hardwares, engineSelect.value);
+    }
+
+    function runSelfTests() {
+      const r8x = { rate: 2400000, usableBandwidth: 2352000, usablePercent: 0.98, dcHalf: 5000, min: 3180000, max: 1782030000 };
+      const airspy = { rate: 10000000, usableBandwidth: 9000000, usablePercent: 0.90, dcHalf: 0, min: 24000000, max: 1800000000 };
+      const one = [{ frequency: 851000000, bandwidth: 12500 }];
+      const r8xPlan = findCenter(one, r8x, 0, "vce");
+      const upstreamPlan = findCenter(one, r8x, 0, "upstream");
+      const airspyPlan = findCenter(one, airspy, 0, "vce");
+      const edgeChannel = [{ frequency: 852169750, bandwidth: 12500 }];
+      const parsed = parseChannels("851.0125\n851.2625 @ 6.25k");
+      const invalidUnit = parseChannels("851012500Hz");
+      const mixedPool = planTunerPool([
+        { frequency: 851000000, bandwidth: 12500 },
+        { frequency: 854000000, bandwidth: 12500 }
+      ], [r8x, airspy], "vce");
+      const twoR8x = planTunerPool([
+        { frequency: 851000000, bandwidth: 12500 },
+        { frequency: 854000000, bandwidth: 12500 }
+      ], [r8x, { ...r8x }], "vce");
+      const assertions = [
+        r8xPlan?.center === 851025000,
+        upstreamPlan?.center === 850975000,
+        airspyPlan?.center === 851000000,
+        isValidCenter(one, 851000000, r8x) === false,
+        isValidCenter(edgeChannel, 851000000, r8x) === true,
+        parsed.channels.length === 2 && parsed.channels[1].bandwidth === 6250,
+        invalidUnit.channels.length === 0 && invalidUnit.invalid.length === 1,
+        mixedPool.plans.length === 1 && mixedPool.plans[0].tunerIndex === 1 && mixedPool.rejected.length === 0,
+        twoR8x.plans.length === 2 && twoR8x.rejected.length === 0,
+        channelizerGrid(2048000)?.step === 25600
+      ];
+      if (assertions.every(Boolean)) {
+        selfTest.textContent = "✓ Built-in model checks passed";
+        selfTest.className = "self-test pass";
+        document.documentElement.dataset.selfTest = "pass";
+      } else {
+        selfTest.textContent = "× Calculator model check failed";
+        selfTest.className = "self-test fail";
+        document.documentElement.dataset.selfTest = "fail";
+        console.error("sdrtrunk calculator self-test failed", assertions);
+      }
+    }
+
+    function tunerForCard(card) {
+      return tunerConfigs.find(tuner => tuner.id === Number(card?.dataset.tunerId));
+    }
+
+    function syncCustomTunerFromCard(card, tuner) {
+      tuner.customRate = Number(card.querySelector(".custom-rate").value);
+      tuner.usablePercent = Number(card.querySelector(".custom-usable").value);
+      tuner.dcHalf = Number(card.querySelector(".custom-dc").value);
+      tuner.minMHz = Number(card.querySelector(".custom-min").value);
+      tuner.maxMHz = Number(card.querySelector(".custom-max").value);
+    }
+
+    document.querySelector("#add-tuner").addEventListener("click", () => {
+      if (tunerConfigs.length >= MAX_TUNERS) return;
+      tunerConfigs.push(createTuner(tunerConfigs.at(-1)?.profileKey || "rtl-r8x"));
+      renderTunerPool();
+    });
+
+    tunerList.addEventListener("click", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner) return;
+      if (event.target.closest(".duplicate-tuner")) {
+        if (tunerConfigs.length >= MAX_TUNERS) return;
+        const duplicate = createTuner(tuner.profileKey, tuner);
+        const index = tunerConfigs.indexOf(tuner);
+        tunerConfigs.splice(index + 1, 0, duplicate);
+        renderTunerPool();
+      } else if (event.target.closest(".remove-tuner") && tunerConfigs.length > 1) {
+        tunerConfigs = tunerConfigs.filter(candidate => candidate !== tuner);
+        renderTunerPool();
+      }
+    });
+
+    tunerList.addEventListener("change", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner) return;
+      if (event.target.matches(".tuner-profile")) {
+        const replacement = createTuner(event.target.value);
+        replacement.id = tuner.id;
+        tunerConfigs[tunerConfigs.indexOf(tuner)] = replacement;
+      } else if (event.target.matches(".tuner-rate")) {
+        tuner.rate = Number(event.target.value);
+      } else if (PROFILES[tuner.profileKey].custom) {
+        syncCustomTunerFromCard(card, tuner);
+      }
+      renderTunerPool();
+    });
+
+    tunerList.addEventListener("input", event => {
+      const card = event.target.closest(".tuner-card");
+      const tuner = tunerForCard(card);
+      if (!tuner || !PROFILES[tuner.profileKey].custom) return;
+      syncCustomTunerFromCard(card, tuner);
+      const hardware = hardwareForTuner(tuner, tunerConfigs.indexOf(tuner));
+      card.querySelector(".tuner-spec").textContent = `${formatRate(hardware.usableBandwidth)} usable · ${hardware.dcHalf > 0 ? `DC ±${formatRate(hardware.dcHalf)}` : "no DC exclusion"} · ${formatMHz(hardware.min)}–${formatMHz(hardware.max)} MHz`;
+    });
+
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      calculate();
+    });
+
+    document.querySelector("#example-button").addEventListener("click", () => {
+      tunerConfigs = [createTuner("rtl-r8x"), createTuner("rtl-r8x")];
+      renderTunerPool();
+      engineSelect.value = "vce";
+      frequenciesInput.value = "851.0125\n851.2625\n851.7750 @ 6.25k\n852.1250\n852.6125\n854.0875";
+      calculate();
+    });
+
+    renderTunerPool();
+    runSelfTests();
+  </script>
+</body>
+</html>

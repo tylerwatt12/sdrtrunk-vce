@@ -19,13 +19,22 @@ import java.util.Collection;
  */
 public interface VoiceDecryptionModule
 {
-    int API_VERSION = 1;
+    int API_VERSION = 2;
 
     int getApiVersion();
 
     String getName();
 
     String getVersion();
+
+    /**
+     * Checks a user-supplied key for the portable profile request identifier.
+     *
+     * @param requestId stable portable profile identifier
+     * @param key user-supplied module key
+     * @return true when the module may be used
+     */
+    boolean verifyKey(String requestId, String key);
 
     Collection<VoiceEncryptionAlgorithm> getSupportedAlgorithms();
 

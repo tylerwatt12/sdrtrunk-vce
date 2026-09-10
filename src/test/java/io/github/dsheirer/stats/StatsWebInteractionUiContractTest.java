@@ -125,7 +125,13 @@ class StatsWebInteractionUiContractTest
 
         assertFalse(loggingNotice.contains("Live Channels"));
         assertFalse(loggingNotice.contains("audio playback"));
+        assertTrue(loggingNotice.contains("Saved statistics couldn’t be checked."));
+        assertTrue(loggingNotice.contains("Saved statistics are not updating."));
+        assertTrue(loggingNotice.contains("Last update:"));
+        assertFalse(loggingNotice.contains("logging.state"));
+        assertFalse(loggingNotice.contains("logging.lastError"));
         assertTrue(signalHealth.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
+        assertTrue(signalHealth.contains("Saved signal history is turned off."));
         assertTrue(signalHealth.contains("anchor('Open Live signal levels', href('live'))"));
         assertFalse(activity.contains("Live Channels remain available"));
     }
@@ -285,7 +291,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"122\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"123\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -624,7 +630,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=99"));
+        assertTrue(html.contains("/assets/app.css?v=100"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -701,7 +707,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(ensureConnected.contains("this.feedCursor = null"));
         assertTrue(requestFeed.contains("this.feedRequestUrl()"));
         assertTrue(requestFeed.contains("typeof value?.reset !== 'boolean'"));
-        assertTrue(pollFeed.contains("if (response.reset) this.recordSkippedCallNotice()"));
+        assertFalse(pollFeed.contains("recordSkippedCallNotice"));
         assertTrue(pollFeed.contains("this.setStatus('Reconnecting')"));
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._callId)"));
         assertTrue(enqueue.contains("this.rememberCallId(normalized._callId)"));
@@ -1069,10 +1075,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("parameters.subscription_id = subscriptionId"));
         assertTrue(events.contains("epoch !== streamEpoch || !transportReady"));
         assertTrue(events.contains("epoch === streamEpoch && transportReady"));
-        assertTrue(messages.contains("stream.onopen = () =>"));
-        assertTrue(events.contains("stream.onopen = () =>"));
-        assertTrue(messages.contains("additional messages may have been missed"));
-        assertTrue(events.contains("additional events may have been missed"));
+        assertFalse(messages.contains("stream.onopen = () =>"));
+        assertFalse(events.contains("stream.onopen = () =>"));
         assertFalse(messages.contains("parameters.timeslot"));
         assertFalse(messages.contains("addEventListener('snapshot'"));
         assertFalse(events.contains("addEventListener('snapshot'"));
@@ -1685,8 +1689,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
         assertTrue(messages.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(messages.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
-        assertTrue(messages.contains("if (document.hidden && stream)"));
-        assertTrue(messages.contains("possibleGap = true"));
+        assertTrue(messages.contains("const onVisibilityChange = () => sync()"));
+        assertFalse(messages.contains("possibleGap"));
         assertTrue(messages.contains("setPaused(value) { paused = value; if (!paused) scheduleRender(); }"));
         assertFalse(messages.contains("badge('Waiting'"));
         assertFalse(messages.contains("setStatus("));

@@ -39,6 +39,15 @@ class SetupStartupBoundaryTest
         assertFalse(wizard.contains("Summary statistics — recommended"));
     }
 
+    @Test void setupFailuresUsePlainGeneralGuidance() throws Exception
+    {
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        assertTrue(wizard.contains("This step couldn’t finish. Try again, or return to it later."));
+        assertTrue(wizard.contains("The original is unchanged. Use Copy error when reporting this problem."));
+        assertFalse(wizard.contains("Copy the technical details below"));
+        assertFalse(wizard.contains("make sure there is enough free space"));
+    }
+
     @Test void replacementReviewIsDurableAndNeverMarksHardwareAsDetected() throws Exception
     {
         SetupProgress progress = SetupProgress.decode(SetupProgress.replacementReview().encode());

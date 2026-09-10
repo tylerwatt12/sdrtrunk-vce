@@ -523,8 +523,8 @@ class StatsWebDatabase
         Map.entry("site", "lower(coalesce(configured.site_name, ''))"),
         Map.entry("type", "configured.channel_kind"),
         Map.entry("protocol", "lower(configured.decoder)"),
-        Map.entry("frequency", "coalesce(configured.observed_primary_frequency_hz, " +
-            "configured.primary_frequency_hz, 0)"),
+        Map.entry("frequency", "coalesce(configured.primary_frequency_hz, 0)"),
+        Map.entry("logical_call_count", "logical_call_count"),
         Map.entry("first_seen", "configured.first_seen_ms"),
         Map.entry("last_seen", "configured.last_seen_ms")
     );
@@ -696,9 +696,9 @@ class StatsWebDatabase
      */
     StatsCsvExport csvExport(String dataset, StatsRequest request)
     {
-        if(!List.of("radio-system-group-identities", "radio-system-radios", "channel-frequencies", "channel-neighbors",
-            "channels", "channel-group-identities", "channel-radios", "signal-health",
-            "channel-quality", "aliases").contains(dataset))
+        if(!List.of("radio-system-group-identities", "radio-system-radios", "radio-system-talker-aliases",
+            "channel-frequencies", "channel-neighbors", "channels", "channel-group-identities", "channel-radios",
+            "signal-health", "channel-quality", "aliases").contains(dataset))
         {
             throw new StatsApiException(400, "Unsupported CSV dataset");
         }
@@ -725,6 +725,16 @@ class StatsWebDatabase
                     String radioSystemKey = request.requiredText("radio_system_key");
                     Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
                     rows = queryRadioSystemRadios(connection, radioSystemKey, request, queryLimit, 0);
+                    addExportMetadata(rows, Map.of(
+                        "system_name", textValue(radioSystem.get("system_name")),
+                        "radio_system_key", textValue(radioSystem.get("radio_system_key"))));
+                    fileScope = exportLabel(radioSystem, "system_name", "radio_system_key");
+                }
+                case "radio-system-talker-aliases" ->
+                {
+                    String radioSystemKey = request.requiredText("radio_system_key");
+                    Map<String,Object> radioSystem = requireRadioSystem(connection, radioSystemKey);
+                    rows = queryRadioSystemTalkerAliases(connection, radioSystemKey, request, queryLimit, 0);
                     addExportMetadata(rows, Map.of(
                         "system_name", textValue(radioSystem.get("system_name")),
                         "radio_system_key", textValue(radioSystem.get("radio_system_key"))));
@@ -1970,7 +1980,19 @@ class StatsWebDatabase
     {
         return readSnapshot(connection -> {
             requireRadioSystem(connection, radioSystemKey);
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = queryRadioSystemTalkerAliases(connection, radioSystemKey, request,
+                request.limit() + 1, request.offset());
+            Map<String,Object> response = page(rows, request);
+            response.put("total_count", countRadioSystemTalkerAliases(connection, radioSystemKey, request));
+            return response;
+        });
+    }
+
+    private List<Map<String,Object>> queryRadioSystemTalkerAliases(Connection connection, String radioSystemKey,
+                                                                   StatsRequest request, int limit, int offset)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
                     CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
@@ -1983,27 +2005,24 @@ class StatsWebDatabase
                   AND summary.last_talker_alias IS NOT NULL
                   AND trim(summary.last_talker_alias) <> ''
                 """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL,
-                TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
-            List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
+            TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
+        List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
 
-            addTalkerAliasSearch(sql, parameters, request.search());
+        addTalkerAliasSearch(sql, parameters, request.search());
 
-            sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
-                .append(", summary.identity_id LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
+        sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
+            .append(", summary.identity_id LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
 
-            for(Map<String,Object> row: rows)
-            {
-                WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
-                    textValue(row.get("identity_key"))));
-            }
+        for(Map<String,Object> row: rows)
+        {
+            WebEntityRef.put(row, identityReference(row, IDENTITY_KIND_RADIO,
+                textValue(row.get("identity_key"))));
+        }
 
-            Map<String,Object> response = page(rows, request);
-            response.put("total_count", countRadioSystemTalkerAliases(connection, radioSystemKey, request));
-            return response;
-        });
+        return rows;
     }
 
     private static long countRadioSystemTalkerAliases(Connection connection, String radioSystemKey,
@@ -3930,8 +3949,34 @@ class StatsWebDatabase
     private static List<Map<String,Object>> queryChannelDirectory(Connection connection, StatsRequest request,
                                                                    int limit, int offset) throws SQLException
     {
-        StringBuilder sql = new StringBuilder("SELECT configured.* FROM (" +
-            WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + ") configured WHERE 1=1");
+        StringBuilder sql = new StringBuilder("""
+            SELECT configured.*,
+                CASE
+                    WHEN configured.channel_kind = 'CONVENTIONAL' THEN coalesce((
+                        SELECT SUM(summary.call_count)
+                        FROM conventional_activity_summary summary
+                        WHERE summary.channel_id = configured.channel_id
+                    ), 0)
+                    WHEN configured.radio_system_protocol_code = 1 THEN coalesce((
+                        SELECT SUM(bucket.observed_call_count)
+                        FROM p25_site_snapshot site
+                        JOIN p25_learned_site learned
+                          ON learned.radio_system_id = configured.radio_system_id
+                         AND learned.rfss = site.rfss AND learned.site = site.site
+                        JOIN p25_site_call_bucket bucket
+                          ON bucket.radio_system_id = learned.radio_system_id
+                         AND bucket.learned_site_id = learned.learned_site_id
+                        WHERE site.channel_id = configured.channel_id
+                    ), 0)
+                    WHEN configured.configuration_id = configured.radio_system_configuration_id THEN coalesce((
+                        SELECT SUM(bucket.logical_call_count)
+                        FROM trunked_logical_call_bucket bucket
+                        WHERE bucket.radio_system_id = configured.radio_system_id
+                    ), 0)
+                    ELSE 0
+                END AS logical_call_count
+            FROM (
+            """ + WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + ") configured WHERE 1=1");
         List<Object> parameters = new ArrayList<>();
 
         addChannelDirectoryFilters(sql, parameters, request);
@@ -3944,7 +3989,10 @@ class StatsWebDatabase
 
         for(Map<String,Object> row: rows)
         {
-            presented.add(new LinkedHashMap<>(WebConfiguredEntityRepository.configuredChannel(row).toApiMap()));
+            Map<String,Object> channel = new LinkedHashMap<>(
+                WebConfiguredEntityRepository.configuredChannel(row).toApiMap());
+            channel.put("logical_call_count", number(row.get("logical_call_count")));
+            presented.add(channel);
         }
 
         return presented;

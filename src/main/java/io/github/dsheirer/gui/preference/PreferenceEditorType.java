@@ -30,7 +30,7 @@ public enum PreferenceEditorType
     NOW_PLAYING("Desktop Interface"),
     DIRECTORY("Directories"),
     JMBE_LIBRARY("JMBE Audio Library"),
-    VOICE_DECRYPTION_MODULE("Voice Decryption Module"),
+    VOICE_DECRYPTION_MODULE("Optional Voice Module"),
     AUDIO_MP3("MP3"),
     AUDIO_RECORD("Record"),
     AUDIO_CALL_MANAGEMENT("Call Management"),

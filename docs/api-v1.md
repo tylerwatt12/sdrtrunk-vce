@@ -201,6 +201,7 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 - `signal-health`
 - `radio-system-group-identities`
 - `radio-system-radios`
+- `radio-system-talker-aliases`
 - `channels`
 - `channel-frequencies`
 - `channel-group-identities`
@@ -210,7 +211,8 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 
 One export runs at a time. Buffered exports stop at 10,000 rows or 16 MiB. Radio-system exports use
 `radio_system_key`; channel exports use `configuration_id`. Radio-system radio exports also accept `affiliated` and
-`configuration_id`. Alias catalog reads and `aliases.csv` require administrator Alias access.
+`configuration_id`. Talker-alias exports contain only radios with a nonblank over-the-air alias. Alias catalog reads
+and `aliases.csv` require administrator Alias access.
 
 ## Live data
 

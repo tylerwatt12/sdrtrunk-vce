@@ -56,7 +56,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(refresh.contains("page: false, signal: controller.signal, timeoutMs: 10_000"));
         assertTrue(refresh.contains("this.snapshot = normalizeReceiverHealthSnapshot(response)"));
         assertTrue(refresh.contains("RECEIVER_HEALTH_STALE_MILLISECONDS"));
-        assertTrue(refresh.contains("The receiver health sampler has not produced a recent snapshot."));
+        assertTrue(refresh.contains("Receiver health hasn’t updated recently."));
+        assertTrue(refresh.contains("Receiver health is temporarily unavailable. Try Refresh now."));
+        assertFalse(refresh.contains("error?.message"));
         assertTrue(refresh.contains("this.stale = true"));
         assertFalse(refresh.contains("this.snapshot = null"));
         assertFalse(refresh.contains("liveConnection("));
@@ -88,7 +90,9 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(page.contains("summary.diagnostic_count"));
         assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
         assertTrue(page.contains("'Measurements'"));
-        assertTrue(page.contains("Showing the last receiver health snapshot."));
+        assertTrue(page.contains("Showing the most recent receiver health information available."));
+        assertTrue(page.contains("'Update delayed'"));
+        assertFalse(page.contains("'Stale'"));
         assertTrue(page.indexOf("receiverHealthHostResourceOverview(snapshot)") <
             page.lastIndexOf("receiverHealthSection('current', 'Current status'"));
         assertTrue(incident.contains("incident.occurrence_id"));

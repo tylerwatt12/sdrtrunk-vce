@@ -46,7 +46,6 @@ export class WebCallPlayer {
     this.paused = false;
     this.volume = 1;
     this.statusValue = this.ui.status?.textContent || '';
-    this.skippedNotice = false;
     this.preferenceWriter = null;
     this.maximumQueued = WebCallPlayer.MAXIMUM_QUEUED_CALLS;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SELECTED_SCAN_LISTS;
@@ -229,7 +228,6 @@ export class WebCallPlayer {
       const response = await this.requestFeed(controller.signal);
       if (!this.feedActive || this.stopped || generation !== this.feedGeneration) return;
       this.feedCursor = response.cursor;
-      if (response.reset) this.recordSkippedCallNotice();
       response.calls.forEach((call) => this.enqueue(call));
       if (!this.current && !this.queuedCount) this.setStatus('Waiting');
       this.scheduleFeedPoll(generation, WebCallPlayer.FEED_POLL_INTERVAL_MS);
@@ -289,7 +287,6 @@ export class WebCallPlayer {
     this.replayingLast = false;
     this.stopAfterReplay = false;
     this.holdTarget = null;
-    this.clearLossNotice();
     this.clearIdleDisplay();
     this.stopCurrent();
     if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
@@ -311,7 +308,6 @@ export class WebCallPlayer {
     this.scanLists = [];
     this.scanListById.clear();
     this.stopFeed();
-    this.clearLossNotice();
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = message;
     this.setStatus(message);
     this.renderScanLists();
@@ -369,7 +365,6 @@ export class WebCallPlayer {
     else updated.delete(item.id);
     if ([...updated].sort().join('|') === [...this.selectedScanListIds].sort().join('|')) return;
     this.selectedScanListIds = updated;
-    this.clearLossNotice();
     this.writePreferences();
     this.updateScanListStatus();
     this.filterQueueForSelectedLists();
@@ -453,7 +448,6 @@ export class WebCallPlayer {
     while (this.queuedCount >= this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.recordSkippedCallNotice();
     }
 
     this.insertQueuedCall(normalized);
@@ -612,7 +606,6 @@ export class WebCallPlayer {
       const defaultScanList = this.scanLists.find((item) => item.enabled && item.default);
       if (defaultScanList) {
         this.selectedScanListIds = new Set([defaultScanList.id]);
-        this.clearLossNotice();
         this.writePreferences();
         this.updateScanListStatus();
         this.filterQueueForSelectedLists();
@@ -631,7 +624,6 @@ export class WebCallPlayer {
       this.stopCurrent();
       this.replayingLast = false;
       this.stopAfterReplay = false;
-      this.clearLossNotice();
       if (this.audioContext) await this.audioContext.suspend();
       if (token !== this.transportToken) return;
       this.setStatus('Ready');
@@ -827,9 +819,7 @@ export class WebCallPlayer {
     } catch (error) {
       if (error?.name === 'AbortError' && !loadTimedOut) return;
       if (token === this.loadToken) {
-        this.recordSkippedCallNotice();
         this.stopCurrent();
-        this.setStatus('Skipped unavailable call');
         setTimeout(() => {
           if (this.stopped || this.paused) {
             this.setStatus('Ready');
@@ -1126,19 +1116,7 @@ export class WebCallPlayer {
   renderStatus() {
     if (!this.ui.status) return;
     const status = this.paused ? `Paused — ${this.queuedCount} calls queued` : this.statusValue;
-    this.ui.status.textContent = [status, this.skippedNotice ? 'Some calls were skipped' : '']
-      .filter(Boolean).join(' · ');
-  }
-
-  recordSkippedCallNotice() {
-    this.skippedNotice = true;
-    this.renderStatus();
-    this.notifyStateObservers();
-  }
-
-  clearLossNotice() {
-    this.skippedNotice = false;
-    this.renderStatus();
+    this.ui.status.textContent = status;
   }
 
   render() {

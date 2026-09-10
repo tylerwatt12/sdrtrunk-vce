@@ -376,6 +376,21 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void talkerAliasCsvExportUsesTheRadioSystemKey() throws Exception
+    {
+        HttpResponse<String> response = get(StatsApiV1.EXPORTS +
+            "/radio-system-talker-aliases.csv?radio_system_key=p25%3Abee00%3A49f");
+        assertEquals(200, response.statusCode(), response.body());
+        assertTrue(response.headers().firstValue("Content-Type").orElse("").startsWith("text/csv"));
+        assertTrue(response.body().contains("Unit 2 OTA"));
+        assertTrue(response.body().contains("talker_alias_seen_utc"));
+
+        HttpResponse<String> unknownParameter = get(StatsApiV1.EXPORTS +
+            "/radio-system-talker-aliases.csv?radio_system_key=p25%3Abee00%3A49f&limit=100");
+        assertStructuredError(unknownParameter, 400, "unknown_parameter", "limit");
+    }
+
+    @Test
     void radioSystemGroupIdentityCollectionAcceptsItsPathKey() throws Exception
     {
         HttpResponse<String> response = get(StatsApiV1.RADIO_SYSTEMS +

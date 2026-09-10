@@ -145,38 +145,37 @@ class ApplicationMigrationSuccessDialogTest
         String helper = "Detected format 1.\nRESULT: migrated and validated.";
         ApplicationMigrationService.MigrationResult current = new ApplicationMigrationService.MigrationResult(
             false, backup, null, helper, PreviousBuildLocator.InputScope.DATABASE_FILE);
-        assertEquals("Your database was migrated successfully without row-level repairs, resets, or skipped " +
-            "items.\n\n" + helper +
-            "\n\nSafety backup:\n" + backup,
+        assertEquals("Your database was updated successfully.\n\n" + helper +
+            "\n\nBackup of your previous database:\n" + backup,
             ApplicationMigrationSuccessDialog.currentDatabaseReport(current));
 
         ApplicationMigrationService.MigrationResult portable = new ApplicationMigrationService.MigrationResult(
             true, null, null, helper, PreviousBuildLocator.InputScope.PORTABLE_PROFILE);
-        assertEquals("Migration completed without row-level repairs, resets, or skipped items. The database was " +
-            "migrated and each usable optional profile item was " +
-            "imported separately. Eligible stored paths were checked and remapped where applicable. Your previous " +
-            "installation and its data were left unchanged. Review the " +
-            "itemized optional-profile results below.\n\n" + helper,
+        assertEquals("Your previous installation was imported successfully. The original installation was not " +
+            "changed. Details about copied files and any items needing attention are listed below.\n\n" + helper,
             ApplicationMigrationSuccessDialog.previousImportReport(portable));
 
         ApplicationMigrationService.MigrationResult databaseOnly = new ApplicationMigrationService.MigrationResult(
             false, null, null, helper, PreviousBuildLocator.InputScope.DATABASE_FILE);
-        assertEquals("Migration completed without row-level repairs, resets, or skipped items. Only the selected " +
-            "SQLite database was imported. The source database and " +
-            "its neighboring files were left unchanged.\n\n" + helper,
+        assertEquals("The selected database was imported successfully. The original file and nearby files were " +
+            "not changed. Files outside the database were not copied.\n\n" + helper,
             ApplicationMigrationSuccessDialog.previousImportReport(databaseOnly));
 
         Path source = Path.of("/old/profile.sqlite");
         String replacement = ApplicationMigrationSuccessDialog.replacementImportReport(current, source);
-        assertEquals("SQLite database import completed without row-level repairs, resets, or skipped items. The " +
-            "selected database replaced the active database after " +
-            "staged migration and validation. The selected source file and its neighboring files were left " +
-            "unchanged.\n\nStored portable paths were not remapped. If no usable administrator credential " +
-            "could be preserved, setup will request a new administrator password after restart.\n\n" + helper +
+        assertEquals("The selected database was imported successfully and is now in use. The original file was " +
+            "not changed. Files outside the database were not copied.\n\nIf the administrator account could not be " +
+            "kept, setup will ask you to create a new administrator password after restart.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
-            "\n\nPrevious active database backup:\n" + backup +
-            "\n\nSDRTrunk will restart automatically into setup. Review the imported settings and output folders " +
-            "before starting reception.", replacement);
+            "\n\nBackup of the database that was replaced:\n" + backup +
+            "\n\nSDRTrunk will restart so you can review the imported settings before receiving.", replacement);
+
+        String repairedHelper = "OUTCOME: Migration completed with itemized repairs, resets, or skipped items.";
+        ApplicationMigrationService.MigrationResult repaired = new ApplicationMigrationService.MigrationResult(
+            false, backup, null, repairedHelper, PreviousBuildLocator.InputScope.DATABASE_FILE);
+        String repairedReport = ApplicationMigrationSuccessDialog.currentDatabaseReport(repaired);
+        assertTrue(repairedReport.startsWith("Your database was updated successfully. Some items were repaired, " +
+            "reset, or skipped. Details are listed below."));
     }
 
     @Test

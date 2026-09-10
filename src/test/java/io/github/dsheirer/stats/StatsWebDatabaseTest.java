@@ -779,6 +779,41 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void channelDirectoryIncludesStoredCallCountsAndSortsThemBeforePagination() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (711, 71, 1, 1, 1000, 4000),
+                         (712, 71, 1, 2, 1000, 4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_bucket (
+                    radio_system_id, learned_site_id, bucket_start_ms,
+                    observed_call_count, encrypted_observed_call_count
+                ) VALUES (71, 711, 3600000, 7, 0),
+                         (71, 712, 3600000, 2, 0)
+                """);
+        }
+
+        Map<String,Object> directory = mDatabase.channelDirectory(request(
+            "/?sort=logical_call_count&direction=desc&limit=3"));
+        assertEquals(4, number(directory.get("total_count")));
+        assertTrue((Boolean)directory.get("has_more"));
+        assertEquals(List.of(P25_CHANNEL_A, ANALOG_CHANNEL, P25_CHANNEL_B), rows(directory).stream()
+            .map(row -> String.valueOf(row.get("configuration_id"))).toList());
+        assertEquals(List.of(7L, 5L, 2L), rows(directory).stream()
+            .map(row -> number(row.get("logical_call_count"))).toList());
+
+        List<Map<String,Object>> byFrequency = rows(mDatabase.channelDirectory(request(
+            "/?sort=frequency&direction=asc")));
+        assertEquals(ANALOG_CHANNEL, byFrequency.getFirst().get("configuration_id"));
+    }
+
+    @Test
     void csvIgnoresPageControlsButKeepsFiltersAndSortOrder()
     {
         StatsCsvExport export = mDatabase.csvExport("channels", request(
@@ -1615,6 +1650,36 @@ class StatsWebDatabaseTest
         StatsCsvExport groups = mDatabase.csvExport("radio-system-group-identities",
             request("/?radio_system_key=" + RADIO_SYSTEM_KEY));
         assertTrue(groups.fileName().startsWith("sdrtrunk-radio-system-group-identities-"));
+    }
+
+    @Test
+    void talkerAliasCsvExportsOnlyNonblankAliases() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary
+                SET last_talker_alias = 'Unit 202 OTA', last_talker_alias_seen_ms = 6000,
+                    encrypted_logical_call_count = 1
+                WHERE id = 7102
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7104, 71, 2, 0xBEE00, 0x49F, 204, 1000, 4000, 1)
+                """);
+        }
+
+        StatsCsvExport export = mDatabase.csvExport("radio-system-talker-aliases",
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY));
+        String csv = new String(export.content(), StandardCharsets.UTF_8);
+        assertEquals(1, export.rowCount());
+        assertTrue(export.fileName().startsWith("sdrtrunk-radio-system-talker-aliases-"));
+        assertTrue(csv.contains("Unit 202 OTA"));
+        assertTrue(csv.contains("talker_alias_seen_utc"));
+        assertFalse(csv.contains("v1-r-bee00-49f-204"));
     }
 
     private void assertQualityChannel(String configurationId, String radioSystemKey, String protocol,

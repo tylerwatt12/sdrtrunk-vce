@@ -1082,8 +1082,8 @@ public final class SetupWizard extends JDialog
         if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
         if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
-        if(step==SetupStep.SOURCE) return "We couldn’t migrate the selected data. Your original data is still safe and has not been replaced. Copy the technical details below when reporting this problem.";
-        return "We couldn’t finish this step. Check the file or folder you selected and make sure there is enough free space, then try again. Your original data has not been replaced by an incomplete import.";
+        if(step==SetupStep.SOURCE) return "Your saved data could not be imported. The original is unchanged. Use Copy error when reporting this problem.";
+        return "This step couldn’t finish. Try again, or return to it later. Any completed setup choices are still saved.";
     }
 
     private String safeFailureDetail(Throwable failure, String summary)

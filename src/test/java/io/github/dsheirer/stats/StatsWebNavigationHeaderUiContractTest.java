@@ -24,15 +24,21 @@ class StatsWebNavigationHeaderUiContractTest
     void exposesCompleteNavigationWithDistinctPurposeBuiltIcons() throws Exception
     {
         String html = readText(INDEX_HTML);
+        String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"122\">"));
-        assertTrue(html.contains("/assets/app.css?v=99"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"123\">"));
+        assertTrue(html.contains("/assets/app.css?v=100"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=143\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=144\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
         assertTrue(html.contains("data-nav-tab=\"streaming\" href=\"/?view=configuration&amp;tab=streaming\""));
+        assertTrue(html.contains("data-nav-tab=\"rf-planner\" href=\"/?view=hardware&amp;tab=rf-planner\""));
+        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js';"));
+        String hardware = block(source, "function renderHardware()");
+        assertTrue(hardware.contains("{ id: 'rf-planner', label: 'RF Planner' }"));
+        assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner()"));
         assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));

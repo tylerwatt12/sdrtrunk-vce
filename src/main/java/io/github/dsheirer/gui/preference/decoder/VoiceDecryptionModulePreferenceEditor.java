@@ -20,12 +20,17 @@ import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -49,10 +54,9 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
         setPadding(new Insets(10));
         setSpacing(10);
 
-        Label title = new Label("Voice Decryption Module");
-        Label help = new Label("Select a compatible optional module jar to enable the encryption key vault and " +
-            "known-key voice decryption. SDRTrunk continues to identify and log protected traffic when no module " +
-            "is loaded.");
+        Label title = new Label("Optional Voice Module");
+        Label help = new Label("Select a compatible optional module JAR. A key is requested only after the file " +
+            "has been checked.");
         help.setWrapText(true);
         help.setMaxWidth(650);
 
@@ -72,19 +76,24 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
         refresh();
     }
 
-    private void addRow(GridPane pane, int row, String name, Label value)
+    private void addRow(GridPane pane, int row, String name, Node value)
     {
         Label label = new Label(name);
         GridPane.setHalignment(label, HPos.RIGHT);
         pane.add(label, 0, row);
-        value.setWrapText(true);
+
+        if(value instanceof Label valueLabel)
+        {
+            valueLabel.setWrapText(true);
+        }
+
         pane.add(value, 1, row);
     }
 
     private void selectModule(Window owner)
     {
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Select Voice Decryption Module");
+        chooser.setTitle("Select Optional Voice Module");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Java module (*.jar)", "*.jar"));
         Path current = mPreference.getPath();
 
@@ -95,14 +104,68 @@ public class VoiceDecryptionModulePreferenceEditor extends VBox
 
         File selected = chooser.showOpenDialog(owner);
 
-        if(selected != null && !mPreference.setPath(selected.toPath()))
+        if(selected != null)
         {
-            Alert alert = new Alert(Alert.AlertType.ERROR, mPreference.getModuleManager().getStatus(), ButtonType.OK);
-            alert.setTitle("Voice Decryption Module");
-            alert.setHeaderText("The selected module could not be loaded");
-            alert.initOwner(owner);
-            alert.showAndWait();
+            if(mPreference.preparePath(selected.toPath()))
+            {
+                promptForKey(owner);
+            }
+            else
+            {
+                showError(owner, "The selected file could not be used", mPreference.getModuleManager().getStatus());
+            }
         }
+    }
+
+    private void promptForKey(Window owner)
+    {
+        while(true)
+        {
+            Dialog<String> dialog = new Dialog<>();
+            dialog.setTitle("Module Key");
+            dialog.setHeaderText("File accepted");
+            dialog.initOwner(owner);
+
+            TextField requestId = new TextField(mPreference.getRequestId());
+            requestId.setEditable(false);
+            TextField key = new TextField();
+            key.setPromptText("Paste key");
+            GridPane content = new GridPane();
+            content.setHgap(10);
+            content.setVgap(10);
+            addRow(content, 0, "Request ID:", requestId);
+            addRow(content, 1, "Key:", key);
+
+            DialogPane pane = dialog.getDialogPane();
+            pane.setContent(content);
+            pane.getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            dialog.setResultConverter(button -> button == ButtonType.OK ? key.getText() : null);
+            pane.lookupButton(ButtonType.OK).disableProperty().bind(key.textProperty().isEmpty());
+            dialog.setOnShown(event -> key.requestFocus());
+            Optional<String> result = dialog.showAndWait();
+
+            if(result.isEmpty())
+            {
+                return;
+            }
+
+            if(mPreference.setKey(result.get()))
+            {
+                refresh();
+                return;
+            }
+
+            showError(owner, "The key was not accepted", "Check the key and try again.");
+        }
+    }
+
+    private void showError(Window owner, String header, String message)
+    {
+        Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
+        alert.setTitle("Optional Voice Module");
+        alert.setHeaderText(header);
+        alert.initOwner(owner);
+        alert.showAndWait();
     }
 
     private void refresh()

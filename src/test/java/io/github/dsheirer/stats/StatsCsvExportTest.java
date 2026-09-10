@@ -73,6 +73,28 @@ class StatsCsvExportTest
     }
 
     @Test
+    void writesTalkerAliasSummaryColumns() throws Exception
+    {
+        StatsCsvExport export = StatsCsvExport.create("radio-system-talker-aliases", "County", List.of(
+            Map.ofEntries(
+                Map.entry("protocol", "P25"), Map.entry("system_name", "County"),
+                Map.entry("radio_system_key", "p25:bee00:348"), Map.entry("wacn", 0xBEE00),
+                Map.entry("system_id", 0x348), Map.entry("identity_key", "v1-r-bee00-348-42"),
+                Map.entry("native_id", 42), Map.entry("last_talker_alias", "Engine 4"),
+                Map.entry("alias_name", "Portable 42"), Map.entry("logical_call_count", 12),
+                Map.entry("encrypted_logical_call_count", 2), Map.entry("last_talker_alias_seen_ms", 2_000))));
+
+        CSVRecord row = firstRecord(export);
+        assertEquals("42", row.get("native_id"));
+        assertEquals("Engine 4", row.get("talker_alias"));
+        assertEquals("Portable 42", row.get("alias"));
+        assertEquals("12", row.get("logical_calls"));
+        assertEquals("2", row.get("encrypted_logical_calls"));
+        assertEquals("1970-01-01T00:00:02Z", row.get("talker_alias_seen_utc"));
+        assertFalse(row.isMapped("affiliated_talkgroup_id"));
+    }
+
+    @Test
     void writesAuthoritativeDmrAndNxdnRadioSystemDimensions() throws Exception
     {
         StatsCsvExport groups = StatsCsvExport.create("radio-system-group-identities", "DMR", List.of(Map.ofEntries(
