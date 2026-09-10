@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,6 +33,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ChannelAndBroadcastConfiguration;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -2140,6 +2143,18 @@ class ReceiverActivityServiceLifecycleTest
 
     private static void persistChannels(Path database, Channel... channels) throws Exception
     {
+        List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
+
+        for(Channel channel: channels)
+        {
+            AliasListFamily family = AliasListFamily.from(channel.getDecodeConfiguration().getDecoderType());
+            AliasListDefinition definition = definitions.stream()
+                .filter(candidate -> candidate.getFamily() == family)
+                .findFirst()
+                .orElseThrow();
+            channel.setAliasListDefinition(definition);
+        }
+
         try(Connection connection = SdrTrunkDatabase.openWriteTransaction(database))
         {
             new ConfigurationDatabaseStore(database).replace(connection,

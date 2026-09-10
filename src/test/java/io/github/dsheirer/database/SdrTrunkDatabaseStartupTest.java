@@ -234,9 +234,9 @@ class SdrTrunkDatabaseStartupTest
                 VALUES (1,'Valid range',-1,91,1,'TALKGROUP_RANGE','APCO25',1,65535)
                 """);
             statement.executeUpdate("""
-                INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,decoder_type,
+                INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,alias_list_id,decoder_type,
                     primary_frequency_hz,config_json)
-                VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,'AM',121900000,'{}')
+                VALUES ('11111111-1111-4111-8111-111111111111','CONVENTIONAL',0,1,'AM',121900000,'{}')
                 """);
         }
     }
@@ -250,10 +250,14 @@ class SdrTrunkDatabaseStartupTest
             Statement statement = connection.createStatement())
         {
             SdrTrunkDatabaseSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family, unmatched_talkgroup_record_enabled)
+                VALUES (1, 'Default P25', 'P25', 0)
+                """);
             String base = """
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, decoder_type, config_json, radioresolve_id
-                ) VALUES ('11111111-1111-4111-8111-111111111111', 'TRUNKED', 0, 'P25_PHASE1', %s, %s)
+                    configuration_id, channel_kind, sort_order, alias_list_id, decoder_type, config_json, radioresolve_id
+                ) VALUES ('11111111-1111-4111-8111-111111111111', 'TRUNKED', 0, 1, 'P25_PHASE1', %s, %s)
                 """;
             assertThrows(java.sql.SQLException.class,
                 () -> statement.executeUpdate(base.formatted("'{\"name\":\"duplicate\"}'", "NULL")));

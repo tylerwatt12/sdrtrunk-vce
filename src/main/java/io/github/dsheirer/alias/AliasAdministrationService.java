@@ -591,6 +591,12 @@ public final class AliasAdministrationService
             AliasListDefinition definition = requireAliasList(aliasListId);
             DeleteImpact impact = deleteImpact(definition);
 
+            if(impact.channelCount() > 0)
+            {
+                throw new IllegalStateException("Reassign " + impact.channelCount() +
+                    " configured channel(s) before deleting Alias List [" + impact.name() + "]");
+            }
+
             if(!confirmed)
             {
                 throw new ConfirmationRequiredException(impact);
@@ -851,7 +857,7 @@ public final class AliasAdministrationService
             {
                 mutation = operation.get();
                 mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
-                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true, Set.of()),
+                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true),
                     null);
             }
             catch(ConfigurationManager.ConfigurationCommitException |
@@ -2078,35 +2084,30 @@ public final class AliasAdministrationService
         {
             Set<Long> changedAliasIds = new HashSet<>(aliases);
             savedAliases.stream().map(Alias::getId).forEach(changedAliasIds::add);
-            Set<Long> clearedChannelAliasListIds = publicationMode.clearsChannelAssignments() && aliasList != null ?
-                Set.of(aliasList.getId()) : Set.of();
             return new ConfigurationManager.AliasConfigurationPublication(changedAliasIds,
                 publicationMode.definitionsChanged(), publicationMode.scanListsChanged(),
-                publicationMode.scanListsFirst(), clearedChannelAliasListIds);
+                publicationMode.scanListsFirst());
         }
     }
 
     private enum PublicationMode
     {
-        ALIASES(false, false, false, false),
-        ALIAS_LISTS(true, false, false, false),
-        SCAN_LISTS_THEN_ALIASES(false, true, true, false),
-        SCAN_LISTS_THEN_ALIAS_LISTS(true, true, true, false),
-        ALIASES_THEN_SCAN_LISTS(false, true, false, false),
-        ALIAS_LIST_DELETE(true, true, false, true);
+        ALIASES(false, false, false),
+        ALIAS_LISTS(true, false, false),
+        SCAN_LISTS_THEN_ALIASES(false, true, true),
+        SCAN_LISTS_THEN_ALIAS_LISTS(true, true, true),
+        ALIASES_THEN_SCAN_LISTS(false, true, false),
+        ALIAS_LIST_DELETE(true, true, false);
 
         private final boolean mDefinitionsChanged;
         private final boolean mScanListsChanged;
         private final boolean mScanListsFirst;
-        private final boolean mClearsChannelAssignments;
 
-        PublicationMode(boolean definitionsChanged, boolean scanListsChanged, boolean scanListsFirst,
-                        boolean clearsChannelAssignments)
+        PublicationMode(boolean definitionsChanged, boolean scanListsChanged, boolean scanListsFirst)
         {
             mDefinitionsChanged = definitionsChanged;
             mScanListsChanged = scanListsChanged;
             mScanListsFirst = scanListsFirst;
-            mClearsChannelAssignments = clearsChannelAssignments;
         }
 
         private boolean definitionsChanged()
@@ -2122,11 +2123,6 @@ public final class AliasAdministrationService
         private boolean scanListsFirst()
         {
             return mScanListsFirst;
-        }
-
-        private boolean clearsChannelAssignments()
-        {
-            return mClearsChannelAssignments;
         }
 
     }

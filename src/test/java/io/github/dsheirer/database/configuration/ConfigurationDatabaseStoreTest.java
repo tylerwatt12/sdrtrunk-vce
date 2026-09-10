@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -221,7 +222,7 @@ class ConfigurationDatabaseStoreTest
                     id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (77, '11111111-1111-4111-8111-111111111111', 'TRUNKED', 9, 'Legacy System',
-                    'Legacy Site', 'Retired MPT', NULL,
+                    'Legacy Site', 'Retired MPT', (SELECT id FROM alias_list ORDER BY id LIMIT 1),
                     '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 451000000,
                     '{"type":"retired-channel","payload":"must be dropped without decoding"}')
                 """);
@@ -230,7 +231,8 @@ class ConfigurationDatabaseStoreTest
                     id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (78, '33333333-3333-4333-8333-333333333333', 'CONVENTIONAL', 10, 'Legacy System',
-                    'Audio Input', 'Retired Sound Card', NULL, NULL, 1, 5, 'DMR', NULL,
+                    'Audio Input', 'Retired Sound Card', (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1),
+                    NULL, 1, 5, 'DMR', NULL,
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
                 """))
         {
@@ -610,6 +612,25 @@ class ConfigurationDatabaseStoreTest
     {
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
+            for(Channel channel: state.mChannels)
+            {
+                if(channel.getAliasListId() <= 0 && channel.getDecodeConfiguration() != null)
+                {
+                    AliasListFamily family = AliasListFamily.from(
+                        channel.getDecodeConfiguration().getDecoderType());
+                    try(PreparedStatement aliasList = connection.prepareStatement(
+                        "SELECT id, name FROM alias_list WHERE family=? ORDER BY id LIMIT 1"))
+                    {
+                        aliasList.setString(1, family.name());
+                        try(ResultSet row = aliasList.executeQuery())
+                        {
+                            assertTrue(row.next());
+                            channel.setAliasListId(row.getLong("id"));
+                            channel.setAliasListName(row.getString("name"));
+                        }
+                    }
+                }
+            }
             connection.setAutoCommit(false);
             new ConfigurationDatabaseStore(database).replace(connection,
                 new ChannelAndBroadcastConfiguration(state.mChannels, state.mBroadcastConfigurations));

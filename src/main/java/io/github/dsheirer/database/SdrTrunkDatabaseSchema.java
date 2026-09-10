@@ -222,9 +222,9 @@ public final class SdrTrunkDatabaseSchema
             system_name TEXT CHECK(system_name IS NULL OR typeof(system_name) = 'text'),
             site_name TEXT CHECK(site_name IS NULL OR typeof(site_name) = 'text'),
             name TEXT CHECK(name IS NULL OR typeof(name) = 'text'),
-            alias_list_id INTEGER REFERENCES alias_list(id)
-                DEFERRABLE INITIALLY DEFERRED CHECK(alias_list_id IS NULL OR
-                    (typeof(alias_list_id) = 'integer' AND alias_list_id > 0)),
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT
+                DEFERRABLE INITIALLY DEFERRED
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
             radioresolve_id TEXT CHECK(
                 radioresolve_id IS NULL OR (
                     typeof(radioresolve_id) = 'text'
@@ -294,6 +294,21 @@ public final class SdrTrunkDatabaseSchema
             )
         )
         """;
+    /** Frozen predecessor DDL used only while the adjacent format-14 migration constructs exact format 15. */
+    private static final String FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL = CONFIGURATION_CHANNEL_TABLE_SQL.replace(
+        """
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT
+                DEFERRABLE INITIALLY DEFERRED
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
+        """,
+        """
+            alias_list_id INTEGER REFERENCES alias_list(id)
+                DEFERRABLE INITIALLY DEFERRED CHECK(alias_list_id IS NULL OR
+                    (typeof(alias_list_id) = 'integer' AND alias_list_id > 0)),
+        """);
+    private static final String FORMAT_16_CONFIGURATION_CHANNEL_MIGRATION_TABLE_SQL =
+        CONFIGURATION_CHANNEL_TABLE_SQL.replaceFirst(
+            "(?i)configuration_channel", "configuration_channel_format16");
     private static final String CONFIGURATION_BROADCAST_STREAM_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS configuration_broadcast_stream (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
@@ -565,6 +580,17 @@ public final class SdrTrunkDatabaseSchema
 
     public static void create(Connection connection) throws SQLException
     {
+        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL);
+    }
+
+    /** Creates the exact format-15 target for its immutable adjacent migration. */
+    public static void createFormat15(Connection connection) throws SQLException
+    {
+        create(connection, FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL);
+    }
+
+    private static void create(Connection connection, String configurationChannelTableSql) throws SQLException
+    {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(DATABASE_METADATA_TABLE_SQL);
@@ -577,13 +603,44 @@ public final class SdrTrunkDatabaseSchema
                 SELECT 0, 'Default', NULL, 1, 1
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
-            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+            statement.executeUpdate(configurationChannelTableSql);
             statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate(APPLICATION_SETTINGS_TABLE_SQL);
             statement.executeUpdate(APPLICATION_ICONS_TABLE_SQL);
             statement.executeUpdate(WEB_USER_TABLE_SQL);
             statement.executeUpdate(WEB_ACCESS_POLICY_TABLE_SQL);
             statement.executeUpdate(WEB_USER_PRIMARY_INDEX_SQL);
+            createConfigurationChannelIndexes(connection);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
+                "ON alias_broadcast_channel(broadcast_configuration_id)");
+        }
+
+    }
+
+    /** Creates the authoritative saved-channel table. Used by fresh databases and the adjacent staged migrator. */
+    public static void createConfigurationChannelTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+        }
+    }
+
+    /** Creates the current saved-channel table under its fixed adjacent-migration staging name. */
+    public static void createConfigurationChannelMigrationTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(FORMAT_16_CONFIGURATION_CHANNEL_MIGRATION_TABLE_SQL);
+        }
+    }
+
+    /** Creates the complete authoritative saved-channel index set. */
+    public static void createConfigurationChannelIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_sort " +
                 "ON configuration_channel(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_alias_list " +
@@ -596,11 +653,7 @@ public final class SdrTrunkDatabaseSchema
                 "idx_configuration_channel_unique_radioresolve_id " +
                 "ON configuration_channel(lower(radioresolve_id)) " +
                 "WHERE radioresolve_id IS NOT NULL");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
-                "ON alias_broadcast_channel(broadcast_configuration_id)");
         }
-
     }
 
     /**

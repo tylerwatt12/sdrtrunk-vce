@@ -47,21 +47,6 @@ public class ChannelModel implements Listener<ChannelEvent>
     }
 
     /**
-     * Deletes any aliases that have the alias list name
-     * @param aliasListName to delete
-     */
-    public void deleteAliasList(long aliasListId)
-    {
-        if(aliasListId <= 0)
-        {
-            return;
-        }
-
-        mChannels.stream().filter(channel -> channel.getAliasListId() == aliasListId)
-            .forEach(channel -> channel.setAliasListDefinition(null));
-    }
-
-    /**
      * Observable list of channel configurations managed by this model
      */
     public ObservableList<Channel> channelList()

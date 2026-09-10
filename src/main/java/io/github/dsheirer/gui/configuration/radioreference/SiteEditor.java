@@ -201,7 +201,7 @@ public class SiteEditor extends GridPane
         GridPane.setHgrow(getNameTextField(), Priority.ALWAYS);
         getChildren().add(getNameTextField());
 
-        Label aliasListLabel = new Label("Alias List (Optional)");
+        Label aliasListLabel = new Label("Alias List");
         GridPane.setConstraints(aliasListLabel, 1, ++row);
         GridPane.setHalignment(aliasListLabel, HPos.RIGHT);
         getChildren().add(aliasListLabel);
@@ -598,7 +598,7 @@ public class SiteEditor extends GridPane
                     gotoChannel = channel;
                 }
 
-                mConfigurationManager.getChannelModel().addChannel(channel);
+                mConfigurationManager.addChannel(channel);
             }
         }
 
@@ -660,7 +660,7 @@ public class SiteEditor extends GridPane
                 channel.setSourceConfiguration(sourceConfig);
             }
 
-            mConfigurationManager.getChannelModel().addChannel(channel);
+            mConfigurationManager.addChannel(channel);
 
             if(getGoToChannelEditorCheckBox().isSelected())
             {
@@ -731,7 +731,7 @@ public class SiteEditor extends GridPane
                     channel.setSourceConfiguration(sourceConfig);
                 }
 
-                mConfigurationManager.getChannelModel().addChannel(channel);
+                mConfigurationManager.addChannel(channel);
 
                 if(getGoToChannelEditorCheckBox().isSelected())
                 {
@@ -758,7 +758,7 @@ public class SiteEditor extends GridPane
                         gotoChannel = channel;
                     }
 
-                    mConfigurationManager.getChannelModel().addChannel(channel);
+                    mConfigurationManager.addChannel(channel);
                 }
 
                 if(getGoToChannelEditorCheckBox().isSelected() && gotoChannel != null)
@@ -827,7 +827,7 @@ public class SiteEditor extends GridPane
                     channel.setSourceConfiguration(sourceConfig);
                 }
 
-                mConfigurationManager.getChannelModel().addChannel(channel);
+                mConfigurationManager.addChannel(channel);
 
                 if(getGoToChannelEditorCheckBox().isSelected())
                 {
@@ -855,7 +855,7 @@ public class SiteEditor extends GridPane
                         gotoChannel = channel;
                     }
 
-                    mConfigurationManager.getChannelModel().addChannel(channel);
+                    mConfigurationManager.addChannel(channel);
                 }
 
                 if(getGoToChannelEditorCheckBox().isSelected() && gotoChannel != null)

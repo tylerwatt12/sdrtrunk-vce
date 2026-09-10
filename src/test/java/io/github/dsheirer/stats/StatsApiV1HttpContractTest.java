@@ -686,9 +686,10 @@ class StatsApiV1HttpContractTest
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('00000000-0000-0000-0000-000000000072', 'CONVENTIONAL', 72,
-                    'HTTP Conventional', 'HTTP County', 'HTTP Fire', 'NBFM', 154310000, '{}')
+                    'HTTP Conventional', 'HTTP County', 'HTTP Fire',
+                    (SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1), 'NBFM', 154310000, '{}')
                 """);
             statement.executeUpdate("UPDATE configuration_channel SET " +
                 "radioresolve_id = '728d2d66-de4e-476b-a696-919f32dd4d12' " +

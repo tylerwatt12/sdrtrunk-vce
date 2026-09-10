@@ -186,6 +186,13 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mChannelModel;
     }
 
+    /** Adds a saved channel after assigning or validating its required compatible Alias List. */
+    public void addChannel(Channel channel)
+    {
+        mAliasModel.requireAliasListAssignment(channel);
+        mChannelModel.addChannel(channel);
+    }
+
     /**
      * Channel processing manager
      */
@@ -436,8 +443,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 throw new IllegalStateException(
                     "Unable to save channel and broadcast configuration before committing Alias configuration");
             }
-            return mConfigurationRepository.commitAliasConfiguration(proposed,
-                publication.clearedChannelAliasListIds());
+            return mConfigurationRepository.commitAliasConfiguration(proposed);
         }
         catch(Exception exception)
         {
@@ -474,8 +480,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 mAliasModel.getAliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 reloaded.aliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 publishCommittedAliasConfiguration(reloaded,
-                    new AliasConfigurationPublication(allAliasIds, true, true, true,
-                        requested.clearedChannelAliasListIds()));
+                    new AliasConfigurationPublication(allAliasIds, true, true, true));
                 mLog.error("Alias configuration committed, but initial publication failed; reloaded committed state",
                     publicationFailure);
                 return reloaded;
@@ -511,17 +516,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mScanListModel.replaceConfiguration(committed.scanLists());
         }
 
-        if(!publication.clearedChannelAliasListIds().isEmpty())
-        {
-            for(Channel channel: mChannelModel.getChannels())
-            {
-                if(publication.clearedChannelAliasListIds().contains(channel.getAliasListId()))
-                {
-                    channel.setAliasListDefinition(null);
-                }
-            }
-        }
-
         mAliasConfigurationRevision.incrementAndGet();
     }
 
@@ -538,14 +532,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     public record AliasConfigurationPublication(Set<Long> changedAliasIds, boolean definitionsChanged,
-                                                boolean scanListsChanged, boolean scanListsFirst,
-                                                Set<Long> clearedChannelAliasListIds)
+                                                boolean scanListsChanged, boolean scanListsFirst)
     {
         public AliasConfigurationPublication
         {
             changedAliasIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
-            clearedChannelAliasListIds = clearedChannelAliasListIds != null ?
-                Set.copyOf(clearedChannelAliasListIds) : Set.of();
         }
     }
 

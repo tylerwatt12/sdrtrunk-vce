@@ -276,7 +276,7 @@ class LegacyPlaylistImportServiceTest
         ScanListConfiguration changedScanLists = new ScanListConfiguration(current.scanLists().scanLists(),
             Map.of(aliasId, Set.of(defaultScanListId)), current.scanLists().unmatchedAliasListMemberships());
         repository.commitAliasConfiguration(new AliasConfigurationSnapshot(current.definitions(), current.aliases(),
-            changedScanLists), List.of());
+            changedScanLists));
 
         assertThrows(IOException.class, () -> service.execute(prepared));
         assertFalse(Files.exists(database.getParent().resolve("backups")));

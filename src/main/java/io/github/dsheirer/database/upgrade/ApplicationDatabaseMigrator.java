@@ -818,7 +818,8 @@ public final class ApplicationDatabaseMigrator
     {
         if(portableRepairRan)
         {
-            output.println("COMPLETED STEP: 15 -> 15 [repair-portable-preferences] " +
+            output.println("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+                DatabaseFormatCatalog.CURRENT_VERSION + " [repair-portable-preferences] " +
                 "Validate and independently repair portable preference components");
             output.println("  TRANSFORM portable directory preferences: " + migration.rebasedDirectories() +
                 " preference component(s) - Updated only stored paths that pointed inside the copied portable profile");
@@ -836,7 +837,8 @@ public final class ApplicationDatabaseMigrator
     {
         if(repair.requiresRepair())
         {
-            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseAdministrativeRepair.STEP_ID +
+            output.println("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+                DatabaseFormatCatalog.CURRENT_VERSION + " [" + CurrentDatabaseAdministrativeRepair.STEP_ID +
                 "] Repair recoverable current-format administrative components independently");
             for(DatabaseMigrationEffect effect: CurrentDatabaseAdministrativeRepair.effects(repair))
             {
@@ -850,7 +852,8 @@ public final class ApplicationDatabaseMigrator
     {
         if(repair.requiresRepair())
         {
-            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseBestEffortRepair.STEP_ID +
+            output.println("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+                DatabaseFormatCatalog.CURRENT_VERSION + " [" + CurrentDatabaseBestEffortRepair.STEP_ID +
                 "] Repair unusable current-format configuration items independently");
             for(DatabaseMigrationEffect effect: CurrentDatabaseBestEffortRepair.effects(repair))
             {
@@ -864,7 +867,8 @@ public final class ApplicationDatabaseMigrator
     {
         if(repair.requiresRepair())
         {
-            output.println("COMPLETED STEP: 15 -> 15 [" + CurrentDatabaseDerivedStateRepair.STEP_ID +
+            output.println("COMPLETED STEP: " + DatabaseFormatCatalog.CURRENT_VERSION + " -> " +
+                DatabaseFormatCatalog.CURRENT_VERSION + " [" + CurrentDatabaseDerivedStateRepair.STEP_ID +
                 "] Reset damaged reproducible receiver activity and statistics state");
             for(DatabaseMigrationEffect effect: CurrentDatabaseDerivedStateRepair.effects(repair))
             {

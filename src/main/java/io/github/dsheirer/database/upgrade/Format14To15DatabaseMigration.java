@@ -2332,7 +2332,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
             statement.executeUpdate("ALTER TABLE scan_list RENAME TO format14_scan_list");
         }
 
-        SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.createFormat15(connection);
         copyUnchangedApplicationRows(connection, input);
         insertChannels(connection, input.channels());
         insertBroadcasts(connection, input.broadcasts());

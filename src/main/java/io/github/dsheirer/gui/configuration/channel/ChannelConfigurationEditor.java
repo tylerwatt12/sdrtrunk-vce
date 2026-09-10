@@ -280,6 +280,21 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             }
 
             updateAliasListCompatibility();
+            String aliasListName = getAliasListComboBox().getSelectionModel().getSelectedItem();
+            AliasListDefinition aliasListDefinition = getAliasListDefinition(aliasListName);
+            if(aliasListDefinition == null || !isAliasListCompatible(aliasListDefinition, getDecoderType()))
+            {
+                Alert alert = new Alert(Alert.AlertType.ERROR,
+                    "Select a compatible Alias List before saving this channel.", ButtonType.OK);
+                alert.setTitle("Alias List Required");
+                alert.setHeaderText("Alias List Required");
+                if(getSaveButton().getScene() != null)
+                {
+                    alert.initOwner(getSaveButton().getScene().getWindow());
+                }
+                alert.showAndWait();
+                return;
+            }
 
             getItem().setSystem(getSystemField().getText());
             getItem().setSite(getSiteField().getText());
@@ -288,9 +303,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getItem().setName(" ");
             getItem().setName(getNameField().getText());
             getItem().setRadioResolveId(getRadioResolveIdField().getText());
-            String aliasListName = getAliasListComboBox().getSelectionModel().getSelectedItem();
-            getItem().setAliasListDefinition(aliasListName != null ?
-                mConfigurationManager.getAliasModel().getAliasListDefinition(aliasListName) : null);
+            getItem().setAliasListDefinition(aliasListDefinition);
             getItem().setAutoStart(getAutoStartSwitch().isSelected());
 
             Integer order = getAutoStartOrderSpinner().getValue();
@@ -599,7 +612,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setHgrow(getNameField(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getNameField());
 
-            Label aliasListLabel = new Label("Alias List (Optional)");
+            Label aliasListLabel = new Label("Alias List");
             GridPane.setHalignment(aliasListLabel, HPos.RIGHT);
             GridPane.setConstraints(aliasListLabel, 2, row);
             mTextFieldPane.getChildren().add(aliasListLabel);

@@ -109,40 +109,6 @@ public class ConfigurationDatabaseStore
         replaceBroadcastConfigurations(connection, configuration.broadcastConfigurations());
     }
 
-    /**
-     * Clears channel references to deleted Alias Lists without rewriting unrelated channel or stream rows.
-     */
-    public void clearAliasListAssignments(Connection connection, Collection<Long> aliasListIds)
-        throws SQLException
-    {
-        if(connection == null || connection.getAutoCommit())
-        {
-            throw new IllegalArgumentException("Alias-list assignment updates require a caller-owned transaction");
-        }
-        if(aliasListIds == null || aliasListIds.isEmpty())
-        {
-            return;
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE configuration_channel
-            SET alias_list_id = NULL
-            WHERE alias_list_id = ?
-            """))
-        {
-            for(Long aliasListId: aliasListIds)
-            {
-                if(aliasListId == null || aliasListId <= AliasListDefinition.UNASSIGNED_ID)
-                {
-                    throw new IllegalArgumentException("Deleted Alias-list IDs must be positive");
-                }
-                statement.setLong(1, aliasListId);
-                statement.addBatch();
-            }
-            statement.executeBatch();
-        }
-    }
-
     private List<Channel> loadChannels(Connection connection) throws SQLException, IOException
     {
         List<Channel> channels = new ArrayList<>();
@@ -394,8 +360,7 @@ public class ConfigurationDatabaseStore
                 statement.setString(4, channel.getSystem());
                 statement.setString(5, channel.getSite());
                 statement.setString(6, channel.getName());
-                setLong(statement, 7, channel.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
-                    channel.getAliasListId() : null);
+                statement.setLong(7, channel.getAliasListId());
                 statement.setString(8, radioResolveId);
                 statement.setInt(9, channel.getAutoStart() ? 1 : 0);
                 setInteger(statement, 10, channel.getAutoStartOrder());

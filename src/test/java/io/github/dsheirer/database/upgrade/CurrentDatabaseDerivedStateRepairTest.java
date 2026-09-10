@@ -255,9 +255,10 @@ class CurrentDatabaseDerivedStateRepairTest
         payload.remove(CHANNEL_ROW_OWNED_JSON_FIELDS);
         try(var insert = connection.prepareStatement("""
             INSERT INTO configuration_channel(
-                configuration_id, channel_kind, sort_order, name, auto_start, decoder_type,
+                configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start, decoder_type,
                 address_domain_code, primary_frequency_hz, config_json
-            ) VALUES (?, 'CONVENTIONAL', 0, ?, 0, 'NBFM', 0, 155250000, ?)
+            ) VALUES (?, 'CONVENTIONAL', 0, ?,
+                (SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1), 0, 'NBFM', 0, 155250000, ?)
             """))
         {
             insert.setString(1, channel.getConfigurationId());

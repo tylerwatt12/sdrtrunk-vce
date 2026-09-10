@@ -454,8 +454,9 @@ class ReceiverActivitySchemaIntegrityTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+                alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control',
+                (SELECT id FROM alias_list WHERE family='P25' LIMIT 1),
                 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 'P25_PHASE1', 851000000, '{}')
             """.formatted(CONFIGURATION_ID));
     }
@@ -466,9 +467,9 @@ class ReceiverActivitySchemaIntegrityTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+                alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'TRUNKED', 0, 'DMR System', 'DMR Site', '%s',
-                NULL, 0, 'DMR', 451000000,
+                (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1), NULL, 0, 'DMR', 451000000,
                 '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
             """.formatted(configurationId, name));
     }
@@ -481,6 +482,7 @@ class ReceiverActivitySchemaIntegrityTest
             statement.execute("PRAGMA foreign_keys=ON");
         }
         SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);

@@ -224,6 +224,7 @@ class DmrActivitySchemaTest
             statement.execute("PRAGMA foreign_keys=ON");
         }
         SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
@@ -236,8 +237,9 @@ class DmrActivitySchemaTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
-            VALUES ('%s', 'CONVENTIONAL', 0, 'DMR', 'Repeater', '%s', NULL, 0, 'DMR', 461125000,
+                alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+            VALUES ('%s', 'CONVENTIONAL', 0, 'DMR', 'Repeater', '%s',
+                    (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1), NULL, 0, 'DMR', 461125000,
                     '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
             """.formatted(configurationId(fixture), fixture));
     }

@@ -130,8 +130,7 @@ public final class ConfigurationRepository
     }
 
     /** Commits Alias-owned state without rewriting unrelated channel or broadcast rows. */
-    public synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-                                                                             Collection<Long> removedAliasListIds)
+    public synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed)
         throws IOException, SQLException
     {
         AliasConfigurationSnapshot detached = AliasConfigurationSnapshot.detachedCopyOf(proposed);
@@ -139,7 +138,6 @@ public final class ConfigurationRepository
         {
             mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
             mScanListStore.replaceConfiguration(connection, detached.scanLists());
-            mChannelAndBroadcastStore.clearAliasListAssignments(connection, removedAliasListIds);
             return loadAliasConfiguration(connection);
         });
     }

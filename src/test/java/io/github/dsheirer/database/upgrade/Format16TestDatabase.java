@@ -1,7 +1,7 @@
 /*
  * *****************************************************************************
  * Copyright (C) 2026 Dennis Sheirer
- * ****************************************************************************
+ * *****************************************************************************
  */
 package io.github.dsheirer.database.upgrade;
 
@@ -10,23 +10,23 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format-15 fixture produced only by the adjacent format-14 migration. */
-public final class Format15TestDatabase
+/** Exact populated format-16 fixture produced only by the adjacent format-15 migration. */
+public final class Format16TestDatabase
 {
-    private Format15TestDatabase()
+    private Format16TestDatabase()
     {
     }
 
     public static Path create(Path database) throws Exception
     {
-        Format14TestDatabase.create(database);
+        Format15TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format14To15DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 15);
+                new Format15To16DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 16);
                 connection.commit();
             }
             catch(Exception exception)
@@ -41,10 +41,10 @@ public final class Format15TestDatabase
 
             DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            if(detected.version() != 15 ||
-                !DatabaseFormatCatalog.requireVersion(15).fingerprint().equals(fingerprint))
+            if(detected.version() != 16 ||
+                !DatabaseFormatCatalog.requireVersion(16).fingerprint().equals(fingerprint))
             {
-                throw new IllegalStateException("Global format 15 fixture fingerprint mismatch: " + fingerprint);
+                throw new IllegalStateException("Global format 16 fixture fingerprint mismatch: " + fingerprint);
             }
         }
         return database;

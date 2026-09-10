@@ -98,8 +98,8 @@ class Format14To15DatabaseMigrationTest
             try
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(15, report.target().version());
-                assertEquals("format-14-to-15", report.steps().getLast().id());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+                assertEquals("format-15-to-16", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -766,6 +766,8 @@ class Format14To15DatabaseMigrationTest
             connection.setAutoCommit(false);
             List<DatabaseMigrationEffect> effects =
                 new Format14To15DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stampForMigration(connection, 15);
+            new Format15To16DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             connection.commit();
 

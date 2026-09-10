@@ -343,7 +343,7 @@ class AliasDatabaseStoreTest
         ScanListConfiguration scanLists = new ScanListConfiguration(current.scanLists().scanLists(), Map.of(),
             Map.of());
         return configurationStore.commitAliasConfiguration(
-            new AliasConfigurationSnapshot(definitions, aliases, scanLists), List.of());
+            new AliasConfigurationSnapshot(definitions, aliases, scanLists));
     }
 
     private static List<Alias> loadAliases(AliasDatabaseStore store) throws Exception

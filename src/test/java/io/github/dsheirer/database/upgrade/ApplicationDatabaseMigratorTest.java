@@ -158,7 +158,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
+            "COMPLETED STEP: 16 -> 16 [repair-portable-preferences]"), result::output);
         assertTrue(result.output().contains(
             "RESET unusable portable preference components: 6 preference component(s)"), result::output);
         assertEquals("keep", scalar(database, """
@@ -204,11 +204,11 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         int completedRepair = result.output().indexOf(
-            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]");
+            "COMPLETED STEP: 16 -> 16 [repair-portable-preferences]");
         int completedAdministrative = result.output().indexOf(
-            "COMPLETED STEP: 15 -> 15 [repair-current-administrative-state]");
+            "COMPLETED STEP: 16 -> 16 [repair-current-administrative-state]");
         int completedAdoption = result.output().indexOf(
-            "COMPLETED STEP: 15 -> 15 [adopt-global-format-marker]");
+            "COMPLETED STEP: 16 -> 16 [adopt-global-format-marker]");
         assertTrue(completedRepair >= 0 && completedAdministrative > completedRepair &&
             completedAdoption > completedAdministrative, result::output);
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
@@ -266,7 +266,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 15 -> 15 [repair-current-administrative-state]"), result::output);
+            "COMPLETED STEP: 16 -> 16 [repair-current-administrative-state]"), result::output);
         assertTrue(result.output().contains("DEFAULT unusable setup progress: 1 row(s)"), result::output);
         assertTrue(result.output().contains("DEFAULT unusable spectrum-snap settings: 1 row(s)"), result::output);
         assertTrue(result.output().contains(
@@ -408,7 +408,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 15 -> 15 [repair-current-configuration-relationships]"), result::output);
+            "COMPLETED STEP: 16 -> 16 [repair-current-configuration-relationships]"), result::output);
         assertTrue(result.output().contains(
             "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
         assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias WHERE id=16478"));
@@ -458,7 +458,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 15 -> 15 [reset-damaged-current-derived-state]"), result::output);
+            "COMPLETED STEP: 16 -> 16 [reset-damaged-current-derived-state]"), result::output);
         assertTrue(result.output().contains(
             "RESET bounded receiver activity and statistics rows: 2 row(s)"), result::output);
         assertTrue(result.output().contains(
@@ -526,10 +526,10 @@ class ApplicationDatabaseMigratorTest
                 """.formatted(validProviderId, invalidProviderId));
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
-                    id, configuration_id, channel_kind, sort_order, name, auto_start, decoder_type,
+                    id, configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start, decoder_type,
                     address_domain_code, config_json
-                ) VALUES (17502, '%s', 'TRUNKED', 0, 'Broken saved channel', 0, 'P25_PHASE1', 0, '{}')
-                """.formatted(invalidChannelId));
+                ) VALUES (17502, '%s', 'TRUNKED', 0, 'Broken saved channel', %d, 0, 'P25_PHASE1', 0, '{}')
+                """.formatted(invalidChannelId, aliasListId));
             statement.executeUpdate("""
                 INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
                 VALUES ('%s', 1, 1)
@@ -549,9 +549,9 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains(
             "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
         int completedDerived = result.output().indexOf(
-            "COMPLETED STEP: 15 -> 15 [reset-damaged-current-derived-state]");
+            "COMPLETED STEP: 16 -> 16 [reset-damaged-current-derived-state]");
         int completedConfiguration = result.output().indexOf(
-            "COMPLETED STEP: 15 -> 15 [repair-current-configuration-relationships]");
+            "COMPLETED STEP: 16 -> 16 [repair-current-configuration-relationships]");
         assertTrue(completedDerived >= 0 && completedConfiguration > completedDerived, result::output);
         assertTrue(result.output().contains(
             "RESET bounded receiver activity and statistics rows: 1 row(s)"), result::output);
@@ -610,7 +610,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void keepsCurrentChannelButClearsAnIncompatibleAliasListAssignment() throws Exception
+    void keepsCurrentChannelAndReassignsAnIncompatibleAliasListAssignment() throws Exception
     {
         Path database = newStagedDatabase();
         SdrTrunkTestDatabase.create(database);
@@ -649,8 +649,12 @@ class ApplicationDatabaseMigratorTest
             result::output);
         assertEquals("1", scalar(database, "SELECT COUNT(*) FROM configuration_channel WHERE configuration_id='" +
             configurationId + "'"));
-        assertEquals("1", scalar(database, "SELECT alias_list_id IS NULL FROM configuration_channel WHERE " +
-            "configuration_id='" + configurationId + "'"));
+        assertEquals("NBFM", scalar(database, """
+            SELECT list.family
+            FROM configuration_channel channel
+            JOIN alias_list list ON list.id=channel.alias_list_id
+            WHERE channel.configuration_id='%s'
+            """.formatted(configurationId)));
     }
 
     @Test
@@ -740,7 +744,7 @@ class ApplicationDatabaseMigratorTest
         assertFalse(result.output().contains("format-1-to-2"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().indexOf("COMPLETED STEP: 2 -> 3 [format-2-to-3]") <
-            result.output().indexOf("COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
+            result.output().indexOf("COMPLETED STEP: 16 -> 16 [repair-portable-preferences]"), result::output);
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
 
@@ -1534,7 +1538,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 15 -> 15 [repair-portable-preferences]"), result::output);
+            "COMPLETED STEP: 16 -> 16 [repair-portable-preferences]"), result::output);
         assertTrue(result.output().contains(
             "RESET unusable portable preference components: 1 preference component(s)"), result::output);
 

@@ -116,18 +116,50 @@ public class AliasDatabaseStore
         List<AliasListDefinition> safeDefinitions = definitions != null ? new ArrayList<>(definitions) :
             new ArrayList<>();
         validateSnapshot(safeAliases, safeDefinitions);
-        clearSnapshot(connection);
+        clearAliasesAndRoutes(connection);
+        deleteMissingDefinitions(connection, safeDefinitions);
         saveDefinitions(connection, safeDefinitions);
         attachDefinitions(safeAliases, safeDefinitions);
         saveAliases(connection, safeAliases);
     }
 
-    private void clearSnapshot(Connection connection) throws SQLException
+    private void clearAliasesAndRoutes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM alias");
-            statement.executeUpdate("DELETE FROM alias_list");
+            statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_stream");
+        }
+    }
+
+    private void deleteMissingDefinitions(Connection connection, List<AliasListDefinition> definitions)
+        throws SQLException
+    {
+        Set<Long> retainedIds = definitions.stream()
+            .map(AliasListDefinition::getId)
+            .filter(id -> id > AliasListDefinition.UNASSIGNED_ID)
+            .collect(java.util.stream.Collectors.toSet());
+        List<Long> removedIds = new ArrayList<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT id FROM alias_list"))
+        {
+            while(rows.next())
+            {
+                long id = rows.getLong(1);
+                if(!retainedIds.contains(id))
+                {
+                    removedIds.add(id);
+                }
+            }
+        }
+        try(PreparedStatement statement = connection.prepareStatement("DELETE FROM alias_list WHERE id=?"))
+        {
+            for(long id: removedIds)
+            {
+                statement.setLong(1, id);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 
@@ -404,6 +436,10 @@ public class AliasDatabaseStore
                     INSERT INTO alias_list (
                         id, name, family, unmatched_talkgroup_record_enabled
                     ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name=excluded.name,
+                        family=excluded.family,
+                        unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled
                     """))
                 {
                     statement.setLong(1, definition.getId());

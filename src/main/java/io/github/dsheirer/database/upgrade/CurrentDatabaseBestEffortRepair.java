@@ -134,8 +134,9 @@ final class CurrentDatabaseBestEffortRepair
         applyStreamRouteRepairs(connection, "alias_list_unmatched_talkgroup_stream",
             analysis.streamRoutes().unmatchedRoutes().repairs());
         deleteRows(connection, "configuration_channel", analysis.channels().invalidRowIds());
-        applyChannelRepairs(connection, analysis.channels().repairs(), analysis.clearedChannelAliasLists());
-        clearUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists());
+        applyChannelRepairs(connection, analysis.channels().repairs());
+        reassignUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists(),
+            analysis.aliasLists().invalidRowIds());
         deleteRows(connection, "alias", analysis.aliases().invalidRowIds());
         deleteRows(connection, "alias_list", analysis.aliasLists().invalidRowIds());
         deleteRows(connection, "scan_list", analysis.scanLists().invalidRowIds());
@@ -222,7 +223,7 @@ final class CurrentDatabaseBestEffortRepair
                 "Remove only links whose Alias, Alias List, scan list, or broadcast provider no longer exists"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
                 "channels with an unusable Alias List", inspection.clearedChannelAliasLists(),
-                "Keep each channel and clear only a missing, malformed, or incompatible Alias List assignment"));
+                "Keep each channel and select an existing compatible Alias List"));
     }
 
     private static AliasListInspection inspectAliasLists(Connection connection) throws SQLException
@@ -1114,27 +1115,70 @@ final class CurrentDatabaseBestEffortRepair
         return new RouteTableInspection(List.copyOf(invalidRows), Map.copyOf(repairs));
     }
 
-    private static void clearUnusableChannelAliasLists(Connection connection, Set<Long> channelRowIds)
-        throws SQLException
+    private static void reassignUnusableChannelAliasLists(Connection connection, Set<Long> channelRowIds,
+                                                           List<Long> invalidAliasListRows) throws SQLException
     {
         if(channelRowIds.isEmpty())
         {
             return;
         }
-        try(PreparedStatement statement = connection.prepareStatement(
-            "UPDATE configuration_channel SET alias_list_id=NULL WHERE rowid=?"))
+        Map<String,Long> aliasListByFamily = new LinkedHashMap<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery(
+                "SELECT rowid AS physical_rowid, id, family FROM alias_list ORDER BY id"))
+        {
+            while(rows.next())
+            {
+                if(!invalidAliasListRows.contains(rows.getLong("physical_rowid")))
+                {
+                    aliasListByFamily.putIfAbsent(rows.getString("family"), rows.getLong("id"));
+                }
+            }
+        }
+        try(PreparedStatement decoder = connection.prepareStatement(
+                "SELECT decoder_type FROM configuration_channel WHERE rowid=?");
+            PreparedStatement update = connection.prepareStatement(
+                "UPDATE configuration_channel SET alias_list_id=? WHERE rowid=?"))
         {
             for(long rowId: channelRowIds)
             {
-                statement.setLong(1, rowId);
-                statement.addBatch();
+                decoder.setLong(1, rowId);
+                String decoderType;
+                try(ResultSet row = decoder.executeQuery())
+                {
+                    if(!row.next())
+                    {
+                        throw new SQLException("Saved channel changed during Alias List repair");
+                    }
+                    decoderType = row.getString(1);
+                }
+                Long aliasListId = aliasListByFamily.get(requiredFamily(decoderType));
+                if(aliasListId == null)
+                {
+                    throw new SQLException("Saved channel requires a compatible Alias List for decoder [" +
+                        decoderType + "]");
+                }
+                update.setLong(1, aliasListId);
+                update.setLong(2, rowId);
+                update.addBatch();
             }
-            statement.executeBatch();
+            update.executeBatch();
         }
     }
 
-    private static void applyChannelRepairs(Connection connection, Map<Long,ChannelRepair> repairs,
-                                            Set<Long> clearedAliasLists)
+    private static String requiredFamily(String decoderType) throws SQLException
+    {
+        return switch(decoderType)
+        {
+            case "P25_PHASE1", "P25_PHASE2", "P25_CONVENTIONAL" -> "P25";
+            case "DMR" -> "DMR";
+            case "NXDN" -> "NXDN";
+            case "AM", "NBFM" -> "NBFM";
+            default -> throw new SQLException("Saved channel has unsupported decoder type [" + decoderType + "]");
+        };
+    }
+
+    private static void applyChannelRepairs(Connection connection, Map<Long,ChannelRepair> repairs)
         throws SQLException
     {
         Map<Long,String> targetConfigurationIds = new LinkedHashMap<>();
@@ -1144,7 +1188,6 @@ final class CurrentDatabaseBestEffortRepair
             UPDATE configuration_channel
             SET configuration_id=?, sort_order=?, system_name=?, site_name=?, name=?, radioresolve_id=?,
                 auto_start=?, auto_start_order=?,
-                alias_list_id=CASE WHEN ?<>0 THEN NULL ELSE alias_list_id END,
                 channel_kind=?, decoder_type=?, address_domain_code=?, primary_frequency_hz=?, config_json=?
             WHERE rowid=?
             """))
@@ -1167,11 +1210,10 @@ final class CurrentDatabaseBestEffortRepair
                 {
                     statement.setInt(8, repair.autoStartOrder());
                 }
-                statement.setInt(9, clearedAliasLists.contains(entry.getKey()) ? 1 : 0);
-                statement.setString(10, repair.channelKind());
-                repair.projection().bind(statement, 11);
-                statement.setString(14, repair.payload());
-                statement.setLong(15, entry.getKey());
+                statement.setString(9, repair.channelKind());
+                repair.projection().bind(statement, 10);
+                statement.setString(13, repair.payload());
+                statement.setLong(14, entry.getKey());
                 if(statement.executeUpdate() != 1)
                 {
                     throw new SQLException("Accepted saved channel changed during current-format repair");

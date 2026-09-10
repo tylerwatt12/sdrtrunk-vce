@@ -3605,9 +3605,10 @@ async function openAliasListDeleteModal(selectedList) {
     if (activeReadOnlyModal !== modal.state) return;
     const body = node('div', 'alias-confirmation');
     body.append(node('p', '', `This permanently deletes ${number(impact.alias_count || 0)} aliases.`));
-    if (Number(impact.channel_count || 0) > 0) {
+    const assignedChannels = Number(impact.channel_count || 0);
+    if (assignedChannels > 0) {
       body.append(node('div', 'logging-notice warning',
-        `${number(impact.channel_count)} configured channels use this list. Their alias-list assignment will be removed.`));
+        `${number(assignedChannels)} configured channels use this list. Reassign them before deleting the list.`));
     }
     const confirm = node('label', 'alias-confirm-check');
     const checkbox = node('input');
@@ -3619,7 +3620,8 @@ async function openAliasListDeleteModal(selectedList) {
     const remove = node('button', 'danger', 'Delete Alias List');
     remove.type = 'button';
     remove.disabled = true;
-    checkbox.addEventListener('change', () => { remove.disabled = !checkbox.checked; });
+    checkbox.disabled = assignedChannels > 0;
+    checkbox.addEventListener('change', () => { remove.disabled = assignedChannels > 0 || !checkbox.checked; });
     cancel.addEventListener('click', modal.close);
     remove.addEventListener('click', async () => {
       remove.disabled = true;

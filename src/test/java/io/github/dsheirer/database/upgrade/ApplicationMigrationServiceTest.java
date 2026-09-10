@@ -1558,7 +1558,7 @@ class ApplicationMigrationServiceTest
                     radioresolve_id, auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
                 ) VALUES (
                     ?, 'TRUNKED', 1, 'Preserved System', 'Preserved Site', 'Preserved Channel',
-                    (SELECT id FROM alias_list WHERE name='Test' COLLATE NOCASE),
+                    (SELECT id FROM alias_list WHERE family='P25' ORDER BY id LIMIT 1),
                     '00000000-0000-4000-8000-000000007001', 0, 'P25_PHASE1', 0, 451000000, ?
                 )
                 """))
