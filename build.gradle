@@ -713,6 +713,15 @@ def verifyRuntimePackage = { Map target, File archive ->
                         !launcher.contains('set JAVA_EXE=%JAVA_HOME%/bin/java.exe')) {
                     throw new GradleException("Launcher ${launcherName} does not use its bundled Java runtime")
                 }
+
+                def classpathLines = launcher.readLines().findAll { it.startsWith('set CLASSPATH=') }
+
+                if(classpathLines.size() != 1 || classpathLines.first().contains('%APP_HOME%') ||
+                        !classpathLines.first().startsWith('set CLASSPATH=lib\\') ||
+                        !launcher.contains('pushd "%APP_HOME%" || goto fail') ||
+                        !launcher.contains('set "EXIT_CODE=%ERRORLEVEL%"\r\npopd')) {
+                    throw new GradleException("Launcher ${launcherName} does not use its bounded Windows classpath")
+                }
             }
             else if(!launcher.contains('JAVA_HOME=$APP_HOME') ||
                     !launcher.contains('JAVACMD=$JAVA_HOME/bin/java')) {
@@ -871,15 +880,39 @@ tasks.named('startScripts') { startScriptsTask ->
         String windowsMarker = '@rem Add default JVM options here.'
         String unixText = unixLauncher.getText('UTF-8')
         String windowsText = windowsLauncher.getText('UTF-8')
+        def windowsClasspathLines = windowsText.readLines().findAll { it.startsWith('set CLASSPATH=') }
+        def windowsLaunchLines = windowsText.readLines().findAll {
+            it.startsWith('"%JAVA_EXE%" ') && it.contains(' -classpath "%CLASSPATH%" ')
+        }
 
-        if(unixText.count(unixMarker) != 1 || windowsText.count(windowsMarker) != 1) {
+        if(unixText.count(unixMarker) != 1 || windowsText.count(windowsMarker) != 1 ||
+                windowsClasspathLines.size() != 1 || windowsLaunchLines.size() != 1) {
             throw new GradleException('Gradle launcher format changed; refusing to create a package that ignores its bundled Java runtime')
         }
 
+        String windowsClasspathLine = windowsClasspathLines.first()
+        //Gradle repeats the absolute application path for every jar.  Use the installation directory while Java is
+        //running so the ordered classpath stays below the Windows cmd.exe command-length limit.
+        String relativeWindowsClasspathLine = windowsClasspathLine.replace('%APP_HOME%\\', '')
+
+        if(relativeWindowsClasspathLine == windowsClasspathLine || relativeWindowsClasspathLine.contains('%APP_HOME%')) {
+            throw new GradleException('Gradle launcher format changed; refusing to create an unbounded Windows classpath')
+        }
+
+        String windowsLaunchLine = windowsLaunchLines.first()
+        String boundedWindowsLaunch = 'pushd "%APP_HOME%" || goto fail\r\n' + windowsLaunchLine +
+                '\r\nset "EXIT_CODE=%ERRORLEVEL%"\r\npopd\r\n' +
+                'if "%EXIT_CODE%"=="0" goto mainEnd\r\n' +
+                'if not ""=="%SDRTRUNK_VCE_EXIT_CONSOLE%" exit %EXIT_CODE%\r\n' +
+                'exit /b %EXIT_CODE%'
+
         unixLauncher.setText(unixText.replace(unixMarker,
                 "JAVA_HOME=\$APP_HOME\n\n${unixMarker}"), 'UTF-8')
-        windowsLauncher.setText(windowsText.replace(windowsMarker,
-                "set JAVA_HOME=%APP_HOME%\r\n\r\n${windowsMarker}"), 'UTF-8')
+        windowsText = windowsText.replace(windowsMarker,
+                "set JAVA_HOME=%APP_HOME%\r\n\r\n${windowsMarker}")
+            .replace(windowsClasspathLine, relativeWindowsClasspathLine)
+            .replace(windowsLaunchLine, boundedWindowsLaunch)
+        windowsLauncher.setText(windowsText, 'UTF-8')
     }
 }
 
