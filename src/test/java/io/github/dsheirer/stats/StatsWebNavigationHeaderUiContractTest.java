@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class StatsWebNavigationHeaderUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
@@ -26,10 +27,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"123\">"));
-        assertTrue(html.contains("/assets/app.css?v=100"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"124\">"));
+        assertTrue(html.contains("/assets/app.css?v=101"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=144\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=145\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
@@ -38,7 +39,8 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js';"));
         String hardware = block(source, "function renderHardware()");
         assertTrue(hardware.contains("{ id: 'rf-planner', label: 'RF Planner' }"));
-        assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner()"));
+        assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner(() =>"));
+        assertTrue(hardware.contains("api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })"));
         assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
@@ -46,6 +48,32 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(channel.contains("M4 18a8 8 0 0 1 16 0"));
         assertTrue(channel.contains("M12 18l4-5"));
         assertFalse(channel.contains("<circle cx=\"12\" cy=\"13\" r=\"7\""));
+    }
+
+    @Test
+    void keepsRfPlannerOnTheSharedThemeAndOperatorLanguage() throws Exception
+    {
+        String planner = readText(RF_PLANNER);
+        String css = readText(APP_CSS);
+        String plannerCss = css.substring(css.indexOf("/* RF planner */"));
+
+        assertTrue(planner.contains("Frequencies to cover (MHz)"));
+        assertTrue(planner.contains("Loaded ${loaded.length} tuner"));
+        assertTrue(planner.contains("target?.usable_bandwidth_hz"));
+        assertTrue(planner.contains("if (planBuilt) calculate();"));
+        assertTrue(planner.contains("button secondary rfp-small rfp-add-tuner"));
+        assertFalse(planner.contains("DSheirer"));
+        assertFalse(planner.contains("upstream"));
+        assertFalse(planner.contains("rfp-placement-engine"));
+        assertFalse(planner.contains("Planning model verified"));
+        assertFalse(planner.contains("polyphase channelizer"));
+        assertTrue(plannerCss.contains("--rfp-channel: var(--chart-decode)"));
+        assertTrue(plannerCss.contains("background: var(--surface-2)"));
+        assertFalse(plannerCss.contains("#28a7d5"));
+        assertFalse(plannerCss.contains("#31a56c"));
+        assertFalse(plannerCss.contains("#d38a22"));
+        assertFalse(plannerCss.contains("#d84b62"));
+        assertFalse(plannerCss.contains("#061118"));
     }
 
     @Test

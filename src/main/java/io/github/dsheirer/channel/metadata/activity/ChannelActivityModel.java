@@ -108,6 +108,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final Map<ChannelMetadata,ChannelActivityRow> mMetadataRows = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ChannelActivityTableState> mRowTables = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ExpiringRow> mPendingControlIdleRows = new IdentityHashMap<>();
+    private final Map<ChannelActivityRow,ExpiringRow> mPendingTrafficIdleRows = new IdentityHashMap<>();
     private final Map<ChannelActivityTableState,Set<ChannelActivityRow>> mPendingTableRefreshes = new IdentityHashMap<>();
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
     private final Map<Channel,Object> mActiveIncarnations = new IdentityHashMap<>();
@@ -990,7 +991,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         row.setState(getStickyTrafficState(row, state, wasEncrypted));
         table.refresh(row);
-        scheduleTrafficGrantAgeOut(row);
+        scheduleTrafficGrantAgeOut(row, table, parentChannel);
     }
 
     /**
@@ -1367,7 +1368,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         row.setState(State.IDLE);
     }
 
-    private long scheduleTrafficGrantAgeOut(ChannelActivityRow row)
+    private long scheduleTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableState table,
+                                            Channel parentChannel)
     {
         clearTrafficGrantAgeOut(row);
 
@@ -1375,6 +1377,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             long expiresAt = System.currentTimeMillis() + getTrafficGrantAgeOutMilliseconds();
             row.setTrafficGrantExpiresAt(expiresAt);
+            mPendingTrafficIdleRows.put(row, new ExpiringRow(table, parentChannel, expiresAt));
+            startActivitySweeper();
             return expiresAt;
         }
 
@@ -1386,7 +1390,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
         if(row != null)
         {
-            row.clearTrafficGrantExpiresAt();
+            clearTrafficGrantAgeOut(row);
             row.setChannel(parentChannel);
             row.setDecoder(getDecoder(parentChannel));
 
@@ -1403,7 +1407,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
         if(row != null)
         {
+            mPendingTrafficIdleRows.remove(row);
             row.clearTrafficGrantExpiresAt();
+            stopActivitySweeperIfIdle();
         }
     }
 
@@ -1418,10 +1424,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         for(ChannelActivityRow row: session.getTrafficRows())
         {
-            if(row.getTrafficGrantExpiresAt() > 0 && row.getTrafficGrantExpiresAt() <= now &&
-                isTrafficState(row.getState()))
+            if(row.getTrafficGrantExpiresAt() > 0 && row.getTrafficGrantExpiresAt() <= now)
             {
-                applyTrafficGrantAgeOut(row, table, parentChannel);
+                if(isTrafficState(row.getState()))
+                {
+                    applyTrafficGrantAgeOut(row, table, parentChannel);
+                }
+                else
+                {
+                    clearTrafficGrantAgeOut(row);
+                }
             }
         }
 
@@ -1458,7 +1470,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     private void stopActivitySweeperIfIdle()
     {
-        if(mPendingControlIdleRows.isEmpty())
+        if(mPendingControlIdleRows.isEmpty() && mPendingTrafficIdleRows.isEmpty())
         {
             mActivitySweeperRunning = false;
         }
@@ -1481,6 +1493,30 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 ExpiringRow expiration = entry.getValue();
                 controlIterator.remove();
                 applyControlIdle(row, expiration.table(), expiration.parentChannel());
+            }
+        }
+
+        Iterator<Map.Entry<ChannelActivityRow,ExpiringRow>> trafficIterator =
+            mPendingTrafficIdleRows.entrySet().iterator();
+
+        while(trafficIterator.hasNext())
+        {
+            Map.Entry<ChannelActivityRow,ExpiringRow> entry = trafficIterator.next();
+
+            if(entry.getValue().expiresAt() <= now)
+            {
+                ChannelActivityRow row = entry.getKey();
+                ExpiringRow expiration = entry.getValue();
+                trafficIterator.remove();
+
+                if(isTrafficState(row.getState()))
+                {
+                    applyTrafficGrantAgeOut(row, expiration.table(), expiration.parentChannel());
+                }
+                else
+                {
+                    clearTrafficGrantAgeOut(row);
+                }
             }
         }
 
@@ -1833,6 +1869,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         mMetadataRows.clear();
         mRowTables.clear();
         mPendingControlIdleRows.clear();
+        mPendingTrafficIdleRows.clear();
         mPendingTableRefreshes.clear();
         mSiteIdentities.clear();
         mActiveIncarnations.clear();
