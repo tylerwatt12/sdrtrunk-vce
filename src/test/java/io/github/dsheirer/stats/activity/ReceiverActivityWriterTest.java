@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -100,6 +101,42 @@ class ReceiverActivityWriterTest
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection,
                 "SELECT COUNT(*) FROM receiver_activity_event WHERE frequency_hz IS NULL"));
+        }
+    }
+
+    @Test
+    void zeroP25SiteUplinkIsStoredAsNullWithoutStoppingTheWriter() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("unknown-site-uplink.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1,
+            TimeUnit.SECONDS.toMillis(10));
+        long timestamp = 1_700_000_000_300L;
+        P25NetworkConfigurationSnapshot.Channel channel = new P25NetworkConfigurationSnapshot.Channel(
+            "primary_control", "1-2053", 876_675_000L, 0L, false, 1);
+        ReceiverActivityRecords.SiteSnapshot site = new ReceiverActivityRecords.SiteSnapshot(timestamp,
+            CONFIGURATION_ID, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "a".repeat(64), "APCO25",
+            0xBEE00, 0x3A9, 0x293, 2, 1, null, null, false, null, 876_675_000L, 876_675_000L,
+            876_675_000L, List.of(channel), List.of(), List.of(), List.of(), List.of());
+
+        writer.start();
+        writer.enqueue(site);
+
+        awaitWritten(writer, 1);
+        assertEquals(1, writer.getWrittenRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        assertNull(writer.getStatus().lastError());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_site_channel_summary"));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_channel_summary WHERE uplink_hz IS NULL"));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_channel WHERE uplink_hz IS NULL"));
+            assertEquals(876_675_000L, scalar(connection,
+                "SELECT downlink_hz FROM p25_site_channel_summary"));
         }
     }
 

@@ -101,6 +101,11 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
             (foreignSystemBands != null && !foreignSystemBands.isEmpty()) || siteStatus != null;
     }
 
+    private static Long positiveFrequency(Long frequency)
+    {
+        return frequency != null && frequency > 0 ? frequency : null;
+    }
+
     public record Network(Integer wacn, Integer system, Integer nac, Integer lra)
     {
     }
@@ -113,6 +118,12 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     public record Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma,
                           Integer timeslots, String callsign, Long observedAtMs)
     {
+        public Channel
+        {
+            downlink = positiveFrequency(downlink);
+            uplink = positiveFrequency(uplink);
+        }
+
         public Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
                        String callsign)
         {
@@ -181,6 +192,12 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     public record NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
                                String channel, Long downlink, Long uplink, String status, Long observedAtMs)
     {
+        public NeighborSite
+        {
+            downlink = positiveFrequency(downlink);
+            uplink = positiveFrequency(uplink);
+        }
+
         public NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
                             String channel, Long downlink, Long uplink, String status)
         {

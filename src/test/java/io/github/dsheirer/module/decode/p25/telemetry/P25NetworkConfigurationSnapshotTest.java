@@ -6,6 +6,7 @@
 package io.github.dsheirer.module.decode.p25.telemetry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
@@ -14,6 +15,20 @@ import org.junit.jupiter.api.Test;
 
 class P25NetworkConfigurationSnapshotTest
 {
+    @Test
+    void convertsNonPositiveOptionalFrequenciesToNull()
+    {
+        P25NetworkConfigurationSnapshot.Channel channel = new P25NetworkConfigurationSnapshot.Channel(
+            "primary_control", "1-1", 851_012_500L, 0L, false, 1);
+        P25NetworkConfigurationSnapshot.NeighborSite neighbor = new P25NetworkConfigurationSnapshot.NeighborSite(
+            0x348, 0x293, 2, 3, null, "1-2", 0L, 806_012_500L, "ACTIVE");
+
+        assertEquals(851_012_500L, channel.downlink());
+        assertNull(channel.uplink());
+        assertNull(neighbor.downlink());
+        assertEquals(806_012_500L, neighbor.uplink());
+    }
+
     @Test
     void defensivelyCopiesTopLevelAndNestedPatchLists()
     {

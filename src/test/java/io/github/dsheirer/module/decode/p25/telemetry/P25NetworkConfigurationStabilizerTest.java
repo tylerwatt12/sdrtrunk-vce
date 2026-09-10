@@ -316,7 +316,7 @@ public class P25NetworkConfigurationStabilizerTest
         stabilizer.observe(snapshot(unresolved), 61_000L);
 
         assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
-        assertEquals(0L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
+        assertNull(stabilizer.getSnapshot().neighborSites().get(0).downlink());
 
         stabilizer.observe(snapshot(resolved), 70_000L);
         stabilizer.observe(snapshot(resolved), 100_000L);
