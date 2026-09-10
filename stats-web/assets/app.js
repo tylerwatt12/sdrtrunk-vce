@@ -17759,9 +17759,12 @@ function renderHardware() {
   ];
   const requested = route.get('tab') || 'tuners';
   const active = availableTabs.some((item) => item.id === requested) ? requested : 'tuners';
-  if (!beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
+  const description = active === 'rf-planner' ? 'Plan channel coverage and tuner center frequencies' :
+    'Inspect and configure receiver hardware';
+  if (!beginPage(renderContext, pageHeader('Hardware', description),
     tabs(availableTabs.map((item) => ({ ...item, href: href('hardware', { tab: item.id }) })), active))) return;
-  content.append(active === 'rf-planner' ? rfPlanner.createPlanner() : comingSoonPanel('Tuners'));
+  content.append(active === 'rf-planner' ? rfPlanner.createPlanner(() =>
+    api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })) : comingSoonPanel('Tuners'));
 }
 
 function adminSystemStatusSection() {

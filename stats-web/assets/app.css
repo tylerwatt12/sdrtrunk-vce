@@ -8298,10 +8298,10 @@ th.numeric {
 
 /* RF planner */
 .rf-planner {
-  --rfp-channel: #28a7d5;
-  --rfp-usable: #31a56c;
-  --rfp-guard: #d38a22;
-  --rfp-dc: #d84b62;
+  --rfp-channel: var(--chart-decode);
+  --rfp-usable: var(--accent);
+  --rfp-guard: var(--warning);
+  --rfp-dc: var(--danger);
   display: grid;
   gap: 14px;
   min-width: 0;
@@ -8324,18 +8324,6 @@ th.numeric {
   line-height: 1.5;
 }
 
-.rfp-compatibility {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  color: var(--rfp-usable);
-  background: color-mix(in srgb, var(--rfp-usable) 10%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--rfp-usable) 40%, var(--line));
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
 .rfp-layout {
   display: grid;
   grid-template-columns: minmax(320px, 410px) minmax(0, 1fr);
@@ -8348,8 +8336,6 @@ th.numeric {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 5px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 8%);
 }
 
 .rfp-controls {
@@ -8403,25 +8389,12 @@ th.numeric {
 .rfp-field > label {
   color: var(--ink);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .rfp-field {
   gap: 5px;
   min-width: 0;
-}
-
-.rfp-field input,
-.rfp-field select,
-.rfp-field textarea {
-  width: 100%;
-  min-height: 34px;
-  padding: 6px 9px;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: 3px;
-  font: inherit;
 }
 
 .rfp-field textarea {
@@ -8432,24 +8405,19 @@ th.numeric {
   line-height: 1.55;
 }
 
-.rfp-field input:focus,
-.rfp-field select:focus,
-.rfp-field textarea:focus {
-  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: 1px;
-  border-color: var(--accent);
-}
-
 .rfp-hint,
 .rfp-tuner-spec,
-.rfp-footer {
+.rfp-tuner-source {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
 }
 
-.rfp-hint code,
-.rfp-footer code {
+.rfp-tuner-source {
+  margin: 0;
+}
+
+.rfp-hint code {
   color: var(--warning);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -8511,42 +8479,20 @@ th.numeric {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.rfp-button {
-  min-height: 32px;
-  padding: 5px 10px;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line-dark);
-  border-radius: 3px;
-  font-weight: 700;
-}
-
-.rfp-button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.rfp-button.rfp-primary {
+.rfp-primary {
   flex: 1;
-  color: #fff;
-  background: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 75%, #000);
 }
 
-.rfp-button.rfp-small {
+.rfp-small {
   min-height: 29px;
   padding: 4px 8px;
   font-size: 11px;
 }
 
-.rfp-button.rfp-icon {
+.rfp-icon {
   min-height: 27px;
   padding: 3px 7px;
   font-size: 10px;
-}
-
-.rfp-button.rfp-remove:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
 }
 
 .rfp-actions {
@@ -8581,7 +8527,7 @@ th.numeric {
 
 .rfp-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .rfp-summary > div {
@@ -8612,7 +8558,10 @@ th.numeric {
 
 .rfp-summary strong {
   overflow: hidden;
-  font: 700 17px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8693,7 +8642,7 @@ th.numeric {
   position: relative;
   height: 106px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--surface-2) 75%, #061118);
+  background: var(--surface-2);
   border: 1px solid var(--line-dark);
   border-radius: 4px;
 }
@@ -8744,7 +8693,7 @@ th.numeric {
   z-index: 3;
   min-width: 3px;
   height: 20px;
-  border: 1px solid color-mix(in srgb, var(--rfp-channel) 35%, #000);
+  border: 1px solid color-mix(in srgb, var(--rfp-channel) 55%, var(--ink));
   border-radius: 3px;
   background: var(--rfp-channel);
   transform: translateY(-50%);
@@ -8755,7 +8704,7 @@ th.numeric {
   inset-block: -3px;
   left: 50%;
   width: 1px;
-  background: rgb(0 0 0 / 45%);
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
   content: '';
 }
 
@@ -8849,16 +8798,6 @@ th.numeric {
   font-size: 9px;
 }
 
-.rfp-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 2px;
-}
-
-.rfp-self-test.pass { color: var(--rfp-usable); }
-.rfp-self-test.fail { color: var(--danger); }
-
 @media (max-width: 900px) {
   .rfp-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -8870,14 +8809,9 @@ th.numeric {
 }
 
 @media (max-width: 620px) {
-  .rfp-intro,
-  .rfp-footer {
+  .rfp-intro {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .rfp-compatibility {
-    white-space: normal;
   }
 
   .rfp-tuner-fields,
@@ -8897,6 +8831,10 @@ th.numeric {
 
   .rfp-summary > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
+  }
+
+  .rfp-summary > div:last-child {
+    grid-column: 1 / -1;
   }
 
   .rfp-result-head {
