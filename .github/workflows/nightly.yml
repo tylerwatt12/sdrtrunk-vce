@@ -7,8 +7,8 @@ on:
 
 concurrency:
   group: nightly-${{ github.ref }}
-  # Publishing replaces release assets before moving the nightly tag. Let an in-flight publication finish so a
-  # newer push cannot cancel it between those operations; the newer run waits and publishes its own complete set.
+  # Publishing adds uniquely named ZIPs and replaces current-build metadata before moving the nightly tag. Let an
+  # in-flight publication finish so a newer push cannot interleave those operations.
   cancel-in-progress: false
 
 permissions:
@@ -85,6 +85,10 @@ jobs:
           prerelease: true
           body: |
             Rolling pre-release build from current `main`.
+
+            Current build: `${{ env.UPDATE_BUILD }}`
+
+            Choose the platform ZIP ending in `-${{ env.UPDATE_BUILD }}.zip`. Older builds remain available below.
 
             Nightly builds contain the newest completed features and fixes and may change frequently. Back up the
             complete portable data folder before upgrading.

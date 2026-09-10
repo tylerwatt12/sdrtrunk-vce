@@ -322,9 +322,16 @@ test {
     jvmArgs = jvmArgsClasspath
 }
 
+def runtimeManifestClassPath = configurations.runtimeClasspath.elements.map { entries ->
+    entries.collect { new URI(null, null, it.asFile.name, null).toASCIIString() }.join(' ')
+}
+
 jar {
+    inputs.property('runtimeManifestClassPath', runtimeManifestClassPath)
+
     manifest {
         attributes (
+                'Class-Path'            : runtimeManifestClassPath,
                 'Implementation-Title'  : 'sdrtrunk-vce project',
                 'Implementation-Version' : archiveVersion,
                 'Update-Track'           : updateTrack,
@@ -433,15 +440,14 @@ javadoc {
     options.addStringOption('Xdoclint:none', '-quiet')
 }
 
-/**
- * Runtime target OS and CPU image names.  We append version here so that version details are at end of zip filename.
- */
-String targetLinuxAarch64 = 'linux-aarch64-v' + version
-String targetLinuxX86_64 = 'linux-x86_64-v' + version
-String targetOsxAarch64 = 'osx-aarch64-v' + version
-String targetOsxX86_64 = 'osx-x86_64-v' + version
-String targetWindowsX86_64 = 'windows-x86_64-v' + version
-String targetWindowsAarch64 = 'windows-aarch64-v' + version
+//Nightlies use their unique update build. Numbered and local packages continue to use their version.
+def packageVersion = updateTrack == 'nightly' ? updateBuild : releaseVersion
+String targetLinuxAarch64 = "vce-linux-arm64-${packageVersion}"
+String targetLinuxX86_64 = "vce-linux64-${packageVersion}"
+String targetOsxAarch64 = "vce-mac-arm64-${packageVersion}"
+String targetOsxX86_64 = "vce-mac64-${packageVersion}"
+String targetWindowsX86_64 = "vce-win64-${packageVersion}"
+String targetWindowsAarch64 = "vce-win-arm64-${packageVersion}"
 
 def libericaRuntimeVersion = '25.0.1+11'
 def libericaRuntimeFolder = 'jre-25.0.1-full'
@@ -538,7 +544,7 @@ def runtimeTargets = [
 
 runtimeTargets.each { target ->
     target.archiveFile = new File(runtimeCacheDirectory, target.archiveName as String)
-    target.packageRoot = "${packagedApplicationName}-${target.targetName}"
+    target.packageRoot = target.targetName
 }
 
 def fileDigest = { File source, String algorithm ->
@@ -669,15 +675,17 @@ def verifyRuntimePackage = { Map target, File archive ->
         String rootLauncherText = archiveEntryText(zip, "${root}/${target.rootLauncher}")
 
         if(target.windows) {
-            if(!rootLauncherText.contains('call "%~dp0bin\\sdrtrunk-vce.bat" %*') ||
+            if(!rootLauncherText.contains('set "JAVA_HOME=%~dp0"') ||
+                    !rootLauncherText.contains('call "%~dp0bin\\sdrtrunk-vce.bat" %*') ||
                     !rootLauncherText.contains('if errorlevel 1 pause')) {
-                throw new GradleException("Root launcher does not forward to the Windows application launcher " +
-                        "and pause when it fails")
+                throw new GradleException("Root launcher does not use the bundled Windows runtime, forward to " +
+                        "the application launcher, and pause when it fails")
             }
         }
         else if(!rootLauncherText.startsWith('#!/bin/sh\n') ||
-                !rootLauncherText.contains('exec "$launcher_root/bin/sdrtrunk-vce" "$@"')) {
-            throw new GradleException("Root launcher does not forward to the Unix application launcher")
+                !rootLauncherText.contains('JAVA_HOME="$launcher_root" exec "$launcher_root/bin/sdrtrunk-vce" "$@"')) {
+            throw new GradleException("Root launcher does not use the bundled Unix runtime and forward to the " +
+                    "application launcher")
         }
 
         if(zip.getEntry("${root}/bin/javac") != null || zip.getEntry("${root}/bin/javac.exe") != null) {
@@ -708,26 +716,15 @@ def verifyRuntimePackage = { Map target, File archive ->
                 }
             }
 
-            if(launcherName.endsWith('.bat')) {
-                if(!launcher.contains('set JAVA_HOME=%APP_HOME%') ||
-                        !launcher.contains('set JAVA_EXE=%JAVA_HOME%/bin/java.exe')) {
-                    throw new GradleException("Launcher ${launcherName} does not use its bundled Java runtime")
-                }
+            String applicationJarName = "${packagedApplicationName}-${releaseVersion}.jar"
+            String expectedClasspath = launcherName.endsWith('.bat') ?
+                    "set CLASSPATH=%APP_HOME%\\lib\\${applicationJarName}" :
+                    "CLASSPATH=\$APP_HOME/lib/${applicationJarName}"
+            String classpathPrefix = launcherName.endsWith('.bat') ? 'set CLASSPATH=' : 'CLASSPATH='
 
-                def classpathLines = launcher.readLines().findAll { it.startsWith('set CLASSPATH=') }
-
-                if(classpathLines.size() != 1 || classpathLines.first().contains('%APP_HOME%') ||
-                        !classpathLines.first().startsWith('set CLASSPATH=lib\\') ||
-                        !launcher.contains('pushd "%APP_HOME%" || goto fail') ||
-                        !launcher.contains('set "EXIT_CODE=%ERRORLEVEL%"\r\npopd')) {
-                    throw new GradleException("Launcher ${launcherName} does not use its bounded Windows classpath")
-                }
+            if(launcher.readLines().findAll { it.startsWith(classpathPrefix) } != [expectedClasspath]) {
+                throw new GradleException("Launcher ${launcherName} does not use the application manifest classpath")
             }
-            else if(!launcher.contains('JAVA_HOME=$APP_HOME') ||
-                    !launcher.contains('JAVACMD=$JAVA_HOME/bin/java')) {
-                throw new GradleException("Launcher ${launcherName} does not use its bundled Java runtime")
-            }
-
         }
 
         byte[] applicationJarBytes = archiveEntryBytes(zip, applicationJar)
@@ -735,6 +732,7 @@ def verifyRuntimePackage = { Map target, File archive ->
             def manifest = applicationJarInput.manifest
 
             if(manifest == null ||
+                    manifest.mainAttributes.getValue('Class-Path') != runtimeManifestClassPath.get() ||
                     manifest.mainAttributes.getValue('Implementation-Version') != releaseVersion ||
                     manifest.mainAttributes.getValue('Update-Track') != updateTrack ||
                     manifest.mainAttributes.getValue('Update-Build') != updateBuild) {
@@ -872,48 +870,8 @@ runtimeTargets.findAll { !it.windows }.each { target ->
     target.materializeLegalTask = materializeTask
 }
 
-tasks.named('startScripts') { startScriptsTask ->
-    doLast {
-        File unixLauncher = new File(startScriptsTask.outputDir, packagedApplicationName)
-        File windowsLauncher = new File(startScriptsTask.outputDir, "${packagedApplicationName}.bat")
-        String unixMarker = '# Use the maximum available, or set MAX_FD != -1 to use that value.'
-        String windowsMarker = '@rem Add default JVM options here.'
-        String unixText = unixLauncher.getText('UTF-8')
-        String windowsText = windowsLauncher.getText('UTF-8')
-        def windowsClasspathLines = windowsText.readLines().findAll { it.startsWith('set CLASSPATH=') }
-        def windowsLaunchLines = windowsText.readLines().findAll {
-            it.startsWith('"%JAVA_EXE%" ') && it.contains(' -classpath "%CLASSPATH%" ')
-        }
-
-        if(unixText.count(unixMarker) != 1 || windowsText.count(windowsMarker) != 1 ||
-                windowsClasspathLines.size() != 1 || windowsLaunchLines.size() != 1) {
-            throw new GradleException('Gradle launcher format changed; refusing to create a package that ignores its bundled Java runtime')
-        }
-
-        String windowsClasspathLine = windowsClasspathLines.first()
-        //Gradle repeats the absolute application path for every jar.  Use the installation directory while Java is
-        //running so the ordered classpath stays below the Windows cmd.exe command-length limit.
-        String relativeWindowsClasspathLine = windowsClasspathLine.replace('%APP_HOME%\\', '')
-
-        if(relativeWindowsClasspathLine == windowsClasspathLine || relativeWindowsClasspathLine.contains('%APP_HOME%')) {
-            throw new GradleException('Gradle launcher format changed; refusing to create an unbounded Windows classpath')
-        }
-
-        String windowsLaunchLine = windowsLaunchLines.first()
-        String boundedWindowsLaunch = 'pushd "%APP_HOME%" || goto fail\r\n' + windowsLaunchLine +
-                '\r\nset "EXIT_CODE=%ERRORLEVEL%"\r\npopd\r\n' +
-                'if "%EXIT_CODE%"=="0" goto mainEnd\r\n' +
-                'if not ""=="%SDRTRUNK_VCE_EXIT_CONSOLE%" exit %EXIT_CODE%\r\n' +
-                'exit /b %EXIT_CODE%'
-
-        unixLauncher.setText(unixText.replace(unixMarker,
-                "JAVA_HOME=\$APP_HOME\n\n${unixMarker}"), 'UTF-8')
-        windowsText = windowsText.replace(windowsMarker,
-                "set JAVA_HOME=%APP_HOME%\r\n\r\n${windowsMarker}")
-            .replace(windowsClasspathLine, relativeWindowsClasspathLine)
-            .replace(windowsLaunchLine, boundedWindowsLaunch)
-        windowsLauncher.setText(windowsText, 'UTF-8')
-    }
+tasks.named('startScripts') {
+    classpath = files(tasks.named('jar'))
 }
 
 def applicationInstallDirectory = layout.buildDirectory.dir("install/${packagedApplicationName}")
@@ -932,7 +890,7 @@ runtimeTargets.each { target ->
             dependsOn(target.materializeLegalTask)
         }
 
-        archiveFileName = "${packagedApplicationName}-${target.targetName}.zip"
+        archiveFileName = "${target.packageRoot}.zip"
         destinationDirectory = layout.buildDirectory.dir('image')
         duplicatesStrategy = DuplicatesStrategy.FAIL
         preserveFileTimestamps = false
@@ -1023,10 +981,10 @@ tasks.register('runtimeZipAll') {
 
     doLast {
         Set<String> expected = runtimeTargets.collect {
-            "${packagedApplicationName}-${it.targetName}.zip"
+            "${it.packageRoot}.zip"
         } as Set
         Set<String> actual = fileTree(layout.buildDirectory.dir('image')) {
-            include "${packagedApplicationName}-*-v${releaseVersion}.zip"
+            include "vce-*-${packageVersion}.zip"
         }.files.collect { it.name } as Set
 
         if(actual != expected) {
