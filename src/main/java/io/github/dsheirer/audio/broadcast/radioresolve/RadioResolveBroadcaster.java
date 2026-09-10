@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -71,10 +72,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String METADATA_PATH = "/api/node/v3/metadata";
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-vce";
+    /** Process-wide JVM override for the number of calls included in one upload request. */
+    public static final String CALLS_PER_UPLOAD_PROPERTY = "sdrtrunk.radioresolve.callsPerUpload";
     static final long METADATA_HOLD_MILLISECONDS = TimeUnit.MINUTES.toMillis(2);
     /** Mirrors RadioResolve's default Live admission window for upload priority; the server remains authoritative. */
     static final long LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS = TimeUnit.MINUTES.toMillis(3);
-    static final int MAXIMUM_CALLS_PER_UPLOAD = 8;
+    static final int MAXIMUM_CALLS_PER_UPLOAD = 32;
     static final long MAXIMUM_CALL_AUDIO_BYTES = 25L * 1024L * 1024L;
     static final long MAXIMUM_UPLOAD_BYTES = 32L * 1024L * 1024L;
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
@@ -92,6 +95,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
     private final RadioResolveSpool mSpool;
     private final RadioResolveClockSynchronizer mClockSynchronizer;
+    private final int mCallsPerUpload;
     private final String mEvidenceSessionId = UUID.randomUUID().toString();
     private final Object mConnectionLock = new Object();
     private final Object mVerifiedSiteLock = new Object();
@@ -141,6 +145,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         mHttpClient = createHttpClient(configuration);
         mSpool = new RadioResolveSpool(spoolDirectory);
         mClockSynchronizer = clockSynchronizer != null ? clockSynchronizer : new RadioResolveClockSynchronizer();
+        mCallsPerUpload = resolveCallsPerUpload(System.getProperty(CALLS_PER_UPLOAD_PROPERTY));
         mCallWorker = Executors.newSingleThreadScheduledExecutor(new ObserverThreadFactory(
             "radioresolve-v3-calls-" + CALL_WORKER_SEQUENCE.incrementAndGet()));
         mMetadataWorker = new Thread(this::runMetadataWorker,
@@ -714,7 +719,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
      */
     List<RadioResolveSpool.Entry> nextUploadBatch(long now) throws IOException
     {
-        return nextUploadBatch(now, MAXIMUM_CALLS_PER_UPLOAD, MAXIMUM_UPLOAD_BYTES);
+        return nextUploadBatch(now, mCallsPerUpload, MAXIMUM_UPLOAD_BYTES);
     }
 
     List<RadioResolveSpool.Entry> nextUploadBatch(long now, int maximumEntries, long maximumBytes)
@@ -816,6 +821,30 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             mUploadInFlight.set(false);
             broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+            enqueueImmediateQueuePass();
+        }
+    }
+
+    /** Continues draining a backlog without waiting for the fixed-delay maintenance pass. */
+    private void enqueueImmediateQueuePass()
+    {
+        if(!mRunning || mCallWorker.isShutdown())
+        {
+            return;
+        }
+
+        try
+        {
+            //The same single-thread worker owns periodic and response-triggered passes, preserving serialized queue
+            //selection while the in-flight flag continues to enforce one HTTP request at a time.
+            mCallWorker.execute(new RecordingProcessor());
+        }
+        catch(RejectedExecutionException exception)
+        {
+            if(mRunning)
+            {
+                mLog.warn("Unable to schedule the next RadioResolve queue pass: {}", safeMessage(exception));
+            }
         }
     }
 
@@ -1109,7 +1138,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     {
         if(entries == null || entries.isEmpty() || entries.size() > MAXIMUM_CALLS_PER_UPLOAD)
         {
-            throw new IOException("RadioResolve upload batch must contain between one and eight calls");
+            throw new IOException("RadioResolve upload batch must contain between one and " +
+                MAXIMUM_CALLS_PER_UPLOAD + " calls");
         }
 
         JsonObject batch = new JsonObject();
@@ -1616,6 +1646,25 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         catch(RuntimeException exception)
         {
             return null;
+        }
+    }
+
+    /** Parses the process-wide upload-count override, defaulting safely and clamping to the server contract. */
+    static int resolveCallsPerUpload(String configuredValue)
+    {
+        if(configuredValue == null || configuredValue.isBlank())
+        {
+            return MAXIMUM_CALLS_PER_UPLOAD;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(configuredValue.trim());
+            return Math.max(1, Math.min(MAXIMUM_CALLS_PER_UPLOAD, parsed));
+        }
+        catch(NumberFormatException exception)
+        {
+            return MAXIMUM_CALLS_PER_UPLOAD;
         }
     }
 

@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -40,6 +41,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -67,6 +69,20 @@ class RadioResolveBroadcasterTest
         configuration.setMode(RadioResolveConfiguration.Mode.METADATA_ONLY);
         assertFalse(configuration.isCallUploadEnabled());
         assertTrue(configuration.isSiteMetadataEnabled());
+    }
+
+    @Test
+    void callsPerUploadPropertyDefaultsAndClampsToServerLimit()
+    {
+        assertEquals(32, RadioResolveBroadcaster.resolveCallsPerUpload(null));
+        assertEquals(32, RadioResolveBroadcaster.resolveCallsPerUpload(""));
+        assertEquals(32, RadioResolveBroadcaster.resolveCallsPerUpload("not-a-number"));
+        assertEquals(1, RadioResolveBroadcaster.resolveCallsPerUpload("-5"));
+        assertEquals(1, RadioResolveBroadcaster.resolveCallsPerUpload("0"));
+        assertEquals(1, RadioResolveBroadcaster.resolveCallsPerUpload("1"));
+        assertEquals(8, RadioResolveBroadcaster.resolveCallsPerUpload(" 8 "));
+        assertEquals(32, RadioResolveBroadcaster.resolveCallsPerUpload("32"));
+        assertEquals(32, RadioResolveBroadcaster.resolveCallsPerUpload("99"));
     }
 
     @Test
@@ -148,6 +164,36 @@ class RadioResolveBroadcasterTest
         assertTrue(multipart.contains("\"audio_part\":\"audio-1\""));
         assertTrue(multipart.contains("name=\"audio-0\""));
         assertTrue(multipart.indexOf("name=\"audio-0\"") < multipart.indexOf("name=\"audio-1\""));
+    }
+
+    @Test
+    void uploadContractAccepts32CallsAndRejects33(@TempDir Path directory) throws Exception
+    {
+        Path audio = directory.resolve("call.mp3");
+        Files.write(audio, new byte[] {0x49, 0x44, 0x33});
+        RadioResolveSpool spool = new RadioResolveSpool(directory.resolve("spool-request-limit"));
+        spool.open();
+        List<RadioResolveSpool.Entry> entries = new ArrayList<>();
+
+        for(int index = 1; index <= 33; index++)
+        {
+            entries.add(spool.enqueue(audio, RadioResolveTestFixtures.readyEnvelope(audio,
+                    RadioResolveTestFixtures.END - index,
+                    String.format("00000000-0000-4000-8000-%012d", index)),
+                RadioResolveCallEnvelope.HoldContext.EMPTY, RadioResolveTestFixtures.END + index).entry());
+        }
+
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setHost("https://calls.example.com/");
+        configuration.setApiKey("test-key");
+        HttpRequest request = RadioResolveBroadcaster.createUploadRequest(configuration,
+            entries.subList(0, RadioResolveBroadcaster.MAXIMUM_CALLS_PER_UPLOAD));
+        String multipart = new String(collectBody(request), StandardCharsets.ISO_8859_1);
+        assertTrue(multipart.contains("name=\"audio-31\""));
+
+        var exception = assertThrows(java.io.IOException.class,
+            () -> RadioResolveBroadcaster.createUploadRequest(configuration, entries));
+        assertEquals("RadioResolve upload batch must contain between one and 32 calls", exception.getMessage());
     }
 
     @Test
