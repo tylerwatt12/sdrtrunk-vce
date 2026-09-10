@@ -669,8 +669,10 @@ def verifyRuntimePackage = { Map target, File archive ->
         String rootLauncherText = archiveEntryText(zip, "${root}/${target.rootLauncher}")
 
         if(target.windows) {
-            if(!rootLauncherText.contains('@"%~dp0bin\\sdrtrunk-vce.bat" %*')) {
-                throw new GradleException("Root launcher does not forward to the Windows application launcher")
+            if(!rootLauncherText.contains('call "%~dp0bin\\sdrtrunk-vce.bat" %*') ||
+                    !rootLauncherText.contains('if errorlevel 1 pause')) {
+                throw new GradleException("Root launcher does not forward to the Windows application launcher " +
+                        "and pause when it fails")
             }
         }
         else if(!rootLauncherText.startsWith('#!/bin/sh\n') ||
