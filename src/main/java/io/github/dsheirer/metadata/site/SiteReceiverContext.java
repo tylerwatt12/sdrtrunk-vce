@@ -241,7 +241,6 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
 
         SiteReceiverContext current = capture(channel, null, 0);
         return current != null && Objects.equals(configurationId, current.configurationId) &&
-            siteEvidenceTuningGeneration == current.siteEvidenceTuningGeneration &&
             decoderType == current.decoderType && protocol == current.protocol &&
             receiverMode == current.receiverMode && identityDomain == current.identityDomain &&
             sourceType == current.sourceType &&
