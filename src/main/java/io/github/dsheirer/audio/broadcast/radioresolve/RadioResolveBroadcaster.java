@@ -648,22 +648,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return List.of();
         }
 
-        List<RadioResolveSpool.Entry> prepared = new ArrayList<>(entries.size());
-
-        for(RadioResolveSpool.Entry entry : entries)
-        {
-            RadioResolveSpool.Entry adjusted = mSpool.applyServerClockOffset(entry,
-                clockProof.offsetMilliseconds());
-
-            if(adjusted == null)
-            {
-                return List.of();
-            }
-
-            prepared.add(adjusted);
-        }
-
-        return List.copyOf(prepared);
+        return mSpool.applyServerClockOffsetAll(entries, clockProof.offsetMilliseconds());
     }
 
     /** Builds the largest oldest-first prefix whose exact multipart Content-Length fits the server contract. */
@@ -861,6 +846,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         }
 
         int retryCount = 0;
+        List<AcknowledgedUpload> acknowledged = new ArrayList<>();
 
         for(int index = 0; index < entries.size(); index++)
         {
@@ -869,26 +855,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             try
             {
-                if(decision.disposition() == UploadDisposition.ACCEPTED)
+                if(decision.disposition() != UploadDisposition.RETRY)
                 {
-                    mSpool.remove(entry);
-                    incrementStreamedAudioCount();
-                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
-                }
-                else if(decision.disposition() == UploadDisposition.TERMINAL_REJECTION)
-                {
-                    mSpool.remove(entry);
-                    incrementErrorAudioCount();
-                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-
-                    if(decision.httpStatus() == 410 || decision.httpStatus() == 422)
-                    {
-                        incrementAgedOffAudioCount();
-                        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-                    }
-
-                    mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
-                        decision.submissionId(), decision.httpStatus());
+                    acknowledged.add(new AcknowledgedUpload(entry, decision));
                 }
                 else
                 {
@@ -902,6 +871,48 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
                 mLog.warn("Unable to update RadioResolve spool entry {}: {}", decision.submissionId(),
                     safeMessage(exception));
+            }
+        }
+
+        if(!acknowledged.isEmpty())
+        {
+            try
+            {
+                mSpool.removeAll(acknowledged.stream().map(AcknowledgedUpload::entry).toList());
+            }
+            catch(IOException exception)
+            {
+                //Every acknowledged submission remains safe to replay with the same immutable UUID if a file-system
+                //crash or deletion failure lets a durable file reappear; the server will return the same outcome.
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to remove one or more acknowledged RadioResolve spool entries: {}",
+                    safeMessage(exception));
+            }
+
+            for(AcknowledgedUpload upload : acknowledged)
+            {
+                BatchUploadDecision decision = upload.decision();
+
+                if(decision.disposition() == UploadDisposition.ACCEPTED)
+                {
+                    incrementStreamedAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
+                }
+                else
+                {
+                    incrementErrorAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+
+                    if(decision.httpStatus() == 410 || decision.httpStatus() == 422)
+                    {
+                        incrementAgedOffAudioCount();
+                        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                    }
+
+                    mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
+                        decision.submissionId(), decision.httpStatus());
+                }
             }
         }
 
@@ -1692,6 +1703,10 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     }
 
     private record ReceiverGeneration(String configurationId, long processingIncarnation, long tuningGeneration)
+    {
+    }
+
+    private record AcknowledgedUpload(RadioResolveSpool.Entry entry, BatchUploadDecision decision)
     {
     }
 

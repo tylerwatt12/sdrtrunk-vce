@@ -768,6 +768,9 @@ class RadioResolveBroadcasterTest
             remaining.get(1).manifest().envelope().submissionId());
         assertEquals(1, remaining.get(0).manifest().attemptCount(), "transient result retries");
         assertEquals(1, remaining.get(1).manifest().attemptCount(), "missing result retries");
+        assertEquals(1, broadcaster.getStreamedAudioCount());
+        assertEquals(3, broadcaster.getAudioErrorCount(), "one terminal response and two retries are counted");
+        assertEquals(1, broadcaster.getAgedOffAudioCount());
         broadcaster.dispose();
     }
 

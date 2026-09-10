@@ -523,25 +523,103 @@ final class RadioResolveSpool
     {
         synchronized(mState)
         {
-            Entry current = find(entry);
+            return applyServerClockOffsetLocked(entry, offsetMilliseconds, true);
+        }
+    }
 
-            if(current == null || current.manifest().appliedServerClockOffsetMs() != null)
+    /**
+     * Freezes one clock proof into a complete request batch. Each manifest is individually forced and atomically
+     * replaced, then one directory force makes the complete batch durable before its HTTP request can begin.
+     */
+    List<Entry> applyServerClockOffsetAll(List<Entry> entries, long offsetMilliseconds) throws IOException
+    {
+        synchronized(mState)
+        {
+            if(entries == null || entries.isEmpty())
             {
-                return current;
+                return List.of();
             }
 
-            if(isProtectedLocked(current))
+            List<Entry> currentEntries = new ArrayList<>(entries.size());
+
+            for(Entry entry : entries)
             {
-                return null;
+                Entry current = find(entry);
+
+                if(current == null || isProtectedLocked(current))
+                {
+                    return List.of();
+                }
+
+                currentEntries.add(current);
             }
 
-            RadioResolveCallEnvelope adjusted = current.manifest().envelope()
-                .withTimestampOffset(offsetMilliseconds);
-            Manifest updated = new Manifest(SPOOL_VERSION, current.manifest().enqueuedAtMs(),
-                current.manifest().nextAttemptAtMs(), current.manifest().attemptCount(),
-                current.manifest().metadataDeadlineMs(), current.manifest().holdContext(), offsetMilliseconds,
-                adjusted);
-            return replaceManifest(current, updated);
+            List<Entry> adjusted = new ArrayList<>(entries.size());
+            boolean directoryChanged = false;
+
+            for(Entry current : currentEntries)
+            {
+                boolean needsAdjustment = current.manifest().appliedServerClockOffsetMs() == null;
+                Entry replacement = applyServerClockOffsetLocked(current, offsetMilliseconds, false);
+
+                adjusted.add(replacement);
+                directoryChanged |= needsAdjustment;
+            }
+
+            if(directoryChanged)
+            {
+                forceDirectory();
+            }
+
+            return List.copyOf(adjusted);
+        }
+    }
+
+    private Entry applyServerClockOffsetLocked(Entry entry, long offsetMilliseconds, boolean forceDirectory)
+        throws IOException
+    {
+        Entry current = find(entry);
+
+        if(current == null || current.manifest().appliedServerClockOffsetMs() != null)
+        {
+            return current;
+        }
+
+        if(isProtectedLocked(current))
+        {
+            return null;
+        }
+
+        RadioResolveCallEnvelope adjusted = current.manifest().envelope()
+            .withTimestampOffset(offsetMilliseconds);
+        Manifest updated = new Manifest(SPOOL_VERSION, current.manifest().enqueuedAtMs(),
+            current.manifest().nextAttemptAtMs(), current.manifest().attemptCount(),
+            current.manifest().metadataDeadlineMs(), current.manifest().holdContext(), offsetMilliseconds,
+            adjusted);
+        return replaceManifest(current, updated, forceDirectory);
+    }
+
+    /** Deletes one certain acknowledgement set and commits all directory removals with one durability flush. */
+    void removeAll(List<Entry> entries) throws IOException
+    {
+        synchronized(mState)
+        {
+            IOException deletionFailure = null;
+
+            if(entries != null)
+            {
+                for(Entry entry : entries)
+                {
+                    deletionFailure = removeLocked(entry, false, deletionFailure);
+                }
+            }
+
+            forceDirectory();
+
+            if(deletionFailure != null)
+            {
+                throw deletionFailure;
+            }
         }
     }
 
@@ -555,14 +633,23 @@ final class RadioResolveSpool
 
     private void removeLocked(Entry entry) throws IOException
     {
+        IOException deletionFailure = removeLocked(entry, true, null);
+
+        if(deletionFailure != null)
+        {
+            throw deletionFailure;
+        }
+    }
+
+    /** Removes one entry and returns any accumulated file failure so a batch can continue cleaning later entries. */
+    private IOException removeLocked(Entry entry, boolean forceDirectory, IOException deletionFailure)
+    {
         Entry current = find(entry);
 
         if(current == null)
         {
-            return;
+            return deletionFailure;
         }
-
-        IOException deletionFailure = null;
 
         try
         {
@@ -570,7 +657,7 @@ final class RadioResolveSpool
         }
         catch(IOException exception)
         {
-            deletionFailure = exception;
+            deletionFailure = appendFailure(deletionFailure, exception);
         }
 
         try
@@ -579,14 +666,7 @@ final class RadioResolveSpool
         }
         catch(IOException exception)
         {
-            if(deletionFailure == null)
-            {
-                deletionFailure = exception;
-            }
-            else
-            {
-                deletionFailure.addSuppressed(exception);
-            }
+            deletionFailure = appendFailure(deletionFailure, exception);
         }
 
         String submissionId = submissionId(current);
@@ -596,12 +676,24 @@ final class RadioResolveSpool
         mState.freshLaneCandidateSubmissionIds.remove(submissionId);
         mState.protectedSubmissionIds.remove(submissionId);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - current.sizeBytes());
-        forceDirectory();
 
-        if(deletionFailure != null)
+        if(forceDirectory)
         {
-            throw deletionFailure;
+            forceDirectory();
         }
+
+        return deletionFailure;
+    }
+
+    private static IOException appendFailure(IOException accumulated, IOException next)
+    {
+        if(accumulated == null)
+        {
+            return next;
+        }
+
+        accumulated.addSuppressed(next);
+        return accumulated;
     }
 
     int prune(long now) throws IOException
@@ -739,11 +831,16 @@ final class RadioResolveSpool
 
     private Entry replaceManifest(Entry current, Manifest updated) throws IOException
     {
+        return replaceManifest(current, updated, true);
+    }
+
+    private Entry replaceManifest(Entry current, Manifest updated, boolean forceDirectory) throws IOException
+    {
         Path temporary = current.manifestPath().resolveSibling(current.manifestPath().getFileName() + ".tmp");
         //Placement and retry updates change only the bounded manifest. Do not evict a newer call to grow an older
         //manifest, especially while that older entry owns an async upload. The next enqueue/open/release performs
         //oldest-first trimming; this temporary overhead is bounded by one manifest.
-        writeManifest(temporary, current.manifestPath(), updated);
+        writeManifest(temporary, current.manifestPath(), updated, forceDirectory);
         long updatedSize = Files.size(current.manifestPath()) + Files.size(current.audioPath());
         Entry replacement = new Entry(current.manifestPath(), current.audioPath(), updated, updatedSize);
         mState.entries.put(submissionId(current), replacement);
@@ -862,11 +959,21 @@ final class RadioResolveSpool
 
     private void writeManifest(Path temporary, Path target, Manifest manifest) throws IOException
     {
+        writeManifest(temporary, target, manifest, true);
+    }
+
+    private void writeManifest(Path temporary, Path target, Manifest manifest, boolean forceDirectory)
+        throws IOException
+    {
         Files.writeString(temporary, RadioResolveJson.GSON.toJson(manifest), StandardCharsets.UTF_8,
             StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
         force(temporary);
         moveAtomically(temporary, target);
-        forceDirectory();
+
+        if(forceDirectory)
+        {
+            forceDirectory();
+        }
     }
 
     private static void moveAtomically(Path source, Path target) throws IOException

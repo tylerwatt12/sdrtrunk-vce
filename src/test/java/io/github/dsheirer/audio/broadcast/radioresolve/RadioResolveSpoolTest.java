@@ -20,6 +20,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -134,6 +135,62 @@ class RadioResolveSpoolTest
         assertEquals(original.completedAtMs() + 275L,
             secondAdjustment.manifest().envelope().completedAtMs(),
             "retry and restart must preserve the first payload for this submission UUID");
+    }
+
+    @Test
+    void batchClockAdjustmentIsDurableOrderedAndCannotBeAppliedTwice(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path audio = audio(directory.resolve("source.mp3"), 64);
+        Path spoolDirectory = directory.resolve("spool");
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        List<RadioResolveSpool.Entry> queued = new ArrayList<>();
+
+        for(int index = 1; index <= 4; index++)
+        {
+            queued.add(spool.enqueue(audio, RadioResolveTestFixtures.readyEnvelope(audio,
+                now - 5_000L + index, uuid(index)), RadioResolveCallEnvelope.HoldContext.EMPTY,
+                now + index).entry());
+        }
+
+        List<RadioResolveSpool.Entry> adjusted = spool.applyServerClockOffsetAll(queued, 275L);
+
+        assertEquals(queued.stream().map(entry -> entry.manifest().envelope().submissionId()).toList(),
+            adjusted.stream().map(entry -> entry.manifest().envelope().submissionId()).toList());
+        assertTrue(adjusted.stream().allMatch(entry -> entry.manifest().appliedServerClockOffsetMs() == 275L));
+
+        RadioResolveSpool reopened = new RadioResolveSpool(spoolDirectory);
+        reopened.open();
+        List<RadioResolveSpool.Entry> restored = reopened.entries();
+        List<RadioResolveSpool.Entry> secondAdjustment = reopened.applyServerClockOffsetAll(restored, -900L);
+
+        assertEquals(adjusted.stream().map(entry -> entry.manifest().envelope().completedAtMs()).toList(),
+            secondAdjustment.stream().map(entry -> entry.manifest().envelope().completedAtMs()).toList(),
+            "a replayed batch must keep the first byte-stable clock proof and call order");
+        assertTrue(secondAdjustment.stream()
+            .allMatch(entry -> entry.manifest().appliedServerClockOffsetMs() == 275L));
+    }
+
+    @Test
+    void batchClockAdjustmentDoesNotPartiallyChangeAClaimedBatch(@TempDir Path directory) throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path audio = audio(directory.resolve("source.mp3"), 64);
+        RadioResolveSpool spool = new RadioResolveSpool(directory.resolve("spool"));
+        spool.open();
+        RadioResolveSpool.Entry first = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio, now - 4_000L, uuid(1)),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now).entry();
+        RadioResolveSpool.Entry claimed = spool.enqueue(audio,
+            RadioResolveTestFixtures.readyEnvelope(audio, now - 3_000L, uuid(2)),
+            RadioResolveCallEnvelope.HoldContext.EMPTY, now + 1L).entry();
+        assertTrue(spool.protect(claimed));
+
+        assertTrue(spool.applyServerClockOffsetAll(List.of(first, claimed), 275L).isEmpty());
+        assertNull(spool.entries().getFirst().manifest().appliedServerClockOffsetMs(),
+            "preflight must reject the complete batch before changing an earlier entry");
+        spool.unprotect(claimed);
     }
 
     @Test
@@ -340,6 +397,63 @@ class RadioResolveSpoolTest
         }
 
         assertEquals(0, spool.size());
+    }
+
+    @Test
+    void acknowledgedBatchRemovalIsSelectiveIdempotentAndSafeIfFilesReappear(@TempDir Path directory)
+        throws Exception
+    {
+        long now = System.currentTimeMillis();
+        Path source = audio(directory.resolve("source.mp3"), 32);
+        Path spoolDirectory = directory.resolve("spool");
+        Path crashImage = directory.resolve("crash-image");
+        Files.createDirectories(crashImage);
+        RadioResolveSpool spool = new RadioResolveSpool(spoolDirectory);
+        spool.open();
+        List<RadioResolveSpool.Entry> queued = new ArrayList<>();
+
+        for(int index = 1; index <= 5; index++)
+        {
+            queued.add(spool.enqueue(source, RadioResolveTestFixtures.readyEnvelope(source,
+                now - 5_000L + index, uuid(index)), RadioResolveCallEnvelope.HoldContext.EMPTY,
+                now + index).entry());
+        }
+
+        List<RadioResolveSpool.Entry> acknowledged = List.of(queued.get(0), queued.get(2), queued.get(4));
+
+        for(RadioResolveSpool.Entry entry : acknowledged)
+        {
+            Files.copy(entry.manifestPath(), crashImage.resolve(entry.manifestPath().getFileName()));
+            Files.copy(entry.audioPath(), crashImage.resolve(entry.audioPath().getFileName()));
+        }
+
+        spool.removeAll(acknowledged);
+        spool.removeAll(acknowledged);
+        assertEquals(List.of(uuid(2), uuid(4)), spool.entries().stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList());
+
+        //Model each crash outcome: one complete pair reappears, one has only its manifest, and one has only audio.
+        //Only the complete immutable pair can be retried, with the same UUID for RadioResolve's server-side dedupe.
+        RadioResolveSpool.Entry completePair = acknowledged.get(0);
+        RadioResolveSpool.Entry manifestOnly = acknowledged.get(1);
+        RadioResolveSpool.Entry audioOnly = acknowledged.get(2);
+        Files.copy(crashImage.resolve(completePair.manifestPath().getFileName()), completePair.manifestPath());
+        Files.copy(crashImage.resolve(completePair.audioPath().getFileName()), completePair.audioPath());
+        Files.copy(crashImage.resolve(manifestOnly.manifestPath().getFileName()), manifestOnly.manifestPath());
+        Files.copy(crashImage.resolve(audioOnly.audioPath().getFileName()), audioOnly.audioPath());
+
+        RadioResolveSpool reopened = new RadioResolveSpool(spoolDirectory);
+        RadioResolveSpool.RecoveryReport report = reopened.open();
+        List<RadioResolveSpool.Entry> reappeared = reopened.entries().stream()
+            .filter(entry -> entry.manifest().envelope().submissionId().equals(uuid(1))).toList();
+        assertEquals(1, report.corruptEntries(), "a manifest without audio is discarded");
+        assertEquals(1, report.orphanFiles(), "audio without a manifest is discarded");
+        assertEquals(List.of(uuid(1)), reappeared.stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList());
+
+        reopened.removeAll(reappeared);
+        assertEquals(List.of(uuid(2), uuid(4)), reopened.entries().stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList());
     }
 
     @Test
