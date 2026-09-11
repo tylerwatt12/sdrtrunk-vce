@@ -94,8 +94,14 @@ class StatsWebAliasCatalogUiContractTest
             .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
         assertTrue(function(source, "async function renderAliases()")
             .contains("sort: route.get('sort') || defaultOrder.sort"));
-        assertTrue(function(source, "async function renderAliases()")
-            .contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
+        String renderer = function(source, "async function renderAliases()");
+        assertTrue(renderer.contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
+        assertTrue(renderer.contains("loading alias-activity-loading', 'Preparing alias activity…'"));
+        String activityAwait = "const [page, options] = await Promise.all";
+        assertTrue(renderer.indexOf("main.append(activityLoading)") < renderer.indexOf(activityAwait),
+            "The in-panel activity status must be visible while the snapshot request is pending");
+        assertTrue(renderer.indexOf("activityLoading?.remove()") > renderer.indexOf(activityAwait),
+            "The in-panel activity status must remain until the snapshot request finishes");
         assertTrue(source.contains("'Preparing alias activity…' : 'Loading'"));
         assertTrue(columns.contains("view === 'activity'"));
         assertFalse(columns.contains("view === 'calls'"));

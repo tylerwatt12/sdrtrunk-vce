@@ -5777,6 +5777,13 @@ async function renderAliases() {
 
   const view = aliasEditorView(selectedList);
   const defaultOrder = aliasEditorDefaultOrder(view);
+  const activityLoading = view === 'activity' ?
+    node('div', 'loading alias-activity-loading', 'Preparing alias activity…') : null;
+  if (activityLoading) {
+    activityLoading.setAttribute('role', 'status');
+    activityLoading.setAttribute('aria-live', 'polite');
+    main.append(activityLoading);
+  }
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
@@ -5793,6 +5800,7 @@ async function renderAliases() {
   const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
+  activityLoading?.remove();
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
