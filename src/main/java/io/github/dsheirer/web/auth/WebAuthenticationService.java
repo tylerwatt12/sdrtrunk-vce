@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Transport-neutral bounded login worker and transient-session owner.
+ * Transport-neutral bounded login worker and in-memory session owner.
  */
 public final class WebAuthenticationService implements AutoCloseable
 {

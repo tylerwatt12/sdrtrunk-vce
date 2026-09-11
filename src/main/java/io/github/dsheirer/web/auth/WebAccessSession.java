@@ -10,8 +10,7 @@ import java.util.Objects;
 /**
  * Immutable snapshot of one in-memory browser session.  Secret values are redacted from {@link #toString()}.
  */
-public record WebAccessSession(String sessionId, String csrfToken, WebAccessAccount account,
-                               long createdAtEpochMillis, long lastSeenAtEpochMillis, long expiresAtEpochMillis)
+public record WebAccessSession(String sessionId, String csrfToken, WebAccessAccount account)
 {
     public WebAccessSession
     {
@@ -19,8 +18,7 @@ public record WebAccessSession(String sessionId, String csrfToken, WebAccessAcco
         Objects.requireNonNull(csrfToken, "CSRF token cannot be null");
         Objects.requireNonNull(account, "Session account cannot be null");
 
-        if(sessionId.isBlank() || csrfToken.isBlank() || createdAtEpochMillis < 0 ||
-            lastSeenAtEpochMillis < createdAtEpochMillis || expiresAtEpochMillis < lastSeenAtEpochMillis)
+        if(sessionId.isBlank() || csrfToken.isBlank())
         {
             throw new IllegalArgumentException("Invalid web access session snapshot");
         }
@@ -29,8 +27,6 @@ public record WebAccessSession(String sessionId, String csrfToken, WebAccessAcco
     @Override
     public String toString()
     {
-        return "WebAccessSession[sessionId=<redacted>, csrfToken=<redacted>, account=" + account +
-            ", createdAtEpochMillis=" + createdAtEpochMillis + ", lastSeenAtEpochMillis=" +
-            lastSeenAtEpochMillis + ", expiresAtEpochMillis=" + expiresAtEpochMillis + "]";
+        return "WebAccessSession[sessionId=<redacted>, csrfToken=<redacted>, account=" + account + "]";
     }
 }

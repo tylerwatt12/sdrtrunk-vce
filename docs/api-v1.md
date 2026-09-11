@@ -267,6 +267,19 @@ Authentication uses `GET /api/v1/auth/session`, `POST /api/v1/auth/login`, and `
 users own one complete preference document at `GET, PUT /api/v1/me/preferences`. Mutations require the session CSRF
 token and the capability assigned to the resource.
 
+Authenticated browser sessions have no idle timeout or absolute time limit, so session responses do not include an
+expiration timestamp. Sessions exist only in receiver memory and end when the user signs out, signs in again and a
+replacement session is delivered, the account password or tier changes, the account is deleted, the primary
+administrator password is reset, the web server is disabled, or the session service shuts down. A receiver restart
+therefore ends every session.
+
+Session storage is bounded to 64 sessions with no per-account limit, and two slots are reserved for the primary
+administrator. When a successful sign-in reaches an ordinary-user or global limit, the presented current session is
+reused when it already belongs to that account. Otherwise, the least-recently-used eligible session is replaced.
+Replacement prefers a session from the same account, then a non-primary session when ordinary-user capacity is full,
+and finally a globally eligible session when the receiver-wide limit is full. The two administrator reservations are
+preserved even when capacity replacement is necessary.
+
 Central administration uses:
 
 - `GET, POST /api/v1/admin/users`

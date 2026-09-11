@@ -8,19 +8,17 @@ package io.github.dsheirer.web.auth;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.time.Clock;
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.HashMap;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Predicate;
 
 /**
- * Fixed-capacity, memory-only browser sessions with idle and absolute expiration.
+ * Fixed-capacity, memory-only browser sessions without time-based expiration.
  *
  * <p>Resolution verifies the account's complete current metadata.  Password resets, role changes, account deletion,
  * and primary-administrator resets therefore revoke old sessions on their next use.</p>
@@ -28,29 +26,27 @@ import java.util.concurrent.locks.ReentrantLock;
 public final class WebAccessSessionManager implements AutoCloseable
 {
     private static final int MAXIMUM_TOKEN_COLLISION_ATTEMPTS = 16;
-    private static final int MAXIMUM_SESSIONS_PER_ACCOUNT = 8;
     private static final int PRIMARY_ADMIN_RESERVED_SESSIONS = 2;
     private final Configuration mConfiguration;
     private final SecureRandom mSecureRandom;
-    private final Clock mClock;
     private final ReentrantLock mLock = new ReentrantLock();
-    private final Map<String,SessionState> mSessions = new HashMap<>();
+    /** Access ordering supports non-time-based replacement when abandoned browser cookies consume session capacity. */
+    private final Map<String,SessionState> mSessions = new LinkedHashMap<>(16, 0.75f, true);
 
     public WebAccessSessionManager()
     {
-        this(Configuration.defaults(), new SecureRandom(), Clock.systemUTC());
+        this(Configuration.defaults(), new SecureRandom());
     }
 
     public WebAccessSessionManager(Configuration configuration)
     {
-        this(configuration, new SecureRandom(), Clock.systemUTC());
+        this(configuration, new SecureRandom());
     }
 
-    WebAccessSessionManager(Configuration configuration, SecureRandom secureRandom, Clock clock)
+    WebAccessSessionManager(Configuration configuration, SecureRandom secureRandom)
     {
         mConfiguration = Objects.requireNonNull(configuration, "Session configuration cannot be null");
         mSecureRandom = Objects.requireNonNull(secureRandom, "Secure random cannot be null");
-        mClock = Objects.requireNonNull(clock, "Clock cannot be null");
     }
 
     public Optional<WebAccessSession> create(WebAccessAccount account)
@@ -59,9 +55,9 @@ public final class WebAccessSessionManager implements AutoCloseable
     }
 
     /**
-     * Creates a new session when capacity permits.  At capacity, a caller that already holds a current session for
-     * the authenticated account may keep that session and refresh its idle lifetime.  The existing session's token,
-     * CSRF token, creation time, and absolute expiration are preserved.
+     * Creates a new session when capacity permits. At capacity, a caller that already holds a current session for the
+     * authenticated account keeps that session. Otherwise, the least-recently-used eligible session is replaced so
+     * that browser-session cookies discarded without signing out cannot permanently prevent future logins.
      */
     Optional<WebAccessSession> createOrReuseAtCapacity(WebAccessAccount account, String existingSessionId)
     {
@@ -70,22 +66,31 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         try
         {
-            long now = nonNegativeNow();
-            removeExpired(now);
-            long accountSessions = mSessions.values().stream()
-                .filter(state -> state.account.username().equals(account.username()))
-                .count();
             int reservedForPrimary = Math.min(PRIMARY_ADMIN_RESERVED_SESSIONS,
                 Math.max(0, mConfiguration.maximumSessions() - 1));
-            boolean accountCapacityReached = accountSessions >=
-                Math.min(MAXIMUM_SESSIONS_PER_ACCOUNT, mConfiguration.maximumSessions());
-            boolean accountClassCapacityReached = !account.primaryAdmin() &&
-                mSessions.size() >= mConfiguration.maximumSessions() - reservedForPrimary;
+            long primarySessions = mSessions.values().stream().filter(state -> state.account.primaryAdmin()).count();
+            long ordinarySessions = mSessions.size() - primarySessions;
+            boolean ordinaryCapacityReached = !account.primaryAdmin() && ordinarySessions >=
+                mConfiguration.maximumSessions() - reservedForPrimary;
             boolean totalCapacityReached = mSessions.size() >= mConfiguration.maximumSessions();
+            String replacementSessionId = null;
 
-            if(accountCapacityReached || accountClassCapacityReached || totalCapacityReached)
+            if(ordinaryCapacityReached || totalCapacityReached)
             {
-                return refreshMatchingSession(existingSessionId, account, now);
+                Optional<WebAccessSession> existing = matchingSession(existingSessionId, account);
+
+                if(existing.isPresent())
+                {
+                    return existing;
+                }
+
+                replacementSessionId = replacementSessionId(account, ordinaryCapacityReached,
+                    totalCapacityReached, primarySessions, reservedForPrimary);
+
+                if(replacementSessionId == null)
+                {
+                    return Optional.empty();
+                }
             }
 
             for(int attempt = 0; attempt < MAXIMUM_TOKEN_COLLISION_ATTEMPTS; attempt++)
@@ -94,8 +99,13 @@ public final class WebAccessSessionManager implements AutoCloseable
 
                 if(!sessionId.equals(existingSessionId) && !mSessions.containsKey(sessionId))
                 {
-                    SessionState state = new SessionState(sessionId, token(), account, now,
-                        saturatingAdd(now, mConfiguration.absoluteTimeout().toMillis()));
+                    SessionState state = new SessionState(sessionId, token(), account);
+
+                    if(replacementSessionId != null)
+                    {
+                        mSessions.remove(replacementSessionId);
+                    }
+
                     mSessions.put(sessionId, state);
                     return Optional.of(snapshot(state));
                 }
@@ -109,26 +119,78 @@ public final class WebAccessSessionManager implements AutoCloseable
         }
     }
 
-    private Optional<WebAccessSession> refreshMatchingSession(String sessionId, WebAccessAccount account, long now)
+    private Optional<WebAccessSession> matchingSession(String sessionId, WebAccessAccount account)
     {
         if(!hasExpectedTokenLength(sessionId))
         {
             return Optional.empty();
         }
 
-        SessionState state = mSessions.get(sessionId);
+        SessionState state = null;
+
+        for(Map.Entry<String,SessionState> entry: mSessions.entrySet())
+        {
+            if(entry.getKey().equals(sessionId))
+            {
+                state = entry.getValue();
+                break;
+            }
+        }
 
         if(state == null || !state.account.equals(account))
         {
             return Optional.empty();
         }
 
-        state.lastSeenAtEpochMillis = Math.max(state.lastSeenAtEpochMillis, now);
+        //Only a matching session should move to the most-recently-used end of the access-ordered map.
+        mSessions.get(sessionId);
         return Optional.of(snapshot(state));
     }
 
     /**
-     * Resolves and refreshes an unexpired session only if its account, role, and authentication revision remain current.
+     * Selects an access-ordered replacement without using session age or wall-clock time. Prefer one of the same
+     * account's sessions, then an ordinary session when preserving the primary-administrator reserve. At global
+     * capacity, a primary administrator may replace any session and an ordinary account may replace a primary
+     * session only when more than the reserved number of primary sessions exist.
+     */
+    private String replacementSessionId(WebAccessAccount account, boolean ordinaryCapacityReached,
+                                        boolean totalCapacityReached, long primarySessions, int reservedForPrimary)
+    {
+        String sessionId = firstSessionMatching(state -> state.account.username().equals(account.username()));
+
+        if(sessionId == null && ordinaryCapacityReached)
+        {
+            sessionId = firstSessionMatching(state -> !state.account.primaryAdmin());
+        }
+
+        if(sessionId == null && totalCapacityReached && account.primaryAdmin())
+        {
+            sessionId = firstSessionMatching(state -> true);
+        }
+
+        if(sessionId == null && totalCapacityReached && primarySessions > reservedForPrimary)
+        {
+            sessionId = firstSessionMatching(state -> state.account.primaryAdmin());
+        }
+
+        return sessionId;
+    }
+
+    private String firstSessionMatching(Predicate<SessionState> predicate)
+    {
+        for(Map.Entry<String,SessionState> entry: mSessions.entrySet())
+        {
+            if(predicate.test(entry.getValue()))
+            {
+                return entry.getKey();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves a session only if its account, role, and authentication revision remain current.
      */
     public Optional<WebAccessSession> resolve(String sessionId, WebAccessService accessService)
     {
@@ -144,7 +206,6 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         try
         {
-            long now = nonNegativeNow();
             SessionState state = mSessions.get(sessionId);
 
             if(state == null)
@@ -152,13 +213,12 @@ public final class WebAccessSessionManager implements AutoCloseable
                 return Optional.empty();
             }
 
-            if(isExpired(state, now) || !accessService.isCurrent(state.account))
+            if(!accessService.isCurrent(state.account))
             {
                 mSessions.remove(sessionId);
                 return Optional.empty();
             }
 
-            state.lastSeenAtEpochMillis = Math.max(state.lastSeenAtEpochMillis, now);
             resolved = snapshot(state);
         }
         finally
@@ -269,7 +329,6 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         try
         {
-            removeExpired(nonNegativeNow());
             return mSessions.size();
         }
         finally
@@ -280,28 +339,7 @@ public final class WebAccessSessionManager implements AutoCloseable
 
     private WebAccessSession snapshot(SessionState state)
     {
-        long idleExpiry = saturatingAdd(state.lastSeenAtEpochMillis, mConfiguration.idleTimeout().toMillis());
-        return new WebAccessSession(state.sessionId, state.csrfToken, state.account, state.createdAtEpochMillis,
-            state.lastSeenAtEpochMillis, Math.min(state.absoluteExpiresAtEpochMillis, idleExpiry));
-    }
-
-    private void removeExpired(long now)
-    {
-        Iterator<SessionState> iterator = mSessions.values().iterator();
-
-        while(iterator.hasNext())
-        {
-            if(isExpired(iterator.next(), now))
-            {
-                iterator.remove();
-            }
-        }
-    }
-
-    private boolean isExpired(SessionState state, long now)
-    {
-        return now >= state.absoluteExpiresAtEpochMillis ||
-            now - state.lastSeenAtEpochMillis >= mConfiguration.idleTimeout().toMillis();
+        return new WebAccessSession(state.sessionId, state.csrfToken, state.account);
     }
 
     private String token()
@@ -325,37 +363,19 @@ public final class WebAccessSessionManager implements AutoCloseable
         return token != null && token.length() == encodedCharacters;
     }
 
-    private long nonNegativeNow()
-    {
-        return Math.max(0, mClock.millis());
-    }
-
-    private static long saturatingAdd(long value, long increment)
-    {
-        return value > Long.MAX_VALUE - increment ? Long.MAX_VALUE : value + increment;
-    }
-
     @Override
     public void close()
     {
         invalidateAll();
     }
 
-    public record Configuration(int maximumSessions, Duration idleTimeout, Duration absoluteTimeout, int tokenBytes)
+    public record Configuration(int maximumSessions, int tokenBytes)
     {
         public Configuration
         {
             if(maximumSessions < 1 || maximumSessions > 256)
             {
                 throw new IllegalArgumentException("Maximum web sessions must be between 1 and 256");
-            }
-
-            requirePositive(idleTimeout, "Session idle timeout");
-            requirePositive(absoluteTimeout, "Session absolute timeout");
-
-            if(idleTimeout.compareTo(absoluteTimeout) > 0)
-            {
-                throw new IllegalArgumentException("Session idle timeout cannot exceed its absolute timeout");
             }
 
             if(tokenBytes < 32 || tokenBytes > 64)
@@ -366,17 +386,7 @@ public final class WebAccessSessionManager implements AutoCloseable
 
         public static Configuration defaults()
         {
-            return new Configuration(64, Duration.ofMinutes(30), Duration.ofHours(12), 32);
-        }
-
-        private static void requirePositive(Duration duration, String label)
-        {
-            Objects.requireNonNull(duration, label + " cannot be null");
-
-            if(duration.isZero() || duration.isNegative() || duration.toMillis() <= 0)
-            {
-                throw new IllegalArgumentException(label + " must be positive");
-            }
+            return new Configuration(64, 32);
         }
     }
 
@@ -385,19 +395,12 @@ public final class WebAccessSessionManager implements AutoCloseable
         private final String sessionId;
         private final String csrfToken;
         private final WebAccessAccount account;
-        private final long createdAtEpochMillis;
-        private final long absoluteExpiresAtEpochMillis;
-        private long lastSeenAtEpochMillis;
 
-        private SessionState(String sessionId, String csrfToken, WebAccessAccount account,
-                             long createdAtEpochMillis, long absoluteExpiresAtEpochMillis)
+        private SessionState(String sessionId, String csrfToken, WebAccessAccount account)
         {
             this.sessionId = sessionId;
             this.csrfToken = csrfToken;
             this.account = account;
-            this.createdAtEpochMillis = createdAtEpochMillis;
-            this.absoluteExpiresAtEpochMillis = absoluteExpiresAtEpochMillis;
-            lastSeenAtEpochMillis = createdAtEpochMillis;
         }
     }
 }

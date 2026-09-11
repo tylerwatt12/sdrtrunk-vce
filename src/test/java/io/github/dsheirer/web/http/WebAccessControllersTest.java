@@ -177,6 +177,16 @@ class WebAccessControllersTest
             assertTrue(admin.setCookie().contains("SameSite=Strict"));
             assertFalse(admin.setCookie().contains("Secure"));
             assertTrue(admin.body().at("/capabilities/admin-aliases").booleanValue());
+            JsonNode authenticatedSession = data(send(client, request(origin, "/api/v1/auth/session")
+                .header("Cookie", admin.cookieHeader()).GET()));
+            assertTrue(authenticatedSession.get("configured").booleanValue());
+            assertTrue(authenticatedSession.get("authenticated").booleanValue());
+            assertEquals("admin", authenticatedSession.get("tier").textValue());
+            assertEquals("admin", authenticatedSession.get("username").textValue());
+            assertTrue(authenticatedSession.get("primary").booleanValue());
+            assertEquals(admin.csrfToken(), authenticatedSession.get("csrf_token").textValue());
+            assertTrue(authenticatedSession.at("/capabilities/admin-users").booleanValue());
+            assertFalse(authenticatedSession.has("expires_at_epoch_millis"));
 
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
