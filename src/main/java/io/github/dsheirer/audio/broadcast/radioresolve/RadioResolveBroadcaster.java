@@ -10,6 +10,8 @@
  */
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import com.google.common.eventbus.AllowConcurrentEvents;
+import com.google.common.eventbus.Subscribe;
 import com.google.common.net.HttpHeaders;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -23,11 +25,15 @@ import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -41,8 +47,10 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -89,6 +97,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     static final long VERIFIED_SITE_RETENTION_MILLISECONDS = TimeUnit.MINUTES.toMillis(5);
     private static final int MAXIMUM_VERIFIED_SITE_ENTRIES = 512;
     private static final int METADATA_HANDOFF_SLOTS = 128;
+    static final int P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY = 4_096;
+    private static final int MAXIMUM_P25_FREQUENCY_EVIDENCE_DRAIN_PER_RUN = 1_024;
     private static final long[] RETRY_BACKOFF_MS = {5_000L, 15_000L, 30_000L, 60_000L, 120_000L};
     private static final AtomicLong CALL_WORKER_SEQUENCE = new AtomicLong();
     private static final AtomicLong METADATA_WORKER_SEQUENCE = new AtomicLong();
@@ -96,20 +106,32 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private final RadioResolveSpool mSpool;
     private final RadioResolveClockSynchronizer mClockSynchronizer;
     private final int mCallsPerUpload;
+    private final Runnable mAfterP25FrequencyEvidenceIngressSnapshotForTest;
     private final String mEvidenceSessionId = UUID.randomUUID().toString();
     private final Object mConnectionLock = new Object();
     private final Object mVerifiedSiteLock = new Object();
+    private final Object mP25FrequencyEvidenceRegistrationLock = new Object();
     private final Map<ReceiverGeneration,VerifiedSite> mVerifiedSites = new HashMap<>();
     private final Map<String,MetadataState> mMetadataStates = new HashMap<>();
+    private final RadioResolveP25FrequencyEvidenceTracker mP25FrequencyEvidenceTracker =
+        new RadioResolveP25FrequencyEvidenceTracker();
     private final AtomicBoolean mUploadInFlight = new AtomicBoolean();
     /** Fixed latest-value slots keyed by receiver configuration; collisions coalesce instead of blocking decode. */
     private final AtomicReferenceArray<SiteMetadataEvent> mPendingSiteMetadata =
         new AtomicReferenceArray<>(METADATA_HANDOFF_SLOTS);
+    /** Grant producers get a preallocated, fixed-attempt handoff and never run projection or tracker work. */
+    private volatile BoundedMpscReferenceQueue<Object> mP25FrequencyEvidenceIngress =
+        new BoundedMpscReferenceQueue<>(P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY);
     private final AtomicLong mCoalescedSiteMetadataCount = new AtomicLong();
+    private final AtomicLong mDroppedP25FrequencyEvidenceCount = new AtomicLong();
     private final Object mSpoolOpenLock = new Object();
     private final ScheduledExecutorService mCallWorker;
     private final Thread mMetadataWorker;
     private volatile boolean mMetadataWorkerShutdown;
+    private boolean mP25FrequencyEvidenceRegistered;
+    private volatile boolean mP25FrequencyEvidenceEnabled;
+    /** Metadata-worker-owned identity fence for its non-thread-safe evidence tracker. */
+    private BoundedMpscReferenceQueue<Object> mWorkerP25FrequencyEvidenceIngress;
     private int mNextMetadataHandoffSlot;
     private volatile boolean mSpoolOpen;
     private ScheduledFuture<?> mProcessorFuture;
@@ -141,10 +163,20 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                             MP3Setting mp3Setting, AliasModel aliasModel, Path spoolDirectory,
                             RadioResolveClockSynchronizer clockSynchronizer)
     {
+        this(configuration, inputAudioFormat, mp3Setting, aliasModel, spoolDirectory, clockSynchronizer, null);
+    }
+
+    /** Test hook permits a deterministic lifecycle race after a producer snapshots the current bounded ingress. */
+    RadioResolveBroadcaster(RadioResolveConfiguration configuration, InputAudioFormat inputAudioFormat,
+                            MP3Setting mp3Setting, AliasModel aliasModel, Path spoolDirectory,
+                            RadioResolveClockSynchronizer clockSynchronizer,
+                            Runnable afterP25FrequencyEvidenceIngressSnapshotForTest)
+    {
         super(configuration);
         mHttpClient = createHttpClient(configuration);
         mSpool = new RadioResolveSpool(spoolDirectory);
         mClockSynchronizer = clockSynchronizer != null ? clockSynchronizer : new RadioResolveClockSynchronizer();
+        mAfterP25FrequencyEvidenceIngressSnapshotForTest = afterP25FrequencyEvidenceIngressSnapshotForTest;
         mCallsPerUpload = resolveCallsPerUpload(System.getProperty(CALLS_PER_UPLOAD_PROPERTY));
         mCallWorker = Executors.newSingleThreadScheduledExecutor(new ObserverThreadFactory(
             "radioresolve-v3-calls-" + CALL_WORKER_SEQUENCE.incrementAndGet()));
@@ -172,6 +204,17 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
+        mP25FrequencyEvidenceIngress =
+            new BoundedMpscReferenceQueue<>(P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY);
+        mP25FrequencyEvidenceEnabled = getBroadcastConfiguration().isSiteMetadataEnabled();
+
+        if(mP25FrequencyEvidenceEnabled)
+        {
+            registerP25FrequencyEvidence();
+        }
+
+        LockSupport.unpark(mMetadataWorker);
+
         setBroadcastState(BroadcastState.CONNECTING);
 
         if(mProcessorFuture == null)
@@ -187,7 +230,10 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public void stop()
     {
         mRunning = false;
+        mP25FrequencyEvidenceEnabled = false;
+        unregisterP25FrequencyEvidence();
         clearPendingSiteMetadata();
+        LockSupport.unpark(mMetadataWorker);
 
         if(mProcessorFuture != null)
         {
@@ -203,6 +249,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public void dispose()
     {
         mRunning = false;
+        mP25FrequencyEvidenceEnabled = false;
+        unregisterP25FrequencyEvidence();
 
         if(mProcessorFuture != null)
         {
@@ -316,11 +364,55 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     }
 
     /**
+     * Performs only a fixed-attempt queue offer on the decoder's posting thread.  Concurrent dispatch avoids the
+     * implicit EventBus subscriber monitor, so another producer or a blocked metadata worker cannot delay decode.
+     */
+    @Subscribe
+    @AllowConcurrentEvents
+    public void receiveP25GrantObservation(P25GrantObservationEvent event)
+    {
+        offerP25FrequencyEvidence(event);
+    }
+
+    /** See {@link #receiveP25GrantObservation(P25GrantObservationEvent)}. */
+    @Subscribe
+    @AllowConcurrentEvents
+    public void receiveP25TrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
+    {
+        offerP25FrequencyEvidence(event);
+    }
+
+    private void offerP25FrequencyEvidence(Object event)
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+
+        if(mAfterP25FrequencyEvidenceIngressSnapshotForTest != null)
+        {
+            mAfterP25FrequencyEvidenceIngressSnapshotForTest.run();
+        }
+
+        if(event == null || !mRunning || !mP25FrequencyEvidenceEnabled || mMetadataWorkerShutdown)
+        {
+            return;
+        }
+
+        if(!ingress.offer(event))
+        {
+            mDroppedP25FrequencyEvidenceCount.incrementAndGet();
+        }
+
+        LockSupport.unpark(mMetadataWorker);
+    }
+
+    /**
      * Performs all snapshot validation, projection, hashing, registry locking, and network work away from the
      * decoder callback. Package visibility permits a focused saturation test to substitute a blocked consumer.
      */
     void processSiteMetadata(SiteMetadataEvent event)
     {
+        BoundedMpscReferenceQueue<Object> evidenceIngress = mP25FrequencyEvidenceIngress;
+        prepareP25FrequencyEvidenceIngress();
+
         if(event == null || !event.isUseful() || !event.matchesCurrentChannel() || event.receiverContext() == null)
         {
             return;
@@ -357,12 +449,19 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
-        String identityKey = metadataIdentityKey(event.snapshot());
-        String hash = hash(event.snapshot());
         long now = System.currentTimeMillis();
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence =
+            mP25FrequencyEvidenceTracker.select(event, now);
+        String identityKey = metadataIdentityKey(event.snapshot());
+        String hash = hash(event.snapshot(), frequencyEvidence);
 
         synchronized(mMetadataStates)
         {
+            if(!isCurrentP25EvidenceIngress(evidenceIngress))
+            {
+                return;
+            }
+
             MetadataState state = mMetadataStates.computeIfAbsent(identityKey, ignored -> new MetadataState());
             boolean changed = !hash.equals(state.lastSuccessfulHash);
             boolean heartbeatDue = now - state.lastSuccessfulAtMs >= METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS;
@@ -383,7 +482,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
-        sendSiteMetadata(event, identityKey, hash, observedAt, clockProof);
+        if(!isCurrentP25EvidenceIngress(evidenceIngress))
+        {
+            return;
+        }
+
+        sendSiteMetadata(event, identityKey, hash, observedAt, clockProof, frequencyEvidence);
     }
 
     void rememberVerifiedSite(SiteMetadataEvent event)
@@ -495,17 +599,64 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         return mCoalescedSiteMetadataCount.get();
     }
 
+    long droppedP25FrequencyEvidenceCount()
+    {
+        return mDroppedP25FrequencyEvidenceCount.get();
+    }
+
+    int pendingP25FrequencyEvidenceCount()
+    {
+        return mP25FrequencyEvidenceIngress.size();
+    }
+
+    private void registerP25FrequencyEvidence()
+    {
+        synchronized(mP25FrequencyEvidenceRegistrationLock)
+        {
+            if(!mP25FrequencyEvidenceRegistered && mRunning && !mMetadataWorkerShutdown)
+            {
+                MyEventBus.getGlobalEventBus().register(this);
+                mP25FrequencyEvidenceRegistered = true;
+            }
+        }
+    }
+
+    private void unregisterP25FrequencyEvidence()
+    {
+        synchronized(mP25FrequencyEvidenceRegistrationLock)
+        {
+            if(mP25FrequencyEvidenceRegistered)
+            {
+                MyEventBus.getGlobalEventBus().unregister(this);
+                mP25FrequencyEvidenceRegistered = false;
+            }
+        }
+    }
+
     private void runMetadataWorker()
     {
         while(!mMetadataWorkerShutdown)
         {
+            prepareP25FrequencyEvidenceIngress();
+            boolean processedEvidence = false;
+
+            for(int drained = 0; drained < MAXIMUM_P25_FREQUENCY_EVIDENCE_DRAIN_PER_RUN; drained++)
+            {
+                if(!processNextP25FrequencyEvidence())
+                {
+                    break;
+                }
+
+                processedEvidence = true;
+            }
+
             SiteMetadataEvent event = pollPendingSiteMetadata();
 
-            if(event == null)
+            if(event == null && !processedEvidence)
             {
                 LockSupport.parkNanos(this, TimeUnit.SECONDS.toNanos(1));
             }
-            else if(mRunning)
+            else if(mRunning && event != null)
             {
                 try
                 {
@@ -522,6 +673,69 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                         safeMessage(throwable));
                 }
             }
+        }
+    }
+
+    private boolean processNextP25FrequencyEvidence()
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+        Object event = ingress.poll();
+
+        if(event == null)
+        {
+            return false;
+        }
+
+        prepareP25FrequencyEvidenceIngress();
+
+        if(isCurrentP25EvidenceIngress(ingress))
+        {
+            try
+            {
+                processP25FrequencyEvidence(event);
+            }
+            catch(Throwable throwable)
+            {
+                if(throwable instanceof Error error)
+                {
+                    throw error;
+                }
+
+                mLog.warn("RadioResolve v3 metadata worker discarded invalid P25 frequency evidence: {}",
+                    safeMessage(throwable));
+            }
+        }
+
+        return true;
+    }
+
+    private void prepareP25FrequencyEvidenceIngress()
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+
+        if(mWorkerP25FrequencyEvidenceIngress != ingress)
+        {
+            mP25FrequencyEvidenceTracker.clear();
+            mWorkerP25FrequencyEvidenceIngress = ingress;
+        }
+    }
+
+    private boolean isCurrentP25EvidenceIngress(BoundedMpscReferenceQueue<Object> ingress)
+    {
+        return mRunning && mP25FrequencyEvidenceEnabled && !mMetadataWorkerShutdown &&
+            ingress == mP25FrequencyEvidenceIngress;
+    }
+
+    /** All confirmation, formatting, map access, and pruning remain confined to the metadata worker. */
+    void processP25FrequencyEvidence(Object event)
+    {
+        if(event instanceof P25GrantObservationEvent grant)
+        {
+            mP25FrequencyEvidenceTracker.observe(grant);
+        }
+        else if(event instanceof P25TrafficChannelConfirmationEvent confirmation)
+        {
+            mP25FrequencyEvidenceTracker.confirm(confirmation);
         }
     }
 
@@ -1100,11 +1314,13 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     }
 
     private void sendSiteMetadata(SiteMetadataEvent event, String identityKey, String hash, long observedAt,
-                                  RadioResolveClockSynchronizer.ClockProof clockProof)
+                                  RadioResolveClockSynchronizer.ClockProof clockProof,
+                                  List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
     {
         try
         {
-            JsonObject payload = createSiteMetadataPayload(event, observedAt, clockProof.offsetMilliseconds());
+            JsonObject payload = createSiteMetadataPayload(event, observedAt, clockProof.offsetMilliseconds(),
+                frequencyEvidence);
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(createUri(getBroadcastConfiguration().getHost(), METADATA_PATH))
                 .timeout(Duration.ofSeconds(10))
@@ -1113,6 +1329,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 .header(HttpHeaders.USER_AGENT, AGENT_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
                 .build();
+
             HttpResponse<Void> response = mHttpClient.send(request, HttpResponse.BodyHandlers.discarding());
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
@@ -1210,6 +1427,19 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
                                                 long serverClockOffsetMilliseconds)
     {
+        return createSiteMetadataPayload(event, observedAt, serverClockOffsetMilliseconds, List.of());
+    }
+
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+        return createSiteMetadataPayload(event, observedAt, 0L, frequencyEvidence);
+    }
+
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
+                                                long serverClockOffsetMilliseconds,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
         JsonObject root = new JsonObject();
         root.addProperty("schema_version", 3);
@@ -1234,9 +1464,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             modes.addProperty("site", "merge");
         }
 
-        addMergeObservation(root, modes, "channels", snapshot.channels().stream()
-            .map(channel -> metadataChannel(channel, observedAt, serverClockOffsetMilliseconds))
-            .filter(java.util.Objects::nonNull).toList());
+        addMergeObservation(root, modes, "channels", metadataChannels(snapshot.channels(), frequencyEvidence,
+            observedAt, serverClockOffsetMilliseconds));
         Integer servingSystem = snapshot.network() != null ? snapshot.network().system() : null;
         addMergeObservation(root, modes, "neighbors", snapshot.neighborSites().stream()
             .map(neighbor -> metadataNeighbor(neighbor, servingSystem, observedAt,
@@ -1272,6 +1501,48 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         return root;
     }
 
+    /**
+     * Preserves the stable snapshot order and then appends grant-derived logical channels in deterministic order.
+     * The native channel descriptor is the canonical wire identity: two descriptors sharing one physical carrier
+     * remain separate observations, while repeated evidence for one descriptor contributes its strongest access mode.
+     */
+    private static List<MetadataChannel> metadataChannels(List<P25NetworkConfigurationSnapshot.Channel> channels,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence, long rootObservedAt,
+        long serverClockOffsetMilliseconds)
+    {
+        Map<String,MetadataChannel> byDescriptor = new LinkedHashMap<>();
+
+        List<P25NetworkConfigurationSnapshot.Channel> snapshotChannels = channels != null ? channels : List.of();
+
+        for(P25NetworkConfigurationSnapshot.Channel channel: snapshotChannels)
+        {
+            mergeMetadataChannel(byDescriptor,
+                metadataChannel(channel, rootObservedAt, serverClockOffsetMilliseconds));
+        }
+
+        if(frequencyEvidence != null && !frequencyEvidence.isEmpty())
+        {
+            frequencyEvidence.stream()
+                .map(evidence -> metadataChannel(evidence, rootObservedAt, serverClockOffsetMilliseconds))
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparing(MetadataChannel::channelDescriptor)
+                    .thenComparing(MetadataChannel::downlinkFrequencyHz)
+                    .thenComparing(MetadataChannel::role)
+                    .thenComparing(MetadataChannel::observedAtMs))
+                .forEach(channel -> mergeMetadataChannel(byDescriptor, channel));
+        }
+
+        return List.copyOf(byDescriptor.values());
+    }
+
+    private static void mergeMetadataChannel(Map<String,MetadataChannel> byDescriptor, MetadataChannel incoming)
+    {
+        if(incoming != null)
+        {
+            byDescriptor.merge(incoming.channelDescriptor(), incoming, MetadataChannel::merge);
+        }
+    }
+
     private static void addMergeObservation(JsonObject root, JsonObject modes, String name, List<?> observations)
     {
         if(observations != null && !observations.isEmpty())
@@ -1303,6 +1574,14 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             positive(channel.uplink()), channel.tdma(), validTimeslots(channel.timeslots()),
             boundedText(channel.callsign(), 32), adjustedObservationTime(channel.observedAtMs(),
                 serverClockOffsetMilliseconds));
+    }
+
+    private static MetadataChannel metadataChannel(RadioResolveP25FrequencyEvidenceTracker.Evidence evidence,
+                                                    long rootObservedAt, long serverClockOffsetMilliseconds)
+    {
+        return evidence != null ? metadataChannel(new P25NetworkConfigurationSnapshot.Channel("traffic",
+            evidence.channelDescriptor(), evidence.frequencyHertz(), null, true, 2, null, evidence.observedAtMs()),
+            rootObservedAt, serverClockOffsetMilliseconds) : null;
     }
 
     private static MetadataNeighbor metadataNeighbor(P25NetworkConfigurationSnapshot.NeighborSite neighbor,
@@ -1399,6 +1678,31 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     private static Integer validTimeslots(Integer value)
     {
         return inRange(value, 1, 8) ? value : null;
+    }
+
+    private static <T> T firstNonNull(T first, T second)
+    {
+        return first != null ? first : second;
+    }
+
+    private static Boolean strongestBoolean(Boolean first, Boolean second)
+    {
+        if(Boolean.TRUE.equals(first) || Boolean.TRUE.equals(second))
+        {
+            return true;
+        }
+
+        return first != null || second != null ? false : null;
+    }
+
+    private static Integer maximum(Integer first, Integer second)
+    {
+        return first == null ? second : second == null ? first : Math.max(first, second);
+    }
+
+    private static Long maximum(Long first, Long second)
+    {
+        return first == null ? second : second == null ? first : Math.max(first, second);
     }
 
     private static boolean inRange(Integer value, int minimum, int maximum)
@@ -1513,7 +1817,8 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             identity.site() : "unknown";
     }
 
-    private static String hash(P25NetworkConfigurationSnapshot snapshot)
+    static String hash(P25NetworkConfigurationSnapshot snapshot,
+                       List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
     {
         try
         {
@@ -1523,7 +1828,9 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
                 snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.talkerAliases(),
                 snapshot.siteStatus() != null ? snapshot.siteStatus().withoutVolatileTiming() : null,
                 snapshot.foreignSystemBands(), snapshot.activePatchesObservedAtMs());
-            byte[] value = digest.digest(RadioResolveJson.GSON.toJson(stable).getBytes(StandardCharsets.UTF_8));
+            MetadataHashInput input = new MetadataHashInput(stable,
+                frequencyEvidence != null ? List.copyOf(frequencyEvidence) : List.of());
+            byte[] value = digest.digest(RadioResolveJson.GSON.toJson(input).getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder(value.length * 2);
             for(byte item : value)
             {
@@ -1731,10 +2038,22 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     {
     }
 
+    private record MetadataHashInput(P25NetworkConfigurationSnapshot snapshot,
+                                     List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+    }
+
     private record MetadataChannel(String role, String channelDescriptor, Long downlinkFrequencyHz,
                                    Long uplinkFrequencyHz, Boolean tdma, Integer timeslots, String callsign,
                                    Long observedAtMs)
     {
+        private MetadataChannel merge(MetadataChannel other)
+        {
+            return new MetadataChannel(role, channelDescriptor, firstNonNull(downlinkFrequencyHz,
+                other.downlinkFrequencyHz), firstNonNull(uplinkFrequencyHz, other.uplinkFrequencyHz),
+                strongestBoolean(tdma, other.tdma), maximum(timeslots, other.timeslots),
+                firstNonNull(callsign, other.callsign), maximum(observedAtMs, other.observedAtMs));
+        }
     }
 
     private record MetadataNeighbor(Integer systemId, Integer nac, Integer rfssId, Integer siteId, Integer lra,

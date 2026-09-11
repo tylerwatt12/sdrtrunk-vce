@@ -26,13 +26,14 @@ import java.util.List;
 
 /**
  * Immutable facts captured when a control-channel grant or grant update is decoded. The live channel, channel
- * descriptor and mutable identifier collection must not cross the asynchronous statistics boundary.
+ * descriptor and mutable identifier collection must not cross an asynchronous observer boundary.
  */
 public record P25GrantObservationEvent(String configurationId, DecoderType decoderType,
                                        DecodeEventType eventType, long timestamp, boolean continuation,
                                        boolean confirmedBand, List<Identifier> identifiers, Long frequencyHertz,
                                        Integer channelBand, Integer channelNumber, Integer timeslot, boolean tdma,
-                                       String radioSystemKey)
+                                       String radioSystemKey, long processingIncarnation,
+                                       long siteEvidenceTuningGeneration)
 {
     public P25GrantObservationEvent
     {
@@ -45,9 +46,22 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
         Protocol protocol = decoderType == DecoderType.P25_PHASE2 ? Protocol.APCO25_PHASE2 : Protocol.APCO25;
         radioSystemKey = radioSystemKey != null ? RadioSystemKey.nativeFor(protocol,
             TrunkedIdentityDomain.STANDARD, radioSystemKey) : null;
+        processingIncarnation = Math.max(0L, processingIncarnation);
+        siteEvidenceTuningGeneration = Math.max(0L, siteEvidenceTuningGeneration);
     }
 
-    /** Captures every value used by statistics before this event is posted. */
+    /** Compatibility constructor for callers that do not capture a receiver generation. */
+    public P25GrantObservationEvent(String configurationId, DecoderType decoderType,
+                                    DecodeEventType eventType, long timestamp, boolean continuation,
+                                    boolean confirmedBand, List<Identifier> identifiers, Long frequencyHertz,
+                                    Integer channelBand, Integer channelNumber, Integer timeslot, boolean tdma,
+                                    String radioSystemKey)
+    {
+        this(configurationId, decoderType, eventType, timestamp, continuation, confirmedBand, identifiers,
+            frequencyHertz, channelBand, channelNumber, timeslot, tdma, radioSystemKey, 0L, 0L);
+    }
+
+    /** Captures every value used by asynchronous observers before this event is posted. */
     public P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
                                     IdentifierCollection identifiers, DecodeEventType eventType, long timestamp,
                                     boolean continuation, boolean confirmedBand)
@@ -55,7 +69,8 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
         this(ChannelConfigurationKey.configured(channel), decoderType(channel), eventType, timestamp, continuation,
             confirmedBand, identifierList(identifiers), frequency(channelDescriptor), band(channelDescriptor),
             channelNumber(channelDescriptor), timeslot(channelDescriptor, identifiers), isTdma(channelDescriptor),
-            RadioSystemKey.p25(channel != null ? channel.getP25SiteIdentity() : null));
+            RadioSystemKey.p25(channel != null ? channel.getP25SiteIdentity() : null),
+            processingIncarnation(channel), siteEvidenceTuningGeneration(channel));
     }
 
     public P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
@@ -101,6 +116,16 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
     {
         return channel != null && channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
+    }
+
+    private static long processingIncarnation(Channel channel)
+    {
+        return channel != null ? channel.getSiteEvidenceProcessingIncarnation() : 0L;
+    }
+
+    private static long siteEvidenceTuningGeneration(Channel channel)
+    {
+        return channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L;
     }
 
     private static List<Identifier> identifierList(IdentifierCollection identifiers)

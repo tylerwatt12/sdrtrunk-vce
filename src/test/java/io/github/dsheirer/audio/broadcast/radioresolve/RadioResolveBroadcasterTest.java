@@ -16,15 +16,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.common.eventbus.AllowConcurrentEvents;
+import com.google.common.eventbus.Subscribe;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import io.github.dsheirer.audio.broadcast.AudioRecording;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
@@ -304,6 +310,83 @@ class RadioResolveBroadcasterTest
     }
 
     @Test
+    void metadataKeepsDistinctLogicalDescriptorsOnOnePhysicalFrequency()
+    {
+        long observedAt = 1_700_000_010_000L;
+        long sharedFrequency = RadioResolveTestFixtures.FREQUENCY;
+        P25NetworkConfigurationSnapshot snapshot = withChannels(List.of(
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "2-493", sharedFrequency,
+                809_087_500L, false, 1, null, observedAt - 3_000L),
+            new P25NetworkConfigurationSnapshot.Channel("secondary_control", "2-491", sharedFrequency - 12_500L,
+                809_075_000L, false, 1, null, observedAt - 4_000L)));
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence = List.of(
+            new RadioResolveP25FrequencyEvidenceTracker.Evidence("10-702",
+                sharedFrequency + 12_500L, observedAt - 1_000L),
+            new RadioResolveP25FrequencyEvidenceTracker.Evidence("10-700", sharedFrequency,
+                observedAt - 2_000L));
+
+        JsonObject payload = RadioResolveBroadcaster.createSiteMetadataPayload(new SiteMetadataEvent(
+            new Channel("Control"), snapshot, observedAt, sharedFrequency), observedAt, frequencyEvidence);
+        var channels = payload.getAsJsonArray("channels");
+
+        assertEquals(4, channels.size());
+        assertEquals("2-493", channels.get(0).getAsJsonObject().get("channel_descriptor").getAsString());
+        assertEquals("2-491", channels.get(1).getAsJsonObject().get("channel_descriptor").getAsString(),
+            "the stable network snapshot keeps its existing order");
+        assertEquals("10-700", channels.get(2).getAsJsonObject().get("channel_descriptor").getAsString());
+        assertEquals("10-702", channels.get(3).getAsJsonObject().get("channel_descriptor").getAsString(),
+            "unmatched frequency evidence is appended in deterministic descriptor order");
+        assertEquals(sharedFrequency,
+            channels.get(0).getAsJsonObject().get("downlink_frequency_hz").getAsLong());
+        assertEquals(sharedFrequency,
+            channels.get(2).getAsJsonObject().get("downlink_frequency_hz").getAsLong());
+        assertFalse(channels.get(0).getAsJsonObject().get("tdma").getAsBoolean());
+        assertEquals(1, channels.get(0).getAsJsonObject().get("timeslots").getAsInt());
+        assertTrue(channels.get(2).getAsJsonObject().get("tdma").getAsBoolean());
+        assertEquals(2, channels.get(2).getAsJsonObject().get("timeslots").getAsInt());
+    }
+
+    @Test
+    void metadataMergesAccessModeEvidenceOnlyForTheExactDescriptor()
+    {
+        long observedAt = 1_700_000_010_000L;
+        long frequency = RadioResolveTestFixtures.FREQUENCY;
+        P25NetworkConfigurationSnapshot snapshot = withChannels(List.of(
+            new P25NetworkConfigurationSnapshot.Channel("primary_control", "10-700", frequency,
+                809_087_500L, false, 1, "WXYZ", observedAt - 9_000L)));
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence = List.of(
+            new RadioResolveP25FrequencyEvidenceTracker.Evidence("10-700", frequency,
+                observedAt - 1_000L));
+
+        JsonObject payload = RadioResolveBroadcaster.createSiteMetadataPayload(new SiteMetadataEvent(
+            new Channel("Control"), snapshot, observedAt, frequency), observedAt, frequencyEvidence);
+        var channels = payload.getAsJsonArray("channels");
+        JsonObject channel = channels.get(0).getAsJsonObject();
+
+        assertEquals(1, channels.size());
+        assertEquals("primary_control", channel.get("role").getAsString());
+        assertEquals("10-700", channel.get("channel_descriptor").getAsString());
+        assertEquals(809_087_500L, channel.get("uplink_frequency_hz").getAsLong());
+        assertEquals("WXYZ", channel.get("callsign").getAsString());
+        assertTrue(channel.get("tdma").getAsBoolean());
+        assertEquals(2, channel.get("timeslots").getAsInt());
+        assertEquals(observedAt - 1_000L, channel.get("observed_at_ms").getAsLong());
+    }
+
+    @Test
+    void grantDerivedFrequencyEvidenceParticipatesInMetadataChangeDetection()
+    {
+        long observedAt = 1_700_000_010_000L;
+        P25NetworkConfigurationSnapshot snapshot = completeSiteSnapshot();
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence = List.of(
+            new RadioResolveP25FrequencyEvidenceTracker.Evidence("10-700",
+                RadioResolveTestFixtures.FREQUENCY, observedAt - 1_000L));
+
+        assertNotEquals(RadioResolveBroadcaster.hash(snapshot, List.of()),
+            RadioResolveBroadcaster.hash(snapshot, frequencyEvidence));
+    }
+
+    @Test
     void representativeMetadataFixtureMatchesWireContract() throws Exception
     {
         JsonObject actual = RadioResolveBroadcaster.createSiteMetadataPayload(new SiteMetadataEvent(
@@ -467,6 +550,177 @@ class RadioResolveBroadcasterTest
             "one busy receiver must not overwrite another receiver's latest observation");
         broadcaster.stop();
         broadcaster.dispose();
+    }
+
+    @Test
+    void p25EvidenceSubscribersPermitConcurrentNonBlockingDispatch() throws Exception
+    {
+        var grantSubscriber = RadioResolveBroadcaster.class.getMethod("receiveP25GrantObservation",
+            P25GrantObservationEvent.class);
+        var confirmationSubscriber = RadioResolveBroadcaster.class.getMethod("receiveP25TrafficChannelConfirmation",
+            P25TrafficChannelConfirmationEvent.class);
+
+        assertTrue(grantSubscriber.isAnnotationPresent(Subscribe.class));
+        assertTrue(grantSubscriber.isAnnotationPresent(AllowConcurrentEvents.class));
+        assertTrue(confirmationSubscriber.isAnnotationPresent(Subscribe.class));
+        assertTrue(confirmationSubscriber.isAnnotationPresent(AllowConcurrentEvents.class));
+    }
+
+    @Test
+    void blockedP25EvidenceConsumerUsesBoundedDropInsteadOfCallerRuns(@TempDir Path directory) throws Exception
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setMode(RadioResolveConfiguration.Mode.METADATA_ONLY);
+        BlockingP25EvidenceBroadcaster broadcaster = new BlockingP25EvidenceBroadcaster(configuration,
+            directory.resolve("spool-evidence-saturation"));
+        P25GrantObservationEvent grant = p25FrequencyEvidenceGrant(1_000L);
+        String producerThread = Thread.currentThread().getName();
+
+        try
+        {
+            broadcaster.start();
+            broadcaster.receiveP25GrantObservation(grant);
+            assertTrue(broadcaster.consumerEntered.await(2, TimeUnit.SECONDS));
+
+            assertTimeout(Duration.ofSeconds(1), () ->
+            {
+                for(int index = 0; index < RadioResolveBroadcaster.P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY + 64;
+                    index++)
+                {
+                    broadcaster.receiveP25GrantObservation(grant);
+                }
+            });
+
+            assertEquals(RadioResolveBroadcaster.P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY,
+                broadcaster.pendingP25FrequencyEvidenceCount());
+            assertTrue(broadcaster.droppedP25FrequencyEvidenceCount() > 0L);
+            assertEquals(1L, broadcaster.processedCount.get(), "a full handoff must never use caller-runs");
+            assertNotEquals(producerThread, broadcaster.consumerThread);
+
+            broadcaster.stop();
+            broadcaster.start();
+            assertEquals(0, broadcaster.pendingP25FrequencyEvidenceCount(),
+                "a restarted session must detach its saturated queue");
+            broadcaster.receiveP25GrantObservation(p25FrequencyEvidenceGrant(2_000L));
+            assertEquals(1, broadcaster.pendingP25FrequencyEvidenceCount(),
+                "new-session evidence must not wait behind stale saturated evidence");
+            broadcaster.releaseConsumer.countDown();
+            assertTrue(broadcaster.nextProcessed.await(2, TimeUnit.SECONDS));
+            assertEquals(2L, broadcaster.processedCount.get(),
+                "stale observations from the stopped session must not rebind");
+        }
+        finally
+        {
+            broadcaster.releaseConsumer.countDown();
+            broadcaster.stop();
+            broadcaster.dispose();
+        }
+    }
+
+    @Test
+    void inFlightP25EvidenceProducerCannotRebindToRestartedSession(@TempDir Path directory) throws Exception
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setMode(RadioResolveConfiguration.Mode.METADATA_ONLY);
+        CountDownLatch ingressSnapshotted = new CountDownLatch(1);
+        CountDownLatch releaseProducer = new CountDownLatch(1);
+        Runnable afterIngressSnapshot = () ->
+        {
+            ingressSnapshotted.countDown();
+
+            try
+            {
+                releaseProducer.await(2, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        };
+        RecordingP25EvidenceBroadcaster broadcaster = new RecordingP25EvidenceBroadcaster(configuration,
+            directory.resolve("spool-evidence-in-flight"), 1, afterIngressSnapshot);
+        Thread producer = new Thread(() ->
+            broadcaster.receiveP25GrantObservation(p25FrequencyEvidenceGrant(1_000L)),
+            "p25-evidence-producer-test");
+
+        try
+        {
+            broadcaster.start();
+            producer.start();
+            assertTrue(ingressSnapshotted.await(2, TimeUnit.SECONDS));
+
+            broadcaster.stop();
+            broadcaster.start();
+            releaseProducer.countDown();
+            producer.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertFalse(producer.isAlive());
+            assertEquals(0, broadcaster.pendingP25FrequencyEvidenceCount(),
+                "a pre-stop producer must retain its detached ingress instead of rebinding to the new session");
+            assertFalse(broadcaster.processed.await(200, TimeUnit.MILLISECONDS));
+            assertEquals(0L, broadcaster.processedCount.get());
+        }
+        finally
+        {
+            releaseProducer.countDown();
+            producer.join(TimeUnit.SECONDS.toMillis(2));
+            broadcaster.stop();
+            broadcaster.dispose();
+        }
+    }
+
+    @Test
+    void callsOnlyModeDoesNotCollectP25MetadataEvidence(@TempDir Path directory)
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
+        RecordingP25EvidenceBroadcaster broadcaster = new RecordingP25EvidenceBroadcaster(configuration,
+            directory.resolve("spool-evidence-calls-only"), 1);
+
+        try
+        {
+            broadcaster.start();
+            broadcaster.receiveP25GrantObservation(p25FrequencyEvidenceGrant(1_000L));
+            assertEquals(0, broadcaster.pendingP25FrequencyEvidenceCount());
+            assertEquals(0L, broadcaster.processedCount.get());
+        }
+        finally
+        {
+            broadcaster.stop();
+            broadcaster.dispose();
+        }
+    }
+
+    @Test
+    void globalGrantDispatchFeedsMultipleBroadcastersOffTheProducerThread(@TempDir Path directory) throws Exception
+    {
+        RadioResolveConfiguration configuration = new RadioResolveConfiguration();
+        configuration.setMode(RadioResolveConfiguration.Mode.METADATA_ONLY);
+        BlockingP25EvidenceBroadcaster first = new BlockingP25EvidenceBroadcaster(configuration,
+            directory.resolve("spool-evidence-first"));
+        RecordingP25EvidenceBroadcaster second = new RecordingP25EvidenceBroadcaster(configuration,
+            directory.resolve("spool-evidence-second"), 1);
+        String producerThread = Thread.currentThread().getName();
+
+        try
+        {
+            first.start();
+            second.start();
+            MyEventBus.getGlobalEventBus().post(p25FrequencyEvidenceGrant(1_000L));
+
+            assertTrue(first.consumerEntered.await(2, TimeUnit.SECONDS));
+            assertTrue(second.processed.await(2, TimeUnit.SECONDS));
+            assertNotEquals(producerThread, first.consumerThread);
+            assertNotEquals(producerThread, second.consumerThread);
+        }
+        finally
+        {
+            first.releaseConsumer.countDown();
+            first.stop();
+            second.stop();
+            first.dispose();
+            second.dispose();
+        }
     }
 
     @Test
@@ -1063,6 +1317,22 @@ class RadioResolveBroadcasterTest
             1_700_000_009_000L);
     }
 
+    private static P25NetworkConfigurationSnapshot withChannels(
+        List<P25NetworkConfigurationSnapshot.Channel> channels)
+    {
+        P25NetworkConfigurationSnapshot source = completeSiteSnapshot();
+        return new P25NetworkConfigurationSnapshot(source.decoder(), source.network(), source.currentSite(), channels,
+            source.neighborSites(), source.frequencyBands(), source.patchGroups(), source.talkerAliases(),
+            source.siteStatus(), source.foreignSystemBands(), source.activePatchesObservedAtMs());
+    }
+
+    private static P25GrantObservationEvent p25FrequencyEvidenceGrant(long timestamp)
+    {
+        return new P25GrantObservationEvent("00000000-0000-0000-0000-000000000401",
+            DecoderType.P25_PHASE2, null, timestamp, false, true, List.of(),
+            RadioResolveTestFixtures.FREQUENCY, 10, 700, 1, true, null, 17L, 3L);
+    }
+
     private static class BlockingMetadataBroadcaster extends RadioResolveBroadcaster
     {
         private final CountDownLatch consumerEntered = new CountDownLatch(1);
@@ -1104,6 +1374,75 @@ class RadioResolveBroadcasterTest
             {
                 subsequentProcessed.countDown();
             }
+        }
+    }
+
+    private static class BlockingP25EvidenceBroadcaster extends RadioResolveBroadcaster
+    {
+        private final CountDownLatch consumerEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseConsumer = new CountDownLatch(1);
+        private final CountDownLatch nextProcessed = new CountDownLatch(1);
+        private final AtomicLong processedCount = new AtomicLong();
+        private volatile String consumerThread;
+
+        private BlockingP25EvidenceBroadcaster(RadioResolveConfiguration configuration, Path spool)
+        {
+            super(configuration, null, null, null, spool);
+        }
+
+        @Override
+        void processP25FrequencyEvidence(Object event)
+        {
+            consumerThread = Thread.currentThread().getName();
+            long count = processedCount.incrementAndGet();
+
+            if(count == 1L)
+            {
+                consumerEntered.countDown();
+
+                try
+                {
+                    releaseConsumer.await(2, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            else
+            {
+                nextProcessed.countDown();
+            }
+        }
+    }
+
+    private static class RecordingP25EvidenceBroadcaster extends RadioResolveBroadcaster
+    {
+        private final CountDownLatch processed;
+        private final AtomicLong processedCount = new AtomicLong();
+        private volatile String consumerThread;
+
+        private RecordingP25EvidenceBroadcaster(RadioResolveConfiguration configuration, Path spool,
+                                                int expectedObservations)
+        {
+            super(configuration, null, null, null, spool);
+            processed = new CountDownLatch(expectedObservations);
+        }
+
+        private RecordingP25EvidenceBroadcaster(RadioResolveConfiguration configuration, Path spool,
+                                                int expectedObservations, Runnable afterIngressSnapshot)
+        {
+            super(configuration, null, null, null, spool, new RadioResolveClockSynchronizer(),
+                afterIngressSnapshot);
+            processed = new CountDownLatch(expectedObservations);
+        }
+
+        @Override
+        void processP25FrequencyEvidence(Object event)
+        {
+            consumerThread = Thread.currentThread().getName();
+            processedCount.incrementAndGet();
+            processed.countDown();
         }
     }
 
