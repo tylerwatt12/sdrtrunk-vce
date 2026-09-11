@@ -78,6 +78,18 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 - Do not make dashboard requests scan detailed event history. Dashboards and directory pages must use summaries and
   buckets only.
 
+### Alias Editor large-list indexes
+
+The web Alias Editor queries at most 100,000 candidates from one selected Alias List, either in stable Alias ID order
+for an in-memory activity snapshot or in case-insensitive name order for configuration browsing. The
+`idx_alias_list_id(alias_list_id, id)` and
+`idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` indexes serve those two concrete queries.
+They add no rows per hour and no retained activity data; each contains one entry per administrator-owned Alias and is
+deleted or rebuilt with that Alias. The cost is two additional B-trees and their write amplification when an Alias List
+is saved. Existing partial matcher indexes cannot serve either whole-list order. At representative volume,
+`EXPLAIN QUERY PLAN` reports `SEARCH alias USING COVERING INDEX idx_alias_list_id (alias_list_id=?)` for snapshot input
+and `SEARCH alias USING INDEX idx_alias_list_name_sort (alias_list_id=?)` for name browsing, without a temporary sort.
+
 ## Verification Required
 
 Schema and query changes must include tests that cover:

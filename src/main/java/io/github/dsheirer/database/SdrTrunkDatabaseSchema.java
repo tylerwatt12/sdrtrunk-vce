@@ -506,6 +506,15 @@ public final class SdrTrunkDatabaseSchema
               )
             """)
     );
+    private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_id", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_id
+            ON alias(alias_list_id, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_name_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_name_sort
+            ON alias(alias_list_id, lower(coalesce(name, '')), id)
+            """));
     private static final List<SqliteSchemaValidator.Definition> EXACT_CONFIGURATION_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "configuration_channel",
             CONFIGURATION_CHANNEL_TABLE_SQL),
@@ -526,6 +535,8 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_talkgroup_range",
         "idx_alias_radio_value",
         "idx_alias_radio_range",
+        "idx_alias_list_id",
+        "idx_alias_list_name_sort",
         "idx_alias_broadcast_configuration",
         "idx_scan_list_one_default",
         "idx_alias_scan_list_by_list",
@@ -598,6 +609,10 @@ public final class SdrTrunkDatabaseSchema
             {
                 statement.executeUpdate(definition.sql());
             }
+            if(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql))
+            {
+                createAliasCatalogIndexes(connection);
+            }
             statement.executeUpdate("""
                 INSERT INTO scan_list (sort_order, name, description, published, is_default)
                 SELECT 0, 'Default', NULL, 1, 1
@@ -616,6 +631,18 @@ public final class SdrTrunkDatabaseSchema
                 "ON alias_broadcast_channel(broadcast_configuration_id)");
         }
 
+    }
+
+    /** Creates the current bounded Alias Editor browse and name-sort indexes. */
+    public static void createAliasCatalogIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
+        }
     }
 
     /** Creates the authoritative saved-channel table. Used by fresh databases and the adjacent staged migrator. */
@@ -781,6 +808,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS, List.of());
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CORE_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);

@@ -29,6 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Read-only alias configuration catalog with compact statistics enrichment.  Configuration always comes from the
@@ -43,6 +44,10 @@ final class StatsAliasCatalog
     static final int MAX_EVIDENCE_ROWS = 10_000;
     static final int MAX_MATCHING_ALIAS_IDS = StatsCsvExport.MAX_ROWS;
     static final int MAX_METRIC_QUERY_ALIASES = MAX_MATCHING_ALIAS_IDS;
+    static final int MAX_ACTIVITY_SNAPSHOT_ALIASES = 100_000;
+    static final int MAX_ACTIVITY_SNAPSHOT_EVIDENCE_ROWS = 500_000;
+    private static final int ACTIVITY_SNAPSHOT_QUERY_ROWS = 2_000;
+    private static final long ACTIVITY_SNAPSHOT_TTL_MILLIS = 30_000;
     static final int MAX_TARGET_ALIAS_LISTS = 256;
     static final int MAX_TARGET_RANGES = 500;
     private static final int MAX_METRIC_ENRICH_BATCH_ALIASES =
@@ -129,10 +134,18 @@ final class StatsAliasCatalog
         "summary.unknown_count";
 
     private final StatsAliasResolver mResolver;
+    private final AtomicLong mActivitySnapshotGeneration = new AtomicLong();
+    private volatile AliasActivitySnapshot mActivitySnapshot;
 
     StatsAliasCatalog(StatsAliasResolver resolver)
     {
         mResolver = resolver;
+    }
+
+    void invalidateActivitySnapshots()
+    {
+        mActivitySnapshotGeneration.incrementAndGet();
+        mActivitySnapshot = null;
     }
 
     Map<String,Object> aliasLists(Connection connection, StatsRequest request) throws SQLException
@@ -176,6 +189,13 @@ final class StatsAliasCatalog
 
         if(metricSort || hasMetricFilters(request))
         {
+            Long aliasListId = numericAliasListId(request);
+
+            if(aliasListId != null)
+            {
+                return aliasesFromActivitySnapshot(connection, request, aliasListId);
+            }
+
             List<Map<String,Object>> allRows = queryAliasRows(connection, request,
                 MAX_METRIC_QUERY_ALIASES + 1, 0, null, false, metricSort);
 
@@ -224,6 +244,63 @@ final class StatsAliasCatalog
         return response;
     }
 
+    private Map<String,Object> aliasesFromActivitySnapshot(Connection connection, StatsRequest request,
+                                                            long aliasListId) throws SQLException
+    {
+        AliasActivitySnapshot snapshot = activitySnapshot(connection, aliasListId);
+        boolean metricSort = metricSortField(request) != null;
+        List<Long> candidateIds = queryAliasIds(connection, request, MAX_ACTIVITY_SNAPSHOT_ALIASES + 1,
+            !metricSort);
+
+        if(candidateIds.size() > MAX_ACTIVITY_SNAPSHOT_ALIASES)
+        {
+            throw new StatsApiException(413, "alias_activity_too_large",
+                "Activity view exceeds the " + MAX_ACTIVITY_SNAPSHOT_ALIASES + " alias limit");
+        }
+
+        applySnapshotMetricFilters(candidateIds, snapshot, request);
+
+        if(metricSort)
+        {
+            sortSnapshotAliasIds(candidateIds, snapshot, request);
+        }
+
+        int from = Math.min(request.offset(), candidateIds.size());
+        int to = Math.min(from + request.limit(), candidateIds.size());
+        boolean hasMore = to < candidateIds.size();
+        List<Long> pageIds = candidateIds.subList(from, to);
+        List<Map<String,Object>> rows = queryAliasRowsByIds(connection, pageIds);
+        enrich(connection, rows, false);
+        applyConfigurationDiagnostics(connection, rows);
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("rows", rows);
+        response.put("limit", request.limit());
+        response.put("offset", request.offset());
+        response.put("has_more", hasMore);
+        response.put("next_offset", hasMore ? request.offset() + request.limit() : null);
+        response.put("activity_snapshot_created_ms", snapshot.createdAtMillis);
+        return response;
+    }
+
+    private static Long numericAliasListId(StatsRequest request)
+    {
+        String list = request.text("list");
+
+        if(list == null || !list.matches("[1-9][0-9]*"))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Long.parseLong(list);
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, "list is invalid");
+        }
+    }
+
     /**
      * Returns every alias identifier matching the catalog filters without applying presentation sorting or paging.
      * Configuration-only selections use a one-column query; activity filters retain the catalog's bounded enrichment
@@ -235,7 +312,7 @@ final class StatsAliasCatalog
 
         if(!metricFilters)
         {
-            List<Long> aliasIds = queryAliasIds(connection, request, MAX_MATCHING_ALIAS_IDS + 1);
+            List<Long> aliasIds = queryAliasIds(connection, request, MAX_MATCHING_ALIAS_IDS + 1, false);
             requireCompleteAliasSelection(aliasIds.size());
             return List.copyOf(aliasIds);
         }
@@ -413,6 +490,90 @@ final class StatsAliasCatalog
         });
     }
 
+    private static void applySnapshotMetricFilters(List<Long> aliasIds, AliasActivitySnapshot snapshot,
+                                                   StatsRequest request)
+    {
+        validateMetricFilters(request);
+        String evidence = request.text("evidence");
+        String use = request.text("use");
+        Long after = optionalTimestamp(request, "last_activity_after");
+        Long before = optionalTimestamp(request, "last_activity_before");
+
+        aliasIds.removeIf(aliasId -> {
+            AliasActivityMetric metric = snapshot.metrics.get(aliasId);
+            if(metric == null)
+            {
+                return true;
+            }
+
+            Long calls = metric.metric("logical_call_count");
+            Long last = metric.lastEvidenceMs;
+            return evidence != null && !evidence.equals(metric.state()) ||
+                "used".equals(use) && !(calls != null && calls > 0) ||
+                "unused".equals(use) && !(calls != null && calls == 0) ||
+                after != null && !(last != null && last >= after) ||
+                before != null && !(last != null && last <= before);
+        });
+    }
+
+    private static void sortSnapshotAliasIds(List<Long> aliasIds, AliasActivitySnapshot snapshot,
+                                             StatsRequest request)
+    {
+        String field = metricSortField(request);
+        boolean descending = request.descending(false);
+        aliasIds.sort((leftId, rightId) -> {
+            Object left = snapshot.metrics.get(leftId).value(field);
+            Object right = snapshot.metrics.get(rightId).value(field);
+
+            if(left == null && right != null)
+            {
+                return 1;
+            }
+            else if(left != null && right == null)
+            {
+                return -1;
+            }
+
+            int comparison = left instanceof Number leftNumber && right instanceof Number rightNumber ?
+                Long.compare(leftNumber.longValue(), rightNumber.longValue()) :
+                String.valueOf(left).compareToIgnoreCase(String.valueOf(right));
+            return comparison != 0 ? descending ? -comparison : comparison : Long.compare(leftId, rightId);
+        });
+    }
+
+    private AliasActivitySnapshot activitySnapshot(Connection connection, long aliasListId) throws SQLException
+    {
+        long now = System.currentTimeMillis();
+        AliasActivitySnapshot current = mActivitySnapshot;
+
+        if(current != null && current.aliasListId == aliasListId && now - current.createdAtMillis <
+            ACTIVITY_SNAPSHOT_TTL_MILLIS)
+        {
+            return current;
+        }
+
+        synchronized(this)
+        {
+            current = mActivitySnapshot;
+            now = System.currentTimeMillis();
+
+            if(current != null && current.aliasListId == aliasListId && now - current.createdAtMillis <
+                ACTIVITY_SNAPSHOT_TTL_MILLIS)
+            {
+                return current;
+            }
+
+            long generation = mActivitySnapshotGeneration.get();
+            AliasActivitySnapshot built = ENRICHMENT_ADMISSION.execute(() ->
+                buildActivitySnapshot(connection, aliasListId));
+            if(generation == mActivitySnapshotGeneration.get())
+            {
+                mActivitySnapshot = built;
+            }
+            return built;
+        }
+    }
+
     private static List<Map<String,Object>> queryAliasRows(Connection connection, StatsRequest request, int limit,
                                                             int offset, Long aliasId,
                                                             boolean includeConfigurationCollections,
@@ -489,7 +650,8 @@ final class StatsAliasCatalog
         return rows;
     }
 
-    private static List<Long> queryAliasIds(Connection connection, StatsRequest request, int limit)
+    private static List<Long> queryAliasIds(Connection connection, StatsRequest request, int limit,
+                                            boolean requestedOrder)
         throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
@@ -500,7 +662,22 @@ final class StatsAliasCatalog
             """);
         List<Object> parameters = new ArrayList<>();
         addFilters(sql, parameters, request);
-        sql.append(" ORDER BY alias.id ASC LIMIT ?");
+        if(requestedOrder)
+        {
+            String sort = SORT_COLUMNS.get(request.sort("name"));
+
+            if(sort == null)
+            {
+                throw new StatsApiException(400, "invalid_parameter", "sort is not supported", "sort");
+            }
+
+            sql.append(" ORDER BY ").append(sort)
+                .append(request.descending(false) ? " DESC" : " ASC").append(", alias.id ASC LIMIT ?");
+        }
+        else
+        {
+            sql.append(" ORDER BY alias.id ASC LIMIT ?");
+        }
         parameters.add(limit);
         List<Long> aliasIds = new ArrayList<>();
 
@@ -521,6 +698,55 @@ final class StatsAliasCatalog
         }
 
         return aliasIds;
+    }
+
+    private static List<Map<String,Object>> queryAliasRowsByIds(Connection connection, List<Long> aliasIds)
+        throws SQLException
+    {
+        if(aliasIds.isEmpty())
+        {
+            return List.of();
+        }
+
+        List<Map<String,Object>> rows = queryRows(connection, """
+            SELECT alias.id AS alias_id, alias.alias_list_id, alias_list.name AS alias_list_name,
+                alias_list.family, alias.name, alias.description, alias.group_name AS `group`, alias.color,
+                alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.matcher_type,
+                CASE
+                    WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
+                    WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                    ELSE 'other'
+                END AS identity_type,
+                alias.protocol, alias.value, alias.min_value, alias.max_value,
+                alias.text_value, alias.numeric_value, alias.tone_sequence,
+                CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
+                CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact
+            FROM alias
+            JOIN alias_list ON alias_list.id = alias.alias_list_id
+            WHERE alias.id IN (%s)
+            ORDER BY alias.id
+            """.formatted(placeholders(aliasIds.size())), aliasIds.toArray());
+        Map<Long,Map<String,Object>> byId = new HashMap<>();
+
+        for(Map<String,Object> row: rows)
+        {
+            normalizeConfigurationRow(row);
+            byId.put(number(row.get("alias_id")), row);
+        }
+
+        List<Map<String,Object>> ordered = new ArrayList<>(aliasIds.size());
+
+        for(Long aliasId: aliasIds)
+        {
+            Map<String,Object> row = byId.get(aliasId);
+            if(row != null)
+            {
+                ordered.add(row);
+            }
+        }
+
+        attachConfigurationCollections(connection, ordered);
+        return ordered;
     }
 
     private static void attachConfigurationCollections(Connection connection, List<Map<String,Object>> aliases)
@@ -1252,6 +1478,351 @@ final class StatsAliasCatalog
         return aliasListId > 0 && source.aliasListIds.contains(aliasListId);
     }
 
+    private AliasActivitySnapshot buildActivitySnapshot(Connection connection, long aliasListId) throws SQLException
+    {
+        Map<Long,Integer> aliasProtocols = new LinkedHashMap<>();
+        Set<Integer> protocols = new LinkedHashSet<>();
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT alias.id, alias.matcher_type, alias.protocol
+            FROM alias
+            WHERE alias.alias_list_id = ?
+            ORDER BY alias.id
+            LIMIT ?
+            """))
+        {
+            statement.setLong(1, aliasListId);
+            statement.setInt(2, MAX_ACTIVITY_SNAPSHOT_ALIASES + 1);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    if(aliasProtocols.size() >= MAX_ACTIVITY_SNAPSHOT_ALIASES)
+                    {
+                        throw new StatsApiException(413, "alias_activity_too_large",
+                            "Activity view exceeds the " + MAX_ACTIVITY_SNAPSHOT_ALIASES + " alias limit");
+                    }
+
+                    String matcher = resultSet.getString("matcher_type");
+                    int protocol = protocolCode(resultSet.getString("protocol"));
+                    boolean supported = protocol > 0 && ("TALKGROUP".equals(matcher) ||
+                        "TALKGROUP_RANGE".equals(matcher) || "RADIO_ID".equals(matcher) ||
+                        "RADIO_ID_RANGE".equals(matcher));
+                    aliasProtocols.put(resultSet.getLong("id"), supported ? protocol : 0);
+                    if(supported)
+                    {
+                        protocols.add(protocol);
+                    }
+                }
+            }
+        }
+
+        IdentityTargets coverageTarget = IdentityTargets.forAliasList(aliasListId, protocols);
+        List<CoverageSource> sources = coverageTarget.isEmpty() ? List.of() :
+            loadCoverageSources(connection, coverageTarget);
+        Map<Integer,SourceAvailability> availability = sourceAvailability(sources);
+        Map<Long,AliasActivityMetric> metrics = new LinkedHashMap<>(Math.max(16, aliasProtocols.size() * 4 / 3));
+
+        for(Map.Entry<Long,Integer> entry: aliasProtocols.entrySet())
+        {
+            metrics.put(entry.getKey(), new AliasActivityMetric(entry.getValue(),
+                availability.get(entry.getValue())));
+        }
+
+        if(!sources.isEmpty())
+        {
+            Map<Long,List<CoverageSource>> systemSources = sourceProjections(sources, true);
+            Map<Long,List<CoverageSource>> channelSources = sourceProjections(sources, false);
+            int[] evidenceRows = {0};
+            applySnapshotTrunkedEvidence(connection, metrics, systemSources, evidenceRows);
+            applySnapshotConventionalEvidence(connection, metrics, channelSources, evidenceRows);
+            applySnapshotRelationships(connection, metrics, systemSources, evidenceRows);
+            applySnapshotAffiliations(connection, metrics, systemSources, evidenceRows);
+        }
+
+        return new AliasActivitySnapshot(aliasListId, System.currentTimeMillis(), Map.copyOf(metrics));
+    }
+
+    private static Map<Integer,SourceAvailability> sourceAvailability(List<CoverageSource> sources)
+    {
+        Map<Integer,SourceAvailability> availability = new HashMap<>();
+
+        for(CoverageSource source: sources)
+        {
+            SourceAvailability current = availability.computeIfAbsent(source.protocolCode,
+                ignored -> new SourceAvailability());
+            current.coverageSourceCount++;
+            current.trunked |= source.trunked;
+            current.p25Trunked |= source.trunked && source.protocolCode == 1;
+        }
+
+        return availability;
+    }
+
+    private void applySnapshotTrunkedEvidence(Connection connection, Map<Long,AliasActivityMetric> metrics,
+                                               Map<Long,List<CoverageSource>> sources, int[] evidenceRows)
+        throws SQLException
+    {
+        if(sources.isEmpty())
+        {
+            return;
+        }
+
+        String sql = """
+            SELECT summary.id AS identity_summary_id, summary.radio_system_id, summary.identity_kind_code,
+                summary.identity_id, summary.identity_id AS canonical_identity_id,
+                summary.home_wacn, summary.home_system_id,
+                summary.first_seen_ms, summary.last_seen_ms, summary.logical_call_count,
+                summary.recorded_output_count AS recorded_logical_call_count,
+                summary.streamed_output_count AS stream_submitted_logical_call_count,
+                summary.encrypted_logical_call_count,
+                summary.grant_count AS grant_observation_count,
+                summary.join_count AS join_observation_count,
+                summary.emergency_count AS emergency_observation_count,
+                summary.register_count AS register_observation_count,
+                summary.logout_count AS logout_observation_count,
+                summary.denial_count AS denial_observation_count,
+                summary.data_count AS data_observation_count,
+                %s AS other_signaling_observation_count,
+                %s AS signaling_observation_count,
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id
+            FROM radio_system_identity_summary summary
+            JOIN radio_system source ON source.id = summary.radio_system_id
+            WHERE summary.radio_system_id IN (%s)
+              AND summary.identity_kind_code IN (1, 2, 3)
+            ORDER BY summary.radio_system_id, summary.identity_kind_code, summary.identity_id,
+                summary.home_wacn, summary.home_system_id
+            """.formatted(OTHER_SIGNALING_SQL, SIGNALING_SQL, placeholders(sources.size()));
+        processSnapshotEvidence(connection, sql, new ArrayList<>(sources.keySet()), sources, "radio_system_id",
+            metrics, evidenceRows);
+    }
+
+    private void applySnapshotConventionalEvidence(Connection connection, Map<Long,AliasActivityMetric> metrics,
+                                                    Map<Long,List<CoverageSource>> sources, int[] evidenceRows)
+        throws SQLException
+    {
+        if(sources.isEmpty())
+        {
+            return;
+        }
+
+        String sql = """
+            SELECT bucket.channel_id, bucket.identity_kind_code, bucket.identity_id,
+                min(bucket.bucket_start_ms) AS first_seen_ms,
+                max(bucket.bucket_start_ms) AS last_seen_ms,
+                sum(bucket.call_count) AS logical_call_count,
+                sum(bucket.recorded_count) AS recorded_logical_call_count,
+                sum(bucket.streamed_count) AS stream_submitted_logical_call_count,
+                sum(bucket.encrypted_count) AS encrypted_logical_call_count,
+                NULL AS grant_observation_count, NULL AS join_observation_count,
+                NULL AS emergency_observation_count, NULL AS register_observation_count,
+                NULL AS logout_observation_count, NULL AS denial_observation_count,
+                NULL AS data_observation_count, NULL AS other_signaling_observation_count,
+                NULL AS signaling_observation_count,
+                CASE WHEN config.decoder_type LIKE 'P25%%' THEN 1
+                     WHEN config.decoder_type = 'DMR' THEN 3
+                     WHEN config.decoder_type = 'NXDN' THEN 4 END AS protocol_code
+            FROM conventional_call_identity_bucket bucket
+            JOIN receiver_channel channel ON channel.id = bucket.channel_id
+            JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+            WHERE bucket.channel_id IN (%s) AND config.channel_kind = 'CONVENTIONAL'
+              AND (config.decoder_type LIKE 'P25%%' OR config.decoder_type IN ('DMR', 'NXDN'))
+              AND bucket.identity_kind_code IN (1, 2, 3)
+            GROUP BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id, config.decoder_type
+            ORDER BY bucket.channel_id, bucket.identity_kind_code, bucket.identity_id
+            """.formatted(placeholders(sources.size()));
+        processSnapshotEvidence(connection, sql, new ArrayList<>(sources.keySet()), sources, "channel_id",
+            metrics, evidenceRows);
+    }
+
+    private void applySnapshotRelationships(Connection connection, Map<Long,AliasActivityMetric> metrics,
+                                            Map<Long,List<CoverageSource>> sources, int[] evidenceRows)
+        throws SQLException
+    {
+        if(sources.isEmpty())
+        {
+            return;
+        }
+
+        String owners = placeholders(sources.size());
+        List<Object> parameters = new ArrayList<>(sources.keySet());
+        parameters.addAll(sources.keySet());
+        String sql = """
+            SELECT relationship.radio_system_id, 2 AS identity_kind_code,
+                identity.identity_id, min(relationship.first_seen_ms) AS first_seen_ms,
+                max(relationship.last_seen_ms) AS last_seen_ms, count(*) AS relationship_count,
+                sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                identity.id AS identity_summary_id, identity.identity_id AS canonical_identity_id,
+                identity.home_wacn, identity.home_system_id
+            FROM trunked_radio_group_summary relationship
+            JOIN radio_system source ON source.id = relationship.radio_system_id
+            JOIN radio_system_identity_summary identity
+              ON identity.radio_system_id = relationship.radio_system_id
+             AND identity.id = relationship.radio_identity_id
+            WHERE relationship.radio_system_id IN (%s)
+            GROUP BY relationship.radio_system_id, identity.id, identity.identity_id,
+                identity.home_wacn, identity.home_system_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
+
+            UNION ALL
+
+            SELECT relationship.radio_system_id, relationship.group_kind_code AS identity_kind_code,
+                target.identity_id, min(relationship.first_seen_ms) AS first_seen_ms,
+                max(relationship.last_seen_ms) AS last_seen_ms, count(*) AS relationship_count,
+                sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
+                source.protocol_code, source.system_key AS radio_system_key,
+                source.p25_wacn AS wacn, source.p25_system_id AS system_id,
+                target.id AS identity_summary_id, target.identity_id AS canonical_identity_id,
+                target.home_wacn, target.home_system_id
+            FROM trunked_radio_group_summary relationship
+            JOIN radio_system source ON source.id = relationship.radio_system_id
+            JOIN radio_system_identity_summary target
+              ON target.radio_system_id = relationship.radio_system_id
+             AND target.id = relationship.group_identity_id
+            WHERE relationship.radio_system_id IN (%s)
+            GROUP BY relationship.radio_system_id, relationship.group_kind_code, target.id, target.identity_id,
+                target.home_wacn, target.home_system_id,
+                source.protocol_code, source.system_key, source.p25_wacn, source.p25_system_id
+            ORDER BY 1, 2, 3
+            """.formatted(owners, owners);
+        processSnapshotEvidence(connection, sql, parameters, sources, "radio_system_id", metrics, evidenceRows);
+    }
+
+    private void applySnapshotAffiliations(Connection connection, Map<Long,AliasActivityMetric> metrics,
+                                           Map<Long,List<CoverageSource>> allSources, int[] evidenceRows)
+        throws SQLException
+    {
+        Map<Long,List<CoverageSource>> sources = new LinkedHashMap<>();
+        allSources.forEach((id, projections) -> {
+            List<CoverageSource> p25 = projections.stream().filter(source -> source.protocolCode == 1).toList();
+            if(!p25.isEmpty())
+            {
+                sources.put(id, p25);
+            }
+        });
+
+        if(sources.isEmpty())
+        {
+            return;
+        }
+
+        String owners = placeholders(sources.size());
+        List<Object> parameters = new ArrayList<>(sources.keySet());
+        parameters.addAll(sources.keySet());
+        String sql = """
+            SELECT source.id AS radio_system_id, 2 AS identity_kind_code,
+                coalesce(affiliation.radio_observed_local_id, identity.identity_id) AS identity_id,
+                max(affiliation.confirmed_at_ms) AS updated_at_ms,
+                count(*) AS current_affiliation_count, source.protocol_code,
+                source.system_key AS radio_system_key, source.p25_wacn AS wacn,
+                source.p25_system_id AS system_id, identity.id AS identity_summary_id,
+                identity.identity_id AS canonical_identity_id, identity.home_wacn, identity.home_system_id
+            FROM radio_system source
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
+            JOIN radio_system_identity_summary identity
+              ON identity.radio_system_id = affiliation.radio_system_id
+             AND identity.id = affiliation.radio_identity_id
+            WHERE source.id IN (%s)
+            GROUP BY source.id, identity.id, identity.identity_id, identity.home_wacn, identity.home_system_id,
+                affiliation.radio_observed_local_id, source.protocol_code, source.system_key,
+                source.p25_wacn, source.p25_system_id
+
+            UNION ALL
+
+            SELECT source.id AS radio_system_id, 1 AS identity_kind_code,
+                coalesce(affiliation.talkgroup_observed_local_id, target.identity_id) AS identity_id,
+                max(affiliation.confirmed_at_ms) AS updated_at_ms,
+                count(*) AS current_affiliation_count, source.protocol_code,
+                source.system_key AS radio_system_key, source.p25_wacn AS wacn,
+                source.p25_system_id AS system_id, target.id AS identity_summary_id,
+                target.identity_id AS canonical_identity_id, target.home_wacn, target.home_system_id
+            FROM radio_system source
+            JOIN trunked_radio_affiliation affiliation ON affiliation.radio_system_id = source.id
+            LEFT JOIN radio_system_identity_summary target
+              ON target.radio_system_id = source.id AND target.id = affiliation.talkgroup_identity_id
+            WHERE source.id IN (%s)
+            GROUP BY source.id, target.id, target.identity_id, target.home_wacn, target.home_system_id,
+                affiliation.talkgroup_observed_local_id, source.protocol_code, source.system_key,
+                source.p25_wacn, source.p25_system_id
+            ORDER BY 1, 2, 3
+            """.formatted(owners, owners);
+        processSnapshotEvidence(connection, sql, parameters, sources, "radio_system_id", metrics, evidenceRows);
+    }
+
+    private void processSnapshotEvidence(Connection connection, String sql, List<Object> parameters,
+                                         Map<Long,List<CoverageSource>> sources, String ownerColumn,
+                                         Map<Long,AliasActivityMetric> metrics, int[] evidenceRows) throws SQLException
+    {
+        int offset = 0;
+
+        while(true)
+        {
+            List<Object> pageParameters = new ArrayList<>(parameters);
+            pageParameters.add(ACTIVITY_SNAPSHOT_QUERY_ROWS);
+            pageParameters.add(offset);
+            List<Map<String,Object>> rows = queryRows(connection, sql + " LIMIT ? OFFSET ?",
+                pageParameters.toArray());
+            evidenceRows[0] += rows.size();
+
+            if(evidenceRows[0] > MAX_ACTIVITY_SNAPSHOT_EVIDENCE_ROWS)
+            {
+                throw new StatsApiException(413, "alias_activity_evidence_too_large",
+                    "Activity evidence exceeds the bounded snapshot limit");
+            }
+
+            List<Map<String,Object>> projected = projectSnapshotEvidence(rows, sources, ownerColumn,
+                evidenceRows);
+            mResolver.resolveEvidenceAliases(connection, projected);
+
+            for(Map<String,Object> row: projected)
+            {
+                Long aliasId = nullableNumber(row.get("resolved_alias_id"));
+                AliasActivityMetric metric = aliasId != null ? metrics.get(aliasId) : null;
+                if(metric != null)
+                {
+                    metric.add(row);
+                }
+            }
+
+            if(rows.size() < ACTIVITY_SNAPSHOT_QUERY_ROWS)
+            {
+                return;
+            }
+
+            offset += rows.size();
+        }
+    }
+
+    private static List<Map<String,Object>> projectSnapshotEvidence(List<Map<String,Object>> rows,
+                                                                    Map<Long,List<CoverageSource>> sources,
+                                                                    String ownerColumn, int[] evidenceRows)
+    {
+        List<Map<String,Object>> projected = new ArrayList<>(rows.size());
+
+        for(Map<String,Object> row: rows)
+        {
+            List<CoverageSource> projections = sources.getOrDefault(number(row.get(ownerColumn)), List.of());
+
+            for(int index = 0; index < projections.size(); index++)
+            {
+                Map<String,Object> projection = index == 0 ? row : new LinkedHashMap<>(row);
+                if(index > 0 && ++evidenceRows[0] > MAX_ACTIVITY_SNAPSHOT_EVIDENCE_ROWS)
+                {
+                    throw new StatsApiException(413, "alias_activity_evidence_too_large",
+                        "Activity evidence exceeds the bounded snapshot limit");
+                }
+                projections.get(index).decorateEvidence(projection);
+                projected.add(projection);
+            }
+        }
+
+        return projected;
+    }
+
     private void applyTrunkedEvidence(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
                                       Set<Long> radioSystemIds,
                                       Map<Long,List<CoverageSource>> sources, SourceIdentityTargets targets,
@@ -1805,6 +2376,140 @@ final class StatsAliasCatalog
         return value instanceof Number number ? number.longValue() : null;
     }
 
+    private record AliasActivitySnapshot(long aliasListId, long createdAtMillis,
+                                         Map<Long,AliasActivityMetric> metrics) {}
+
+    private static final class SourceAvailability
+    {
+        private int coverageSourceCount;
+        private boolean trunked;
+        private boolean p25Trunked;
+    }
+
+    /** Compact per-alias values retained by the short-lived list snapshot. */
+    private static final class AliasActivityMetric
+    {
+        private final boolean supported;
+        private final int coverageSourceCount;
+        private final boolean trunked;
+        private final boolean p25Trunked;
+        private Set<String> observedSources;
+        private long callCount;
+        private long recordedCount;
+        private long streamedCount;
+        private long encryptedCount;
+        private long grantCount;
+        private long joinCount;
+        private long emergencyCount;
+        private long registerCount;
+        private long logoutCount;
+        private long denialCount;
+        private long dataCount;
+        private long otherSignalingCount;
+        private long signalingCount;
+        private long relationshipCount;
+        private long joinRelationshipCount;
+        private long currentAffiliationCount;
+        private Long firstEvidenceMs;
+        private Long lastEvidenceMs;
+
+        private AliasActivityMetric(int protocol, SourceAvailability availability)
+        {
+            supported = protocol > 0;
+            coverageSourceCount = availability != null ? availability.coverageSourceCount : 0;
+            trunked = availability != null && availability.trunked;
+            p25Trunked = availability != null && availability.p25Trunked;
+        }
+
+        private void add(Map<String,Object> row)
+        {
+            callCount += number(row.get("logical_call_count"));
+            recordedCount += number(row.get("recorded_logical_call_count"));
+            streamedCount += number(row.get("stream_submitted_logical_call_count"));
+            encryptedCount += number(row.get("encrypted_logical_call_count"));
+            grantCount += number(row.get("grant_observation_count"));
+            joinCount += number(row.get("join_observation_count"));
+            emergencyCount += number(row.get("emergency_observation_count"));
+            registerCount += number(row.get("register_observation_count"));
+            logoutCount += number(row.get("logout_observation_count"));
+            denialCount += number(row.get("denial_observation_count"));
+            dataCount += number(row.get("data_observation_count"));
+            otherSignalingCount += number(row.get("other_signaling_observation_count"));
+            signalingCount += number(row.get("signaling_observation_count"));
+            relationshipCount += number(row.get("relationship_count"));
+            joinRelationshipCount += number(row.get("join_relationship_count"));
+            currentAffiliationCount += number(row.get("current_affiliation_count"));
+            Long first = nullableNumber(row.get("first_seen_ms"));
+            Long last = nullableNumber(row.get("last_seen_ms"));
+            Long updated = nullableNumber(row.get("updated_at_ms"));
+            first = first != null ? first : updated;
+            last = last != null ? last : updated;
+            firstEvidenceMs = first != null && (firstEvidenceMs == null || first < firstEvidenceMs) ? first :
+                firstEvidenceMs;
+            lastEvidenceMs = last != null && (lastEvidenceMs == null || last > lastEvidenceMs) ? last :
+                lastEvidenceMs;
+
+            if(first != null || last != null || number(row.get("relationship_count")) > 0 ||
+                number(row.get("current_affiliation_count")) > 0)
+            {
+                if(observedSources == null)
+                {
+                    observedSources = new HashSet<>();
+                }
+                String source = text(row.get("coverage_key"));
+                if(source != null)
+                {
+                    observedSources.add(source);
+                }
+            }
+        }
+
+        private String state()
+        {
+            return !supported ? "unsupported" : coverageSourceCount == 0 ? "not_collected" :
+                observedSources != null && !observedSources.isEmpty() ? "observed" : "covered_no_evidence";
+        }
+
+        private Object value(String field)
+        {
+            return switch(field)
+            {
+                case "first_evidence_ms" -> firstEvidenceMs;
+                case "last_evidence_ms" -> lastEvidenceMs;
+                default -> metric(field);
+            };
+        }
+
+        private Long metric(String field)
+        {
+            if(!supported || coverageSourceCount == 0)
+            {
+                return null;
+            }
+
+            return switch(field)
+            {
+                case "logical_call_count" -> callCount;
+                case "recorded_logical_call_count" -> recordedCount;
+                case "stream_submitted_logical_call_count" -> streamedCount;
+                case "encrypted_logical_call_count" -> encryptedCount;
+                case "grant_observation_count" -> p25Trunked ? grantCount : null;
+                case "join_observation_count" -> trunked ? joinCount : null;
+                case "emergency_observation_count" -> trunked ? emergencyCount : null;
+                case "register_observation_count" -> trunked ? registerCount : null;
+                case "logout_observation_count" -> trunked ? logoutCount : null;
+                case "denial_observation_count" -> trunked ? denialCount : null;
+                case "data_observation_count" -> trunked ? dataCount : null;
+                case "other_signaling_observation_count" -> trunked ? otherSignalingCount : null;
+                case "signaling_observation_count" -> trunked ? signalingCount : null;
+                case "relationship_count" -> trunked ? relationshipCount : null;
+                case "join_relationship_count" -> trunked ? joinRelationshipCount : null;
+                case "current_affiliation_count" -> p25Trunked ? currentAffiliationCount : null;
+                default -> null;
+            };
+        }
+    }
+
     @FunctionalInterface
     interface EnrichmentOperation<T>
     {
@@ -1984,6 +2689,19 @@ final class StatsAliasCatalog
                 }
             }
 
+            return new IdentityTargets(aliasListIds);
+        }
+
+        private static IdentityTargets forAliasList(long aliasListId, Set<Integer> protocols)
+        {
+            Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();
+            for(Integer protocol: protocols)
+            {
+                if(protocol != null && protocol > 0)
+                {
+                    aliasListIds.put(protocol, Set.of(aliasListId));
+                }
+            }
             return new IdentityTargets(aliasListIds);
         }
 

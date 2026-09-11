@@ -5786,9 +5786,10 @@ async function renderAliases() {
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
       pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
-      pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
+    pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
         sort: route.get('sort') || defaultOrder.sort,
-        direction: route.get('direction') || defaultOrder.direction }));
+        direction: route.get('direction') || defaultOrder.direction }),
+      view === 'activity' ? { timeoutMs: 35_000 } : {});
   const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
@@ -18056,7 +18057,10 @@ async function render() {
   activeRenderController = renderController;
   const renderContext = Object.freeze({ epoch, signal: renderController.signal });
   closePageConnections();
-  const loading = node('div', 'loading', 'Loading');
+  const aliasTab = route.get('aliasTab');
+  const loadingLabel = view === 'aliases' && ['activity', 'calls', 'evidence'].includes(aliasTab) ?
+    'Preparing alias activity…' : 'Loading';
+  const loading = node('div', 'loading', loadingLabel);
   loading.setAttribute('role', 'status');
   content.setAttribute('aria-busy', 'true');
   content.replaceChildren(loading);

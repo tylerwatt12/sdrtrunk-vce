@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 16;
+    public static final int CURRENT_VERSION = 17;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -66,6 +66,8 @@ public final class DatabaseFormatCatalog
         "ea94d75d85937561e38e1cc58560a37f46969cd6af1e9bc6a1efdff1dc9c3896";
     private static final String FORMAT_16_FINGERPRINT =
         "4fc2e9c7bf96f51fa2ad3e25907c12b5675b49d264deec843ba9711145d2520e";
+    private static final String FORMAT_17_FINGERPRINT =
+        "05e863208c96d7cf3d317733b90aaf687ca463f1c012f94cfd3af4f8096545dc";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -221,9 +223,19 @@ public final class DatabaseFormatCatalog
             "Group standard DMR Tier III by model and Network ID and NXDN Type-C by location category and System ID",
             "Keep unsupported or incomplete native identity scoped to the exact saved channel"));
 
+    private static final FormatDescriptor FORMAT_17 = new FormatDescriptor(17, "large-alias-editor-indexes-v1",
+        "Bounded Alias Editor list browsing and name-sort index format", FORMAT_17_FINGERPRINT, Map.of(),
+        List.of("main format 17"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format17TestDatabase.java", List.of(
+            "Preserve every administrator-owned Alias and all other database content",
+            "Add only bounded Alias List browse and case-insensitive name-sort indexes",
+            "Keep activity metrics derived from existing retention-bounded summaries",
+            "Group standard DMR Tier III by model and Network ID and NXDN Type-C by location category and System ID",
+            "Keep unsupported or incomplete native identity scoped to the exact saved channel"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
-            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16);
+            FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -379,7 +391,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_16;
+        return FORMAT_17;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */

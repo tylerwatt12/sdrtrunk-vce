@@ -532,6 +532,13 @@ class StatsAliasResolverTest
             assertConventionalAliasMetrics(connection, 5, 101, "P25", 5, 0, 0, 0);
             assertConventionalAliasMetrics(connection, 6, 102, "DMR", 6, 0, 0, 0);
             assertConventionalAliasMetrics(connection, 7, 103, "NXDN", 7, 0, 0, 0);
+
+            Map<String,Object> activity = new StatsAliasCatalog(new StatsAliasResolver()).aliases(connection,
+                new StatsRequest(Map.of("list", "1", "sort", "logical_call_count", "direction", "desc",
+                    "limit", "1")));
+            List<Map<String,Object>> activityRows = (List<Map<String,Object>>)activity.get("rows");
+            assertEquals(5L, ((Number)activityRows.getFirst().get("alias_id")).longValue());
+            assertEquals(5L, ((Number)activityRows.getFirst().get("logical_call_count")).longValue());
         }
     }
 
@@ -734,6 +741,11 @@ class StatsAliasResolverTest
             assertNull(source.get("channel_id"), "shared P25 systems do not select one arbitrary channel owner");
             assertFalse(source.containsKey("scope_key"));
             assertFalse(source.containsKey("scope_label"));
+
+            Map<String,Object> activity = new StatsAliasCatalog(new StatsAliasResolver()).aliases(connection,
+                new StatsRequest(Map.of("list", "1", "sort", "last_evidence_ms", "direction", "desc")));
+            List<Map<String,Object>> activityRows = (List<Map<String,Object>>)activity.get("rows");
+            assertEquals(1L, ((Number)activityRows.getFirst().get("alias_id")).longValue());
         }
     }
 
@@ -936,6 +948,82 @@ class StatsAliasResolverTest
         row.put("target_id", target);
         row.put("target_kind_code", targetKind);
         return row;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void listActivitySnapshotSortsAllCandidatesAndIsReused() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("alias-activity-snapshot.sqlite");
+        createDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'County', 'DMR')");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value) VALUES
+                    (1, 1, 'Idle', 'TALKGROUP', 'DMR', 90),
+                    (2, 1, 'Busy', 'TALKGROUP', 'DMR', 91)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
+                    auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
+                ) VALUES ('30000000-0000-4000-8000-000000000012', 'TRUNKED', 1, 'County', 'North',
+                    'Control', 1, 0, 'DMR', 0, 451000000,
+                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system(id, system_key, configuration_id, protocol_code, address_domain_code,
+                    first_seen_ms, last_seen_ms)
+                VALUES (91, 'dmr:channel:30000000-0000-4000-8000-000000000012',
+                    '30000000-0000-4000-8000-000000000012', 3, 0, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms,
+                    radio_system_id, radio_system_assigned_at_ms)
+                VALUES (91, '30000000-0000-4000-8000-000000000012', 1, 2, 91, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id, radio_system_id, identity_kind_code, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count, join_count)
+                VALUES (9101, 91, 1, 91, 10, 20, 12, 3)
+                """);
+
+            StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
+            StatsRequest request = new StatsRequest(Map.of("list", "1", "sort", "logical_call_count",
+                "direction", "desc", "limit", "1"));
+            Map<String,Object> first = catalog.aliases(connection, request);
+            List<Map<String,Object>> firstRows = (List<Map<String,Object>>)first.get("rows");
+            assertEquals(2L, ((Number)firstRows.getFirst().get("alias_id")).longValue());
+            assertEquals(12L, ((Number)firstRows.getFirst().get("logical_call_count")).longValue());
+            assertTrue((Boolean)first.get("has_more"));
+
+            Map<String,Object> second = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
+                "sort", "logical_call_count", "direction", "desc", "limit", "1", "offset", "1")));
+            List<Map<String,Object>> secondRows = (List<Map<String,Object>>)second.get("rows");
+            assertEquals(1L, ((Number)secondRows.getFirst().get("alias_id")).longValue());
+            assertEquals(first.get("activity_snapshot_created_ms"), second.get("activity_snapshot_created_ms"));
+
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id, radio_system_id, identity_kind_code, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count)
+                VALUES (9102, 91, 1, 90, 21, 22, 20)
+                """);
+            Map<String,Object> cached = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
+                "sort", "logical_call_count", "direction", "desc", "limit", "1")));
+            List<Map<String,Object>> cachedRows = (List<Map<String,Object>>)cached.get("rows");
+            assertEquals(2L, ((Number)cachedRows.getFirst().get("alias_id")).longValue());
+
+            catalog.invalidateActivitySnapshots();
+            Map<String,Object> refreshed = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
+                "sort", "logical_call_count", "direction", "desc", "limit", "1")));
+            List<Map<String,Object>> refreshedRows = (List<Map<String,Object>>)refreshed.get("rows");
+            assertEquals(1L, ((Number)refreshedRows.getFirst().get("alias_id")).longValue());
+            assertEquals(20L, ((Number)refreshedRows.getFirst().get("logical_call_count")).longValue());
+        }
     }
 
     private static void createDatabase(Path database) throws Exception

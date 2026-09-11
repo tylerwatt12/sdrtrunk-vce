@@ -822,6 +822,11 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
+    void invalidateAliasActivitySnapshots()
+    {
+        mAliasCatalog.invalidateActivitySnapshots();
+    }
+
     List<Long> matchingAliasIds(StatsRequest request)
     {
         return readSnapshot(connection -> mAliasCatalog.matchingAliasIds(connection, request));

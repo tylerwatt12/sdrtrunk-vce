@@ -51,7 +51,7 @@ class Format15To16DatabaseMigrationTest
 
             assertEquals(0, scalar(connection,
                 "SELECT COUNT(*) FROM configuration_channel WHERE alias_list_id IS NULL"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(16).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertThrows(SQLException.class, () -> statement.executeUpdate(
                 "UPDATE configuration_channel SET alias_list_id=NULL WHERE id=" + channelId));

@@ -270,6 +270,15 @@ a system that had not yet been proven. Current site and radio-presence state is 
 it cannot be presented as current on both systems. Native grouping joins observations inside the migrated receiver
 profile; it does not turn these values into a worldwide identifier for comparing separate installations.
 
+The format 15-to-16 step requires every saved channel to reference an Alias List from the decoder's compatible family.
+It preserves valid assignments, selects a preferred compatible list only for an invalid assignment, and creates a
+family-specific default only when no usable list exists.
+
+The format 16-to-17 step preserves every row and adds two indexes to the existing `alias` table. One supports bounded
+Alias List scans in stable ID order; the other supports case-insensitive name sorting inside one list. No activity rows,
+caches, or per-call records are added. The indexes are rebuilt naturally when administrator-owned aliases change and
+are removed automatically with the database; they have no separate retention policy.
+
 ## Schema-Change Rule
 
 Every change to persisted DDL or persisted meaning must land with all of the following:

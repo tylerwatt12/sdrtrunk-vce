@@ -94,6 +94,9 @@ class StatsWebAliasCatalogUiContractTest
             .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
         assertTrue(function(source, "async function renderAliases()")
             .contains("sort: route.get('sort') || defaultOrder.sort"));
+        assertTrue(function(source, "async function renderAliases()")
+            .contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
+        assertTrue(source.contains("'Preparing alias activity…' : 'Loading'"));
         assertTrue(columns.contains("view === 'activity'"));
         assertFalse(columns.contains("view === 'calls'"));
         assertFalse(columns.contains("view === 'evidence'"));
