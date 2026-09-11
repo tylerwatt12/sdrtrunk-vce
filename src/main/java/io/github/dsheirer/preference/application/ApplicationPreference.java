@@ -52,7 +52,7 @@ public class ApplicationPreference extends Preference
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
     public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
     public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
-    public static final int MIN_STATS_WEB_SERVER_PORT = 1024;
+    public static final int MIN_STATS_WEB_SERVER_PORT = 1;
     public static final int MAX_STATS_WEB_SERVER_PORT = 65535;
     public static final int DEFAULT_STATS_WEB_SERVER_PORT = 8090;
     public static final double MIN_GUI_SCALE = 0.5d;
