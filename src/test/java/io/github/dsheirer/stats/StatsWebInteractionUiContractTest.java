@@ -275,11 +275,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
         assertTrue(css.contains(".resizable-table th:last-child .column-resizer {\n  right: 0;"));
+        assertTrue(css.contains(".table-column-autofit-measurement {"));
         assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
         assertTrue(css.contains(".table-wrap {"));
         assertTrue(css.contains("overflow-x: auto;"));
         assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths)")
             .contains("element.style.minWidth = `${Math.round(total)}px`"));
+        assertTrue(function(source, "function addColumnResizers(element, columns, columnElements, headers, tableType,")
+            .contains("addEventListener('dblclick'"));
+        assertTrue(function(source, "function measureTableColumnContentWidth(element, header, index)")
+            .contains("measurement.getBoundingClientRect().width"));
     }
 
     @Test

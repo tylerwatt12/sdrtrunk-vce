@@ -2084,6 +2084,38 @@ function setTableColumnWidths(element, columnElements, widths) {
   element.style.minWidth = `${Math.round(total)}px`;
 }
 
+function measureTableColumnContentWidth(element, header, index) {
+  const sourceCells = [header];
+  [...element.tBodies].forEach((tableBody) => [...tableBody.rows].forEach((row) => {
+    const cell = row.cells[index];
+    if (cell && !cell.classList.contains('empty')) sourceCells.push(cell);
+  }));
+  const measurement = element.cloneNode(false);
+  measurement.removeAttribute('id');
+  measurement.removeAttribute('style');
+  measurement.classList.add('table-column-autofit-measurement');
+  const measurementBody = node('tbody');
+  sourceCells.forEach((sourceCell) => {
+    const row = sourceCell.parentElement?.cloneNode(false) || node('tr');
+    row.removeAttribute('id');
+    const cell = sourceCell.cloneNode(true);
+    cell.removeAttribute('id');
+    cell.querySelectorAll('[id]').forEach((candidate) => candidate.removeAttribute('id'));
+    cell.querySelectorAll('.column-resizer').forEach((candidate) => candidate.remove());
+    row.append(cell);
+    measurementBody.append(row);
+  });
+  measurement.append(measurementBody);
+  document.body.append(measurement);
+  let width;
+  try {
+    width = Math.ceil(measurement.getBoundingClientRect().width);
+  } finally {
+    measurement.remove();
+  }
+  return Math.max(TABLE_WIDTH_MINIMUM, Math.min(TABLE_WIDTH_MAXIMUM, width));
+}
+
 function applyPreferredTableWidths(element, columns, columnElements, layout) {
   const widths = columns.map((column, index) => {
     const savedWidth = layout.column_widths[tableColumnKey(column, index)];
@@ -2117,17 +2149,36 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
     const handle = node('span', 'column-resizer');
     handle.setAttribute('role', 'separator');
     handle.setAttribute('aria-orientation', 'vertical');
-    handle.setAttribute('aria-label', `Resize ${columns[index].label} column`);
+    handle.setAttribute('aria-label',
+      `Resize ${columns[index].label} column; double-click or press Enter to fit visible content`);
     handle.setAttribute('aria-valuemin', String(TABLE_WIDTH_MINIMUM));
     handle.setAttribute('aria-valuemax', String(TABLE_WIDTH_MAXIMUM));
     handle.setAttribute('aria-valuenow', String(Math.round(Number(columns[index].width) || TABLE_WIDTH_MINIMUM)));
+    handle.title = 'Drag to resize. Double-click to fit visible content.';
     handle.tabIndex = 0;
     handle.addEventListener('focus', () => handle.setAttribute('aria-valuenow',
       String(Math.round(header.getBoundingClientRect().width))));
-    handle.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const autofitColumn = () => {
+      if (!beginLayoutMutation()) return;
+      const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
+      const fittedWidth = measureTableColumnContentWidth(element, header, index);
+      const widths = resizeColumns(index, startingWidths, fittedWidth - startingWidths[index]);
+      handle.setAttribute('aria-valuenow', String(Math.round(widths[index])));
+      void saveWidths(widths);
+    };
+    handle.addEventListener('dblclick', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      autofitColumn();
+    });
+    handle.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        autofitColumn();
+        return;
+      }
       if (!beginLayoutMutation()) return;
       const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
       const widths = resizeColumns(index, startingWidths, event.key === 'ArrowLeft' ? -10 : 10);
@@ -2152,6 +2203,10 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
         handle.removeEventListener('pointermove', pointerMove);
         handle.removeEventListener('pointerup', pointerUp);
         handle.removeEventListener('pointercancel', pointerUp);
+        if (resizedWidths[index] === startingWidths[index]) {
+          endLayoutMutation();
+          return;
+        }
         void saveWidths(resizedWidths);
       };
       handle.setPointerCapture(event.pointerId);

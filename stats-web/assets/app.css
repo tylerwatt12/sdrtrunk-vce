@@ -3318,6 +3318,33 @@ button.secondary {
   table-layout: fixed;
 }
 
+.table-column-autofit-measurement {
+  position: fixed !important;
+  top: 0;
+  left: -10000px;
+  width: max-content !important;
+  min-width: 0 !important;
+  max-width: 1200px;
+  table-layout: auto !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.table-column-autofit-measurement th,
+.table-column-autofit-measurement td {
+  width: auto !important;
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.table-column-autofit-measurement .table-sort-control,
+.table-column-autofit-measurement .table-column-label {
+  width: auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 table {
   width: 100%;
   margin: 0;

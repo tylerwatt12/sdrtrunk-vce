@@ -254,8 +254,18 @@ async function main() {
   assert.match(resizerSource, /setCurrentLayout\(nextLayout\)/);
   assert.match(resizerSource, /if \(!beginLayoutMutation\(\)\) return/);
   assert.match(resizerSource, /endLayoutMutation\(\)/);
+  assert.match(resizerSource, /addEventListener\('dblclick'/);
+  assert.match(resizerSource, /event\.key === 'Enter'/);
+  assert.match(resizerSource, /measureTableColumnContentWidth\(element, header, index\)/);
+  assert.match(resizerSource, /resizedWidths\[index\] === startingWidths\[index\]/);
+  const autofitSource = functionBinding(appSource, 'measureTableColumnContentWidth');
+  assert.match(autofitSource, /\.\.\.element\.tBodies/);
+  assert.match(autofitSource, /!cell\.classList\.contains\('empty'\)/);
+  assert.match(autofitSource, /measurement\.getBoundingClientRect\(\)\.width/);
+  assert.match(autofitSource, /Math\.max\(TABLE_WIDTH_MINIMUM, Math\.min\(TABLE_WIDTH_MAXIMUM, width\)\)/);
   assert.match(appSource, /let layoutMutationPending = false/);
   assert.match(appCssSource, /\.resizable-table\.table-layout-busy \.column-resizer/);
+  assert.match(appCssSource, /\.table-column-autofit-measurement \{/);
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
