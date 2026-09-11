@@ -622,12 +622,56 @@ class ReceiverActivityWriter implements AutoCloseable
             }
             catch(SQLException e)
             {
+                if(isConstraintViolation(e))
+                {
+                    isolateConstraintFailure(connection, batch, e);
+                    return;
+                }
+
                 if(!isDatabaseBusy(e) || !pauseBeforeDatabaseBusyRetry())
                 {
                     throw e;
                 }
             }
         }
+    }
+
+    /**
+     * Preserves valid observations around a deterministic row-level constraint failure.  Ordered bisection avoids
+     * replaying every record individually during the normal case while ensuring one poison record cannot terminate
+     * statistics collection or discard the rest of its transaction batch.
+     */
+    private void isolateConstraintFailure(Connection connection, List<ReceiverActivityRecord> batch,
+                                          SQLException batchFailure) throws SQLException, InterruptedException
+    {
+        if(batch.size() == 1)
+        {
+            ReceiverActivityRecord rejected = batch.getFirst();
+            long droppedRecords = mDroppedRecords.incrementAndGet();
+            String warning = "Discarded invalid statistics record [" + diagnosticSummary(rejected) + "]: " +
+                batchFailure.getMessage();
+            mLastError = warning.substring(0, Math.min(500, warning.length()));
+            mLog.warn(warning);
+            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(droppedRecords));
+            return;
+        }
+
+        int middle = batch.size() / 2;
+        writeBatchWithRetry(connection, List.copyOf(batch.subList(0, middle)));
+        writeBatchWithRetry(connection, List.copyOf(batch.subList(middle, batch.size())));
+    }
+
+    private static String diagnosticSummary(ReceiverActivityRecord record)
+    {
+        if(record instanceof ReceiverActivityRecords.ActivityEvent activity)
+        {
+            return "ActivityEvent configuration=" + activity.configurationId() +
+                ", protocol=" + activity.protocol() + ", action=" + activity.action() +
+                ", observedAt=" + activity.observedAtEpochMilliseconds() +
+                ", frequency=" + activity.frequencyHertz() + ", site=" + activity.site();
+        }
+
+        return record != null ? record.getClass().getSimpleName() : "unknown";
     }
 
     private void cleanupRetentionWithRetry(Connection connection) throws SQLException, InterruptedException
@@ -922,6 +966,30 @@ class ReceiverActivityWriter implements AutoCloseable
             String message = throwable.getMessage();
 
             if(message != null && (message.contains("SQLITE_BUSY") || message.contains("database is locked")))
+            {
+                return true;
+            }
+
+            throwable = throwable.getCause();
+        }
+
+        return false;
+    }
+
+    private static boolean isConstraintViolation(SQLException exception)
+    {
+        Throwable throwable = exception;
+
+        while(throwable != null)
+        {
+            if(throwable instanceof SQLException sqlException &&
+                (sqlException.getErrorCode() & 0xFF) == 19)
+            {
+                return true;
+            }
+
+            String message = throwable.getMessage();
+            if(message != null && message.contains("SQLITE_CONSTRAINT"))
             {
                 return true;
             }

@@ -54,6 +54,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format14To15DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format15To16DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format17To18DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",

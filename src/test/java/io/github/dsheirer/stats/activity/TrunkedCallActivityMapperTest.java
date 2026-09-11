@@ -24,6 +24,7 @@ import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -63,6 +64,7 @@ class TrunkedCallActivityMapperTest
         Channel parent = dmrParent();
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(DMRRadio.createFrom(101));
+        identifiers.update(DMRSite.create(1023));
         identifiers.update(DMRTalkgroup.create(91));
         TrunkedCallStartEvent start = new TrunkedCallStartTracker(5_000).observe(parent, Protocol.DMR,
             dmrChannel(451_012_500L, 2), 2, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L);
@@ -77,6 +79,7 @@ class TrunkedCallActivityMapperTest
         assertEquals(2, record.timeslot());
         assertEquals("101", record.sourceRadioId());
         assertEquals("91", record.targetId());
+        assertEquals(1023, record.site());
         assertEquals(" LCN:12 CHANID:26", record.lcn());
         assertTrue(record.encrypted());
         assertTrue(record.countedCall(), "typed start still identifies a call but completion owns counters");

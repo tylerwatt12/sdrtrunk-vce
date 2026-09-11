@@ -317,7 +317,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
         dropRetiredNamedChannelMaps(connection);
         rebuildApplicationSchema(connection, input);
 
-        ReceiverActivitySchema.create(connection);
+        ReceiverActivitySchema.createFormat17(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
         seedMetricBoundaries(connection, input.newMetricBoundary());

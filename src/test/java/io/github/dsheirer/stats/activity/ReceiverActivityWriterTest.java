@@ -105,6 +105,35 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void constraintRejectedRecordDoesNotStopWriterOrDiscardValidNeighbors() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("constraint-isolation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 3,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_000_210L));
+        writer.enqueue(activityWithEncryptionAlgorithm(1_700_000_000_211L, -1));
+        writer.enqueue(activity(ReceiverActivityRecords.Action.DENIAL, 1_700_000_000_212L));
+
+        awaitWritten(writer, 2);
+        assertEquals(2, writer.getWrittenRecords());
+        assertEquals(1, writer.getDroppedRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        assertTrue(writer.getStatus().lastError().contains("ActivityEvent"));
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(2, scalar(connection,
+                "SELECT grant_count + denial_count FROM trunked_signaling_activity_bucket"));
+            assertEquals(1, scalar(connection,
+                "SELECT value FROM statistics_status WHERE key='records_dropped'"));
+        }
+    }
+
+    @Test
     void zeroP25SiteUplinkIsStoredAsNullWithoutStoppingTheWriter() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("unknown-site-uplink.sqlite"));
@@ -467,6 +496,17 @@ class ReceiverActivityWriterTest
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP", "1811524",
             "56138", "TALKGROUP", List.of(), frequencyHertz, "00-0509", 1, false, null, null,
             0xBEE00, 0x3A9, 0x293, 2, 1, null, action == ReceiverActivityRecords.Action.CALL, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent activityWithEncryptionAlgorithm(long timestamp,
+                                                                                           int algorithm)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, CONFIGURATION_ID,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
+            true, algorithm, 1, 0xBEE00, 0x3A9, 0x293, 2, 1, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }
