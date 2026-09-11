@@ -53,8 +53,9 @@ omit these newer features until they are deliberately included in that release l
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
   FFT and waterfall with zoom, smoothing, persistent country-aware FFT band indicators, optional frequency snapping,
   and channel flags.
-- **Receiver-health alerts are personal to each administrator:** every alert type can be turned on or off for that
-  account's header indicator while shared monitoring, measurements, and incident history continue unchanged.
+- **Status icon choices are personal to each administrator:** each receiver issue type can be shown or hidden for that
+  account's status icon while shared monitoring, detailed measurements, and current and recently cleared issues remain
+  available.
 - **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems
   workspace, embedded diagnostics, and receiver-local tuner Spectrum/Waterfall displays are removed. Both selected-
   channel and tuner-wide FFT/waterfall diagnostics remain available in the website.

@@ -9,68 +9,73 @@
   }
 
   const receiverHealthAlertGroups = Object.freeze([
-    group('receiver', 'Receiver and tuners', 'Tuner availability and the first receiver sample queue.', [
-      alert('tuner-error', 'Tuner error', 'A tuner reports that it cannot continue receiving normally.'),
-      alert('receiver-iq-drop', 'Receiver samples discarded',
-        'Incoming tuner samples were discarded before channel processing.'),
-      alert('receiver-ingress-drop', 'USB receiver handoff discarded samples',
-        'The bounded USB receiver handoff discarded samples instead of delaying USB transfers.'),
-      alert('receiver-listener-failure', 'Receiver listener failed',
-        'One receiver or diagnostic listener failed while other registered listeners continued.'),
-      alert('receiver-queue-pressure', 'Receiver queue nearly full',
-        'The receiver sample queue stayed close to its limit.'),
-      alert('tuner-allocation-failure', 'Tuner allocation failed',
-        'A conventional, control, or traffic channel could not obtain a tuner source.')
+    group('receiver', 'Tuners and radio data',
+      'Problems receiving data from a tuner or assigning a tuner to a channel.', [
+      alert('tuner-error', 'Tuner stopped working',
+        'This tuner cannot receive its assigned channels. Check its reported error, USB connection, power, and driver.'),
+      alert('receiver-iq-drop', 'Radio data was lost before decoding',
+        'The app could not process all data from this tuner. Calls may have gaps or be missed.'),
+      alert('receiver-ingress-drop', 'Radio data was lost entering the receiver',
+        'The tuner delivered data, but the app could not pass it into receiver processing fast enough.'),
+      alert('receiver-listener-failure', 'A receiver component missed radio data',
+        'One component could not accept tuner data. Other receiver components continued running.'),
+      alert('receiver-queue-pressure', 'Receiver processing is falling behind',
+        'Incoming radio data is building up. If this continues, every channel using this tuner may lose data.'),
+      alert('tuner-allocation-failure', 'No tuner was available for a channel',
+        'No enabled tuner could receive the requested frequency, so the channel may not start.')
     ]),
-    group('usb', 'USB delivery', 'Sample transfer between USB tuners and the receiver.', [
-      alert('usb-sample-loss', 'USB sample delivery incomplete',
-        'A USB tuner delivered missing, malformed, or substantially incomplete sample data.'),
-      alert('usb-delivery-rate-low', 'USB delivery rate below expected',
-        'USB callbacks arrived below the expected rate for one or more measurement windows.'),
-      alert('usb-transfer-gap', 'USB transfer paused',
-        'A USB tuner paused long enough to put decoding at risk.'),
-      alert('usb-transfer-pool-degraded', 'USB transfer capacity degraded',
-        'One or more USB transfer buffers could not be kept active.')
+    group('usb', 'USB connection', 'Problems moving radio data from USB tuners into sdrtrunk-vce.', [
+      alert('usb-sample-loss', 'USB tuner data is incomplete',
+        'The tuner sent missing or unusable radio data. Signal strength may still look normal while decoding fails.'),
+      alert('usb-delivery-rate-low', 'USB tuner data is arriving too slowly',
+        'Radio data arrived more slowly than expected. Repeated slowdowns can interrupt decoding.'),
+      alert('usb-transfer-gap', 'USB tuner data paused',
+        'No radio data arrived for a noticeable time, which can interrupt decoding or clip call audio.'),
+      alert('usb-transfer-pool-degraded', 'USB tuner has reduced transfer capacity',
+        'The app could not keep all USB transfers running, making data gaps more likely.')
     ]),
-    group('channels', 'Channel processing', 'Channelizer, decoder, and control-channel continuity.', [
-      alert('channelizer-drop', 'Channelizer output discarded',
-        'The channelizer discarded output before it reached extracted channels.'),
-      alert('channelizer-queue-pressure', 'Channelizer queue nearly full',
-        'The channelizer worker stayed close to its queue limit.'),
-      alert('channel-queue-pressure', 'Channel queue nearly full',
-        'An individual channel output queue stayed close to its limit.'),
-      alert('channel-output-drop', 'Channel decoder missed samples',
-        'An individual channel decoder missed sample batches.'),
-      alert('control-channel-lock-lost', 'Control-channel lock lost',
-        'An active control channel stopped producing valid control frames.')
+    group('channels', 'Channel decoding',
+      'Problems separating tuner data into channels and decoding the radio system.', [
+      alert('channelizer-drop', 'Channels lost radio data',
+        'Data was lost while the app separated one tuner signal into individual channels.'),
+      alert('channelizer-queue-pressure', 'Channel separation is falling behind',
+        'The app is close to running out of room while separating channels.'),
+      alert('channel-queue-pressure', 'One channel is falling behind',
+        'Processing for one channel is close to its limit, putting its decoding or audio at risk.'),
+      alert('channel-output-drop', 'One or more channels lost radio data',
+        'A decoder did not receive all of its data, which can interrupt decoding or audio.'),
+      alert('control-channel-lock-lost', 'Control channel stopped decoding',
+        'The receiver is no longer getting valid control messages and may miss new calls.')
     ]),
-    group('host', 'Host resources', 'CPU, memory, garbage collection, and storage.', [
-      alert('host-cpu-pressure', 'Host CPU saturated',
-        'Receiver host CPU usage stayed high enough to threaten processing deadlines.'),
-      alert('heap-pressure', 'JVM heap nearly full',
-        'The application used nearly all of its configured Java memory.'),
-      alert('gc-pause', 'Long garbage collection',
-        'Garbage collection consumed substantial time during a health sample.'),
-      alert('disk-space', 'Storage running low',
-        'The application data volume has little free space remaining.')
+    group('host', 'Computer resources',
+      'Processor, memory, and storage problems that can interrupt receiving.', [
+      alert('host-cpu-pressure', 'Computer is overloaded',
+        'Processor use has stayed high enough that radio processing may fall behind.'),
+      alert('heap-pressure', 'sdrtrunk-vce is low on memory',
+        'The app is using almost all the memory available to it, which can interrupt receiving.'),
+      alert('gc-pause', 'sdrtrunk-vce spent extra time freeing memory',
+        'The app spent an unusually long time freeing memory, so receiving may fall behind.'),
+      alert('disk-space', 'Storage space is low',
+        'The drive holding sdrtrunk-vce application data has little free space remaining.')
     ]),
-    group('outputs', 'Audio and outputs', 'Completed-call recording, streaming, and browser audio.', [
-      alert('audio-coordinator-ingress', 'Completed-call handoff dropped',
-        'A completed-call or lifecycle event could not enter the output coordinator.'),
-      alert('audio-coordinator-aborted', 'Completed call aborted',
-        'The output coordinator rejected or abandoned a completed call.'),
-      alert('audio-output-pressure', 'Completed-call coordinator nearly full',
-        'Recording, streaming, or browser-call completion work is falling behind.'),
-      alert('recording', 'Call recording dropped',
-        'A completed call could not be written to the recording output.'),
-      alert('recording-output-pressure', 'Recording queue nearly full',
-        'The recording writer is close to exhausting its bounded queue.'),
-      alert('streaming', 'Call streaming output lost',
-        'A completed call could not be encoded or delivered to a configured streamer.'),
-      alert('streaming-output-pressure', 'Streaming queue nearly full',
-        'The streaming writer is close to exhausting its bounded queue.'),
-      alert('web-audio-drop', 'Browser call audio lost',
-        'A completed call could not be encoded for browser listeners.')
+    group('outputs', 'Recordings and listening',
+      'Problems saving calls, sending calls to a streaming service, or preparing browser audio.', [
+      alert('audio-coordinator-ingress', 'A call could not finish all output steps',
+        'The app could not queue part of the work needed to finish a call for recording, streaming, or browser audio.'),
+      alert('audio-coordinator-aborted', 'Output processing stopped for a call',
+        'Output processing was overloaded and stopped handling a call.'),
+      alert('audio-output-pressure', 'Call outputs are falling behind',
+        'Finished calls are arriving faster than recording, streaming, or browser audio processing can handle them.'),
+      alert('recording', 'A call recording was not saved',
+        'A completed call could not be written to disk.'),
+      alert('recording-output-pressure', 'Saving recordings is falling behind',
+        'Too many completed calls are waiting to be saved.'),
+      alert('streaming', 'A call was not sent to the streaming service',
+        'A completed call could not be prepared or delivered to a configured streaming service.'),
+      alert('streaming-output-pressure', 'Streaming is falling behind',
+        'Too many completed calls are waiting to be sent.'),
+      alert('web-audio-drop', 'Browser audio was not available for a call',
+        'The app could not prepare one completed call for browser listening.')
     ])
   ]);
 
