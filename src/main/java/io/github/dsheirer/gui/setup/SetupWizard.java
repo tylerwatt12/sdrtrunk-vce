@@ -289,6 +289,7 @@ public final class SetupWizard extends JDialog
         });
         JPanel diagnosticActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         diagnosticActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        diagnosticActions.setBorder(new EmptyBorder(20, 0, 0, 0));
         diagnosticActions.add(detailsToggle); diagnosticActions.add(copyError);
         footer.add(diagnosticActions);
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.RIGHT));
