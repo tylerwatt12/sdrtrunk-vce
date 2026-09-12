@@ -6877,7 +6877,7 @@ async function signalHealthSection() {
   const tiles = node('div', 'signal-current-grid');
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
-  const block = section('Signal Health', host, exportCsvLink('signal-health'));
+  const block = section('Signal quality', host, exportCsvLink('signal-health'));
   let currentResponse = null;
   const tileNodes = new Map();
   let loading = false;
@@ -6929,7 +6929,7 @@ async function signalHealthSection() {
     const loadCurrent = async (initial = false, pageOwned = false) => {
       if (loading) return;
       loading = true;
-      if (initial) summary.textContent = 'Loading current signal health…';
+      if (initial) summary.textContent = 'Loading current signal quality…';
       try {
         currentResponse = await apiPage('/api/v1/quality', {
           range: '1h', points: 60, include_history: false
@@ -6937,7 +6937,7 @@ async function signalHealthSection() {
         renderCurrent();
       } catch (error) {
         if (pageOwned) rethrowPageHandlingError(error);
-        summary.textContent = currentResponse ? `Signal health update failed: ${error.message}` : '';
+        summary.textContent = currentResponse ? `Signal quality update failed: ${error.message}` : '';
         if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
       } finally {
         loading = false;
@@ -7396,11 +7396,11 @@ class ReceiverHealthController {
       this.snapshot = normalizeReceiverHealthSnapshot(response);
       this.stale = this.snapshot.generated_at_ms <= 0 ||
         Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
-      this.lastError = this.stale ? 'Receiver health hasn’t updated recently.' : '';
+      this.lastError = this.stale ? 'Receiver status has not updated recently.' : '';
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;
       this.stale = true;
-      this.lastError = 'Receiver health is temporarily unavailable. Try Refresh now.';
+      this.lastError = 'Receiver status is unavailable right now. Select Check again to try again.';
     } finally {
       if (this.requestController === controller) this.requestController = null;
       if (this.desktopEnabled()) {
@@ -7435,51 +7435,51 @@ class ReceiverHealthController {
     const summary = this.snapshot?.summary;
     const accountAlerts = receiverHealthAccountAlertSummary(this.snapshot, activeUserPreferences());
     let className = 'loading';
-    let label = 'Loading';
-    let detail = 'Receiver health status is loading.';
+    let label = 'Checking';
+    let detail = 'Loading receiver status.';
     if (this.stale) {
       className = 'stale';
       if (accountAlerts.critical_count > 0) {
         const count = accountAlerts.critical_count || accountAlerts.enabled_count;
-        label = `Update delayed · Critical ${number(count)}`;
+        label = `Status out of date · Last report: Action needed (${number(count)})`;
       } else if (accountAlerts.warning_count > 0) {
         const count = accountAlerts.warning_count || accountAlerts.enabled_count;
-        label = `Update delayed · Warning ${number(count)}`;
+        label = `Status out of date · Last report: Check soon (${number(count)})`;
       } else {
-        label = 'Update delayed';
+        label = 'Status out of date';
       }
-      detail = this.lastError || 'Receiver health hasn’t updated recently.';
+      detail = this.lastError || 'Receiver status has not updated recently.';
     } else if (accountAlerts.critical_count > 0) {
       className = 'critical';
       const count = accountAlerts.critical_count || accountAlerts.enabled_count;
-      label = `Critical ${number(count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
-        `${number(accountAlerts.critical_count)} critical.`;
+      label = `Action needed · ${number(count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current issue${accountAlerts.enabled_count === 1 ? '' : 's'}; ` +
+        `Action needed: ${number(accountAlerts.critical_count)}.`;
     } else if (accountAlerts.warning_count > 0) {
       className = 'warning';
       const count = accountAlerts.warning_count || accountAlerts.enabled_count;
-      label = `Warning ${number(count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
-        `${number(accountAlerts.warning_count)} warning.`;
+      label = `Check soon · ${number(count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current issue${accountAlerts.enabled_count === 1 ? '' : 's'}; ` +
+        `Check soon: ${number(accountAlerts.warning_count)}.`;
     } else if (accountAlerts.enabled_count > 0) {
       className = 'warning';
-      label = `Alert ${number(accountAlerts.enabled_count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active receiver health alert` +
+      label = `Current issues · ${number(accountAlerts.enabled_count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current receiver issue` +
         `${accountAlerts.enabled_count === 1 ? '' : 's'}.`;
     } else if (accountAlerts.active_count > 0) {
       className = 'neutral';
-      label = `${number(accountAlerts.disabled_count)} alert${accountAlerts.disabled_count === 1 ? '' : 's'} turned off`;
-      detail = `All ${number(accountAlerts.disabled_count)} active receiver health alert` +
-        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account. ` +
+      label = `${number(accountAlerts.disabled_count)} issue${accountAlerts.disabled_count === 1 ? '' : 's'} hidden from icon`;
+      detail = `All ${number(accountAlerts.disabled_count)} current receiver issue` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} hidden from this account's status icon. ` +
         'Monitoring and history continue.';
     } else if (summary) {
       className = 'healthy';
-      label = 'Healthy';
-      detail = 'No active receiver health incidents.';
+      label = 'Normal';
+      detail = 'No receiver issues need attention.';
     }
     if (!this.stale && accountAlerts.disabled_count > 0 && accountAlerts.enabled_count > 0) {
-      detail += ` ${number(accountAlerts.disabled_count)} alert` +
-        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account.`;
+      detail += ` ${number(accountAlerts.disabled_count)} issue` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} hidden from this account's status icon.`;
     }
     if (this.snapshot?.generated_at_ms) {
       detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
@@ -7490,7 +7490,7 @@ class ReceiverHealthController {
     });
     indicator.classList.add(`receiver-health-${className}`);
     indicator.title = detail;
-    indicator.setAttribute('aria-label', `Health: ${label}. ${detail}`);
+    indicator.setAttribute('aria-label', `Receiver status: ${label}. ${detail}`);
   }
 }
 
@@ -9817,7 +9817,7 @@ async function renderDashboard() {
     pageHeader('Dashboard', dashboard.last_seen_ms ?
       fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
     tabs([
-      { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
+      { id: 'health', label: 'Signal quality', href: href('dashboard', { tab: 'health' }) },
       { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
       { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
     ], tab))) return;
@@ -16897,7 +16897,7 @@ function receiverHealthTime(value) {
 
 function receiverHealthSeverityBadge(value) {
   const severity = receiverHealthSeverity(value);
-  const label = severity === 'critical' ? 'Critical' : severity === 'warning' ? 'Warning' : 'Healthy';
+  const label = severity === 'critical' ? 'Action needed' : severity === 'warning' ? 'Check soon' : 'Normal';
   return badge(label, `receiver-health-severity receiver-health-${severity}`);
 }
 
@@ -16907,26 +16907,26 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
   const heading = node(resolved ? 'summary' : 'div', 'receiver-health-incident-heading');
   const identity = node('div', 'receiver-health-incident-identity');
   identity.append(node('h3', '', receiverHealthText(incident.title, receiverHealthText(incident.code,
-    'Receiver health incident'))), node('div', 'receiver-health-incident-scope',
+    'Receiver issue'))), node('div', 'receiver-health-incident-scope',
     receiverHealthText(incident.scope, 'Receiver')));
   if (resolved) {
     const observations = receiverHealthCount(incident.count, 1);
     const resolvedSummary = node('div', 'receiver-health-incident-resolved-summary');
-    resolvedSummary.append('Resolved ', receiverHealthTime(incident.resolved_at_ms),
-      ` · ${number(observations)} observation${observations === 1 ? '' : 's'}`);
+    resolvedSummary.append('Cleared ', receiverHealthTime(incident.resolved_at_ms),
+      ` · ${number(observations)} recorded value${observations === 1 ? '' : 's'}`);
     identity.append(resolvedSummary);
   }
   heading.append(identity, receiverHealthSeverityBadge(incident.severity));
 
   const facts = node('dl', 'receiver-health-incident-facts');
   const entries = [
-    ['Code', receiverHealthText(incident.code)],
-    ['Occurrence ID', receiverHealthText(incident.occurrence_id)],
-    ['Observations', number(receiverHealthCount(incident.count, 1))],
-    ['Opened', receiverHealthTime(incident.opened_at_ms)],
-    ['Last seen', receiverHealthTime(incident.last_seen_ms)]
+    ['Issue code', receiverHealthText(incident.code)],
+    ['Event ID', receiverHealthText(incident.occurrence_id)],
+    ['Recorded value', number(receiverHealthCount(incident.count, 1))],
+    ['Started', receiverHealthTime(incident.opened_at_ms)],
+    ['Last detected', receiverHealthTime(incident.last_seen_ms)]
   ];
-  if (resolved) entries.push(['Resolved', receiverHealthTime(incident.resolved_at_ms)]);
+  if (resolved) entries.push(['Cleared', receiverHealthTime(incident.resolved_at_ms)]);
   entries.forEach(([label, value]) => {
     facts.append(node('dt', '', label));
     const detail = node('dd');
@@ -16936,10 +16936,10 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
 
   const guidance = node('div', 'receiver-health-incident-guidance');
   [
-    ['Observed', incident.observed],
-    ['Likely cause', incident.likely_cause],
-    ['Impact', incident.impact],
-    ['Check next', incident.check_next]
+    ['What happened', incident.observed],
+    ['Possible cause', incident.likely_cause],
+    ['What this may affect', incident.impact],
+    ['What to do', incident.check_next]
   ].forEach(([label, value]) => {
     const item = node('div', 'receiver-health-guidance-item');
     item.append(node('h4', '', label), node('p', '', receiverHealthText(value)));
@@ -17010,7 +17010,7 @@ function receiverHealthPruneExpandedResolvedIncidents(incidents) {
 function receiverHealthIncidentList(incidents, resolved = false) {
   if (!incidents.length) {
     return node('div', resolved ? 'receiver-health-empty' : 'receiver-health-empty receiver-health-empty-healthy',
-      resolved ? 'No recently resolved incidents.' : 'No active receiver health incidents.');
+      resolved ? 'No issues have cleared recently.' : 'No receiver issues need attention.');
   }
   const list = node('div', 'receiver-health-incident-list');
   list.append(...incidents.map((incident) => {
@@ -17027,13 +17027,13 @@ function receiverHealthIncidentList(incidents, resolved = false) {
 
 function receiverHealthResolvedPager(page, onPage) {
   const navigation = node('nav', 'pager receiver-health-resolved-pager');
-  navigation.setAttribute('aria-label', 'Recently resolved pagination');
+  navigation.setAttribute('aria-label', 'Recently cleared issues');
   navigation.dataset.receiverHealthFocus = 'resolved-pager';
   navigation.tabIndex = -1;
   const first = page.offset + 1;
   const last = page.offset + page.rows.length;
   navigation.append(node('span', 'muted',
-    `Resolved alerts ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
+    `Cleared issues ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
       `Page ${number(page.page + 1)} of ${number(page.page_count)}`));
   const previous = node('button', 'secondary', 'Previous');
   previous.type = 'button';
@@ -17053,13 +17053,13 @@ function receiverHealthResolvedSection(incidents) {
   receiverHealthPruneExpandedResolvedIncidents(incidents);
   if (!incidents.length) {
     receiverHealthController.resolvedPage = 0;
-    return receiverHealthSection('resolved', 'Recently resolved', receiverHealthIncidentList(incidents, true));
+    return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true));
   }
   const body = node('div');
   const sort = node('select');
-  sort.setAttribute('aria-label', 'Sort resolved alerts');
+  sort.setAttribute('aria-label', 'Sort cleared issues');
   sort.dataset.receiverHealthFocus = 'resolved-sort';
-  [['recent', 'Newest resolved'], ['type', 'Alert type (A–Z)']].forEach(([value, label]) => {
+  [['recent', 'Most recently cleared'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
     option.selected = receiverHealthController.resolvedSort === value;
@@ -17084,7 +17084,7 @@ function receiverHealthResolvedSection(incidents) {
     draw();
   });
   draw();
-  return receiverHealthSection('resolved', 'Recently resolved', body, control);
+  return receiverHealthSection('resolved', 'Recently cleared', body, control);
 }
 
 let receiverHealthSectionSequence = 0;
@@ -17125,7 +17125,7 @@ function receiverHealthResourceScale(row) {
   const label = receiverHealthText(row?.label).toLowerCase();
   const unit = receiverHealthText(row?.unit, '').toLowerCase();
   const maximum = unit === '%' ? 100 :
-    label === 'garbage collection' && unit === 'ms in last sample' ?
+    label === 'time spent freeing memory' && unit === 'ms in last sample' ?
       RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS : available ? Math.max(1, numeric) : 100;
   return {
     available,
@@ -17136,7 +17136,7 @@ function receiverHealthResourceScale(row) {
 
 function receiverHealthResourceBar(row) {
   const severity = receiverHealthSeverity(row.severity);
-  const label = receiverHealthText(row.label, 'Host resource');
+  const label = receiverHealthText(row.label, 'Computer resource');
   const value = receiverHealthText(row.value);
   const unit = receiverHealthText(row.unit, '');
   const formattedValue = unit ? `${value} ${unit}` : value;
@@ -17162,8 +17162,8 @@ function receiverHealthHostResourceOverview(snapshot) {
     receiverHealthText(measurement.id).toLowerCase() === 'host');
   const body = node('div', 'receiver-health-resource-bars');
   if (group?.rows?.length) body.append(...group.rows.map(receiverHealthResourceBar));
-  else body.append(node('div', 'receiver-health-empty', 'No host resource measurements were reported.'));
-  return receiverHealthSection('host-overview', 'Host resource overview', body);
+  else body.append(node('div', 'receiver-health-empty', 'Computer resource information is not available yet.'));
+  return receiverHealthSection('host-overview', 'Computer resources', body);
 }
 
 function receiverHealthMeasurementRow(row) {
@@ -17185,14 +17185,14 @@ function receiverHealthMeasurementGroup(group, index) {
   const body = node('div', 'receiver-health-measurement-list');
   body.setAttribute('role', 'list');
   if (group.rows.length) body.append(...group.rows.map(receiverHealthMeasurementRow));
-  else body.append(node('div', 'receiver-health-empty', 'No measurements were reported.'));
-  const title = receiverHealthText(group.title, receiverHealthText(group.id, 'Measurements'));
+  else body.append(node('div', 'receiver-health-empty', 'No detailed measurements were reported.'));
+  const title = receiverHealthText(group.title, receiverHealthText(group.id, 'Detailed measurements'));
   const key = `measurement:${receiverHealthText(group.id, `${title}:${index}`)}`;
   return receiverHealthSection(key, title, body);
 }
 
 function receiverHealthRefreshButton() {
-  const refresh = node('button', 'secondary', 'Refresh now');
+  const refresh = node('button', 'secondary', 'Check again');
   refresh.type = 'button';
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
@@ -17206,19 +17206,19 @@ function receiverHealthRefreshButton() {
 function receiverHealthAccountSettingNotice(snapshot) {
   const settings = receiverHealthAccountAlertSummary(snapshot, activeUserPreferences());
   const notice = node('aside', 'receiver-health-account-setting');
-  let message = 'Alert switches affect only this account\'s header indicator. Monitoring, measurements, and ' +
-    'history always continue.';
+  let message = 'Your choices only control the status icon at the top of the page. Every issue is still monitored ' +
+    'and listed here. Issues clear automatically after the condition stops; this feature does not send email or push notifications.';
   if (settings.disabled_count > 0) {
-    message = `${number(settings.disabled_count)} of ${number(settings.active_count)} active incident` +
-      `${settings.active_count === 1 ? ' is' : 's are'} turned off for this account's header alert. ` +
-      'They remain visible below because monitoring and history always continue.';
+    message = `${number(settings.disabled_count)} of ${number(settings.active_count)} current issue` +
+      `${settings.active_count === 1 ? ' is' : 's are'} hidden from your status icon. ` +
+      'They are still monitored and listed below. This feature does not send email or push notifications.';
   } else if (settings.active_count > 0) {
-    message = `All ${number(settings.active_count)} active incident` +
+    message = `All ${number(settings.active_count)} current issue` +
       `${settings.active_count === 1 ? '' : 's'} currently ` +
-      `${settings.active_count === 1 ? 'affects' : 'affect'} this account's header alert. ` +
-      'Monitoring, measurements, and history always continue.';
+      `${settings.active_count === 1 ? 'appears' : 'appear'} in your status icon. ` +
+      'Every issue remains monitored and clears automatically when the condition stops. This feature does not send email or push notifications.';
   }
-  const settingsLink = anchor('Manage alert switches', href('admin', { tab: 'alerts' }));
+  const settingsLink = anchor('Choose what appears in my status icon', href('admin', { tab: 'alerts' }));
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
   notice.append(node('span', '', message), settingsLink);
   return notice;
@@ -17240,29 +17240,29 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   const focusedControl = receiverHealthFocusedControl(host);
   host.replaceChildren();
   if (!snapshot) {
-    const message = stale ? (lastError || 'Receiver health is temporarily unavailable. Try Refresh now.') :
-      'Loading receiver health status…';
+    const message = stale ? (lastError || 'Receiver status is unavailable right now. Select Check again to try again.') :
+      'Loading receiver status…';
     const body = node('div', 'admin-section-body');
     body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
-    host.append(receiverHealthSection('current', 'Current status', body, receiverHealthRefreshButton()));
+    host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()));
     receiverHealthRestoreFocus(host, focusedControl);
     return;
   }
 
   const summary = snapshot.summary;
-  const stateLabel = stale ? 'Update delayed' : summary.severity === 'critical' ? 'Critical' :
-    summary.severity === 'warning' ? 'Warning' : 'Healthy';
+  const stateLabel = stale ? 'Status out of date' : summary.severity === 'critical' ? 'Action needed' :
+    summary.severity === 'warning' ? 'Check soon' : 'Normal';
   const overview = node('div', 'receiver-health-overview');
   const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
-  status.append(node('span', '', 'Receiver health'), node('strong', '', stateLabel));
+  status.append(node('span', '', 'Receiver status'), node('strong', '', stateLabel));
   overview.append(status, metrics([
-    ['Active incidents', summary.active_count],
-    ['Critical', summary.critical_count],
-    ['Warnings', summary.warning_count]
+    ['Current issues', summary.active_count],
+    ['Need action', summary.critical_count],
+    ['Check soon', summary.warning_count]
   ], true));
   const timing = node('dl', 'receiver-health-timing');
   [
-    ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)],
+    ['Status tracking started', receiverHealthTime(snapshot.started_at_ms)],
     ['Last update', receiverHealthTime(snapshot.generated_at_ms)]
   ].forEach(([label, value]) => {
     timing.append(node('dt', '', label));
@@ -17272,18 +17272,18 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   });
   overview.append(timing);
   if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
-    'Showing the most recent receiver health information available.'));
+    'Live status is delayed. Showing the last update received.'));
 
   host.append(receiverHealthHostResourceOverview(snapshot),
-    receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),
+    receiverHealthSection('current', 'Summary', overview, receiverHealthRefreshButton()),
     receiverHealthAccountSettingNotice(snapshot),
-    receiverHealthSection('active', 'Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
+    receiverHealthSection('active', 'Issues needing attention', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));
   if (snapshot.measurements.length) {
     host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
   } else {
-    host.append(receiverHealthSection('measurements', 'Measurements', node('div', 'receiver-health-empty',
-      'No receiver health measurements were reported.')));
+    host.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'receiver-health-empty',
+      'Detailed measurements are not available yet.')));
   }
   receiverHealthRestoreFocus(host, focusedControl);
 }
@@ -17422,10 +17422,10 @@ function userPreferenceSummaryCards(preferences) {
       ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
       ['Performance profile', semanticLabel(preferences.tuner.profile)]
     ])),
-    settingsCard('Health alerts', 'Changed from Administration > Alerts.', settingsSummary([
-      ['Header alerts enabled', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
+    settingsCard('Status icon', 'Changed from Administration > Status icon.', settingsSummary([
+      ['Issue types shown', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
         number(receiverHealthAlertIds.length)],
-      ['Disabled alerts', disabledHealthAlertSummary(disabledAlerts)]
+      ['Hidden issue types', disabledHealthAlertSummary(disabledAlerts)]
     ])),
     settingsCard('Table layouts', 'Changed with the Columns control on each table.',
       tableLayoutSummary(preferences.tables))
@@ -17436,7 +17436,7 @@ async function renderAdminAlerts() {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message ||
-      'Alert settings could not be loaded for this account.');
+      'Your status icon choices could not be loaded.');
     const retry = node('button', 'button secondary', 'Retry');
     retry.type = 'button';
     retry.addEventListener('click', async () => {
@@ -17444,7 +17444,7 @@ async function renderAdminAlerts() {
       await synchronizeUserPreferences();
       void render();
     });
-    content.append(section('Alert settings unavailable', unavailable, retry));
+    content.append(section('Status icon choices unavailable', unavailable, retry));
     return;
   }
 
@@ -17471,42 +17471,43 @@ async function renderAdminAlerts() {
   });
   apply(snapshot.preferences);
 
-  const save = node('button', '', 'Save Alert Settings');
+  const save = node('button', '', 'Save status icon choices');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(node('p', 'health-alert-settings-intro',
-    'Choose which receiver-health incidents can change the health icon in this account\'s header. ' +
-    'Turning an alert off does not stop monitoring, remove measurements, or hide current and resolved incidents ' +
-    'from the Health page.'), settingsCardGrid(...cards), footer);
+    'Choose which issues appear in the status icon at the top of the page. ' +
+    'Hiding an issue here changes only your icon. sdrtrunk-vce still monitors it, and current or recently cleared ' +
+    'issues still appear on Receiver status.'),
+    settingsCardGrid(...cards), footer);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (save.disabled) return;
     controls.forEach((input) => { input.disabled = true; });
     save.disabled = true;
-    message.textContent = 'Saving alert settings…';
+    message.textContent = 'Saving status icon choices…';
     try {
       await updateUserPreferences((preferences) => {
         preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
       }, false);
-      message.textContent = 'Alert settings saved.';
+      message.textContent = 'Status icon choices saved.';
     } catch (error) {
       if (error?.code === 'preference_conflict' && !error.reloadError) {
         const current = userPreferenceController.snapshot();
         if (current.loaded) apply(current.preferences);
-        message.textContent = 'These settings changed in another session. The current saved values were loaded.';
+        message.textContent = 'Your status icon choices changed in another browser or tab, so the latest saved choices are shown.';
       } else if (error?.code === 'preference_conflict') {
-        message.textContent = 'These settings changed in another session, but the current values could not be ' +
-          'reloaded. Try saving again or reload this page.';
+        message.textContent = 'Your status icon choices changed elsewhere, but the latest choices could not be ' +
+          'loaded. Reload the page before saving again.';
       } else message.textContent = error.message;
     } finally {
       controls.forEach((input) => { input.disabled = false; });
       save.disabled = false;
     }
   });
-  content.append(section('Header alerts', form));
+  content.append(section('Issues shown in the status icon', form));
 }
 
 function openLivePresentationSettings(returnFocusSelector = null) {
@@ -17720,7 +17721,7 @@ function openResetUserPreferences(returnFocusSelector = null) {
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', 'Reset every personal preference for this account to its default value?'),
     node('p', 'muted', 'This resets the theme, Scanner and Live choices, volume and scan-list subscriptions, ' +
-      'tuner display, health alert switches, and saved table layouts. It does not change the username, password, ' +
+      'tuner display, status icon choices, and saved table layouts. It does not change the username, password, ' +
       'access, receiver configuration, or other users.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
@@ -17868,8 +17869,8 @@ function refreshAdminSystemStatus() {
 async function renderAdmin() {
   const renderContext = captureRenderContext();
   const availableTabs = [
-    { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'alerts', label: 'Alerts', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+    { id: 'health', label: 'Receiver status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+    { id: 'alerts', label: 'Status icon', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'receiver-settings', label: 'Receiver Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'p25-bandplans', label: 'P25 Bandplan Overrides', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
@@ -17884,11 +17885,11 @@ async function renderAdmin() {
     window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('Administration',
-    'Monitor receiver health and manage receiver-wide web settings'),
+    'Check receiver status and manage settings for this sdrtrunk-vce installation.'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
   if (active === 'health') await renderAdminHealth();
   else if (active === 'alerts') {
-    pageTitleController.update({ pageTitle: 'Health Alerts' });
+    pageTitleController.update({ pageTitle: 'Status icon settings' });
     await renderAdminAlerts();
   }
   else if (active === 'receiver-settings') {

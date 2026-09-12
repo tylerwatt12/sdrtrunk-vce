@@ -28,9 +28,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
         assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
-        assertTrue(dashboard.contains("{ id: 'health', label: 'Health'"));
+        assertTrue(dashboard.contains("{ id: 'health', label: 'Signal quality'"));
         assertTrue(dashboard.contains("{ id: 'activity', label: 'Activity'"));
-        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Health'") <
+        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Signal quality'") <
             dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
             dashboard.indexOf("{ id: 'activity', label: 'Activity'"));

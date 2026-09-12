@@ -95,7 +95,7 @@ class ReceiverHealthSnapshotWriterTest
                                                 long resolvedAtMs, long count, String observed)
     {
         return Map.ofEntries(Map.entry("occurrence_id", occurrenceId), Map.entry("code", "receiver-iq-drop"),
-            Map.entry("severity", severity), Map.entry("title", "Receiver IQ samples were discarded"),
+            Map.entry("severity", severity), Map.entry("title", "Radio data was lost before decoding"),
             Map.entry("scope", "Airspy"), Map.entry("opened_at_ms", openedAtMs),
             Map.entry("last_seen_ms", Math.max(openedAtMs, resolvedAtMs)),
             Map.entry("resolved_at_ms", resolvedAtMs), Map.entry("count", count),
