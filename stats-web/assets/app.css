@@ -3016,6 +3016,119 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   border-radius: 3px;
 }
 
+.channel-admin-toolbar {
+  flex-wrap: wrap;
+  padding: 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.channel-admin-toolbar input[type="search"] {
+  flex: 1 1 360px;
+}
+
+.channel-admin-toolbar select {
+  min-height: 31px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.channel-admin-status {
+  min-width: 160px;
+  margin-left: auto;
+}
+
+.channel-frequency-cell {
+  min-width: 150px;
+  max-width: 360px;
+  white-space: normal;
+}
+
+.channel-name-actions {
+  display: grid;
+  gap: 2px;
+}
+
+.channel-activity-link {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.channel-select-cell {
+  width: 48px;
+  text-align: center;
+}
+
+.channel-order-controls {
+  display: inline-grid;
+  grid-template-columns: 30px 32px 30px;
+  align-items: center;
+  gap: 3px;
+}
+
+.channel-order-number {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.button.compact {
+  min-width: 30px;
+  min-height: 28px;
+  padding: 3px 7px;
+}
+
+.link-button {
+  padding: 0;
+  color: var(--link);
+  background: none;
+  border: 0;
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover,
+.link-button:focus-visible {
+  text-decoration: underline;
+}
+
+.channel-editor-modal {
+  width: min(1040px, 96vw);
+}
+
+.channel-editor-grid {
+  align-items: start;
+}
+
+.channel-wide-field {
+  grid-column: 1 / -1;
+}
+
+.channel-multi-select {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+}
+
+.channel-read-only {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
 .alias-catalog-toolbar {
   flex-wrap: wrap;
   align-items: flex-end;

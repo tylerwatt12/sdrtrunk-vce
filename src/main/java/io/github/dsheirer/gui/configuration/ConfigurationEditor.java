@@ -22,15 +22,13 @@ package io.github.dsheirer.gui.configuration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ViewWebAliasRequest;
-import io.github.dsheirer.gui.configuration.channel.ChannelEditor;
-import io.github.dsheirer.gui.configuration.channel.ChannelTabRequest;
+import io.github.dsheirer.gui.ViewWebChannelRequest;
 import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceEditor;
 import io.github.dsheirer.gui.configuration.streaming.StreamingEditor;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import javafx.embed.swing.SwingFXUtils;
@@ -56,33 +54,27 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * JavaFX channels, streaming, and radioreference.com import editor.
+ * Retained JavaFX streaming and radioreference.com import editor. Channel management is web-first.
  */
 public class ConfigurationEditor extends BorderPane
 {
     private static final Logger mLog = LoggerFactory.getLogger(ConfigurationEditor.class);
 
     private ConfigurationManager mConfigurationManager;
-    private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
     private MenuBar mMenuBar;
     private TabPane mTabPane;
-    private Tab mChannelsTab;
     private Tab mRadioReferenceTab;
     private Tab mStreamingTab;
-    private ChannelEditor mChannelEditor;
 
     /**
      * Constructs an instance
      * @param configurationManager for alias and channel models
-     * @param tunerManager for tuners
      * @param userPreferences for settings
      */
-    public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
-                               UserPreferences userPreferences)
+    public ConfigurationEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
     {
         mConfigurationManager = configurationManager;
-        mTunerManager = tunerManager;
         mUserPreferences = userPreferences;
 
         //The window manager constructs this editor only after its lightweight loading shell is visible.  Finish the
@@ -92,7 +84,8 @@ public class ConfigurationEditor extends BorderPane
     }
 
     /**
-     * Process requests for retained configuration-editor actions such as viewing a channel.
+     * Processes requests for the retained configuration editor. Channel requests are routed to the web manager by
+     * the window manager before this editor is constructed.
      *
      * Note: this method must be invoked on the JavaFX platform thread
      * @param request to process
@@ -101,15 +94,8 @@ public class ConfigurationEditor extends BorderPane
     {
         switch(request.getTabName())
         {
-            case CHANNEL:
-                if(request instanceof ChannelTabRequest)
-                {
-                    getTabPane().getSelectionModel().select(getChannelsTab());
-                    getChannelEditor().process((ChannelTabRequest)request);
-                }
-                break;
             case CONFIGURATION:
-                getTabPane().getSelectionModel().select(getChannelsTab());
+                getTabPane().getSelectionModel().select(getStreamingTab());
                 break;
             default:
                 mLog.warn("Unrecognized configuration editor request: " + request.getClass());
@@ -152,6 +138,11 @@ public class ConfigurationEditor extends BorderPane
                 MyEventBus.getGlobalEventBus().post(new ViewWebAliasRequest()));
             viewMenu.getItems().add(aliasEditorItem);
 
+            MenuItem channelEditorItem = new MenuItem("_Channel Manager (Web)");
+            channelEditorItem.setOnAction(event ->
+                MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest()));
+            viewMenu.getItems().add(channelEditorItem);
+
             mMenuBar.getMenus().add(viewMenu);
 
             Menu screenShot = new Menu("_Screenshot");
@@ -192,31 +183,10 @@ public class ConfigurationEditor extends BorderPane
         {
             mTabPane = new TabPane();
             mTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-            mTabPane.getTabs().addAll(getChannelsTab(), getStreamingTab(), getRadioReferenceTab());
+            mTabPane.getTabs().addAll(getStreamingTab(), getRadioReferenceTab());
         }
 
         return mTabPane;
-    }
-
-    private Tab getChannelsTab()
-    {
-        if(mChannelsTab == null)
-        {
-            mChannelsTab = new Tab("Channels");
-            mChannelsTab.setContent(getChannelEditor());
-        }
-
-        return mChannelsTab;
-    }
-
-    private ChannelEditor getChannelEditor()
-    {
-        if(mChannelEditor == null)
-        {
-            mChannelEditor = new ChannelEditor(mConfigurationManager, mTunerManager, mUserPreferences);
-        }
-
-        return mChannelEditor;
     }
 
     private Tab getRadioReferenceTab()

@@ -196,6 +196,24 @@ public class ChannelModel implements Listener<ChannelEvent>
         }
     }
 
+    /** Replaces one stopped saved channel in place while preserving the operator's table order. */
+    public void replaceChannel(Channel current, Channel replacement)
+    {
+        if(current == null || replacement == null || current.getChannelType() != ChannelType.STANDARD ||
+            replacement.getChannelType() != ChannelType.STANDARD)
+        {
+            throw new IllegalArgumentException("Saved channel replacement requires standard channels");
+        }
+        int index = mChannels.indexOf(current);
+        if(index < 0)
+        {
+            throw new IllegalArgumentException("Channel replacement target is not in the model");
+        }
+        mChannels.set(index, replacement);
+        mChannelEventBroadcaster.broadcast(new ChannelEvent(replacement,
+            Event.NOTIFICATION_CONFIGURATION_CHANGE));
+    }
+
     /**
      * List of channels that have the auto-start flag set.
      *

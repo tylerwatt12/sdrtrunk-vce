@@ -200,10 +200,10 @@ class WebAccessServiceTest
     @Test
     void definesEveryCapabilityAndLocksFixedPolicies()
     {
-        assertEquals(14, WebCapability.registry().size());
+        assertEquals(15, WebCapability.registry().size());
         for(String id: new String[]{"web-access", "dashboard", "live", "tuner-spectrum", "radio",
             "credits", "csv-export", "call-audio", "user-settings", "admin-users",
-            "admin-access", "admin-aliases", "admin-settings", "receiver-health"})
+            "admin-access", "admin-aliases", "admin-channels", "admin-settings", "receiver-health"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);
         }
@@ -213,6 +213,7 @@ class WebAccessServiceTest
         assertEquals("Scanner and call audio", WebCapability.WEB_AUDIO_LISTEN.displayName());
         assertFalse(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
         assertFalse(WebCapability.ADMIN_USERS.configurable());
+        assertFalse(WebCapability.ADMIN_CHANNELS.configurable());
         assertTrue(AccessTier.ADMIN.allows(AccessTier.USER));
         assertFalse(AccessTier.PUBLIC.allows(AccessTier.USER));
     }

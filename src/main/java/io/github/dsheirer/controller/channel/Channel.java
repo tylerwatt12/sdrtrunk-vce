@@ -47,10 +47,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -99,7 +97,7 @@ public class Channel extends Configuration
     /** Control-source tuning epoch; standard channels own it and traffic channels inherit it per allocation. */
     private final transient AtomicLong mSiteEvidenceTuningGeneration = new AtomicLong();
     private BooleanProperty mAutoStart = new SimpleBooleanProperty();
-    private IntegerProperty mAutoStartOrder = new SimpleIntegerProperty();
+    private ObjectProperty<Integer> mAutoStartOrder = new SimpleObjectProperty<>();
     private boolean mSelected;
     private List<TunerChannel> mTunerChannels = null;
 
@@ -342,7 +340,7 @@ public class Channel extends Configuration
     /**
      * Auto-start order property.  Indicates the order for starting channels that are flagged for auto-start.
      */
-    public IntegerProperty autoStartOrderProperty()
+    public ObjectProperty<Integer> autoStartOrderProperty()
     {
         return mAutoStartOrder;
     }
@@ -810,14 +808,7 @@ public class Channel extends Configuration
     @JacksonXmlProperty(isAttribute = true, localName = "order")
     public void setAutoStartOrder(Integer order)
     {
-        if(order != null)
-        {
-            mAutoStartOrder.set(order);
-        }
-        else
-        {
-            mAutoStartOrder.setValue(null);
-        }
+        mAutoStartOrder.set(order);
     }
 
     /**

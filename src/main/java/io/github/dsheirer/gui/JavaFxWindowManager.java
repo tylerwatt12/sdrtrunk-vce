@@ -420,7 +420,7 @@ public class JavaFxWindowManager extends Application
     {
         if(mConfigurationEditor == null)
         {
-            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences);
+            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mUserPreferences);
         }
 
         return mConfigurationEditor;
@@ -452,6 +452,19 @@ public class JavaFxWindowManager extends Application
     @Subscribe
     public void process(ConfigurationEditorRequest request)
     {
+        if(request.getTabName() == ConfigurationEditorRequest.TabName.CHANNEL)
+        {
+            execute(() -> {
+                String configurationId = request instanceof
+                    io.github.dsheirer.gui.configuration.channel.ViewChannelRequest channelRequest &&
+                    channelRequest.getChannel() != null ? channelRequest.getChannel().getConfigurationId() : null;
+                WebAdministratorNavigator navigator =
+                    new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
+                if(configurationId != null) navigator.openChannel(mConfigurationStage, configurationId);
+                else navigator.openChannels(mConfigurationStage);
+            });
+            return;
+        }
         execute(() -> {
             try
             {
@@ -492,6 +505,18 @@ public class JavaFxWindowManager extends Application
             {
                 navigator.openAliases(mConfigurationStage);
             }
+        });
+    }
+
+    /** Opens the web-first Channel manager without constructing the retired Java editor. */
+    @Subscribe
+    public void process(ViewWebChannelRequest request)
+    {
+        execute(() -> {
+            WebAdministratorNavigator navigator =
+                new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
+            if(request.hasChannel()) navigator.openChannel(mConfigurationStage, request.getConfigurationId());
+            else navigator.openChannels(mConfigurationStage);
         });
     }
 

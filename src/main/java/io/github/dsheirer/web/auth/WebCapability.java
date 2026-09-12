@@ -35,6 +35,7 @@ public enum WebCapability
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),
     ADMIN_ACCESS("admin-access", "Access management", AccessTier.ADMIN, false),
     ADMIN_ALIASES("admin-aliases", "Alias and scan-list management", AccessTier.ADMIN, false),
+    ADMIN_CHANNELS("admin-channels", "Channel management", AccessTier.ADMIN, false),
     ADMIN_SETTINGS("admin-settings", "Receiver settings", AccessTier.ADMIN, false),
     RECEIVER_HEALTH("receiver-health", "Receiver status", AccessTier.ADMIN, false);
 

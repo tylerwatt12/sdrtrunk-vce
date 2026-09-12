@@ -109,7 +109,8 @@ public class ConfigurationDatabaseStore
         replaceBroadcastConfigurations(connection, configuration.broadcastConfigurations());
     }
 
-    private List<Channel> loadChannels(Connection connection) throws SQLException, IOException
+    /** Loads the channel portion of a caller-owned consistent database view. */
+    public List<Channel> loadChannels(Connection connection) throws SQLException, IOException
     {
         List<Channel> channels = new ArrayList<>();
 
@@ -259,7 +260,8 @@ public class ConfigurationDatabaseStore
         return configurations;
     }
 
-    private void replaceChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
+    /** Replaces only saved channels inside a caller-owned transaction. */
+    public void replaceChannels(Connection connection, List<Channel> channels) throws SQLException, IOException
     {
         Map<String,StoredChannelClassification> stored = storedChannelClassifications(connection);
         Set<String> retainedIds = new HashSet<>();

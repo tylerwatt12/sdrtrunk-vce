@@ -28,6 +28,7 @@ import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -57,6 +58,7 @@ import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
+import io.github.dsheirer.web.http.ChannelAdminHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
@@ -175,6 +177,7 @@ public class StatsWebServerService implements AutoCloseable
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ReceiverActivityService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
+    private final ChannelAdministrationService mChannelAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
@@ -237,6 +240,17 @@ public class StatsWebServerService implements AutoCloseable
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
                                  ScanListModel scanListModel)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 ReceiverActivityService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel,
+                                 ChannelAdministrationService channelAdministrationService)
+    {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
@@ -248,6 +262,7 @@ public class StatsWebServerService implements AutoCloseable
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
+        mChannelAdministrationService = channelAdministrationService;
         mDecodeEventViewService = decodeEventViewService;
         mDecodeMessageViewService = channelProcessingManager != null ?
             new DecodeMessageViewService(channelProcessingManager) : null;
@@ -690,6 +705,14 @@ public class StatsWebServerService implements AutoCloseable
             server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, protectedAliases);
         }
 
+        if(mChannelAdministrationService != null)
+        {
+            ChannelAdminHttpController channelController =
+                new ChannelAdminHttpController(mChannelAdministrationService);
+            server.createContext(ChannelAdminHttpController.PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_CHANNELS, channelController::handle));
+        }
+
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
             mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
         server.createContext(RadioReferenceHttpController.PATH, mWebRequestSecurity.protectApi(
@@ -1024,6 +1047,26 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath(aliasListId, aliasId));
+    }
+
+    /** Arms a one-use local administrator sign-in and opens the web-first Channel manager. */
+    public synchronized URI createDesktopAdministratorChannelHandoffUri()
+    {
+        return createDesktopAdministratorChannelHandoffUri(null);
+    }
+
+    /** Arms a one-use local administrator sign-in and opens one configured Channel. */
+    public synchronized URI createDesktopAdministratorChannelHandoffUri(String configurationId)
+    {
+        String handoffPath = configurationId == null ? WebSessionHttpController.desktopChannelHandoffPath() :
+            WebSessionHttpController.desktopChannelHandoffPath(configurationId);
+        StatsWebNavigationState navigation = getNavigationState();
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff())
+        {
+            return null;
+        }
+        return navigation.baseUri().resolve(handoffPath);
     }
 
     /**
