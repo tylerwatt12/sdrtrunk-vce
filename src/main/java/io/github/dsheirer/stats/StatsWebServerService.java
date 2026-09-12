@@ -709,6 +709,8 @@ public class StatsWebServerService implements AutoCloseable
         {
             ChannelAdminHttpController channelController =
                 new ChannelAdminHttpController(mChannelAdministrationService);
+            server.createContext(ChannelAdminHttpController.READ_PATH, mWebRequestSecurity.protectApi(
+                WebCapability.RADIO_VIEW, channelController::handleCatalog));
             server.createContext(ChannelAdminHttpController.PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_CHANNELS, channelController::handle));
         }

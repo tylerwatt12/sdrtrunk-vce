@@ -52,7 +52,7 @@ class StatsWebPresentationUiContractTest
         String channelFrequencies = function(source,
             "async function renderTrunkedChannelFrequencies(channel, renderContext)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
-        String channels = function(source, "async function renderChannels()");
+        String channels = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
         String liveMessages = function(source, "function liveMessagesPane()");
         String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
@@ -76,7 +76,8 @@ class StatsWebPresentationUiContractTest
             channelGroups.indexOf("host.replaceChildren(node('div', 'loading'"));
         assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
-        assertTrue(channels.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channels.contains("tableClass: 'channel-catalog-table'"));
+        assertTrue(channels.contains("controller: tableController"));
         assertTrue(liveMessages.contains("layoutMenuHost: toolbar"));
         assertTrue(liveEvents.contains("layoutMenuHost: eventToolbar"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));

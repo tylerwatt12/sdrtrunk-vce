@@ -146,7 +146,55 @@ public final class ChannelAdministrationService
     public MutationResult update(String configurationId, ChannelDefinition definition, long expectedRevision)
     {
         String id = requireConfigurationId(configurationId);
-        return admitted(() -> mutate(expectedRevision, false, channels ->
+        return admitted(() ->
+        {
+            Channel original = onConfigurationThread(() ->
+            {
+                requireRevision(expectedRevision);
+                return requireChannel(id);
+            });
+            boolean restart = isProcessing(id);
+            boolean stopped = false;
+            try
+            {
+                if(restart && isProcessing(id))
+                {
+                    mConfigurationManager.getChannelProcessingManager().stop(original);
+                    stopped = true;
+                }
+                MutationResult result = updateStopped(id, definition, expectedRevision);
+                if(stopped)
+                {
+                    Channel replacement = onConfigurationThread(() -> requireChannel(id));
+                    mConfigurationManager.getChannelProcessingManager().start(replacement);
+                }
+                return result;
+            }
+            catch(RuntimeException | ChannelException exception)
+            {
+                if(stopped)
+                {
+                    try
+                    {
+                        Channel current = onConfigurationThread(() -> requireChannel(id));
+                        if(!isProcessing(id)) mConfigurationManager.getChannelProcessingManager().start(current);
+                    }
+                    catch(RuntimeException | ChannelException recoveryFailure)
+                    {
+                        exception.addSuppressed(recoveryFailure);
+                        throw new LifecycleException("The channel change was saved, but its previous running state " +
+                            "could not be restored", exception);
+                    }
+                }
+                if(exception instanceof RuntimeException runtime) throw runtime;
+                throw new LifecycleException("Unable to preserve the channel's running state", exception);
+            }
+        });
+    }
+
+    private MutationResult updateStopped(String id, ChannelDefinition definition, long expectedRevision)
+    {
+        return mutate(expectedRevision, false, channels ->
         {
             int index = requireChannelIndex(channels, id);
             Channel existing = channels.get(index);
@@ -159,7 +207,7 @@ public final class ChannelAdministrationService
             channels.set(index, replacement);
             requireUniqueRadioResolveIds(channels);
             return new MutationTarget(Set.of(id), List.of(id));
-        }));
+        });
     }
 
     public MutationResult cloneChannels(Collection<String> configurationIds, long expectedRevision)
@@ -172,7 +220,13 @@ public final class ChannelAdministrationService
             for(String id: ids)
             {
                 Channel source = requireChannel(byId, id);
-                Channel clone = mCodec.cloneChannel(source, requireAliasList(source.getAliasListId()));
+                Channel clone = source.copyOf();
+                clone.setRadioResolveId(null);
+                clone.setP25SiteIdentity(null);
+                if(clone.isAutoStart())
+                {
+                    clone.setAutoStartOrder(effectiveAutoStartIds(channels).size() + 1);
+                }
                 channels.add(clone);
                 createdIds.add(clone.getConfigurationId());
             }
@@ -191,30 +245,45 @@ public final class ChannelAdministrationService
                 requireRevision(expectedRevision);
                 return ids.stream().map(this::requireChannel).toList();
             });
-            for(Channel channel: selected)
+            List<Channel> stopped = new ArrayList<>();
+            try
             {
-                if(isProcessing(channel.getConfigurationId()))
+                for(Channel channel: selected)
+                {
+                    if(isProcessing(channel.getConfigurationId()))
+                    {
+                        mConfigurationManager.getChannelProcessingManager().stop(channel);
+                        stopped.add(channel);
+                    }
+                }
+                return mutate(expectedRevision, false, channels ->
+                {
+                    for(String id: ids)
+                    {
+                        int index = requireChannelIndex(channels, id);
+                        if(isProcessing(id)) throw new ChannelRunningException(id);
+                        channels.remove(index);
+                    }
+                    return new MutationTarget(Set.copyOf(ids), ids);
+                });
+            }
+            catch(RuntimeException | ChannelException exception)
+            {
+                for(Channel channel: stopped)
                 {
                     try
                     {
-                        mConfigurationManager.getChannelProcessingManager().stop(channel);
+                        if(!isProcessing(channel.getConfigurationId()))
+                            mConfigurationManager.getChannelProcessingManager().start(channel);
                     }
-                    catch(ChannelException exception)
+                    catch(ChannelException recoveryFailure)
                     {
-                        throw new LifecycleException("Unable to stop channel before deletion", exception);
+                        exception.addSuppressed(recoveryFailure);
                     }
                 }
+                if(exception instanceof RuntimeException runtime) throw runtime;
+                throw new LifecycleException("Unable to stop channels before deletion", exception);
             }
-            return mutate(expectedRevision, false, channels ->
-            {
-                for(String id: ids)
-                {
-                    int index = requireChannelIndex(channels, id);
-                    if(isProcessing(id)) throw new ChannelRunningException(id);
-                    channels.remove(index);
-                }
-                return new MutationTarget(Set.copyOf(ids), ids);
-            });
         });
     }
 
@@ -319,7 +388,7 @@ public final class ChannelAdministrationService
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
             requireRevision(expectedRevision);
-            List<Channel> channels = detachedChannels();
+            List<Channel> channels = detachedChannels(autoStartOnly);
             MutationTarget target = operation.apply(channels);
             if(target.changedIds().isEmpty())
             {
@@ -338,27 +407,41 @@ public final class ChannelAdministrationService
         }));
     }
 
-    private List<Channel> detachedChannels()
+    private List<Channel> detachedChannels(boolean deepCopy)
     {
         List<Channel> copies = new ArrayList<>();
         for(Channel live: mConfigurationManager.getChannelModel().getChannels())
         {
-            AliasListDefinition aliasList = requireAliasList(live.getAliasListId());
-            copies.add(mCodec.toChannel(mCodec.fromChannel(live), aliasList, live));
+            copies.add(deepCopy ? live.copyOfPreservingIdentity() : live);
         }
         return copies;
     }
 
     private ChannelSummary summary(Channel channel, Integer autoStartOrder)
     {
-        ChannelDefinition definition = mCodec.fromChannel(channel);
         AliasListDefinition aliasList = mConfigurationManager.getAliasModel()
             .getAliasListDefinition(channel.getAliasListId());
-        return new ChannelSummary(channel.getConfigurationId(), definition.protocolId(),
-            mProtocolRegistry.require(definition.protocolId()).label(),
-            ChannelConfigurationPolicy.requireChannelKind(channel).name(), channel.getSystem(), channel.getSite(),
-            channel.getName(), definition.source().frequenciesHz(), processingState(channel), autoStartOrder,
-            channel.getAliasListId(), aliasList != null ? aliasList.getName() : channel.getAliasListName());
+        try
+        {
+            ChannelDefinition definition = mCodec.fromChannel(channel);
+            return new ChannelSummary(channel.getConfigurationId(), definition.protocolId(),
+                mProtocolRegistry.require(definition.protocolId()).label(),
+                ChannelConfigurationPolicy.requireChannelKind(channel).name(), channel.getSystem(), channel.getSite(),
+                channel.getName(), definition.source().frequenciesHz(), processingState(channel), autoStartOrder,
+                channel.getAliasListId(), aliasList != null ? aliasList.getName() : channel.getAliasListName(), true,
+                null);
+        }
+        catch(RuntimeException exception)
+        {
+            String decoder = channel.getDecodeConfiguration() != null ?
+                channel.getDecodeConfiguration().getDecoderType().getDisplayString() : "Unsupported";
+            return new ChannelSummary(channel.getConfigurationId(), "unsupported", decoder, "UNSUPPORTED",
+                channel.getSystem(), channel.getSite(), channel.getName(), List.copyOf(channel.getFrequencyList()),
+                processingState(channel), autoStartOrder, channel.getAliasListId(),
+                aliasList != null ? aliasList.getName() : channel.getAliasListName(), false,
+                "This compatibility channel can be viewed, started, stopped, reordered, cloned, or deleted, but " +
+                    "its decoder configuration cannot be edited on the web.");
+        }
     }
 
     private ProcessingState processingState(Channel channel)
@@ -459,7 +542,7 @@ public final class ChannelAdministrationService
         Set<String> ids = new HashSet<>();
         for(Channel channel: channels)
         {
-            String id = channel.getRadioResolveId();
+            String id = channel.hasRadioResolveId() ? channel.getRadioResolveId() : null;
             if(id != null && !ids.add(id))
             {
                 throw new IllegalArgumentException("RadioResolve ID is already assigned to another channel");
@@ -615,7 +698,7 @@ public final class ChannelAdministrationService
     public record ChannelSummary(String configurationId, String protocolId, String protocolLabel, String channelKind,
                                  String system, String site, String name, List<Long> frequenciesHz,
                                  ProcessingState processingState, Integer autoStartOrder, long aliasListId,
-                                 String aliasListName)
+                                 String aliasListName, boolean editable, String restrictionMessage)
     {
         public ChannelSummary { frequenciesHz = List.copyOf(frequenciesHz); }
     }

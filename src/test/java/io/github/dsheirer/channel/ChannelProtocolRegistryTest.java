@@ -46,4 +46,28 @@ class ChannelProtocolRegistryTest
         assertThrows(IllegalArgumentException.class,
             () -> registry.validateSettings(profile, Map.of("modulation", "NOT_A_MODULATION")));
     }
+
+    @Test
+    void creationDefaultsMatchRuntimeBehaviorWithRequestedCqpskPreference()
+    {
+        ChannelProtocolRegistry registry = new ChannelProtocolRegistry();
+
+        assertEquals("CQPSK", registry.require("p25-conventional").defaultSettings().get("modulation"));
+        assertEquals("CQPSK", registry.require("p25-phase1").defaultSettings().get("modulation"));
+        assertEquals(false, registry.require("p25-phase1").defaultSettings()
+            .get("learn_announced_control_channels"));
+        assertEquals(false, registry.require("p25-phase2").defaultSettings()
+            .get("learn_announced_control_channels"));
+        assertEquals(false, registry.require("p25-phase2").defaultSettings()
+            .get("auto_detect_scramble_parameters"));
+        assertEquals("BW_15_0", registry.require("am").defaultSettings().get("bandwidth"));
+        assertEquals("BW_12_5", registry.require("nbfm").defaultSettings().get("bandwidth"));
+        assertEquals(true, registry.require("dmr").defaultSettings().get("ignore_data_calls"));
+        assertEquals("TRUNKED", registry.require("nxdn").defaultSettings().get("channel_mode"));
+
+        String catalog = registry.catalog().toString();
+        assertTrue(catalog.contains("\"visible_when\":{\"path\":\"settings.low_pass_enabled\""));
+        assertTrue(catalog.contains("\"number_maximum\":2048"));
+        assertTrue(catalog.contains("\"options_source\":\"alias_lists\""));
+    }
 }

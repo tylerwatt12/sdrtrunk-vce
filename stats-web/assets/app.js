@@ -1713,12 +1713,14 @@ function closeReadOnlyModal(force = false) {
   active.onClose?.();
   active.backdrop.remove();
   document.body.classList.remove('modal-open');
-  const returnFocus = active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null;
+  const returnFocus = active.returnFocusElement?.isConnected ? active.returnFocusElement :
+    (active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null);
   if (returnFocus instanceof HTMLElement) returnFocus.focus();
   return true;
 }
 
 function openReadOnlyModal(title, body, options = {}) {
+  const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (!closeReadOnlyModal()) return null;
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
@@ -1776,7 +1778,7 @@ function openReadOnlyModal(title, body, options = {}) {
   let dirty = false;
   let busy = false;
   modalState = {
-    backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null,
+    backdrop, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
     isBusy: () => busy,
     cleanup: options.cleanup || null,
@@ -2052,6 +2054,7 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   columns.forEach((column) => {
     const className = typeof column.className === 'function' ? column.className(data) : column.className;
     const cell = node('td', className || '');
+    cell.dataset.label = column.fullLabel || column.label || '';
     const title = typeof column.title === 'function' ? column.title(data) : column.title;
     if (title) cell.title = String(title);
     const value = column.render ? column.render(data) : data[column.key];
@@ -15518,11 +15521,95 @@ function channelAdminFrequencyList(values) {
   return (values || []).map((value) => frequency(value)).filter(Boolean).join(', ');
 }
 
-function channelAdminButton(label, action, className = 'button secondary') {
-  const button = node('button', className, label);
+function uiActionButton(label, iconId, action, className = 'ui-button ui-button-secondary') {
+  const button = node('button', className);
   button.type = 'button';
+  if (iconId) button.append(iconGlyph(iconId));
+  if (label) button.append(node('span', '', label));
   button.addEventListener('click', action);
   return button;
+}
+
+function channelAdminButton(label, action, className = 'ui-button ui-button-secondary', iconId = null) {
+  return uiActionButton(label, iconId, action, className);
+}
+
+function uiSelect(values, selectedValue = '', includeBlank = false, blankLabel = 'None') {
+  const select = node('select', 'ui-select');
+  if (includeBlank) {
+    const blank = node('option', '', blankLabel);
+    blank.value = '';
+    select.append(blank);
+  }
+  values.forEach((entry) => {
+    const value = typeof entry === 'object' ? entry.value : entry;
+    const label = typeof entry === 'object' ? entry.label : entry;
+    const option = node('option', '', label);
+    option.value = String(value ?? '');
+    option.selected = String(value ?? '') === String(selectedValue ?? '');
+    select.append(option);
+  });
+  return select;
+}
+
+function uiToggle(checked, accessibleLabel = '') {
+  const wrapper = node('label', 'ui-toggle');
+  const input = node('input');
+  input.type = 'checkbox';
+  input.checked = Boolean(checked);
+  if (accessibleLabel) input.setAttribute('aria-label', accessibleLabel);
+  const track = node('span', 'ui-toggle-track');
+  track.append(node('span', 'ui-toggle-thumb'));
+  const state = node('span', 'ui-toggle-state', input.checked ? 'On' : 'Off');
+  input.addEventListener('change', () => { state.textContent = input.checked ? 'On' : 'Off'; });
+  wrapper.append(input, track, state);
+  return wrapper;
+}
+
+function uiPill(label, tone = 'neutral', iconId = null) {
+  const value = node('span', `ui-pill ui-pill-${tone}`);
+  if (iconId) value.append(iconGlyph(iconId));
+  value.append(node('span', '', label));
+  return value;
+}
+
+function uiSegmentedControl(entries, initialValue, onChange) {
+  const group = node('div', 'ui-segmented');
+  group.setAttribute('role', 'group');
+  group.dataset.value = initialValue;
+  entries.forEach((entry) => {
+    const button = node('button', 'ui-segmented-option', entry.label);
+    button.type = 'button';
+    button.dataset.value = entry.value;
+    button.classList.toggle('active', entry.value === initialValue);
+    button.setAttribute('aria-pressed', String(entry.value === initialValue));
+    button.addEventListener('click', () => {
+      group.dataset.value = entry.value;
+      [...group.children].forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-pressed', String(active));
+      });
+      onChange?.(entry.value);
+    });
+    group.append(button);
+  });
+  return group;
+}
+
+function channelSummaryCards(catalog) {
+  const channels = catalog.channels || [];
+  const wrapper = node('div', 'channel-summary-grid');
+  [
+    ['Configured channels', channels.length, 'icon-channel', 'accent'],
+    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-live', 'success'],
+    ['Auto-start queue', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue']
+  ].forEach(([label, value, icon, tone]) => {
+    const card = node('div', `ui-summary-card ui-summary-${tone}`);
+    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
+    wrapper.append(card);
+  });
+  return wrapper;
 }
 
 async function channelAdminMutation(path, options, statusHost) {
@@ -15541,61 +15628,77 @@ async function channelAdminMutation(path, options, statusHost) {
   }
 }
 
-function channelAdminColumns(rows, selected, revision, statusHost) {
+function channelAdminColumns(selected, state, statusHost, editable, selectionChanged) {
   const selectedChanged = (id, checked) => {
     if (checked) selected.add(id); else selected.delete(id);
+    selectionChanged?.();
   };
-  return [
+  const columns = [];
+  if (editable) columns.push(
     { id: 'select', label: 'Select', className: 'channel-select-cell', render: (row) => {
       const checkbox = node('input');
       checkbox.type = 'checkbox';
+      checkbox.className = 'ui-selection-check';
       checkbox.checked = selected.has(row.configuration_id);
       checkbox.setAttribute('aria-label', `Select ${row.name || 'channel'}`);
-      checkbox.addEventListener('change', () => selectedChanged(row.configuration_id, checkbox.checked));
+      checkbox.addEventListener('change', () => {
+        selectedChanged(row.configuration_id, checkbox.checked);
+        checkbox.closest('tr')?.classList.toggle('selected', checkbox.checked);
+      });
       return checkbox;
-    } },
+    } });
+  columns.push(
     { id: 'name', label: 'Name', render: (row) => {
       const actions = node('div', 'channel-name-actions');
-      const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
-      edit.type = 'button';
-      edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
-      actions.append(edit, anchor('Activity', href('channel', { configuration_id: row.configuration_id }),
-        'channel-activity-link'));
+      if (editable && row.editable !== false) {
+        const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
+        edit.type = 'button';
+        edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
+        actions.append(edit);
+      } else {
+        actions.append(anchor(row.name || 'Unnamed channel',
+          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link'));
+      }
+      actions.append(node('span', 'channel-row-context',
+        [row.system, row.site].filter(Boolean).join(' · ') || 'No system or site'));
+      if (row.editable === false) {
+        const locked = uiPill('Compatibility', 'warning', 'icon-lock');
+        locked.title = row.restriction_message || 'This configuration is read-only on the web';
+        actions.append(locked);
+      }
       return actions;
     }, sortValue: (row) => row.name || '' },
-    { id: 'system', label: 'System / Site', render: (row) =>
-      [row.system, row.site].filter(Boolean).join(' · '),
-      sortValue: (row) => `${row.system || ''}\u0000${row.site || ''}` },
     { id: 'frequency', label: 'Frequencies (MHz)', render: (row) =>
       channelAdminFrequencyList(row.frequencies_hz), className: 'channel-frequency-cell',
       sortValue: (row) => Number(row.frequencies_hz?.[0] || 0) },
-    { id: 'protocol', label: 'Protocol', key: 'protocol_label',
+    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol_label || 'Unknown', 'protocol'),
       sortValue: (row) => row.protocol_label || '' },
-    { id: 'type', label: 'Type', render: (row) => semanticLabel(row.channel_kind),
-      sortValue: (row) => row.channel_kind || '' },
-    { id: 'status', label: 'Status', render: (row) => badge(
+    { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
-      row.processing_state === 'RUNNING' ? 'state-active' : 'state-historical') },
+      row.processing_state === 'RUNNING' ? 'success' : 'neutral',
+      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') },
     { id: 'auto-start', label: 'Auto Start', className: 'numeric', render: (row) => {
+      if (!editable) return node('span', 'channel-order-readonly',
+        row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');
-      const earlier = channelAdminButton('↑', async () => {
+      const earlier = uiActionButton('', 'icon-arrow-up', async () => {
         earlier.disabled = later.disabled = true;
         try {
           await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
-            { method: 'POST', body: { revision, direction: 'EARLIER' } }, statusHost);
+            { method: 'POST', body: { revision: state.revision, direction: 'EARLIER' } }, statusHost);
         } catch (_) { earlier.disabled = later.disabled = false; }
-      }, 'button secondary compact');
+      }, 'ui-button ui-icon-button');
       earlier.title = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
       earlier.setAttribute('aria-label', earlier.title);
       const order = node('span', 'channel-order-number', row.auto_start_order == null ? '—' : row.auto_start_order);
-      const later = channelAdminButton('↓', async () => {
+      const later = uiActionButton('', 'icon-arrow-down', async () => {
         if (row.auto_start_order == null) return;
         later.disabled = earlier.disabled = true;
         try {
           await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
-            { method: 'POST', body: { revision, direction: 'LATER' } }, statusHost);
+            { method: 'POST', body: { revision: state.revision, direction: 'LATER' } }, statusHost);
         } catch (_) { later.disabled = earlier.disabled = false; }
-      }, 'button secondary compact');
+      }, 'ui-button ui-icon-button');
       later.disabled = row.auto_start_order == null;
       later.title = 'Start later; moving the last channel later disables auto start';
       later.setAttribute('aria-label', later.title);
@@ -15604,89 +15707,168 @@ function channelAdminColumns(rows, selected, revision, statusHost) {
     }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
     { id: 'alias-list', label: 'Alias List', key: 'alias_list_name',
       sortValue: (row) => row.alias_list_name || '' }
-  ];
+  );
+  return columns;
 }
 
-async function renderManagedChannels(renderContext) {
+async function renderModernChannelCatalog(renderContext, editable) {
   const loading = createAsyncSection('Channel Configuration', {
     loadingMessage: 'Loading channel configuration…',
     errorMessage: 'Channel configuration could not be loaded.'
   });
-  if (!beginPage(renderContext,
-    pageHeader('Channels', 'Create, configure, order, start, and stop receiver channels'), loading.element)) return;
+  if (!beginPage(renderContext, pageHeader('Channels', editable ?
+    'Configure and operate every receiver channel from one place' :
+    'Current receiver channels and their operating state'), loading.element)) return;
   await loading.load(async () => {
+    const catalogPath = editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
     const [catalog, protocols, options] = await Promise.all([
-      requestJson('/api/v1/admin/channels', { csrf: false }),
-      requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
-      requestJson('/api/v1/admin/channels/options', { csrf: false })
+      requestJson(catalogPath, { csrf: false }),
+      editable ? requestJson('/api/v1/admin/channels/protocols', { csrf: false }) : Promise.resolve(null),
+      editable ? requestJson('/api/v1/admin/channels/options', { csrf: false }) : Promise.resolve(null)
     ]);
     return { catalog, protocols, options };
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
-    const wrapper = node('div', 'channel-admin-catalog');
-    const toolbar = node('div', 'toolbar channel-admin-toolbar');
-    const search = node('input');
+    const state = { revision: Number(catalog.revision), catalog, visibleRows: [] };
+    const wrapper = node('div', 'channel-admin-catalog ui-catalog');
+    const summaryHost = node('div');
+    summaryHost.append(channelSummaryCards(catalog));
+    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    searchWrap.append(iconGlyph('icon-search'));
+    const search = node('input', 'ui-input');
     search.type = 'search';
-    search.placeholder = 'Search name, system, site, protocol, frequency, or alias list';
+    search.placeholder = 'Search channels, systems, protocols, frequencies, or alias lists';
     search.setAttribute('aria-label', search.placeholder);
-    const view = aliasSelect('', [
+    searchWrap.append(search);
+    let activeView = 'all';
+    let draw = () => {};
+    const filters = uiSegmentedControl([
       { value: 'all', label: 'All channels' },
       { value: 'running', label: 'Running' },
-      { value: 'auto-start', label: 'Auto Start' }
-    ], 'all');
-    view.setAttribute('aria-label', 'Filter channels');
+      { value: 'auto-start', label: 'Auto-start' }
+    ], activeView, (value) => { activeView = value; draw(); });
+    filters.setAttribute('aria-label', 'Filter channels');
     const statusHost = node('div', 'channel-admin-status');
-    const newChannel = channelAdminButton('New Channel', () =>
-      openChannelEditorModal('create', null, { protocols, options }));
-    const action = (label, actionName, confirmMessage = null) => channelAdminButton(label, async () => {
-      const ids = [...selected];
-      if (!ids.length) {
-        statusHost.replaceChildren(node('span', 'error', 'Select at least one channel.'));
-        return;
+    statusHost.setAttribute('role', 'status');
+    statusHost.setAttribute('aria-live', 'polite');
+    if (editable) toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
+      openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
+    const exportLink = exportCsvLink('channels');
+    exportLink.classList.add('ui-button', 'ui-button-secondary');
+    exportLink.prepend(iconGlyph('icon-download'));
+    const refresh = uiActionButton('', 'icon-refresh', () => renderChannels(), 'ui-button ui-icon-button');
+    refresh.setAttribute('aria-label', 'Refresh channels');
+    refresh.title = 'Refresh channels';
+    toolbar.append(searchWrap, filters, exportLink, refresh, statusHost);
+
+    const tableHost = node('div', 'channel-catalog-table-host');
+    const tableController = {};
+    const selectedBar = node('div', 'channel-selection-bar');
+    selectedBar.hidden = true;
+    const selectedSummary = node('strong');
+    const hiddenSummary = node('span', 'muted');
+    let selectAll = null;
+    const updateSelection = () => {
+      if (!editable) return;
+      const visibleIds = new Set(state.visibleRows.map((row) => row.configuration_id));
+      const visibleSelected = [...selected].filter((id) => visibleIds.has(id)).length;
+      const hiddenSelected = selected.size - visibleSelected;
+      selectedBar.hidden = selected.size === 0;
+      selectedSummary.textContent = `${selected.size} selected`;
+      hiddenSummary.textContent = hiddenSelected ? `${hiddenSelected} outside this filter` : '';
+      if (selectAll) {
+        selectAll.checked = state.visibleRows.length > 0 && visibleSelected === state.visibleRows.length;
+        selectAll.indeterminate = visibleSelected > 0 && visibleSelected < state.visibleRows.length;
       }
-      if (confirmMessage && !window.confirm(confirmMessage.replace('{count}', String(ids.length)))) return;
-      try {
-        await channelAdminMutation('/api/v1/admin/channels/actions', {
-          method: 'POST', body: { revision: catalog.revision, action: actionName, configuration_ids: ids }
-        }, statusHost);
-      } catch (_) { /* The inline error remains actionable. */ }
+    };
+    const clearSelection = uiActionButton('Clear', null, () => {
+      selected.clear();
+      tableHost.querySelectorAll('.ui-selection-check').forEach((checkbox) => { checkbox.checked = false; });
+      tableHost.querySelectorAll('tr.selected').forEach((row) => row.classList.remove('selected'));
+      updateSelection();
     });
-    toolbar.append(search, view, newChannel, action('Start', 'START'), action('Stop', 'STOP'),
-      action('Clone', 'CLONE'), action('Delete', 'DELETE', 'Delete {count} selected channel(s)?'),
-      channelAdminButton('Refresh', () => renderChannels()), statusHost);
-    const tableHost = node('div');
-    const draw = () => {
+    const action = (label, icon, actionName, confirmMessage = null, danger = false) =>
+      uiActionButton(label, icon, async () => {
+        const ids = [...selected];
+        if (!ids.length) return;
+        if (confirmMessage && !window.confirm(confirmMessage.replace('{count}', String(ids.length)))) return;
+        try {
+          await channelAdminMutation('/api/v1/admin/channels/actions', {
+            method: 'POST', body: { revision: state.revision, action: actionName, configuration_ids: ids }
+          }, statusHost);
+        } catch (_) { /* The inline error remains actionable. */ }
+      }, `ui-button ${danger ? 'ui-button-danger' : 'ui-button-secondary'}`);
+    if (editable) selectedBar.append(selectedSummary, hiddenSummary,
+      action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
+      action('Clone', 'icon-copy', 'CLONE'),
+      action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
+
+    const filteredRows = () => {
       const term = search.value.trim().toLowerCase();
-      const rows = (catalog.channels || []).filter((row) =>
-        (view.value === 'all' || view.value === 'running' && row.processing_state === 'RUNNING' ||
-          view.value === 'auto-start' && row.auto_start_order != null) &&
+      return (state.catalog.channels || []).filter((row) =>
+        (activeView === 'all' || activeView === 'running' && row.processing_state === 'RUNNING' ||
+          activeView === 'auto-start' && row.auto_start_order != null) &&
         (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
-          channelAdminFrequencyList(row.frequencies_hz)]
-          .some((value) => String(value || '').toLowerCase().includes(term))));
-      tableHost.replaceChildren(table(rows,
-        channelAdminColumns(rows, selected, catalog.revision, statusHost), 'No configured channels',
-        { type: 'channel-management', clientSort: true }));
+          channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
+            String(value || '').toLowerCase().includes(term))));
+    };
+    draw = () => {
+      state.visibleRows = filteredRows();
+      tableController.reconcileRows?.(state.visibleRows);
+      updateSelection();
     };
     search.addEventListener('input', draw);
-    view.addEventListener('change', draw);
-    draw();
-    wrapper.append(toolbar, tableHost);
+    state.visibleRows = filteredRows();
+    const channelTable = table(state.visibleRows,
+      channelAdminColumns(selected, state, statusHost, editable, updateSelection),
+      'No channels match this view', {
+        type: editable ? 'channel-catalog-admin-v1' : 'channel-catalog-readonly-v1',
+        clientSort: true, controller: tableController,
+        rowKey: (row) => row.configuration_id,
+        rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
+        tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap'
+      });
+    tableHost.append(channelTable);
+    if (editable) {
+      const header = channelTable.querySelector('thead th');
+      header?.replaceChildren();
+      selectAll = node('input', 'ui-selection-check');
+      selectAll.type = 'checkbox';
+      selectAll.setAttribute('aria-label', 'Select all visible channels');
+      selectAll.addEventListener('change', () => {
+        state.visibleRows.forEach((row) => selectAll.checked ? selected.add(row.configuration_id) :
+          selected.delete(row.configuration_id));
+        tableHost.querySelectorAll('tbody .ui-selection-check').forEach((checkbox) => {
+          checkbox.checked = selectAll.checked;
+        });
+        tableHost.querySelectorAll('tbody tr').forEach((row) => row.classList.toggle('selected', selectAll.checked));
+        updateSelection();
+      });
+      header?.append(selectAll);
+    }
+    wrapper.append(summaryHost, toolbar, editable ? selectedBar : node('span'), tableHost);
+    updateSelection();
+
     let refreshInFlight = false;
     pageInterval(async () => {
       if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
       refreshInFlight = true;
       try {
-        const refreshed = await requestJson('/api/v1/admin/channels', { csrf: false });
-        catalog.revision = refreshed.revision;
-        catalog.channels = refreshed.channels;
-        const available = new Set((catalog.channels || []).map((row) => row.configuration_id));
+        const refreshed = await requestJson(editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog',
+          { csrf: false });
+        state.revision = Number(refreshed.revision);
+        state.catalog = refreshed;
+        const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
         [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
+        summaryHost.replaceChildren(channelSummaryCards(refreshed));
         draw();
-      } catch (_) { /* Keep the last confirmed table; explicit actions surface errors. */ }
+      } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
-    }, 3_000);
-    const requestedChannel = route.get('channel');
-    if (requestedChannel) {
+    }, 5_000);
+    const requestedChannel = editable ? route.get('channel') : null;
+    if (requestedChannel && state.catalog.channels?.some((row) =>
+      row.configuration_id === requestedChannel && row.editable !== false)) {
       route.delete('channel');
       window.history.replaceState({}, '', currentHref());
       queueMicrotask(() => openChannelEditorModal('edit', requestedChannel, { protocols, options }));
@@ -15714,27 +15896,124 @@ function channelFieldOptions(field, profile, options) {
     .map((entry) => ({ value: entry.id, label: entry.name }));
   if (field.path === 'source.preferred_tuner') return (options.tuners || [])
     .map((value) => ({ value, label: value }));
-  if (field.path === 'event_logs') return (profile.event_logs || []).map((value) => ({ value, label: value }));
-  if (field.path === 'recorders') return (profile.recorders || []).map((value) => ({ value, label: value }));
+  const outputLabels = {
+    CALL_EVENT: 'Call events', DECODED_MESSAGE: 'Decoded messages',
+    TRAFFIC_CALL_EVENT: 'Traffic-channel call events', TRAFFIC_DECODED_MESSAGE: 'Traffic decoded messages',
+    BASEBAND: 'Baseband I/Q', DEMODULATED_BIT_STREAM: 'Demodulated bit stream',
+    MBE_CALL_SEQUENCE: 'MBE call sequence', TRAFFIC_BASEBAND: 'Traffic baseband I/Q',
+    TRAFFIC_DEMODULATED_BIT_STREAM: 'Traffic demodulated bit stream',
+    TRAFFIC_MBE_CALL_SEQUENCE: 'Traffic MBE call sequence'
+  };
+  if (field.path === 'event_logs') return (profile.event_logs || [])
+    .map((value) => ({ value, label: outputLabels[value] || semanticLabel(value) }));
+  if (field.path === 'recorders') return (profile.recorders || [])
+    .map((value) => ({ value, label: outputLabels[value] || semanticLabel(value) }));
   if (field.path === 'auxiliary_decoders') return (profile.auxiliary_decoders || [])
     .map((value) => ({ value, label: value }));
   return [];
+}
+
+function channelListEditor(field, values) {
+  const editor = node('div', 'ui-repeater channel-list-editor');
+  const rows = node('div', 'ui-repeater-rows');
+  const add = uiActionButton('Add frequency', 'icon-plus', () => {
+    append('');
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const append = (value) => {
+    const row = node('div', 'ui-repeater-row');
+    const input = node('input', 'ui-input');
+    input.type = 'number';
+    input.step = '0.000001';
+    input.min = '0.000001';
+    input.placeholder = '851.012500';
+    input.value = value == null || value === '' ? '' : channelMHz(value);
+    input.setAttribute('aria-label', `${field.label} in MHz`);
+    const unit = node('span', 'ui-input-unit', 'MHz');
+    const remove = uiActionButton('', 'icon-trash', () => {
+      row.remove();
+      add.disabled = false;
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 'ui-button ui-icon-button ui-button-danger-quiet');
+    remove.setAttribute('aria-label', 'Remove frequency');
+    row.append(input, unit, remove);
+    rows.append(row);
+    const maximum = Number(field.maximum_items || 256);
+    add.disabled = rows.children.length >= maximum;
+  };
+  (values || []).forEach(append);
+  if (!rows.children.length) append('');
+  editor.append(rows, add);
+  return editor;
+}
+
+function channelMapEditor(field, values) {
+  const editor = node('div', 'ui-repeater channel-map-editor');
+  const header = node('div', 'channel-map-header');
+  header.append(node('span', '', field.number_label || 'Channel'), node('span', '', 'Downlink MHz'));
+  if (field.show_uplink) header.append(node('span', '', 'Uplink MHz'));
+  header.append(node('span'));
+  const rows = node('div', 'ui-repeater-rows');
+  const add = uiActionButton('Add mapping', 'icon-plus', () => {
+    append({});
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+    'ui-button ui-button-secondary');
+  const append = (value = {}) => {
+    const row = node('div', 'ui-repeater-row channel-map-row');
+    const channel = node('input', 'ui-input');
+    channel.type = 'number';
+    channel.step = '1';
+    channel.min = String(field.number_minimum ?? 1);
+    if (field.number_maximum != null) channel.max = String(field.number_maximum);
+    channel.value = value.number ?? '';
+    channel.setAttribute('aria-label', field.number_label || 'Channel number');
+    const downlink = node('input', 'ui-input');
+    downlink.type = 'number';
+    downlink.step = '0.000001';
+    downlink.min = '0.000001';
+    downlink.value = value.downlink_hz ? channelMHz(value.downlink_hz) : '';
+    downlink.setAttribute('aria-label', 'Downlink frequency in MHz');
+    row.append(channel, downlink);
+    if (field.show_uplink) {
+      const uplink = node('input', 'ui-input');
+      uplink.type = 'number';
+      uplink.step = '0.000001';
+      uplink.min = '0.000001';
+      uplink.value = value.uplink_hz ? channelMHz(value.uplink_hz) : '';
+      uplink.setAttribute('aria-label', 'Uplink frequency in MHz');
+      row.append(uplink);
+    }
+    const remove = uiActionButton('', 'icon-trash', () => {
+      row.remove();
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+      'ui-button ui-icon-button ui-button-danger-quiet');
+    remove.setAttribute('aria-label', 'Remove mapping');
+    row.append(remove);
+    rows.append(row);
+  };
+  (values || []).forEach(append);
+  editor.append(header, rows, add);
+  if (field.clipboard) {
+    editor.append(node('small', 'ui-field-hint',
+      `Paste is supported directly into each ${field.number_label || 'channel'} or frequency cell.`));
+  }
+  return editor;
 }
 
 function channelEditorControl(field, profile, options, channel) {
   const value = channelValueAt(channel, field.path);
   let control;
   if (field.type === 'boolean') {
-    control = node('input');
-    control.type = 'checkbox';
-    control.checked = Boolean(value ?? field.default);
+    control = uiToggle(Boolean(value ?? field.default), field.label);
   } else if (field.type === 'enum' || field.type === 'dynamic_select') {
     const entries = [...channelFieldOptions(field, profile, options)];
     if (field.type === 'dynamic_select' && value != null && value !== '' &&
         !entries.some((entry) => String(entry.value) === String(value))) {
       entries.unshift({ value, label: `Current (unavailable): ${value}` });
     }
-    control = aliasSelect('', entries, value ?? field.default ?? '', field.required !== true);
+    control = uiSelect(entries, value ?? field.default ?? '', field.required !== true);
   } else if (field.type === 'multi_select') {
     const selected = new Set(value || []);
     control = node('fieldset', 'channel-multi-select');
@@ -15743,23 +16022,37 @@ function channelEditorControl(field, profile, options, channel) {
       checkbox.type = 'checkbox';
       checkbox.value = entry.value;
       checkbox.checked = selected.has(entry.value);
-      control.append(aliasCheckOption(entry.label, checkbox));
+      const toggle = uiToggle(selected.has(entry.value), entry.label);
+      const input = toggle.querySelector('input');
+      input.value = entry.value;
+      const option = node('div', 'channel-output-option');
+      option.append(node('span', '', entry.label), toggle);
+      control.append(option);
     });
     if (!control.children.length) control.append(node('div', 'empty', 'No options for this protocol'));
   } else if (field.type === 'frequency_list') {
-    control = node('textarea');
-    control.rows = 5;
-    control.value = channelFrequencyLines(value);
-    control.placeholder = 'One MHz frequency per line, for example 851.0125';
+    control = channelListEditor(field, value);
   } else if (field.type === 'frequency_map') {
-    control = node('textarea');
-    control.rows = 8;
-    control.value = (value || []).map((entry) => [entry.number, channelMHz(entry.downlink_hz),
-      Number(entry.uplink_hz) ? channelMHz(entry.uplink_hz) : ''].join(', ')).join('\n');
-    control.placeholder = 'Channel, downlink MHz, uplink MHz (optional)';
+    control = channelMapEditor(field, value);
   } else if (field.type === 'read_only') {
-    control = node('pre', 'channel-read-only', value == null ? 'Not observed' :
-      (typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)));
+    const empty = value == null || Array.isArray(value) && !value.length ||
+      typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length;
+    control = node('div', 'channel-read-only');
+    if (empty) control.append(uiPill('Not observed', 'neutral'));
+    else if (Array.isArray(value)) value.forEach((entry) =>
+      control.append(uiPill(field.path.includes('frequencies') ? `${channelMHz(entry)} MHz` : String(entry), 'blue')));
+    else if (typeof value === 'object') Object.entries(value).forEach(([key, entry]) => {
+      const item = node('div', 'channel-observed-item');
+      item.append(node('span', '', semanticLabel(key)), node('strong', '', String(entry)));
+      control.append(item);
+    });
+    else control.append(node('span', '', String(value)));
+  } else if (field.type === 'frequency_select') {
+    const frequencies = channelValueAt(channel, 'source.frequencies_hz') || [];
+    const entries = frequencies.map((entry) => ({ value: entry, label: `${channelMHz(entry)} MHz` }));
+    if (value != null && !entries.some((entry) => String(entry.value) === String(value)))
+      entries.unshift({ value, label: `Current: ${channelMHz(value)} MHz` });
+    control = uiSelect(entries, value ?? '', true);
   } else {
     control = node('input');
     control.type = ['integer', 'number', 'frequency', 'frequency_select'].includes(field.type) ? 'number' : 'text';
@@ -15771,9 +16064,10 @@ function channelEditorControl(field, profile, options, channel) {
     if (field.maximum != null && !['frequency', 'frequency_select'].includes(field.type)) control.max = field.maximum;
   }
   if (field.type !== 'read_only') {
-    control.dataset.channelPath = field.path;
-    control.dataset.channelType = field.type;
-    if (field.required === true && 'required' in control) control.required = true;
+    const dataControl = field.type === 'boolean' ? control.querySelector('input') : control;
+    dataControl.dataset.channelPath = field.path;
+    dataControl.dataset.channelType = field.type;
+    if (field.required === true && 'required' in dataControl) dataControl.required = true;
   }
   return control;
 }
@@ -15781,18 +16075,32 @@ function channelEditorControl(field, profile, options, channel) {
 function channelEditorTabs(panels, sections) {
   const navigation = node('nav', 'tabs alias-modal-tabs channel-modal-tabs');
   navigation.setAttribute('aria-label', 'Channel editor sections');
+  navigation.setAttribute('role', 'tablist');
   const activate = (id) => {
-    Object.entries(panels).forEach(([key, panel]) => { panel.hidden = key !== id; });
+    Object.entries(panels).forEach(([key, panel]) => {
+      panel.hidden = key !== id;
+      panel.setAttribute('aria-hidden', String(key !== id));
+    });
     [...navigation.children].forEach((button) => {
       const active = button.dataset.tab === id;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
     });
   };
+  const icons = { general: 'icon-edit', source: 'icon-tuner', protocol: 'icon-channel', output: 'icon-recording' };
   sections.forEach((section) => {
-    const button = node('button', 'secondary', section.label);
+    const button = node('button', 'secondary');
     button.type = 'button';
+    button.setAttribute('role', 'tab');
     button.dataset.tab = section.id;
+    button.id = `channel-tab-${section.id}`;
+    if (icons[section.id]) button.append(iconGlyph(icons[section.id]));
+    button.append(node('span', '', section.label));
+    const panel = panels[section.id];
+    if (panel) {
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', button.id);
+    }
     button.addEventListener('click', () => activate(section.id));
     navigation.append(button);
   });
@@ -15809,6 +16117,28 @@ function channelEditorVisibility(form) {
   });
 }
 
+function channelEditorDependencies(form) {
+  channelEditorVisibility(form);
+  const preferred = form.querySelector('[data-channel-type="frequency_select"]');
+  const frequencies = form.querySelector('[data-channel-type="frequency_list"]');
+  if (!(preferred instanceof HTMLSelectElement) || !frequencies) return;
+  const current = preferred.value;
+  const values = [...frequencies.querySelectorAll('.ui-repeater-row input[type="number"]')]
+    .map((input) => input.value.trim()).filter(Boolean)
+    .map((value) => Math.round(Number(value) * 1_000_000)).filter(Number.isFinite);
+  preferred.replaceChildren();
+  const blank = node('option', '', 'None');
+  blank.value = '';
+  preferred.append(blank);
+  values.forEach((value) => {
+    const option = node('option', '', `${channelMHz(value)} MHz`);
+    option.value = String(value);
+    option.selected = String(value) === current;
+    preferred.append(option);
+  });
+  if (current && !values.some((value) => String(value) === current)) preferred.value = '';
+}
+
 function channelParseFrequency(value, label, nullable = false) {
   if (String(value).trim() === '' && nullable) return null;
   const mhz = Number(value);
@@ -15821,21 +16151,28 @@ function channelEditorFieldValue(control, field) {
   if (field.type === 'multi_select') return [...control.querySelectorAll('input:checked')]
     .map((input) => input.value);
   if (field.type === 'frequency_list') {
-    const values = control.value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean)
+    const values = [...control.querySelectorAll('.ui-repeater-row input[type="number"]')]
+      .map((input) => input.value.trim()).filter(Boolean)
       .map((value) => channelParseFrequency(value, field.label));
     if (field.required && !values.length) throw new Error(`${field.label} requires at least one frequency.`);
+    if (field.minimum_items != null && values.length < Number(field.minimum_items))
+      throw new Error(`${field.label} requires at least ${field.minimum_items} value(s).`);
+    if (field.maximum_items != null && values.length > Number(field.maximum_items))
+      throw new Error(`${field.label} allows at most ${field.maximum_items} value(s).`);
     return values;
   }
-  if (field.type === 'frequency_map') return control.value.split(/\r?\n/).map((line) => line.trim())
-    .filter(Boolean).map((line, index) => {
-      const parts = line.split(/[\t,]+/).map((part) => part.trim());
-      const number = Number(parts[0]);
-      if (!Number.isInteger(number) || number < 1 || !parts[1])
-        throw new Error(`${field.label} line ${index + 1} needs a channel number and downlink frequency.`);
-      return { number, downlink_hz: channelParseFrequency(parts[1], field.label),
-        uplink_hz: parts[2] ? channelParseFrequency(parts[2], field.label) : 0 };
-    });
-  if (field.type === 'frequency' || field.type === 'frequency_select')
+  if (field.type === 'frequency_map') return [...control.querySelectorAll('.channel-map-row')].map((row, index) => {
+    const inputs = row.querySelectorAll('input');
+    const channelNumber = Number(inputs[0]?.value);
+    const minimum = Number(field.number_minimum ?? 1);
+    const maximum = Number(field.number_maximum ?? Number.MAX_SAFE_INTEGER);
+    if (!Number.isInteger(channelNumber) || channelNumber < minimum || channelNumber > maximum || !inputs[1]?.value)
+      throw new Error(`${field.label} row ${index + 1} needs a valid ${field.number_label || 'channel'} and downlink.`);
+    return { number: channelNumber, downlink_hz: channelParseFrequency(inputs[1].value, field.label),
+      uplink_hz: field.show_uplink && inputs[2]?.value ? channelParseFrequency(inputs[2].value, field.label) : 0 };
+  });
+  if (field.type === 'frequency_select') return control.value ? Number(control.value) : null;
+  if (field.type === 'frequency')
     return channelParseFrequency(control.value, field.label, field.nullable === true || field.required !== true);
   if (field.type === 'integer') {
     if (control.value === '' && field.nullable) return null;
@@ -15867,6 +16204,22 @@ function channelEditorPayload(form, profile) {
   return payload;
 }
 
+function channelRestoreProtocolDefaults(form, profile) {
+  profile.sections.flatMap((section) => section.fields).filter((field) =>
+    field.path.startsWith('settings.') && Object.hasOwn(field, 'default')).forEach((field) => {
+      const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
+      if (!control) return;
+      if (field.type === 'boolean') {
+        control.checked = Boolean(field.default);
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        control.value = String(field.default ?? '');
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+  });
+  channelEditorDependencies(form);
+}
+
 async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null) {
   const editing = mode === 'edit';
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
@@ -15890,19 +16243,40 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     let profile = profiles.find((candidate) => candidate.id === entry?.channel?.protocol_id) || profiles[0];
     let channel = entry?.channel || await requestJson(
       `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
+    let baselineChannel = structuredClone(channel);
+    let templateGeneration = 0;
     const host = node('div');
 
     const draw = () => {
       const form = node('form', 'alias-editor-form channel-editor-form');
+      const hero = node('div', 'channel-editor-hero');
+      const identity = node('div');
+      identity.append(node('strong', '', channel.name || 'New channel'),
+        node('span', '', `${profile.label} · ${semanticLabel(profile.channel_kind || 'Dynamic')}`));
+      hero.append(iconGlyph('icon-channel'), identity);
+      if (editing) hero.append(uiPill(entry.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+        entry.processing_state === 'RUNNING' ? 'success' : 'neutral',
+        entry.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop'));
+      form.append(hero);
+      if (editing && entry.processing_state === 'RUNNING') {
+        const notice = node('div', 'channel-restart-notice');
+        notice.append(iconGlyph('icon-warning'), node('span', '',
+          'Saving safely stops this channel, applies the change, and restores its running state.'));
+        form.append(notice);
+      }
       if (!editing) {
-        const protocolSelect = aliasSelect('', profiles.map((candidate) =>
+        const protocolSelect = uiSelect(profiles.map((candidate) =>
           ({ value: candidate.id, label: candidate.label })), profile.id);
         protocolSelect.addEventListener('change', async () => {
+          const generation = ++templateGeneration;
           modal.setBusy(true);
           try {
             profile = profiles.find((candidate) => candidate.id === protocolSelect.value);
-            channel = await requestJson(
+            const loaded = await requestJson(
               `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
+            if (generation !== templateGeneration || activeReadOnlyModal !== modal.state) return;
+            channel = loaded;
+            baselineChannel = structuredClone(loaded);
             draw();
             modal.setDirty(false);
           } catch (error) {
@@ -15915,15 +16289,29 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const panels = {};
       profile.sections.forEach((sectionDefinition) => {
         const panel = node('section', 'alias-editor-panel channel-editor-panel');
+        const panelHeader = node('header', 'channel-editor-panel-header');
+        panelHeader.append(node('div', '', sectionDefinition.label));
+        if (sectionDefinition.id === 'protocol') {
+          panelHeader.append(uiActionButton('Restore defaults', 'icon-reset', () => {
+            channelRestoreProtocolDefaults(form, profile);
+            modal.setDirty(true);
+          }, 'ui-button ui-button-secondary'));
+        }
+        panel.append(panelHeader);
         const grid = node('div', 'alias-editor-grid channel-editor-grid');
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
-          const wrapper = field.type === 'multi_select' || field.type === 'read_only' ||
+          const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
             field.type === 'frequency_map' || field.type === 'frequency_list' ?
             node('div', 'alias-editor-field channel-wide-field') : aliasFormField(field.label, control, field.help || '');
           if (!wrapper.contains(control)) {
             wrapper.append(node('span', 'alias-editor-field-label', field.label), control);
             if (field.help) wrapper.append(node('small', '', field.help));
+          }
+          if (field.path === 'settings.use_bandplan_override' &&
+              capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+            wrapper.append(anchor('Manage P25 bandplan profiles', href('admin', { tab: 'p25-bandplans' }),
+              'channel-field-action'));
           }
           if (field.visible_when) {
             wrapper.dataset.visiblePath = field.visible_when.path;
@@ -15936,13 +16324,16 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       });
       const errors = node('div', 'alias-form-message');
       const cancel = channelAdminButton('Cancel', modal.close);
-      const save = node('button', 'button', editing ? 'Save Changes' : 'Create Channel');
+      const reset = channelAdminButton('Reset changes', () => {
+        channel = structuredClone(baselineChannel);
+        draw();
+        modal.setDirty(false);
+      }, 'ui-button ui-button-secondary', 'icon-reset');
+      const save = uiActionButton(editing && entry.processing_state === 'RUNNING' ? 'Save & restart' :
+        (editing ? 'Save changes' : 'Create channel'), editing ? 'icon-edit' : 'icon-plus', () => {},
+        'ui-button ui-button-primary');
       save.type = 'submit';
       const clearStatistics = editing ? channelAdminButton('Clear Statistics', async () => {
-        if (entry.processing_state === 'RUNNING') {
-          errors.replaceChildren(node('div', 'error', 'Stop the channel before clearing its statistics.'));
-          return;
-        }
         if (!window.confirm(`Clear learned observations and activity history for ${channel.name || 'this channel'}?`))
           return;
         clearStatistics.disabled = true;
@@ -15954,53 +16345,33 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         } catch (error) {
           errors.replaceChildren(node('div', 'error', error.message));
         } finally { clearStatistics.disabled = false; }
-      }, 'button secondary danger-outline') : null;
+      }, 'ui-button ui-button-danger') : null;
       form.append(channelEditorTabs(panels, profile.sections), ...Object.values(panels), errors,
-        aliasModalFooter(clearStatistics, node('span', 'alias-modal-footer-spacer'), cancel, save));
-      form.addEventListener('input', () => { modal.setDirty(true); channelEditorVisibility(form); });
-      form.addEventListener('change', () => { modal.setDirty(true); channelEditorVisibility(form); });
+        aliasModalFooter(clearStatistics, reset, node('span', 'alias-modal-footer-spacer'), cancel, save));
+      form.addEventListener('input', () => { modal.setDirty(true); channelEditorDependencies(form); });
+      form.addEventListener('change', () => { modal.setDirty(true); channelEditorDependencies(form); });
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!form.reportValidity()) return;
         errors.replaceChildren();
         save.disabled = true;
-        let restart = false;
-        let saved = false;
         try {
           const payload = channelEditorPayload(form, profile);
           if (editing && entry.processing_state === 'RUNNING') {
-            if (!window.confirm('This channel is running. Stop it, save the settings, and start it again?')) {
+            if (!window.confirm('Save these settings and restart the running channel?')) {
               save.disabled = false;
               return;
             }
-            const stopped = await requestJson('/api/v1/admin/channels/actions', { method: 'POST',
-              body: { revision, action: 'STOP', configuration_ids: [configurationId] } });
-            if (!stopped.results?.every((result) => result.success)) throw new Error('The channel could not be stopped.');
-            restart = true;
           }
           const result = await requestJson(editing ?
             `/api/v1/admin/channels/${encodeURIComponent(configurationId)}` : '/api/v1/admin/channels', {
             method: editing ? 'PUT' : 'POST', body: { revision, ...payload }, timeoutMs: 30_000
           });
           revision = Number(result.revision);
-          saved = true;
           modal.setDirty(false);
-          if (restart) {
-            const started = await requestJson('/api/v1/admin/channels/actions', { method: 'POST',
-              body: { revision, action: 'START', configuration_ids: [configurationId] }, timeoutMs: 30_000 });
-            if (!started.results?.every((value) => value.success)) {
-              throw new Error('Settings were saved, but the channel could not be restarted. Start it from the table.');
-            }
-          }
           closeReadOnlyModal(true);
           await renderChannels();
         } catch (error) {
-          if (restart && !saved) {
-            try {
-              await requestJson('/api/v1/admin/channels/actions', { method: 'POST',
-                body: { revision, action: 'START', configuration_ids: [configurationId] }, timeoutMs: 30_000 });
-            } catch (_) { /* The original error remains primary; the table exposes the stopped state. */ }
-          }
           aliasMutationError(errors, error, () => {
             modal.setDirty(false);
             closeReadOnlyModal(true);
@@ -16010,7 +16381,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         }
       });
       host.replaceChildren(form);
-      channelEditorVisibility(form);
+      channelEditorDependencies(form);
       modal.content.replaceChildren(host);
       modal.dialog.querySelector('.modal-header h2').textContent = editing ?
         `Edit ${channel.name || 'Channel'}` : 'Create Channel';
@@ -16024,26 +16395,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
 
 async function renderChannels() {
   const renderContext = captureRenderContext();
-  if (canManageChannels()) {
-    await renderManagedChannels(renderContext);
-    return;
-  }
-  const directory = createAsyncSection('Channels', {
-    action: exportCsvLink('channels'),
-    loadingMessage: 'Loading channels…',
-    errorMessage: 'The channel directory could not be loaded.'
-  });
-  if (!beginPage(renderContext,
-    pageHeader('Channels', 'Every configured trunked and conventional receiver channel'),
-    searchBar('Search name, system, site, protocol, or frequency'), directory.element)) return;
-  await directory.load(
-    () => apiPage('/api/v1/channels', pageParameters()),
-    (page) => pagedTableContent(page, channelDirectoryColumns(), 'channels', {
-      itemLabel: 'Channels', tableOptions: {
-        layoutMenuHost: directory.titleActions, controller: directory.tableController
-      }
-    }),
-    renderContext);
+  await renderModernChannelCatalog(renderContext, canManageChannels());
 }
 
 function channelTabItems(channel) {

@@ -83,7 +83,8 @@ class ChannelAdministrationPersistenceTest
                 updated.revision());
             String cloneId = cloned.configurationIds().getFirst();
             assertEquals("Dispatch Updated", channels.get(cloneId).channel().name());
-            assertNull(channels.get(cloneId).autoStartOrder());
+            assertEquals(2, channels.get(cloneId).autoStartOrder(),
+                "Web clones preserve Java clone auto-start behavior and append safely to the queue");
 
             ChannelAdministrationService.MutationResult deleted = channels.deleteChannels(List.of(cloneId),
                 cloned.revision());

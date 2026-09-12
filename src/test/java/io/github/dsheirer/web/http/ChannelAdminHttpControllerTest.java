@@ -63,6 +63,7 @@ class ChannelAdminHttpControllerTest
             server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
             server.setExecutor(executor);
             server.createContext(ChannelAdminHttpController.PATH, controller::handle);
+            server.createContext(ChannelAdminHttpController.READ_PATH, controller::handleCatalog);
             server.start();
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -93,6 +94,15 @@ class ChannelAdminHttpControllerTest
             assertEquals(200, entry.statusCode());
             assertEquals("CQPSK", MAPPER.readTree(entry.body()).path("data").path("channel")
                 .path("settings").path("modulation").textValue());
+
+            HttpResponse<String> readOnlyCatalog = client.send(HttpRequest.newBuilder(
+                origin.resolve(ChannelAdminHttpController.READ_PATH)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, readOnlyCatalog.statusCode());
+            assertEquals("Dispatch", MAPPER.readTree(readOnlyCatalog.body()).path("data").path("channels")
+                .get(0).path("name").textValue());
+            assertTrue(MAPPER.readTree(readOnlyCatalog.body()).path("data").path("channels")
+                .get(0).path("editable").booleanValue());
 
             HttpResponse<String> move = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH + "/" +
                 channelId + "/auto-start/move"), "POST",

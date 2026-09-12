@@ -16,21 +16,28 @@ import org.junit.jupiter.api.Test;
 class StatsWebChannelsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
-    void listsTrunkedAndConventionalChannelsTogether() throws Exception
+    void usesOneModernCatalogForReadOnlyAndChannelAdministrators() throws Exception
     {
         String source = source();
         String render = function(source, "async function renderChannels()");
-        String columns = function(source, "function channelDirectoryColumns()");
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        String columns = function(source,
+            "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged)");
 
-        assertTrue(render.contains("pageHeader('Channels', 'Every configured trunked and conventional receiver channel')"));
-        assertTrue(render.contains("apiPage('/api/v1/channels', pageParameters())"));
-        assertTrue(render.contains("exportCsvLink('channels')"));
-        assertTrue(columns.contains("label: 'Type'"));
-        assertTrue(columns.contains("? 'Trunked' : 'Conventional'"));
-        assertTrue(columns.contains("row.primary_frequency_hz"));
-        assertFalse(columns.contains("row.frequency_hz"));
+        assertTrue(render.contains("renderModernChannelCatalog(renderContext, canManageChannels())"));
+        assertTrue(catalog.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
+        assertTrue(catalog.contains("exportCsvLink('channels')"));
+        assertTrue(catalog.contains("channelSummaryCards(catalog)"));
+        assertTrue(catalog.contains("tableController.reconcileRows"));
+        assertTrue(catalog.contains("editable ? 'channel-catalog-admin-v1' : " +
+            "'channel-catalog-readonly-v1'"));
+        assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
+        assertTrue(columns.contains("row.auto_start_order == null ? 'Off'"));
+        assertTrue(columns.contains("row.alias_list_name"));
+        assertTrue(columns.contains("row.editable !== false"));
         assertFalse(source.contains("/api/v1/conventional-channels"));
         assertFalse(source.contains("/api/v1/conventional-contexts"));
     }
@@ -51,6 +58,35 @@ class StatsWebChannelsUiContractTest
         assertTrue(radios.contains("exportCsvLink('channel-radios'"));
         assertFalse(source.contains("site.guid"));
         assertFalse(source.contains("context_key"));
+    }
+
+    @Test
+    void exposesReusableControlsAndProtocolDrivenEditorBehavior() throws Exception
+    {
+        String source = source();
+        String editor = function(source, "function channelEditorControl(field, profile, options, channel)");
+        String dependencies = function(source, "function channelEditorDependencies(form)");
+        String modal = function(source,
+            "async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null)");
+        String css = Files.readString(APP_CSS);
+
+        for(String helper: new String[]{"uiActionButton", "uiSelect", "uiToggle", "uiPill", "uiSegmentedControl"})
+        {
+            assertTrue(source.contains("function " + helper + "("), () -> "Missing reusable " + helper);
+        }
+        assertTrue(editor.contains("uiToggle(Boolean(value ?? field.default), field.label)"));
+        assertTrue(editor.contains("channelListEditor(field, value)"));
+        assertTrue(editor.contains("channelMapEditor(field, value)"));
+        assertTrue(dependencies.contains("frequency_select"));
+        assertTrue(dependencies.contains("channelEditorVisibility(form)"));
+        assertTrue(modal.contains("channelRestoreProtocolDefaults(form, profile)"));
+        assertTrue(modal.contains("Save & restart"));
+        assertFalse(modal.contains("action: 'STOP'"));
+        assertTrue(css.contains(".ui-toggle input:checked + .ui-toggle-track"));
+        assertTrue(css.contains(".channel-catalog-table tbody tr.selected"));
+        assertTrue(css.contains("@media (max-width: 720px)"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .link-button"));
+        assertTrue(css.contains(":not(.ui-button):not(.ui-segmented-option)"));
     }
 
     @Test

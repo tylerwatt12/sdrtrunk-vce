@@ -193,6 +193,20 @@ public class Channel extends Configuration
     }
 
     /**
+     * Creates a detached deep copy for editing an existing saved configuration.  Unlike {@link #copyOf()}, this
+     * preserves the identities and learned site state that belong to the saved channel instead of creating a new
+     * channel identity.  Callers can safely mutate the returned configuration without changing the live model.
+     */
+    public Channel copyOfPreservingIdentity()
+    {
+        Channel channel = copyOf();
+        channel.setConfigurationId(getConfigurationId());
+        channel.setRadioResolveId(hasRadioResolveId() ? getRadioResolveId() : null);
+        channel.setP25SiteIdentity(getP25SiteIdentity());
+        return channel;
+    }
+
+    /**
      * Creates a short title containing the system, site and channel name where each value is constrained to
      * ten characters each.
      * @return short title

@@ -296,7 +296,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"125\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"127\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -520,7 +520,7 @@ class StatsWebInteractionUiContractTest
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
         assertTrue(function(source, "async function renderChannelNeighbors(channel, renderContext)")
             .contains("exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id })"));
-        assertTrue(function(source, "async function renderChannels()")
+        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext, editable)")
             .contains("exportCsvLink('channels')"));
         assertTrue(function(source, "async function renderChannelGroupIdentities(configurationId)")
             .contains("exportCsvLink('channel-group-identities', { configuration_id: configurationId })"));
@@ -635,7 +635,7 @@ class StatsWebInteractionUiContractTest
         String css = readText(APP_CSS);
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=102"));
+        assertTrue(html.contains("/assets/app.css?v=104"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

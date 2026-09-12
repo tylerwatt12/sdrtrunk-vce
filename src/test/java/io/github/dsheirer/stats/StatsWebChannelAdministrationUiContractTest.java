@@ -22,13 +22,14 @@ class StatsWebChannelAdministrationUiContractTest
             Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java"));
 
         assertTrue(javascript.contains("ADMIN_CHANNELS: 'admin-channels'"));
-        assertTrue(javascript.contains("requestJson('/api/v1/admin/channels'"));
+        assertTrue(javascript.contains("const catalogPath = editable ? '/api/v1/admin/channels' : " +
+            "'/api/v1/channel-catalog'"));
         assertTrue(javascript.contains("profile.sections.forEach"));
         assertTrue(javascript.contains("field.visible_when"));
-        assertTrue(javascript.contains("action('Start', 'START')"));
-        assertTrue(javascript.contains("action('Stop', 'STOP')"));
-        assertTrue(javascript.contains("action('Clone', 'CLONE')"));
-        assertTrue(javascript.contains("action('Delete', 'DELETE'"));
+        assertTrue(javascript.contains("action('Start', 'icon-play', 'START')"));
+        assertTrue(javascript.contains("action('Stop', 'icon-stop', 'STOP')"));
+        assertTrue(javascript.contains("action('Clone', 'icon-copy', 'CLONE')"));
+        assertTrue(javascript.contains("action('Delete', 'icon-trash', 'DELETE'"));
         assertTrue(javascript.contains("direction: 'EARLIER'"));
         assertTrue(javascript.contains("direction: 'LATER'"));
         assertTrue(Files.readString(Path.of("src/main/resources/channel-protocols.json"))

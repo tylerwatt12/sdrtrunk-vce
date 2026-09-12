@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 public final class ChannelAdminHttpController
 {
     public static final String PATH = "/api/v1/admin/channels";
+    public static final String READ_PATH = "/api/v1/channel-catalog";
     public static final String PROTOCOLS_PATH = PATH + "/protocols";
     public static final String OPTIONS_PATH = PATH + "/options";
     public static final String ACTIONS_PATH = PATH + "/actions";
@@ -115,6 +116,32 @@ public final class ChannelAdminHttpController
             if(exchange.getResponseCode() >= 0 && exception instanceof IOException ioException) throw ioException;
             mLog.warn("Unable to complete channel administration request", exception);
             sendError(exchange, 503, "request_failed", "The channel request could not be completed");
+        }
+    }
+
+    /** Read-only channel catalog for every account allowed to view the receiver. */
+    public void handleCatalog(HttpExchange exchange) throws IOException
+    {
+        WebRequestSecurity.prepareSecurityHeaders(exchange);
+        try
+        {
+            if(!READ_PATH.equals(exchange.getRequestURI().getRawPath()))
+                throw error(404, "not_found", "Not found");
+            requireGet(exchange);
+            sendData(exchange, 200, mService.catalog());
+        }
+        catch(RequestException exception)
+        {
+            sendError(exchange, exception.status(), exception.code(), exception.getMessage());
+        }
+        catch(ChannelAdministrationService.NotInitializedException exception)
+        {
+            sendError(exchange, 503, "configuration_loading", "Channel configuration is still loading");
+        }
+        catch(Exception exception)
+        {
+            mLog.warn("Unable to read the channel catalog", exception);
+            sendError(exchange, 503, "request_failed", "The channel catalog could not be loaded");
         }
     }
 
