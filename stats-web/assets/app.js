@@ -45,6 +45,7 @@ const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
 const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
+const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
@@ -7379,6 +7380,38 @@ async function requestJson(path, options = {}) {
   }
   if (Array.isArray(result.data)) return { rows: result.data, ...(result.meta || {}) };
   return result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
+}
+
+function waitForRequestRetry(delayMilliseconds, signal) {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const complete = () => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    const timeout = window.setTimeout(complete, delayMilliseconds);
+    const abort = () => {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function requestChannelConfigurationJson(path, options = {}) {
+  const signal = options.signal || (options.page === false ? null : activeRenderController?.signal);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestJson(path, { ...options, signal });
+    } catch (error) {
+      const delay = CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS[attempt];
+      if (error?.code !== 'configuration_loading' || delay === undefined) throw error;
+      await waitForRequestRetry(delay, signal);
+    }
+  }
 }
 
 async function api(path, parameters = {}, options = {}) {
@@ -15722,9 +15755,11 @@ async function renderModernChannelCatalog(renderContext, editable) {
   await loading.load(async () => {
     const catalogPath = editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
     const [catalog, protocols, options] = await Promise.all([
-      requestJson(catalogPath, { csrf: false }),
-      editable ? requestJson('/api/v1/admin/channels/protocols', { csrf: false }) : Promise.resolve(null),
-      editable ? requestJson('/api/v1/admin/channels/options', { csrf: false }) : Promise.resolve(null)
+      requestChannelConfigurationJson(catalogPath, { csrf: false }),
+      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/protocols', { csrf: false }) :
+        Promise.resolve(null),
+      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/options', { csrf: false }) :
+        Promise.resolve(null)
     ]);
     return { catalog, protocols, options };
   }, ({ catalog, protocols, options }) => {

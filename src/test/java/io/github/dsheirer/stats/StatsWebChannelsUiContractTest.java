@@ -24,11 +24,19 @@ class StatsWebChannelsUiContractTest
         String source = source();
         String render = function(source, "async function renderChannels()");
         String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        String configurationRequest = function(source,
+            "async function requestChannelConfigurationJson(path, options = {})");
         String columns = function(source,
             "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged)");
 
         assertTrue(render.contains("renderModernChannelCatalog(renderContext, canManageChannels())"));
         assertTrue(catalog.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
+        assertTrue(catalog.contains("requestChannelConfigurationJson(catalogPath"));
+        assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels/protocols'"));
+        assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels/options'"));
+        assertTrue(configurationRequest.contains("error?.code !== 'configuration_loading'"));
+        assertTrue(configurationRequest.contains("CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS[attempt]"));
+        assertTrue(configurationRequest.contains("waitForRequestRetry(delay, signal)"));
         assertTrue(catalog.contains("exportCsvLink('channels')"));
         assertTrue(catalog.contains("channelSummaryCards(catalog)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
