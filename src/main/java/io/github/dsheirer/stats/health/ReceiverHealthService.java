@@ -24,6 +24,7 @@ import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
+import io.github.dsheirer.stats.activity.ReceiverHealthIncidentRecord;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.FileStore;
@@ -55,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public final class ReceiverHealthService implements AutoCloseable
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ReceiverHealthService.class);
+    static final String LEGACY_SNAPSHOT_FILE_NAME = "receiver-health.json";
     private static final long SAMPLE_INTERVAL_MILLISECONDS = 1_000L;
     private static final long CONDITION_HOLD_MILLISECONDS = 10_000L;
     private static final long STORAGE_SAMPLE_INTERVAL_MILLISECONDS = 30_000L;
@@ -71,7 +73,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final LongSupplier mClock;
     private final long mStartedAtMs;
     private final ScheduledExecutorService mExecutor;
-    private final ReceiverHealthSnapshotWriter mSnapshotWriter;
+    private final Path mLegacySnapshotPath;
     private final ReceiverHealthIncidentTracker mIncidents = new ReceiverHealthIncidentTracker();
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
@@ -90,14 +92,15 @@ public final class ReceiverHealthService implements AutoCloseable
     private StorageSnapshot mStorageSnapshot = StorageSnapshot.unavailable();
     private long mLastGcCollectionTimeMs = -1;
     private long mLastFailureLogMs;
-    private long mLastSnapshotWriteFailureLogMs;
+    private long mLastIncidentPersistenceFailureLogMs;
+    private boolean mLegacySnapshotCleanupAttempted;
 
     public ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                                  ChannelProcessingManager channelProcessingManager,
                                  ReceiverActivityService activityLogService)
     {
         this(userPreferences, tunerManager, channelProcessingManager, activityLogService,
-            System::currentTimeMillis, snapshotWriter(userPreferences));
+            System::currentTimeMillis, legacySnapshotPath(userPreferences));
     }
 
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
@@ -110,7 +113,7 @@ public final class ReceiverHealthService implements AutoCloseable
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                           ChannelProcessingManager channelProcessingManager,
                           ReceiverActivityService activityLogService, LongSupplier clock,
-                          ReceiverHealthSnapshotWriter snapshotWriter)
+                          Path legacySnapshotPath)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
@@ -120,7 +123,7 @@ public final class ReceiverHealthService implements AutoCloseable
             mChannelActivityModel.getSnapshotSet() : new ChannelActivityModel.SnapshotSet(0, List.of());
         mActivityLogService = activityLogService;
         mClock = clock != null ? clock : System::currentTimeMillis;
-        mSnapshotWriter = snapshotWriter;
+        mLegacySnapshotPath = legacySnapshotPath;
         mStartedAtMs = mClock.getAsLong();
         mSnapshot = emptySnapshot(mStartedAtMs);
         mExecutor = Executors.newSingleThreadScheduledExecutor(runnable ->
@@ -197,6 +200,8 @@ public final class ReceiverHealthService implements AutoCloseable
 
     private void sample()
     {
+        removeLegacySnapshotOnce();
+
         if(mClosed.get())
         {
             return;
@@ -215,6 +220,7 @@ public final class ReceiverHealthService implements AutoCloseable
             now - entry.getValue().lastSeenMs > COUNTER_BASELINE_RETENTION_MILLISECONDS);
         mConditionStartTimes.keySet().retainAll(mConditionsEvaluatedThisSample);
         mIncidents.endSample(now);
+        publishIncidentChanges(mIncidents.lifecycleChanges(), now);
         List<Map<String,Object>> active = mIncidents.active();
         LinkedHashMap<String,Object> response = new LinkedHashMap<>();
         response.put("started_at_ms", mStartedAtMs);
@@ -224,27 +230,52 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
         mSnapshot = Map.copyOf(response);
-        publishSnapshot(response, now);
     }
 
-    private void publishSnapshot(Map<String,Object> snapshot, long now)
+    private void publishIncidentChanges(List<Map<String,Object>> incidents, long now)
     {
-        if(mSnapshotWriter == null)
+        if(mActivityLogService == null || incidents.isEmpty())
         {
             return;
         }
 
-        try
+        for(Map<String,Object> incident: incidents)
         {
-            mSnapshotWriter.publish(snapshot);
-        }
-        catch(Exception exception)
-        {
-            if(mLastSnapshotWriteFailureLogMs == 0 ||
-                now - mLastSnapshotWriteFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
+            try
             {
-                mLastSnapshotWriteFailureLogMs = now;
-                LOGGER.warn("Receiver health incident report could not be updated", exception);
+                ReceiverHealthIncidentRecord record = new ReceiverHealthIncidentRecord(mStartedAtMs,
+                    number(incident.get("occurrence_id")), text(incident.get("code")),
+                    text(incident.get("severity")), text(incident.get("title")), text(incident.get("scope")),
+                    number(incident.get("opened_at_ms")), number(incident.get("last_seen_ms")),
+                    number(incident.get("resolved_at_ms")), number(incident.get("count")),
+                    text(incident.get("observed")), text(incident.get("likely_cause")),
+                    text(incident.get("impact")), text(incident.get("check_next")));
+
+                if(!mActivityLogService.receiveReceiverHealthIncident(record))
+                {
+                    logIncidentPersistenceFailure(now, null);
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                logIncidentPersistenceFailure(now, exception);
+            }
+        }
+    }
+
+    private void logIncidentPersistenceFailure(long now, RuntimeException exception)
+    {
+        if(mLastIncidentPersistenceFailureLogMs == 0 ||
+            now - mLastIncidentPersistenceFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
+        {
+            mLastIncidentPersistenceFailureLogMs = now;
+            if(exception != null)
+            {
+                LOGGER.warn("Receiver status alert history could not be queued for SQLite", exception);
+            }
+            else
+            {
+                LOGGER.warn("Receiver status alert history could not be queued for SQLite");
             }
         }
     }
@@ -1040,6 +1071,11 @@ public final class ReceiverHealthService implements AutoCloseable
         return value instanceof Number number ? number.longValue() : 0;
     }
 
+    private static String text(Object value)
+    {
+        return value != null ? String.valueOf(value) : "";
+    }
+
     static Map<String,Object> summarize(List<Map<String,Object>> active)
     {
         long critical = active.stream().filter(incident -> "critical".equals(incident.get("severity"))).count();
@@ -1071,7 +1107,7 @@ public final class ReceiverHealthService implements AutoCloseable
             "measurements", List.of());
     }
 
-    private static ReceiverHealthSnapshotWriter snapshotWriter(UserPreferences userPreferences)
+    private static Path legacySnapshotPath(UserPreferences userPreferences)
     {
         if(userPreferences == null)
         {
@@ -1081,14 +1117,48 @@ public final class ReceiverHealthService implements AutoCloseable
         try
         {
             Path path = userPreferences.getDirectoryPreference().getDirectoryApplicationLog()
-                .resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
-            return new ReceiverHealthSnapshotWriter(path);
+                .resolve(LEGACY_SNAPSHOT_FILE_NAME);
+            return path;
         }
         catch(Exception exception)
         {
-            LOGGER.warn("Receiver health incident report path is unavailable", exception);
+            LOGGER.warn("Legacy receiver health incident report path is unavailable", exception);
             return null;
         }
+    }
+
+    private void removeLegacySnapshotOnce()
+    {
+        if(mLegacySnapshotCleanupAttempted)
+        {
+            return;
+        }
+
+        mLegacySnapshotCleanupAttempted = true;
+        if(mLegacySnapshotPath == null)
+        {
+            return;
+        }
+
+        try
+        {
+            removeLegacySnapshotFiles(mLegacySnapshotPath);
+        }
+        catch(Exception exception)
+        {
+            LOGGER.warn("Legacy receiver health incident report could not be removed", exception);
+        }
+    }
+
+    static void removeLegacySnapshotFiles(Path target) throws java.io.IOException
+    {
+        if(target == null)
+        {
+            return;
+        }
+
+        Files.deleteIfExists(target);
+        Files.deleteIfExists(target.resolveSibling("." + target.getFileName() + ".tmp"));
     }
 
     @Override

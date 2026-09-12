@@ -43,6 +43,7 @@ final class CurrentDatabaseDerivedStateRepair
         "trunked_radio_channel_presence_clear",
         "receiver_channel",
         "receiver_activity_event",
+        "receiver_health_incident",
         "activity_event_identity_member",
         "p25_learned_site",
         "trunked_signaling_activity_bucket",
@@ -82,7 +83,8 @@ final class CurrentDatabaseDerivedStateRepair
         "radio_system",
         "radio_system_identity_summary",
         "receiver_channel",
-        "receiver_activity_event");
+        "receiver_activity_event",
+        "receiver_health_incident");
     private static final List<String> METRIC_BOUNDARY_KEYS = List.of(
         ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
         ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,

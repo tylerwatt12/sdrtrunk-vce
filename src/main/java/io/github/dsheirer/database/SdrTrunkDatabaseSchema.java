@@ -27,12 +27,59 @@ import java.util.Map;
  */
 public final class SdrTrunkDatabaseSchema
 {
+    public static final int MAXIMUM_RECEIVER_HEALTH_INCIDENTS = 200;
     private static final String DATABASE_METADATA_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS database_metadata (
             key TEXT NOT NULL PRIMARY KEY CHECK(typeof(key) = 'text' AND length(trim(key)) > 0),
             value TEXT NOT NULL CHECK(typeof(value) = 'text'),
             updated_at_ms INTEGER NOT NULL
                 CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
+        )
+        """;
+    private static final String RECEIVER_HEALTH_INCIDENT_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS receiver_health_incident (
+            id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
+            process_started_at_ms INTEGER NOT NULL CHECK(
+                typeof(process_started_at_ms) = 'integer' AND process_started_at_ms > 0
+            ),
+            occurrence_id INTEGER NOT NULL CHECK(typeof(occurrence_id) = 'integer' AND occurrence_id > 0),
+            code TEXT NOT NULL CHECK(
+                typeof(code) = 'text' AND length(trim(code)) > 0
+                AND length(CAST(code AS BLOB)) <= 80
+            ),
+            severity TEXT NOT NULL CHECK(
+                typeof(severity) = 'text' AND severity IN ('warning', 'critical')
+            ),
+            title TEXT NOT NULL CHECK(
+                typeof(title) = 'text' AND length(trim(title)) > 0
+                AND length(CAST(title AS BLOB)) <= 256
+            ),
+            scope TEXT NOT NULL CHECK(
+                typeof(scope) = 'text' AND length(trim(scope)) > 0
+                AND length(CAST(scope AS BLOB)) <= 512
+            ),
+            opened_at_ms INTEGER NOT NULL CHECK(typeof(opened_at_ms) = 'integer' AND opened_at_ms > 0),
+            last_seen_at_ms INTEGER NOT NULL CHECK(
+                typeof(last_seen_at_ms) = 'integer' AND last_seen_at_ms >= opened_at_ms
+            ),
+            resolved_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(resolved_at_ms) = 'integer'
+                AND (resolved_at_ms = 0 OR resolved_at_ms >= last_seen_at_ms)
+            ),
+            count INTEGER NOT NULL CHECK(typeof(count) = 'integer' AND count >= 0),
+            observed TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(observed) = 'text' AND length(CAST(observed AS BLOB)) <= 2048
+            ),
+            likely_cause TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(likely_cause) = 'text' AND length(CAST(likely_cause AS BLOB)) <= 2048
+            ),
+            impact TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(impact) = 'text' AND length(CAST(impact AS BLOB)) <= 2048
+            ),
+            check_next TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(check_next) = 'text' AND length(CAST(check_next AS BLOB)) <= 2048
+            ),
+            UNIQUE(process_started_at_ms, occurrence_id)
         )
         """;
     private static final String ALIAS_LIST_TABLE_SQL = """
@@ -523,7 +570,9 @@ public final class SdrTrunkDatabaseSchema
     private static final List<SqliteSchemaValidator.Definition> EXACT_CORE_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "database_metadata", DATABASE_METADATA_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "application_settings", APPLICATION_SETTINGS_TABLE_SQL),
-        new SqliteSchemaValidator.Definition("table", "application_icons", APPLICATION_ICONS_TABLE_SQL));
+        new SqliteSchemaValidator.Definition("table", "application_icons", APPLICATION_ICONS_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "receiver_health_incident",
+            RECEIVER_HEALTH_INCIDENT_TABLE_SQL));
     private static final List<SqliteSchemaValidator.Definition> EXACT_WEB_SETTINGS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "web_user", WEB_USER_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "web_access_policy", WEB_ACCESS_POLICY_TABLE_SQL),
@@ -581,6 +630,9 @@ public final class SdrTrunkDatabaseSchema
                 "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
             new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("receiver_health_incident", "id", "process_started_at_ms",
+                "occurrence_id", "code", "severity", "title", "scope", "opened_at_ms", "last_seen_at_ms",
+                "resolved_at_ms", "count", "observed", "likely_cause", "impact", "check_next"),
             new SqliteSchemaValidator.Table("web_user", "id", "username", "tier", "primary_admin",
                 "credential_version", "password_algorithm", "password_iterations", "password_derived_key_bits",
                 "password_salt", "password_hash", "password_changed_at_ms", "auth_revision", "preferences_json",
@@ -592,6 +644,7 @@ public final class SdrTrunkDatabaseSchema
     public static void create(Connection connection) throws SQLException
     {
         create(connection, CONFIGURATION_CHANNEL_TABLE_SQL);
+        createReceiverHealthIncidentTable(connection);
     }
 
     /** Creates the exact format-15 target for its immutable adjacent migration. */
@@ -651,6 +704,15 @@ public final class SdrTrunkDatabaseSchema
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+        }
+    }
+
+    /** Creates the bounded receiver-health history for fresh databases and the adjacent staged migrator only. */
+    public static void createReceiverHealthIncidentTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(RECEIVER_HEALTH_INCIDENT_TABLE_SQL);
         }
     }
 
@@ -812,6 +874,16 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
+
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM receiver_health_incident"))
+        {
+            if(!rows.next() || rows.getLong(1) > MAXIMUM_RECEIVER_HEALTH_INCIDENTS)
+            {
+                throw new SQLException("Receiver-health incident history exceeds its " +
+                    MAXIMUM_RECEIVER_HEALTH_INCIDENTS + "-row limit");
+            }
+        }
     }
 
 }

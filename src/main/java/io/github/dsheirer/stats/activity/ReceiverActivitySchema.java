@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.identifier.Form;
@@ -239,6 +240,62 @@ public class ReceiverActivitySchema
             "idx_p25_site_patch_group_radio_summary_retention"))
         {
             validateIndexColumns(connection, index, List.of("last_seen_ms"));
+        }
+    }
+
+    /** Upserts one receiver-health occurrence and keeps the complete diagnostic history count-bounded. */
+    static void recordReceiverHealthIncident(Connection connection, ReceiverHealthIncidentRecord incident)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_health_incident (
+                process_started_at_ms, occurrence_id, code, severity, title, scope, opened_at_ms,
+                last_seen_at_ms, resolved_at_ms, count, observed, likely_cause, impact, check_next
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(process_started_at_ms, occurrence_id) DO UPDATE SET
+                code=excluded.code,
+                severity=excluded.severity,
+                title=excluded.title,
+                scope=excluded.scope,
+                opened_at_ms=excluded.opened_at_ms,
+                last_seen_at_ms=excluded.last_seen_at_ms,
+                resolved_at_ms=excluded.resolved_at_ms,
+                count=excluded.count,
+                observed=excluded.observed,
+                likely_cause=excluded.likely_cause,
+                impact=excluded.impact,
+                check_next=excluded.check_next
+            """))
+        {
+            statement.setLong(1, incident.processStartedAtMs());
+            statement.setLong(2, incident.occurrenceId());
+            statement.setString(3, incident.code());
+            statement.setString(4, incident.severity());
+            statement.setString(5, incident.title());
+            statement.setString(6, incident.scope());
+            statement.setLong(7, incident.openedAtMs());
+            statement.setLong(8, incident.lastSeenAtMs());
+            statement.setLong(9, incident.resolvedAtMs());
+            statement.setLong(10, incident.count());
+            statement.setString(11, incident.observed());
+            statement.setString(12, incident.likelyCause());
+            statement.setString(13, incident.impact());
+            statement.setString(14, incident.checkNext());
+            statement.executeUpdate();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM receiver_health_incident
+            WHERE id NOT IN (
+                SELECT id
+                FROM receiver_health_incident
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            """))
+        {
+            statement.setInt(1, SdrTrunkDatabaseSchema.MAXIMUM_RECEIVER_HEALTH_INCIDENTS);
+            statement.executeUpdate();
         }
     }
 

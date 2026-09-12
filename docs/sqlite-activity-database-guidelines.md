@@ -90,6 +90,22 @@ is saved. Existing partial matcher indexes cannot serve either whole-list order.
 `EXPLAIN QUERY PLAN` reports `SEARCH alias USING COVERING INDEX idx_alias_list_id (alias_list_id=?)` for snapshot input
 and `SEARCH alias USING INDEX idx_alias_list_name_sort (alias_list_id=?)` for name browsing, without a temporary sort.
 
+### Receiver status alert history
+
+The `receiver_health_incident` table retains the lifecycle of recent Receiver status alerts so a debug report that
+includes the SQLite database also includes the issue name, affected scope, explanation, suggested next check, and
+open or resolved times. Existing hourly statistics cannot reconstruct those alert-specific fields or their lifecycle.
+
+Rows are written only when an alert opens, changes severity or title, or resolves. A healthy receiver writes zero rows
+per hour. Even if an alert repeatedly clears and reopens, the table retains no more than 200 occurrences. Each row has
+at most 9,048 bytes of bounded UTF-8 text plus integer, row, and unique-index overhead, so the retained raw text is
+bounded below 1.8 MiB and normal usage is much smaller. Lifecycle changes update the same occurrence row, and the
+oldest rows are deleted in the same background-writer transaction after the limit is exceeded.
+
+The unique `(process_started_at_ms, occurrence_id)` index supports lifecycle upserts. The integer primary key supports
+newest-first reads and pruning without another index. Representative-volume tests require `EXPLAIN QUERY PLAN` for
+`ORDER BY id DESC LIMIT 200` to use the primary-key order without a temporary B-tree.
+
 ## Verification Required
 
 Schema and query changes must include tests that cover:

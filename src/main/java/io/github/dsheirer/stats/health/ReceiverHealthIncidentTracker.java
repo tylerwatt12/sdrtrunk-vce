@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -27,6 +28,7 @@ final class ReceiverHealthIncidentTracker
 
     private final Map<String,MutableIncident> mActive = new LinkedHashMap<>();
     private final Deque<Map<String,Object>> mResolved = new ArrayDeque<>();
+    private final Map<String,Map<String,Object>> mLifecycleChanges = new LinkedHashMap<>();
     private final Set<String> mObservedThisSample = new HashSet<>();
     private final long mResolutionDelayMilliseconds;
     private long mOccurrenceSequence;
@@ -44,6 +46,7 @@ final class ReceiverHealthIncidentTracker
     void beginSample()
     {
         mObservedThisSample.clear();
+        mLifecycleChanges.clear();
     }
 
     void observe(String code, String severity, String title, String scope, long now, long count,
@@ -52,11 +55,16 @@ final class ReceiverHealthIncidentTracker
         String key = code + '\u0000' + scope;
         mObservedThisSample.add(key);
         MutableIncident incident = mActive.get(key);
+        boolean lifecycleChanged = incident == null;
 
         if(incident == null)
         {
             incident = new MutableIncident(++mOccurrenceSequence, code, severity, title, scope, now);
             mActive.put(key, incident);
+        }
+        else if(!Objects.equals(incident.severity, severity) || !Objects.equals(incident.title, title))
+        {
+            lifecycleChanged = true;
         }
 
         incident.severity = severity;
@@ -67,6 +75,11 @@ final class ReceiverHealthIncidentTracker
         incident.likelyCause = likelyCause;
         incident.impact = impact;
         incident.checkNext = checkNext;
+
+        if(lifecycleChanged || mLifecycleChanges.containsKey(key))
+        {
+            mLifecycleChanges.put(key, incident.toMap(0));
+        }
     }
 
     void endSample(long now)
@@ -90,7 +103,9 @@ final class ReceiverHealthIncidentTracker
 
             if(incident != null)
             {
-                mResolved.addFirst(incident.toMap(now));
+                Map<String,Object> resolved = incident.toMap(now);
+                mResolved.addFirst(resolved);
+                mLifecycleChanges.put(key, resolved);
             }
         }
 
@@ -118,6 +133,11 @@ final class ReceiverHealthIncidentTracker
     List<Map<String,Object>> resolved()
     {
         return List.copyOf(mResolved);
+    }
+
+    List<Map<String,Object>> lifecycleChanges()
+    {
+        return List.copyOf(mLifecycleChanges.values());
     }
 
     private static long number(Object value)

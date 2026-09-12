@@ -79,23 +79,17 @@ class ReceiverHealthServiceTest
     }
 
     @Test
-    void publishesTheLocalIncidentSnapshotFromTheObserverSample() throws Exception
+    void removesTheLegacyLocalIncidentSnapshotAndTemporaryFile() throws Exception
     {
-        AtomicLong clock = new AtomicLong(1_000);
-        Path target = mTemporaryDirectory.resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
+        Path target = mTemporaryDirectory.resolve(ReceiverHealthService.LEGACY_SNAPSHOT_FILE_NAME);
+        Path staged = target.resolveSibling("." + target.getFileName() + ".tmp");
+        Files.writeString(target, "legacy");
+        Files.writeString(staged, "legacy temporary");
 
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get,
-            new ReceiverHealthSnapshotWriter(target)))
-        {
-            service.sampleNow();
-            assertTrue(Files.isRegularFile(target));
-            String first = Files.readString(target);
-            assertFalse(first.contains("\"measurements\""));
+        ReceiverHealthService.removeLegacySnapshotFiles(target);
 
-            clock.set(2_000);
-            service.sampleNow();
-            assertEquals(first, Files.readString(target));
-        }
+        assertFalse(Files.exists(target));
+        assertFalse(Files.exists(staged));
     }
 
     @Test

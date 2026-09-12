@@ -145,18 +145,18 @@ class ReceiverActivityWriter implements AutoCloseable
         mDetailedEventHistoryEnabled = detailedEventHistoryEnabled;
     }
 
-    void enqueue(ReceiverActivityRecord record)
+    boolean enqueue(ReceiverActivityRecord record)
     {
         if(record == null)
         {
-            return;
+            return false;
         }
 
         synchronized(mQueueOrderingLock)
         {
             if(!mRunning.get())
             {
-                return;
+                return false;
             }
 
             QueuedRecord queuedRecord = new QueuedRecord(mEnqueueSequence.incrementAndGet(), record);
@@ -169,8 +169,11 @@ class ReceiverActivityWriter implements AutoCloseable
                 if(!mQueue.offer(queuedRecord))
                 {
                     mDroppedRecords.incrementAndGet();
+                    return false;
                 }
             }
+
+            return true;
         }
     }
 
@@ -375,7 +378,7 @@ class ReceiverActivityWriter implements AutoCloseable
                     long batchDeadline = System.nanoTime() +
                         TimeUnit.MILLISECONDS.toNanos(mBatchCollectionMilliseconds);
 
-                    while(batch.size() < mBatchSize)
+                    while(batch.size() < mBatchSize && !requiresPromptCommit(batch.getLast()))
                     {
                         command = mMaintenanceQueue.peek();
                         queuedHead = mQueue.peek();
@@ -424,6 +427,11 @@ class ReceiverActivityWriter implements AutoCloseable
                         }
 
                         batch.add(next.record());
+
+                        if(requiresPromptCommit(next.record()))
+                        {
+                            break;
+                        }
                     }
 
                     writeBatchWithRetry(connection, batch);
@@ -671,6 +679,12 @@ class ReceiverActivityWriter implements AutoCloseable
                 ", frequency=" + activity.frequencyHertz() + ", site=" + activity.site();
         }
 
+        if(record instanceof ReceiverHealthIncidentRecord incident)
+        {
+            return "ReceiverHealthIncident code=" + incident.code() +
+                ", observedAt=" + incident.observedAtEpochMilliseconds();
+        }
+
         return record != null ? record.getClass().getSimpleName() : "unknown";
     }
 
@@ -867,6 +881,11 @@ class ReceiverActivityWriter implements AutoCloseable
                     }
                     writtenRecords++;
                 }
+                else if(record instanceof ReceiverHealthIncidentRecord incident)
+                {
+                    ReceiverActivitySchema.recordReceiverHealthIncident(connection, incident);
+                    writtenRecords++;
+                }
             }
 
             long writtenTotal = mWrittenRecords.get() + writtenRecords;
@@ -910,6 +929,11 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             connection.setAutoCommit(previousAutoCommit);
         }
+    }
+
+    private static boolean requiresPromptCommit(ReceiverActivityRecord record)
+    {
+        return record instanceof ReceiverHealthIncidentRecord;
     }
 
     private boolean hasResolvedLogicalCall(LogicalCallId logicalCallId, Set<LogicalCallId> acceptedLogicalCalls)

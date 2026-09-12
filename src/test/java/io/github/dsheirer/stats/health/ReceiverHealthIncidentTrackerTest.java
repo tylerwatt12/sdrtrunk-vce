@@ -21,10 +21,12 @@ class ReceiverHealthIncidentTrackerTest
         tracker.observe("usb-sample-loss", "critical", "USB loss", "Airspy", 100, 1,
             "one short transfer", "USB pressure", "decode loss", "check USB");
         tracker.endSample(100);
+        assertEquals(1, tracker.lifecycleChanges().size());
         tracker.beginSample();
         tracker.observe("usb-sample-loss", "critical", "USB loss", "Airspy", 105, 2,
             "two short transfers", "USB pressure", "decode loss", "check USB");
         tracker.endSample(105);
+        assertTrue(tracker.lifecycleChanges().isEmpty());
         assertEquals(1, tracker.active().size());
         Map<String,Object> active = tracker.active().getFirst();
         assertEquals(2L, active.get("count"));
@@ -35,14 +37,17 @@ class ReceiverHealthIncidentTrackerTest
         tracker.observe("usb-sample-loss", "warning", "USB delivery recovered partially", "Airspy", 106, 2,
             "delivery restored", "USB pressure", "decode at risk", "keep watching");
         tracker.endSample(106);
+        assertEquals(1, tracker.lifecycleChanges().size());
         assertEquals("warning", tracker.active().getFirst().get("severity"));
         assertEquals("USB delivery recovered partially", tracker.active().getFirst().get("title"));
 
         tracker.beginSample();
         tracker.endSample(115);
+        assertTrue(tracker.lifecycleChanges().isEmpty());
         assertEquals(1, tracker.active().size());
         tracker.beginSample();
         tracker.endSample(116);
+        assertEquals(1, tracker.lifecycleChanges().size());
         assertTrue(tracker.active().isEmpty());
         assertEquals(1, tracker.resolved().size());
         assertEquals(116L, tracker.resolved().getFirst().get("resolved_at_ms"));
