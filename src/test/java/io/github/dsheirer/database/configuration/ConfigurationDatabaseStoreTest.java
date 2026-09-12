@@ -82,7 +82,6 @@ class ConfigurationDatabaseStoreTest
         stream.setName("RadioResolve");
         stream.setHost("https://example.invalid/upload");
         stream.setApiKey("test-api-key");
-        stream.setNodeName("TEST-NODE");
         stream.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
         stream.setEnabled(true);
 
@@ -91,6 +90,18 @@ class ConfigurationDatabaseStoreTest
         state.setBroadcastConfigurations(List.of(stream));
 
         replace(database, state);
+
+        //Retired RadioResolve node fields can remain in an older database until its next configuration save.
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate("""
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json,
+                    '$.nodeName', 'TEST-NODE',
+                    '$.nodeTimezone', 'America/New_York')
+                """));
+        }
 
         ChannelAndBroadcastConfiguration loaded = store.load();
         assertEquals(1, loaded.channels().size());
@@ -121,9 +132,13 @@ class ConfigurationDatabaseStoreTest
         assertEquals("RadioResolve", loadedRadioResolve.getName());
         assertEquals("https://example.invalid/upload", loadedRadioResolve.getHost());
         assertEquals("test-api-key", loadedRadioResolve.getApiKey());
-        assertEquals("TEST-NODE", loadedRadioResolve.getNodeName());
         assertEquals(RadioResolveConfiguration.Mode.CALLS_ONLY, loadedRadioResolve.getMode());
         assertTrue(loadedRadioResolve.isEnabled());
+
+        TestConfiguration resaved = new TestConfiguration();
+        resaved.setChannels(loaded.channels());
+        resaved.setBroadcastConfigurations(loaded.broadcastConfigurations());
+        replace(database, resaved);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
@@ -155,7 +170,9 @@ class ConfigurationDatabaseStoreTest
                        json_extract(config_json, '$.mode') AS mode,
                        json_type(config_json, '$.configurationId') AS configuration_id_json,
                        json_type(config_json, '$.callUploadEnabled') AS call_upload_enabled,
-                       json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled
+                       json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled,
+                       json_type(config_json, '$.nodeName') AS retired_node_name,
+                       json_type(config_json, '$.nodeTimezone') AS retired_node_timezone
                 FROM configuration_broadcast_stream
                 """))
             {
@@ -169,6 +186,8 @@ class ConfigurationDatabaseStoreTest
                 assertNull(resultSet.getString("configuration_id_json"));
                 assertNull(resultSet.getString("call_upload_enabled"));
                 assertNull(resultSet.getString("site_metadata_enabled"));
+                assertNull(resultSet.getString("retired_node_name"));
+                assertNull(resultSet.getString("retired_node_timezone"));
             }
         }
     }

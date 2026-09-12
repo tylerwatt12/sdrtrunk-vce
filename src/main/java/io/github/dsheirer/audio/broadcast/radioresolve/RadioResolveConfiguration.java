@@ -15,8 +15,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import java.net.InetAddress;
-import java.time.ZoneId;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
@@ -32,8 +30,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
 {
     public static final String PRODUCTION_ENDPOINT = "https://calls.radioresolve.com";
     private StringProperty mApiKey = new SimpleStringProperty();
-    private StringProperty mNodeName = new SimpleStringProperty(getDefaultNodeName());
-    private StringProperty mNodeTimezone = new SimpleStringProperty(getDefaultNodeTimezone());
     private BooleanProperty mIgnoreCertificateErrors = new SimpleBooleanProperty(false);
     private ObjectProperty<Mode> mMode = new SimpleObjectProperty<>(Mode.CALLS_AND_METADATA);
 
@@ -89,16 +85,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return mApiKey;
     }
 
-    public StringProperty nodeNameProperty()
-    {
-        return mNodeName;
-    }
-
-    public StringProperty nodeTimezoneProperty()
-    {
-        return mNodeTimezone;
-    }
-
     public BooleanProperty ignoreCertificateErrorsProperty()
     {
         return mIgnoreCertificateErrors;
@@ -123,26 +109,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
     public void setApiKey(String apiKey)
     {
         mApiKey.set(apiKey);
-    }
-
-    public String getNodeName()
-    {
-        return mNodeName.get();
-    }
-
-    public void setNodeName(String nodeName)
-    {
-        mNodeName.set(nodeName);
-    }
-
-    public String getNodeTimezone()
-    {
-        return mNodeTimezone.get();
-    }
-
-    public void setNodeTimezone(String nodeTimezone)
-    {
-        mNodeTimezone.set(nodeTimezone);
     }
 
     public boolean getIgnoreCertificateErrors()
@@ -197,30 +163,11 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         copy.setName(getName());
         copy.setHost(getHost());
         copy.setApiKey(getApiKey());
-        copy.setNodeName(getNodeName());
-        copy.setNodeTimezone(getNodeTimezone());
         copy.setIgnoreCertificateErrors(getIgnoreCertificateErrors());
         copy.setMode(getMode());
         copy.setMaximumRecordingAge(getMaximumRecordingAge());
         copy.setEnabled(isEnabled());
         return copy;
-    }
-
-    public static String getDefaultNodeName()
-    {
-        try
-        {
-            return InetAddress.getLocalHost().getHostName();
-        }
-        catch(Exception _)
-        {
-            return "sdrtrunk";
-        }
-    }
-
-    public static String getDefaultNodeTimezone()
-    {
-        return ZoneId.systemDefault().getId();
     }
 
     private static String normalizeHost(String host)
