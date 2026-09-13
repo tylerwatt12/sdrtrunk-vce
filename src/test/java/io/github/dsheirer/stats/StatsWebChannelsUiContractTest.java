@@ -40,6 +40,7 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("exportCsvLink('channels')"));
         assertTrue(catalog.contains("channelSummaryCards(catalog)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
+        assertTrue(catalog.contains("layoutMenuHost: toolbar"));
         assertTrue(catalog.contains("editable ? 'channel-catalog-admin-v1' : " +
             "'channel-catalog-readonly-v1'"));
         assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
@@ -92,6 +93,10 @@ class StatsWebChannelsUiContractTest
         assertFalse(modal.contains("action: 'STOP'"));
         assertTrue(css.contains(".ui-toggle input:checked + .ui-toggle-track"));
         assertTrue(css.contains(".channel-catalog-table tbody tr.selected"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
+        assertTrue(css.contains(".channel-catalog-table-host {\n  min-width: 0;\n  max-width: 100%;"));
+        assertTrue(css.contains(".channel-catalog-table-wrap {\n  width: 100%;\n  min-width: 0;\n" +
+            "  max-width: 100%;\n  overflow-x: auto;\n  overflow-y: hidden;"));
         assertTrue(css.contains("@media (max-width: 720px)"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .link-button"));
         assertTrue(css.contains(":not(.ui-button):not(.ui-segmented-option)"));

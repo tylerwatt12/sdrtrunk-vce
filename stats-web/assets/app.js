@@ -15862,7 +15862,8 @@ async function renderModernChannelCatalog(renderContext, editable) {
         clientSort: true, controller: tableController,
         rowKey: (row) => row.configuration_id,
         rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
-        tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap'
+        tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
+        layoutMenuHost: toolbar
       });
     tableHost.append(channelTable);
     if (editable) {

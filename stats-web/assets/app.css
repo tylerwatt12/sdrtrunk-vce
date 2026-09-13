@@ -2933,6 +2933,11 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   border: 1px solid var(--line);
 }
 
+.async-section-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .section-title {
   min-height: 35px;
   display: flex;
@@ -9262,7 +9267,15 @@ select:focus-visible,
 
 .ui-catalog {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+}
+
+.ui-catalog,
+.ui-catalog > *,
+.channel-catalog-table-host {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .channel-summary-grid {
@@ -9340,7 +9353,11 @@ select:focus-visible,
 }
 
 .channel-catalog-table-wrap {
-  overflow: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
