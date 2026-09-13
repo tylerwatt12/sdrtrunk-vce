@@ -677,7 +677,12 @@ public class StatsWebServerService implements AutoCloseable
         if(mAliasAdministrationService != null)
         {
             AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService,
-                mDatabase::invalidateAliasActivitySnapshots);
+                mDatabase::invalidateAliasActivitySnapshots, aliasListId ->
+                {
+                    AliasTransferExport.Prepared prepared = mDatabase.aliasTransferExport(aliasListId);
+                    return new AliasAdminHttpController.AliasListExport(prepared.path(), prepared.fileName(),
+                        prepared.rowCount(), prepared.byteCount(), prepared::close);
+                });
             HttpHandler protectedAliases = mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_ALIASES, aliasController::handle);
             server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, protectedAliases);

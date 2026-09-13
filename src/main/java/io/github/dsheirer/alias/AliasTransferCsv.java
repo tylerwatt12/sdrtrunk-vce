@@ -21,6 +21,8 @@ import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.io.Reader;
+import java.io.Writer;
 import java.util.*;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -31,8 +33,11 @@ import org.apache.commons.csv.CSVRecord;
 public final class AliasTransferCsv
 {
     public enum Format { VCE, RADIOREFERENCE }
-    public static final int MAX_ROWS = 10_000;
-    public static final int MAX_BYTES = 8 * 1024 * 1024;
+    /**
+     * Import requests are still bounded as untrusted administrator input.  This is deliberately independent of
+     * export size: database-backed exports use {@link StreamingWriter} and have no row or byte ceiling.
+     */
+    public static final int MAX_BYTES = 128 * 1024 * 1024;
     public static final List<String> HEADERS = List.of("format_version", "alias_list", "name", "description", "group",
         "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
         "record_enabled", "scan_lists", "streaming_destinations", "stream_as_talkgroup");
@@ -48,11 +53,17 @@ public final class AliasTransferCsv
     public static List<AliasImportService.Input> read(String csv, Format format, AliasListDefinition list)
     {
         if(csv == null || csv.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_BYTES)
-            throw new IllegalArgumentException("CSV exceeds 8 MiB");
-        if(csv.startsWith("\uFEFF")) csv = csv.substring(1);
+            throw new IllegalArgumentException("CSV exceeds " + (MAX_BYTES / (1024 * 1024)) + " MiB");
+        return read(new StringReader(csv), format, list);
+    }
+
+    /** Parses a caller-size-bounded character stream without first copying the complete CSV into a String. */
+    public static List<AliasImportService.Input> read(Reader reader, Format format, AliasListDefinition list)
+    {
+        Objects.requireNonNull(reader, "CSV reader cannot be null");
         List<AliasImportService.Input> rows = new ArrayList<>();
         try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
-            .parse(new StringReader(csv)))
+            .parse(new BomStrippingReader(reader)))
         {
             List<String> expected = format == Format.VCE ? HEADERS : RR_HEADERS;
             boolean version1 = format == Format.VCE && parser.getHeaderNames().equals(VERSION_1_HEADERS);
@@ -60,7 +71,6 @@ public final class AliasTransferCsv
                 throw new IllegalArgumentException("Expected exact CSV header: " + String.join(",", expected));
             for(CSVRecord row: parser)
             {
-                if(rows.size() == MAX_ROWS) throw new IllegalArgumentException("CSV exceeds 10,000 aliases");
                 try
                 {
                     if(!row.isConsistent()) throw new IllegalArgumentException("Column count does not match header");
@@ -131,6 +141,40 @@ public final class AliasTransferCsv
         if(sourceLists.size() > 1)
             throw new IllegalArgumentException("VCE CSV rows must identify one source alias_list");
         return List.copyOf(rows);
+    }
+
+    private static final class BomStrippingReader extends java.io.PushbackReader
+    {
+        private boolean mStarted;
+
+        private BomStrippingReader(Reader reader)
+        {
+            super(reader, 1);
+        }
+
+        @Override
+        public int read(char[] buffer, int offset, int length) throws java.io.IOException
+        {
+            if(!mStarted)
+            {
+                mStarted = true;
+                int first = super.read();
+
+                if(first >= 0 && first != '\uFEFF')
+                {
+                    unread(first);
+                }
+            }
+
+            return super.read(buffer, offset, length);
+        }
+
+        @Override
+        public int read() throws java.io.IOException
+        {
+            char[] value = new char[1];
+            return read(value, 0, 1) < 0 ? -1 : value[0];
+        }
     }
 
     private static AliasID matcher(CSVRecord row)
@@ -212,20 +256,64 @@ public final class AliasTransferCsv
         try
         {
             StringWriter writer = new StringWriter();
-            writer.write('\uFEFF');
-            try(CSVPrinter printer = new CSVPrinter(writer, CSVFormat.RFC4180.builder()
-                .setHeader(HEADERS.toArray(String[]::new)).get()))
+            try(StreamingWriter csv = streamingWriter(writer))
             {
                 for(Map<String,String> row: rows)
-                    printer.printRecord(HEADERS.stream().map(header ->
-                        Set.of("alias_list", "name", "description", "group", "icon", "text").contains(header) ?
-                            escape(row.get(header)) : row.get(header)).toList());
+                {
+                    csv.write(row);
+                }
             }
-            if(writer.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_BYTES)
-                throw new IllegalArgumentException("Export exceeds 8 MiB");
             return writer.toString();
         }
         catch(java.io.IOException exception) { throw new IllegalArgumentException("Unable to write CSV", exception); }
+    }
+
+    /**
+     * Opens a VCE CSV writer that emits each alias immediately.  Callers can target a buffered file writer so the
+     * complete export is never accumulated in the Java heap.
+     */
+    public static StreamingWriter streamingWriter(Writer writer) throws java.io.IOException
+    {
+        return new StreamingWriter(writer);
+    }
+
+    public static final class StreamingWriter implements AutoCloseable
+    {
+        private static final Set<String> ESCAPED_TEXT_COLUMNS =
+            Set.of("alias_list", "name", "description", "group", "icon", "text");
+        private final CSVPrinter mPrinter;
+        private long mRowCount;
+
+        private StreamingWriter(Writer writer) throws java.io.IOException
+        {
+            Objects.requireNonNull(writer, "CSV writer cannot be null").write('\uFEFF');
+            mPrinter = new CSVPrinter(writer, CSVFormat.RFC4180.builder()
+                .setHeader(HEADERS.toArray(String[]::new)).get());
+        }
+
+        public void write(Map<String,String> row) throws java.io.IOException
+        {
+            Objects.requireNonNull(row, "CSV row cannot be null");
+            mPrinter.printRecord(HEADERS.stream().map(header -> ESCAPED_TEXT_COLUMNS.contains(header) ?
+                escape(row.get(header)) : text(row.get(header))).toList());
+            mRowCount++;
+        }
+
+        public long rowCount()
+        {
+            return mRowCount;
+        }
+
+        public void flush() throws java.io.IOException
+        {
+            mPrinter.flush();
+        }
+
+        @Override
+        public void close() throws java.io.IOException
+        {
+            mPrinter.close();
+        }
     }
 
     private static int integer(CSVRecord row, String field) { return Integer.parseInt(row.get(field)); }

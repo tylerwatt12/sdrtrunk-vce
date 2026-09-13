@@ -199,6 +199,62 @@ class AliasDatabaseStoreTest
     }
 
     @Test
+    void preservesActivityForConfigurationEditsResetsMatcherChangesAndSynchronizesLifecycle() throws Exception
+    {
+        Path database = database("activity-summary-lifecycle.sqlite");
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+        AliasListDefinition definition = definition("County", AliasListFamily.P25);
+        AliasConfigurationSnapshot committed = replace(store,
+            List.of(alias("Dispatch", definition, 100)), List.of(definition));
+        definition = committed.definitions().getFirst();
+        Alias dispatch = committed.aliases().getFirst();
+        long dispatchId = dispatch.getId();
+
+        execute(database, """
+            UPDATE alias_activity_summary
+            SET metrics_state='observed', logical_call_count=17,
+                recorded_logical_call_count=3, first_evidence_ms=1000, last_evidence_ms=2000
+            WHERE alias_id=%d
+            """.formatted(dispatchId));
+
+        dispatch.setName("Renamed Dispatch");
+        dispatch.setDescription("Imported description update");
+        dispatch.setGroup("Operations");
+        dispatch.setRecordable(true);
+        committed = replace(store, List.of(dispatch), List.of(definition));
+        dispatch = committed.aliases().getFirst();
+        assertSummary(database, dispatchId, "observed", 17L, 3L, 1000L, 2000L);
+
+        dispatch.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+        committed = replace(store, List.of(dispatch), List.of(definition));
+        dispatch = committed.aliases().getFirst();
+        assertSummary(database, dispatchId, "not_collected", null, null, null, null);
+
+        execute(database, """
+            UPDATE alias_activity_summary
+            SET metrics_state='observed', logical_call_count=9,
+                recorded_logical_call_count=1, first_evidence_ms=3000, last_evidence_ms=4000
+            WHERE alias_id=%d
+            """.formatted(dispatchId));
+        Alias added = alias("New alias", definition, 200);
+        committed = replace(store, List.of(dispatch, added), List.of(definition));
+        Alias savedAdded = committed.aliases().stream()
+            .filter(candidate -> "New alias".equals(candidate.getName())).findFirst().orElseThrow();
+        assertNotEquals(Alias.UNASSIGNED_ID, savedAdded.getId());
+        assertSummary(database, savedAdded.getId(), "not_collected", null, null, null, null);
+        assertSummary(database, dispatchId, "observed", 9L, 1L, 3000L, 4000L);
+
+        replace(store, List.of(savedAdded), List.of(definition));
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            assertEquals(0, count(connection,
+                "SELECT count(*) FROM alias_activity_summary WHERE alias_id=?", dispatchId));
+            assertEquals(1, count(connection,
+                "SELECT count(*) FROM alias_activity_summary WHERE alias_id=?", savedAdded.getId()));
+        }
+    }
+
+    @Test
     void persistsEmptyProtocolOwnedList() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("empty-list.sqlite"));
@@ -400,6 +456,48 @@ class AliasDatabaseStoreTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate(sql);
+        }
+    }
+
+    private static void assertSummary(Path database, long aliasId, String state, Long calls, Long recorded,
+                                      Long firstSeen, Long lastSeen) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT metrics_state,logical_call_count,recorded_logical_call_count,
+                    first_evidence_ms,last_evidence_ms
+                FROM alias_activity_summary WHERE alias_id=?
+                """))
+        {
+            statement.setLong(1, aliasId);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                assertTrue(rows.next());
+                assertEquals(state, rows.getString("metrics_state"));
+                assertEquals(calls, nullableLong(rows, "logical_call_count"));
+                assertEquals(recorded, nullableLong(rows, "recorded_logical_call_count"));
+                assertEquals(firstSeen, nullableLong(rows, "first_evidence_ms"));
+                assertEquals(lastSeen, nullableLong(rows, "last_evidence_ms"));
+            }
+        }
+    }
+
+    private static Long nullableLong(ResultSet rows, String column) throws Exception
+    {
+        long value = rows.getLong(column);
+        return rows.wasNull() ? null : value;
+    }
+
+    private static int count(Connection connection, String sql, long value) throws Exception
+    {
+        try(PreparedStatement statement = connection.prepareStatement(sql))
+        {
+            statement.setLong(1, value);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                assertTrue(rows.next());
+                return rows.getInt(1);
+            }
         }
     }
 

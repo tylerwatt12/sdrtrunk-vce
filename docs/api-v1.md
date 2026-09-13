@@ -198,6 +198,7 @@ decoder-specific protocol labels. Database integer codes and internal surrogate 
 CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 
 - `aliases`
+- `alias-list`
 - `signal-health`
 - `radio-system-group-identities`
 - `radio-system-radios`
@@ -209,7 +210,11 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 - `channel-neighbors`
 - `channel-quality`
 
-One export runs at a time. Buffered exports stop at 10,000 rows or 16 MiB. Radio-system exports use
+One export runs at a time. General reporting exports stop at 10,000 rows or 16 MiB. The importable `alias-list.csv`
+export instead requires a positive `list` and `scope=all` or `scope=filtered`. The filtered scope accepts the Alias
+catalog filters, applies them to the complete result, and has no row limit. Importable alias rows are always written
+in ascending durable alias-ID order, independent of the table's presentation sort. The export is prepared in bounded
+database batches and downloaded from a validated temporary spool. Radio-system exports use
 `radio_system_key`; channel exports use `configuration_id`. Radio-system radio exports also accept `affiliated` and
 `configuration_id`. Talker-alias exports contain only radios with a nonblank over-the-air alias. Alias catalog reads
 and `aliases.csv` require administrator Alias access.

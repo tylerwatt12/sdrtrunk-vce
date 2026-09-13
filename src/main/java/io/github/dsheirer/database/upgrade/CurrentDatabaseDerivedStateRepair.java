@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -74,6 +75,7 @@ final class CurrentDatabaseDerivedStateRepair
         "trunked_control_channel_quality",
         "dmr_conventional_talkgroup_summary",
         "dmr_conventional_radio_summary",
+        "alias_activity_summary",
         "trunked_site_snapshot",
         "trunked_site_channel_summary",
         "trunked_site_neighbor_summary",
@@ -136,6 +138,11 @@ final class CurrentDatabaseDerivedStateRepair
             }
         }
 
+        if(!damagedTables.contains("alias_activity_summary") && invalidAliasActivitySummaryParity(connection))
+        {
+            damagedTables.add("alias_activity_summary");
+        }
+
         List<String> invalidMetricBoundaryKeys = new ArrayList<>();
         for(String key: METRIC_BOUNDARY_KEYS)
         {
@@ -161,6 +168,7 @@ final class CurrentDatabaseDerivedStateRepair
         if(before.damagedTables() > 0)
         {
             LegacyActivityReset.clear(connection, REPRODUCIBLE_TABLES);
+            AliasActivitySummaryMaintenance.resetAll(connection);
             restartMetricBoundaries(connection, METRIC_BOUNDARY_KEYS);
         }
         else
@@ -236,6 +244,55 @@ final class CurrentDatabaseDerivedStateRepair
                     return true;
                 }
             }
+        }
+    }
+
+    /**
+     * The summary is a maintained read model, so row-local constraints cannot detect a missing row or values that
+     * still satisfy the table checks but no longer describe the owning Alias.  Require exactly one summary per Alias
+     * with the configuration-derived owner and activity protocol.
+     */
+    private static boolean invalidAliasActivitySummaryParity(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("""
+                SELECT
+                    EXISTS(
+                        SELECT 1
+                        FROM alias configured
+                        JOIN alias_list owner ON owner.id=configured.alias_list_id
+                        LEFT JOIN alias_activity_summary summary ON summary.alias_id=configured.id
+                        WHERE summary.alias_id IS NULL
+                           OR summary.alias_list_id<>configured.alias_list_id
+                           OR summary.protocol_code<>CASE
+                               WHEN configured.matcher_type IN (
+                                   'TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE'
+                               ) THEN CASE configured.protocol
+                                   WHEN 'APCO25' THEN 1
+                                   WHEN 'APCO25_PHASE2' THEN 1
+                                   WHEN 'DMR' THEN 3
+                                   WHEN 'NXDN' THEN 4
+                                   ELSE 0
+                               END
+                               ELSE 0
+                           END
+                        LIMIT 1
+                    )
+                    OR EXISTS(
+                        SELECT 1
+                        FROM alias_activity_summary summary
+                        LEFT JOIN alias configured ON configured.id=summary.alias_id
+                        WHERE configured.id IS NULL
+                        LIMIT 1
+                    )
+                """))
+        {
+            if(!rows.next())
+            {
+                throw new SQLException("Unable to inspect Alias Activity summary parity");
+            }
+
+            return rows.getInt(1) != 0;
         }
     }
 

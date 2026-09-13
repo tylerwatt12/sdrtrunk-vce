@@ -467,6 +467,7 @@ class StatsAliasResolverTest
             assertEquals("Dispatch", historical.get("alias_name"),
                 "detaching a fallback must not detach its exact saved-channel Alias List");
 
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
             Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
             Map<String,Object> alias = (Map<String,Object>)response.get("alias");
             List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
@@ -474,8 +475,8 @@ class StatsAliasResolverTest
                 .filter(row -> fallbackKey.equals(row.get("radio_system_key")))
                 .findFirst().orElseThrow();
 
-            assertEquals(2L, ((Number)alias.get("coverage_source_count")).longValue(),
-                "the selected list covers both the historical fallback and the current native system");
+            assertEquals(1L, ((Number)alias.get("coverage_source_count")).longValue(),
+                "coverage reports the currently assigned native system while retained evidence remains visible");
             assertEquals(1L, ((Number)alias.get("observed_source_count")).longValue());
             assertEquals(4L, ((Number)fallback.get("logical_call_count")).longValue());
             assertEquals(configurationId, fallback.get("configuration_id"));
@@ -524,6 +525,7 @@ class StatsAliasResolverTest
             insertConventionalRadioBucket(statement, 101, 501, 5);
             insertConventionalRadioBucket(statement, 102, 501, 6);
             insertConventionalRadioBucket(statement, 103, 501, 7);
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
 
             assertConventionalAliasMetrics(connection, 1, 101, "P25", 2, 1, 1, 0);
             assertConventionalAliasMetrics(connection, 2, 102, "DMR", 3, 1, 0, 1);
@@ -727,6 +729,7 @@ class StatsAliasResolverTest
                 """);
             statement.executeUpdate("UPDATE alias_list SET name='Renamed County' WHERE id=1");
 
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
             Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
             Map<String,Object> alias = (Map<String,Object>)response.get("alias");
             List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
@@ -952,7 +955,7 @@ class StatsAliasResolverTest
 
     @Test
     @SuppressWarnings("unchecked")
-    void listActivitySnapshotSortsAllCandidatesAndIsReused() throws Exception
+    void durableActivitySummarySortsAllCandidatesAndRefreshesWithoutARequestCache() throws Exception
     {
         Path database = mTemporaryFolder.resolve("alias-activity-snapshot.sqlite");
         createDatabase(database);
@@ -992,6 +995,7 @@ class StatsAliasResolverTest
                 VALUES (9101, 91, 1, 91, 10, 20, 12, 3)
                 """);
 
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
             StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
             StatsRequest request = new StatsRequest(Map.of("list", "1", "sort", "logical_call_count",
                 "direction", "desc", "limit", "1"));
@@ -1005,19 +1009,15 @@ class StatsAliasResolverTest
                 "sort", "logical_call_count", "direction", "desc", "limit", "1", "offset", "1")));
             List<Map<String,Object>> secondRows = (List<Map<String,Object>>)second.get("rows");
             assertEquals(1L, ((Number)secondRows.getFirst().get("alias_id")).longValue());
-            assertEquals(first.get("activity_snapshot_created_ms"), second.get("activity_snapshot_created_ms"));
+            assertFalse(first.containsKey("activity_snapshot_created_ms"));
+            assertFalse(second.containsKey("activity_snapshot_created_ms"));
 
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary(id, radio_system_id, identity_kind_code, identity_id,
                     first_seen_ms, last_seen_ms, logical_call_count)
                 VALUES (9102, 91, 1, 90, 21, 22, 20)
                 """);
-            Map<String,Object> cached = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
-                "sort", "logical_call_count", "direction", "desc", "limit", "1")));
-            List<Map<String,Object>> cachedRows = (List<Map<String,Object>>)cached.get("rows");
-            assertEquals(2L, ((Number)cachedRows.getFirst().get("alias_id")).longValue());
-
-            catalog.invalidateActivitySnapshots();
+            AliasActivitySummaryMaintenance.rebuildAll(connection);
             Map<String,Object> refreshed = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
                 "sort", "logical_call_count", "direction", "desc", "limit", "1")));
             List<Map<String,Object>> refreshedRows = (List<Map<String,Object>>)refreshed.get("rows");

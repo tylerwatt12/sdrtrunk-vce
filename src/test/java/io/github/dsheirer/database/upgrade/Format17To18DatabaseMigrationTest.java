@@ -48,7 +48,7 @@ class Format17To18DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals(2, preflight.steps().size());
+            assertEquals(3, preflight.steps().size());
             assertEquals("format-17-to-18", preflight.steps().getFirst().id());
             assertEquals(DatabaseMigrationEffect.UNKNOWN_COUNT,
                 preflight.steps().getFirst().effects().getFirst().affectedRows());
@@ -72,8 +72,8 @@ class Format17To18DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(19, report.target().version());
-            assertEquals("format-18-to-19", report.steps().getLast().id());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+            assertEquals("format-19-to-20", report.steps().getLast().id());
             assertEquals(1, number(statement,
                 "SELECT count(*) FROM receiver_activity_event WHERE id=600 AND observed_site=255"));
             statement.executeUpdate("""

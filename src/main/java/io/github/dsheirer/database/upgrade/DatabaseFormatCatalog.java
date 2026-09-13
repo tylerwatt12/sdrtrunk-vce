@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 19;
+    public static final int CURRENT_VERSION = 20;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -72,6 +72,8 @@ public final class DatabaseFormatCatalog
         "99ea9b24172056c97ef8c84603f916c7825f29521a17d5959761ff836b2ae905";
     private static final String FORMAT_19_FINGERPRINT =
         "5d009af3663ca630a74c5d2723b80ba62fa8ed8b08f9c104cb22372879244330";
+    private static final String FORMAT_20_FINGERPRINT =
+        "190b00e68d988236732ad25a10de187e54944a6dd6f7d1cd7a7fd3e60956722a";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -257,10 +259,19 @@ public final class DatabaseFormatCatalog
             "Group standard DMR Tier III by model and Network ID and NXDN Type-C by location category and System ID",
             "Keep unsupported or incomplete native identity scoped to the exact saved channel"));
 
+    private static final FormatDescriptor FORMAT_20 = new FormatDescriptor(20, "alias-activity-summary-v1",
+        "Durable indexed Alias Activity summary format", FORMAT_20_FINGERPRINT, Map.of(),
+        List.of("main format 20"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format20TestDatabase.java", List.of(
+            "Preserve every administrator-owned Alias and all retained receiver activity",
+            "Project retained exact, range, conventional, and multisite activity into one summary per Alias",
+            "Keep Alias Activity filtering, sorting, and paging database-driven without a short-lived snapshot",
+            "Keep unsupported or incomplete native identity scoped to the exact saved channel"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19);
+            FORMAT_19, FORMAT_20);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -416,7 +427,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_19;
+        return FORMAT_20;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */

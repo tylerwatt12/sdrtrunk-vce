@@ -39,6 +39,17 @@ function functionSource(signature) {
 const context = {
   number: (value) => String(value),
   identifierNumber: (value) => String(value ?? ''),
+  URLSearchParams,
+  Uint8Array,
+  encodeURIComponent,
+  window: {
+    crypto: {
+      getRandomValues: (bytes) => {
+        bytes.forEach((_, index) => { bytes[index] = index; });
+        return bytes;
+      }
+    }
+  },
   aliasMatcherOption: (value) => ({
     label: String(value || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
       (character) => character.toUpperCase())
@@ -48,6 +59,8 @@ vm.createContext(context);
 vm.runInContext(`
   const ALIAS_BULK_SELECTION_LIMIT = 10_000;
   const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
+  const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
+  let route = new URLSearchParams('');
   let aliasEditorSelection = new Set();
   let aliasEditorSelectionScope = null;
   let aliasEditorSelectionRequest = 0;
@@ -62,6 +75,10 @@ vm.runInContext(`
   ${functionSource('function aliasTransferListDefaultsSummary(defaults)')}
   ${functionSource('function aliasTransferAssignmentNames(enabled, selectedNames = [], exactNames = [])')}
   ${functionSource('function aliasTransferDetectedFormat(csv)')}
+  ${functionSource("function aliasTransferExportHref(listId, scope = 'all')")}
+  ${functionSource('function aliasTransferExportToken()')}
+  ${functionSource('function aliasTransferExportDownloadHref(listId, scope, token)')}
+  ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
@@ -83,6 +100,10 @@ vm.runInContext(`
   globalThis.transferListDefaultsSummary = aliasTransferListDefaultsSummary;
   globalThis.transferAssignmentNames = aliasTransferAssignmentNames;
   globalThis.transferDetectedFormat = aliasTransferDetectedFormat;
+  globalThis.transferExportHref = aliasTransferExportHref;
+  globalThis.transferExportToken = aliasTransferExportToken;
+  globalThis.transferExportDownloadHref = aliasTransferExportDownloadHref;
+  globalThis.transferExportIsReady = aliasTransferExportIsReady;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
@@ -157,10 +178,22 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure
   { sort: 'name', direction: 'asc' },
   'Configuration views must retain their alphabetical default.');
 const aliasRenderer = functionSource('async function renderAliases()');
+const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(listResponse, options = null)');
 assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
   'Explicit routed sorting must take precedence over the view default.');
 assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
   'The table indicator must match the order requested from the server.');
+assert.match(aliasRenderer, /admin\/alias-lists\?include_counts=false/,
+  'Activity renders must not recount the complete in-memory Alias model.');
+assert.match(aliasRenderer, /apiPage\('\/api\/v1\/alias-lists\?limit=500'\)/,
+  'The database-backed catalog must supply counts for every Alias List the administrator catalog can return.');
+assert.match(aliasRenderer, /optionParameters\.include_group_names = false/,
+  'Activity renders must not rebuild global group-name suggestions.');
+assert.match(aliasFilterToolbar, /selectFilter\('Evidence', 'evidence'/,
+  'The Activity filters must expose the server-side evidence state filter.');
+assert.match(aliasFilterToolbar, /covered_no_evidence/);
+assert.match(aliasFilterToolbar, /not_collected/);
+assert.match(aliasFilterToolbar, /unsupported/);
 
 const transferDefaults = context.transferListDefaults({ unmatched_talkgroup_policy: {
   recordable: true, scan_list_ids: [2], broadcast_configuration_ids: ['stream-1']
@@ -185,25 +218,66 @@ assert.equal(context.transferDetectedFormat(
   'format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value'), 'VCE');
 assert.equal(context.transferDetectedFormat('name,description\nDispatch,County'), '',
   'Unknown CSV headers must require an explicit format choice.');
+assert.equal(context.transferExportToken(), '000102030405060708090a0b0c0d0e0f',
+  'Each download must use a 128-bit lowercase hexadecimal browser nonce.');
+assert.equal(context.transferExportDownloadHref(7, 'all', '0123456789abcdef0123456789abcdef'),
+  '/api/v1/admin/alias-lists/7/transfer?export_token=0123456789abcdef0123456789abcdef');
+assert.equal(context.transferExportDownloadHref(7, 'filtered', '0123456789abcdef0123456789abcdef'),
+  '/api/v1/exports/alias-list.csv?list=7&scope=filtered&export_token=0123456789abcdef0123456789abcdef');
+assert.equal(context.transferExportIsReady(
+  'other=value; sdrtrunk_alias_export_ready_0123456789abcdef0123456789abcdef=1',
+  '0123456789abcdef0123456789abcdef'), true);
+assert.equal(context.transferExportIsReady(
+  'sdrtrunk_alias_export_ready_1123456789abcdef0123456789abcdef=1',
+  '0123456789abcdef0123456789abcdef'), false,
+  'A stale ready marker must not complete a newer export attempt.');
+const concurrentReadyCookies =
+  'sdrtrunk_alias_export_ready_0123456789abcdef0123456789abcdef=1; ' +
+  'sdrtrunk_alias_export_ready_fedcba9876543210fedcba9876543210=1';
+assert.equal(context.transferExportIsReady(concurrentReadyCookies,
+  '0123456789abcdef0123456789abcdef'), true);
+assert.equal(context.transferExportIsReady(concurrentReadyCookies,
+  'fedcba9876543210fedcba9876543210'), true,
+  'Concurrent all-list and filtered downloads must keep independent ready markers.');
 
 const transferModal = functionSource("function openAliasTransferModal(selectedList, action = 'Import')");
+const transferExportHref = functionSource("function aliasTransferExportHref(listId, scope = 'all')");
+assert.match(transferExportHref, /admin\/alias-lists\/\$\{listId\}\/transfer/,
+  'The established administrator-only all-list export route must remain compatible.');
+assert.match(transferExportHref, /api\/v1\/exports\/alias-list\.csv/);
+assert.match(transferExportHref, /last_activity_after/);
+assert.match(transferExportHref, /scan_list_id/);
+assert.doesNotMatch(transferExportHref, /limit|offset/,
+  'Filtered transfer exports must not inherit the current browser page.');
+assert.doesNotMatch(transferExportHref, /route\.get\('sort'\)|route\.get\('direction'\)/,
+  'Importable exports use durable alias-ID order instead of presentation order.');
 assert.match(transferModal, /options\.streams_truncated === true/);
 assert.match(transferModal, /Add an exact configured name not shown/);
 assert.match(transferModal, /Up to 500 destinations are listed/);
 assert.match(transferModal, /Drop a CSV file here/);
 assert.match(transferModal, /Add new aliases and update matches/);
 assert.match(transferModal, /Replace this list’s aliases/);
-assert.match(transferModal, /Download alias list CSV/);
+assert.match(transferModal, /Download CSV/);
+assert.match(transferModal, /All aliases in this Alias List/);
+assert.match(transferModal, /Current filtered results/);
+assert.match(transferModal, /not only the visible page/);
 assert.match(transferModal, /destinationSummary\.append\(/);
 assert.match(transferModal, /step\.append\(node\('span'/);
 assert.match(transferModal, /exportSummary\.append\(/);
 assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-destination',\s*node\(/);
 assert.doesNotMatch(transferModal, /node\('li', '', node\(/);
 assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-export-summary',\s*node\(/);
-assert.match(transferModal, /duplicate exact matchers/);
 assert.match(transferModal, /preview\.counts\.deleted > 0/);
-assert.match(transferModal, /fetch\(endpoint/);
-assert.match(transferModal, /createObjectURL/);
+assert.match(transferModal, /exportFrame/);
+assert.match(transferModal, /Preparing the complete CSV/);
+assert.match(transferModal, /aliasTransferExportDownloadHref/);
+assert.match(transferModal, /aliasTransferExportIsReady\(document\.cookie, token\)/);
+assert.match(transferModal, /Download started\. The browser verifies the complete file length/);
+assert.match(transferModal, /sign-in or export access may have changed/);
+assert.match(transferModal, /window\.clearInterval\(exportStartPoll\)/,
+  'Closing the modal must stop the ready-marker poll.');
+assert.doesNotMatch(transferModal, /fetch\(endpoint/);
+assert.doesNotMatch(transferModal, /createObjectURL/);
 assert.match(transferModal, /timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS/g);
 
 const firstTone = { tone: 'A' };

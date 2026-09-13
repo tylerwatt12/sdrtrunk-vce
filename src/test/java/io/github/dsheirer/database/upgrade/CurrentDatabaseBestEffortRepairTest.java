@@ -153,6 +153,16 @@ class CurrentDatabaseBestEffortRepairTest
                 insert.setLong(4, p25List);
                 assertEquals(5, insert.executeUpdate());
             }
+            execute(connection, """
+                INSERT INTO alias_activity_summary(
+                    alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+                ) VALUES
+                    (99001, %d, 1, 'not_collected', 1),
+                    (99002, %d, 0, 'unsupported', 1),
+                    (99003, %d, 0, 'unsupported', 1),
+                    (99004, %d, 0, 'unsupported', 1),
+                    (99005, 999999, 1, 'not_collected', 1)
+                """.formatted(p25List, p25List, nbfmList, p25List));
             try(var insert = connection.prepareStatement("""
                 INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
                 VALUES (99001, ?), (99002, ?), (99003, ?), (99004, ?), (99005, ?)
@@ -175,6 +185,8 @@ class CurrentDatabaseBestEffortRepairTest
 
             CurrentDatabaseBestEffortRepair.repair(connection);
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id BETWEEN 99001 AND 99005"));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id BETWEEN 99001 AND 99005"));
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership " +
                 "WHERE alias_id BETWEEN 99001 AND 99005"));
             assertEquals("Keep this Alias", text(connection, "SELECT name FROM alias WHERE id=99001"));

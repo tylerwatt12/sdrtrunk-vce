@@ -272,6 +272,119 @@ class StatsAliasResolver
     }
 
     /**
+     * Migration-only form of {@link #resolveEvidenceAliases(Connection, List)}.  The interactive resolver loads all
+     * matching rules for one bounded response and therefore deliberately rejects pathological rule sets.  A database
+     * upgrade cannot reject otherwise-valid configuration merely because thousands of ranges overlap one retained
+     * identity, so this path asks SQLite for only the single winning exact/range rule for each bounded evidence row.
+     */
+    void resolveEvidenceAliasesForMigration(Connection connection, List<Map<String,Object>> rows)
+        throws SQLException
+    {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        try(MigrationWinnerResolver resolver = new MigrationWinnerResolver(connection))
+        {
+            Map<Long,MigrationConsensus> p25Local = loadMigrationP25Consensus(connection, rows, resolver);
+
+            for(Map<String,Object> row: rows)
+            {
+                Integer identifier = integer(row.get("identity_id"));
+                Integer kind = integer(row.get("identity_kind_code"));
+                Integer protocol = integer(row.get("protocol_code"));
+                if(identifier == null || kind == null || protocol == null ||
+                    protocol != 1 && protocol != 3 && protocol != 4)
+                {
+                    continue;
+                }
+
+                int ruleKind = kind == 2 ? 2 : 1;
+                Long winner;
+                if(protocol == 1 && "TRUNKED".equals(row.get("topology")))
+                {
+                    Long summaryId = positiveLong(row.get("identity_summary_id"));
+                    MigrationConsensus local = summaryId != null ? p25Local.get(summaryId) : null;
+                    if(local != null)
+                    {
+                        winner = local.winner();
+                    }
+                    else
+                    {
+                        winner = resolver.resolveSystemConsensus(string(row.get("radio_system_key")),
+                            ruleKind, identifier);
+                    }
+                }
+                else
+                {
+                    Long aliasListId = positiveLong(row.get("alias_list_id"));
+                    winner = aliasListId != null ? resolver.resolve(protocol, ruleKind, aliasListId,
+                        identifier) : null;
+                }
+
+                if(winner != null)
+                {
+                    row.put("resolved_alias_id", winner);
+                }
+            }
+        }
+    }
+
+    /**
+     * Streams local P25 site evidence and retains only one consensus value per identity in the current evidence page.
+     * No collection grows with the number of retained channel observations or overlapping Alias rules.
+     */
+    private static Map<Long,MigrationConsensus> loadMigrationP25Consensus(Connection connection,
+                                                                           List<Map<String,Object>> rows,
+                                                                           MigrationWinnerResolver resolver)
+        throws SQLException
+    {
+        Map<Long,Integer> requested = new LinkedHashMap<>();
+        for(Map<String,Object> row: rows)
+        {
+            if(protocolCode(row) == 1)
+            {
+                Long summaryId = positiveLong(row.get("identity_summary_id"));
+                Integer kind = integer(row.get("identity_kind_code"));
+                if(summaryId != null && kind != null)
+                {
+                    requested.put(summaryId, kind == 2 ? 2 : 1);
+                }
+            }
+        }
+
+        if(requested.isEmpty())
+        {
+            return Map.of();
+        }
+
+        Map<Long,MigrationConsensus> result = new HashMap<>();
+        List<Long> ids = List.copyOf(requested.keySet());
+        for(int offset = 0; offset < ids.size(); offset += QUERY_VALUE_CHUNK)
+        {
+            List<Long> chunk = ids.subList(offset, Math.min(ids.size(), offset + QUERY_VALUE_CHUNK));
+            try(PreparedStatement statement = connection.prepareStatement(p25LocalEvidenceSql(chunk.size(), false)))
+            {
+                bind(statement, 1, chunk);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        long summaryId = resultSet.getLong("identity_summary_id");
+                        int kind = requested.getOrDefault(summaryId, 1);
+                        Long winner = resolver.resolve(1, kind, resultSet.getLong("alias_list_id"),
+                            resultSet.getInt("observed_local_id"));
+                        result.computeIfAbsent(summaryId, ignored -> new MigrationConsensus()).accept(winner);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Resolves each observed group identity only against the Alias List ID carried by that row. Unlike the
      * normal system enrichment, this projection deliberately does not consider another list assigned to a second
      * receiver for the same P25 system: the Alias Editor needs to show whether the selected list itself has an exact
@@ -791,12 +904,17 @@ class StatsAliasResolver
     /** Exact bounded query used by the groups/radios page and query-plan regression coverage. */
     static String p25LocalEvidenceSql(int requestedCount)
     {
+        return p25LocalEvidenceSql(requestedCount, true);
+    }
+
+    private static String p25LocalEvidenceSql(int requestedCount, boolean bounded)
+    {
         if(requestedCount < 1 || requestedCount > QUERY_VALUE_CHUNK)
         {
             throw new IllegalArgumentException("P25 local evidence query size is out of bounds");
         }
 
-        return """
+        String sql = """
                 WITH requested(identity_summary_id) AS (VALUES %s), compact_evidence AS (
                     SELECT bucket.identity_summary_id, bucket.channel_id, bucket.observed_local_id
                     FROM requested
@@ -869,8 +987,8 @@ class StatsAliasResolver
                   AND local_evidence.observed_local_id > 0
                 ORDER BY local_evidence.identity_summary_id, config.alias_list_id,
                     local_evidence.observed_local_id
-                LIMIT ?
                 """.formatted(valuesPlaceholders(requestedCount));
+        return bounded ? sql + " LIMIT ?" : sql;
     }
 
     private Map<String,Set<Long>> loadAliasLists(Connection connection, Set<String> systemKeys)
@@ -1187,6 +1305,185 @@ class StatsAliasResolver
     private record RuleTarget(long aliasListId, int identifier) {}
 
     private record LocalEvidence(long aliasListId, int observedLocalId) {}
+
+    private static final class MigrationConsensus
+    {
+        private boolean mSeen;
+        private boolean mValid = true;
+        private Long mWinner;
+
+        private void accept(Long winner)
+        {
+            mSeen = true;
+            if(winner == null || mWinner != null && !mWinner.equals(winner))
+            {
+                mValid = false;
+            }
+            else if(mWinner == null)
+            {
+                mWinner = winner;
+            }
+        }
+
+        private Long winner()
+        {
+            return mSeen && mValid ? mWinner : null;
+        }
+    }
+
+    /** Prepared, index-backed winner lookups shared across one bounded migration evidence page. */
+    private static final class MigrationWinnerResolver implements AutoCloseable
+    {
+        private final Connection mConnection;
+        private final Map<MigrationRuleKey,PreparedStatement> mExact = new HashMap<>();
+        private final Map<MigrationRuleKey,PreparedStatement> mRange = new HashMap<>();
+
+        private MigrationWinnerResolver(Connection connection)
+        {
+            mConnection = connection;
+        }
+
+        private Long resolve(int protocol, int kind, long aliasListId, int identifier) throws SQLException
+        {
+            MigrationRuleKey ruleKey = new MigrationRuleKey(protocol, kind);
+            PreparedStatement exact = mExact.get(ruleKey);
+            if(exact == null)
+            {
+                exact = mConnection.prepareStatement(migrationExactSql(ruleKey));
+                mExact.put(ruleKey, exact);
+            }
+            exact.setInt(1, identifier);
+            exact.setLong(2, aliasListId);
+            try(ResultSet resultSet = exact.executeQuery())
+            {
+                if(resultSet.next())
+                {
+                    return resultSet.getLong(1);
+                }
+            }
+
+            PreparedStatement range = mRange.get(ruleKey);
+            if(range == null)
+            {
+                range = mConnection.prepareStatement(migrationRangeSql(ruleKey));
+                mRange.put(ruleKey, range);
+            }
+            range.setLong(1, aliasListId);
+            range.setInt(2, identifier);
+            range.setInt(3, identifier);
+            try(ResultSet resultSet = range.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getLong(1) : null;
+            }
+        }
+
+        private Long resolveSystemConsensus(String systemKey, int kind, int identifier) throws SQLException
+        {
+            if(systemKey == null)
+            {
+                return null;
+            }
+
+            Long winner = null;
+            int assignedCount = 0;
+            try(PreparedStatement statement = mConnection.prepareStatement("""
+                WITH selected AS (
+                    SELECT id, configuration_id FROM radio_system WHERE system_key = ?
+                ), assigned(alias_list_id) AS (
+                    SELECT configuration.alias_list_id
+                    FROM selected
+                    JOIN receiver_channel channel ON channel.radio_system_id = selected.id
+                    JOIN configuration_channel configuration
+                      ON configuration.configuration_id = channel.configuration_id
+                    WHERE configuration.alias_list_id IS NOT NULL
+                    UNION
+                    SELECT configuration.alias_list_id
+                    FROM selected
+                    JOIN configuration_channel configuration
+                      ON configuration.configuration_id = selected.configuration_id
+                    WHERE configuration.alias_list_id IS NOT NULL
+                )
+                SELECT alias_list_id FROM assigned ORDER BY alias_list_id
+                """))
+            {
+                statement.setString(1, systemKey);
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    while(resultSet.next())
+                    {
+                        assignedCount++;
+                        Long candidate = resolve(1, kind, resultSet.getLong(1), identifier);
+                        if(candidate == null || winner != null && !winner.equals(candidate))
+                        {
+                            return null;
+                        }
+                        winner = candidate;
+                    }
+                }
+            }
+            return assignedCount > 0 ? winner : null;
+        }
+
+        @Override
+        public void close() throws SQLException
+        {
+            SQLException failure = null;
+            for(PreparedStatement statement: mExact.values())
+            {
+                try
+                {
+                    statement.close();
+                }
+                catch(SQLException exception)
+                {
+                    failure = exception;
+                }
+            }
+            for(PreparedStatement statement: mRange.values())
+            {
+                try
+                {
+                    statement.close();
+                }
+                catch(SQLException exception)
+                {
+                    failure = exception;
+                }
+            }
+            if(failure != null)
+            {
+                throw failure;
+            }
+        }
+
+        private static String migrationExactSql(MigrationRuleKey key)
+        {
+            String matcher = key.kind() == 2 ? "RADIO_ID" : "TALKGROUP";
+            String index = key.kind() == 2 ? "idx_alias_radio_value" : "idx_alias_talkgroup_value";
+            return "SELECT id FROM alias INDEXED BY " + index +
+                " WHERE matcher_type='" + matcher + "' AND protocol IN " + protocolSql(key.protocol()) +
+                " AND value=? AND alias_list_id=? ORDER BY id DESC LIMIT 1";
+        }
+
+        private static String migrationRangeSql(MigrationRuleKey key)
+        {
+            String matcher = key.kind() == 2 ? "RADIO_ID_RANGE" : "TALKGROUP_RANGE";
+            String index = key.kind() == 2 ? "idx_alias_activity_radio_range" :
+                "idx_alias_activity_talkgroup_range";
+            return "SELECT id FROM alias INDEXED BY " + index +
+                " WHERE alias_list_id=? AND matcher_type='" + matcher + "' AND protocol IN " +
+                protocolSql(key.protocol()) + " AND min_value<=? AND max_value>=? " +
+                "ORDER BY min_value DESC,max_value DESC,id DESC LIMIT 1";
+        }
+
+        private static String protocolSql(int protocol)
+        {
+            return protocol == 1 ? "('APCO25','APCO25_PHASE2')" :
+                protocol == 3 ? "('DMR')" : "('NXDN')";
+        }
+    }
+
+    private record MigrationRuleKey(int protocol, int kind) {}
 
     private static final class RuleTargets
     {

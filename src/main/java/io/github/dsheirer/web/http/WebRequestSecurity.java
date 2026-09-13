@@ -29,13 +29,18 @@ import java.util.Set;
 public final class WebRequestSecurity implements AutoCloseable
 {
     public static final String SESSION_COOKIE_NAME = "sdrtrunk_web_session";
+    public static final String ALIAS_EXPORT_READY_COOKIE_PREFIX = "sdrtrunk_alias_export_ready_";
     public static final String CSRF_HEADER_NAME = "X-CSRF-Token";
     private static final String AUTHORIZATION_ATTRIBUTE = WebRequestSecurity.class.getName() + ".authorization";
+    private static final String SAME_ORIGIN_FRAME_ATTRIBUTE =
+        WebRequestSecurity.class.getName() + ".sameOriginFrame";
     private static final int MAXIMUM_COOKIE_HEADER_CHARACTERS = 8 * 1024;
     private static final String SECURITY_POLICY =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
             "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; " +
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+    private static final String SAME_ORIGIN_FRAME_SECURITY_POLICY =
+        SECURITY_POLICY.replace("frame-ancestors 'none'", "frame-ancestors 'self'");
 
     private final WebAccessService mAccessService;
     private final WebAuthenticationService mAuthenticationService;
@@ -146,11 +151,44 @@ public final class WebRequestSecurity implements AutoCloseable
     public static void prepareSecurityHeaders(HttpExchange exchange)
     {
         Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Security-Policy", SECURITY_POLICY);
+        boolean sameOriginFrame = Boolean.TRUE.equals(exchange.getAttribute(SAME_ORIGIN_FRAME_ATTRIBUTE));
+        headers.set("Content-Security-Policy",
+            sameOriginFrame ? SAME_ORIGIN_FRAME_SECURITY_POLICY : SECURITY_POLICY);
         headers.set("X-Content-Type-Options", "nosniff");
-        headers.set("X-Frame-Options", "DENY");
+        headers.set("X-Frame-Options", sameOriginFrame ? "SAMEORIGIN" : "DENY");
         headers.set("Referrer-Policy", "no-referrer");
         headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)");
+    }
+
+    /**
+     * Allows only an explicitly selected response to load in a same-origin hidden download frame.  Calling this
+     * after authorization keeps the application's default clickjacking policy unchanged for every other response.
+     */
+    public static void allowSameOriginDownloadFrame(HttpExchange exchange)
+    {
+        exchange.setAttribute(SAME_ORIGIN_FRAME_ATTRIBUTE, Boolean.TRUE);
+        prepareSecurityHeaders(exchange);
+    }
+
+    /** Sets the short-lived browser marker used to replace an export's "preparing" message once headers arrive. */
+    public static void markAliasExportReady(HttpExchange exchange, String token)
+    {
+        if(!isValidAliasExportToken(token))
+        {
+            throw new IllegalArgumentException("Alias export token is invalid");
+        }
+
+        //Use one cookie name per attempt so simultaneous exports in separate tabs cannot overwrite each other's
+        //ready marker.  The value is deliberately fixed and carries no authorization state.
+        String cookie = ALIAS_EXPORT_READY_COOKIE_PREFIX + token + "=1" +
+            "; Path=/; Max-Age=30; SameSite=Strict" + (isSecureTransport(exchange) ? "; Secure" : "");
+        exchange.getResponseHeaders().add("Set-Cookie", cookie);
+    }
+
+    /** A 128-bit lowercase hexadecimal nonce is safe to reflect into the ready-marker cookie. */
+    public static boolean isValidAliasExportToken(String token)
+    {
+        return token != null && token.matches("[0-9a-f]{32}");
     }
 
     private boolean authorize(HttpExchange exchange, WebCapability capability) throws IOException

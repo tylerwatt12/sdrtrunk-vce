@@ -822,6 +822,89 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
+    /** Streams the exact Alias table selection from one read-only SQLite snapshot in bounded batches. */
+    void forEachFilteredAliasBatch(StatsRequest request, int batchSize,
+                                   StatsAliasCatalog.AliasBatchConsumer consumer)
+    {
+        readSnapshot(connection -> {
+            mAliasCatalog.forEachFilteredAliasBatch(connection, request, batchSize, consumer);
+            return null;
+        });
+    }
+
+    /** Prepares one complete, importable Alias List CSV without materializing the selection in memory. */
+    AliasTransferExport.Prepared aliasTransferExport(StatsRequest request)
+    {
+        String scope = request.requiredText("scope");
+        boolean filtered;
+
+        if("all".equals(scope))
+        {
+            request.requireOnly("scope", "list", "export_token");
+            filtered = false;
+        }
+        else if("filtered".equals(scope))
+        {
+            filtered = true;
+        }
+        else
+        {
+            throw new StatsApiException(400, "invalid_parameter", "scope must be all or filtered", "scope");
+        }
+
+        String list = request.requiredText("list");
+        long aliasListId;
+
+        try
+        {
+            if(!list.matches("[1-9][0-9]*"))
+            {
+                throw new NumberFormatException();
+            }
+
+            aliasListId = Long.parseLong(list);
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "list must be a positive integer", "list");
+        }
+
+        try
+        {
+            return AliasTransferExport.prepare(aliasListId, filtered, consumer ->
+                readSnapshot(connection ->
+                {
+                    if(queryRows(connection, "SELECT id FROM alias_list WHERE id=?", aliasListId).isEmpty())
+                    {
+                        throw new StatsApiException(404, "Alias List was not found");
+                    }
+
+                    if(filtered)
+                    {
+                        mAliasCatalog.forEachFilteredAliasBatch(connection, request, AliasTransferExport.BATCH_SIZE,
+                            consumer::accept);
+                    }
+                    else
+                    {
+                        mAliasCatalog.forEachAliasConfigurationBatch(connection, aliasListId,
+                            AliasTransferExport.BATCH_SIZE, consumer::accept);
+                    }
+                    return null;
+                }));
+        }
+        catch(IOException | SQLException exception)
+        {
+            mLog.warn("Unable to prepare Alias CSV export", exception);
+            throw new StatsApiException(503, "export_failed", "Alias CSV export could not be prepared");
+        }
+    }
+
+    AliasTransferExport.Prepared aliasTransferExport(long aliasListId)
+    {
+        return aliasTransferExport(new StatsRequest(Map.of("scope", "all", "list",
+            Long.toString(aliasListId))));
+    }
+
     void invalidateAliasActivitySnapshots()
     {
         mAliasCatalog.invalidateActivitySnapshots();

@@ -23,6 +23,7 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -365,6 +366,8 @@ public class ReceiverActivitySchema
             upsertCallIdentityBuckets(connection, activity, channelId);
         }
 
+        AliasActivityProjection.recordActivity(connection, activity);
+
         return activityId;
     }
 
@@ -574,6 +577,7 @@ public class ReceiverActivitySchema
 
             upsertConventionalCallOutputIdentityBuckets(connection, conventionalOutput, channel.channelId(),
                 protocol, recorded, streamed);
+            AliasActivityProjection.recordConventionalCallOutput(connection, conventionalOutput);
             return true;
         }
 
@@ -643,6 +647,8 @@ public class ReceiverActivitySchema
             }
         }
 
+        AliasActivityProjection.recordResolvedLogicalCall(connection, call);
+
         return true;
     }
 
@@ -674,6 +680,7 @@ public class ReceiverActivitySchema
         upsertLogicalCallBucket(connection, radioSystem.radioSystemId(), bucket, 0, 0, recorded, streamed);
         upsertLogicalCallIdentities(connection, radioSystem, channel.channelId(), bucket, call, 0, 0, recorded,
             streamed, false, null);
+        AliasActivityProjection.recordLogicalCallOutput(connection, output);
         return true;
     }
 
@@ -957,6 +964,7 @@ public class ReceiverActivitySchema
         if(applied && radioSystem != null)
         {
             enrichDetailedTrunkedCall(connection, channel.channelId(), radioSystem, attribution);
+            AliasActivityProjection.recordTrunkedAttribution(connection, attribution);
         }
         return true;
     }
@@ -1167,6 +1175,7 @@ public class ReceiverActivitySchema
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         DmrActivitySchema.recordCompletedCall(connection, channelId, call);
+        AliasActivityProjection.recordDmrConventionalCall(connection, call);
         return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, channelId, null) : null;
     }
 
@@ -1215,6 +1224,7 @@ public class ReceiverActivitySchema
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
+        AliasActivityProjection.recordNxdnConventionalCall(connection, call);
         return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, channelId, null) : null;
     }
 
@@ -1794,6 +1804,7 @@ public class ReceiverActivitySchema
         deleted += deleteAll(connection, "trunked_control_channel_quality");
         deleted += deleteAll(connection, "receiver_channel");
         deleted += deleteAll(connection, "statistics_status");
+        deleted += AliasActivitySummaryMaintenance.resetAll(connection);
         SdrTrunkDatabaseStartup.setMetadata(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,

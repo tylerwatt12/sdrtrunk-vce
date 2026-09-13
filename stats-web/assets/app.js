@@ -20,6 +20,9 @@ const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revi
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
   'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
+const ALIAS_TRANSFER_IMPORT_MAX_BYTES = 128 * 1024 * 1024;
+const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
+const ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS = 30_000;
 const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
   'createP25Override', 'wacn', 'system', 'rfss', 'site', 'configuration_id'
 ]);
@@ -3318,6 +3321,13 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   seenAfter.append(node('span', '', 'Seen after'), lastAfter);
   const seenBefore = node('label', 'alias-filter alias-date-filter');
   seenBefore.append(node('span', '', 'Seen before'), lastBefore);
+  const evidenceFilter = selectFilter('Evidence', 'evidence', [
+    ['', 'Any activity state'],
+    ['observed', 'Observed'],
+    ['covered_no_evidence', 'Assigned, no evidence'],
+    ['not_collected', 'Not being collected'],
+    ['unsupported', 'Unsupported alias type']
+  ]);
   const activeFilters = ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
     'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore'];
   const actions = node('div', 'alias-filter-actions');
@@ -3329,7 +3339,9 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
     }), 'button secondary'));
   }
   form.append(identityGroup, behaviorGroup,
-    filterGroup('Observed activity', 'alias-filter-group-observed', [seenAfter, seenBefore, actions]));
+    filterGroup('Observed activity', 'alias-filter-group-observed', [
+      evidenceFilter, seenAfter, seenBefore, actions
+    ]));
   form.addEventListener('submit', () => {
     [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
       if (!control.value) return;
@@ -4780,6 +4792,45 @@ function aliasTransferDetectedFormat(csv) {
   return '';
 }
 
+function aliasTransferExportHref(listId, scope = 'all') {
+  if (scope === 'all') return `/api/v1/admin/alias-lists/${listId}/transfer`;
+  const parameters = new URLSearchParams({ list: String(listId), scope });
+  if (scope === 'filtered') {
+    const filters = new Map([
+      ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['scanListId', 'scan_list_id'],
+      ['record', 'record'], ['stream', 'stream'], ['evidence', 'evidence'], ['use', 'use'],
+      ['lastActivityBefore', 'last_activity_before'], ['lastActivityAfter', 'last_activity_after']
+    ]);
+    filters.forEach((queryKey, routeKey) => {
+      const value = route.get(routeKey);
+      if (value) parameters.set(queryKey, value);
+    });
+    const search = route.get('q');
+    if (search) parameters.set('q', search);
+  }
+  return `/api/v1/exports/alias-list.csv?${parameters}`;
+}
+
+function aliasTransferExportToken() {
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function aliasTransferExportDownloadHref(listId, scope, token) {
+  const href = aliasTransferExportHref(listId, scope);
+  return `${href}${href.includes('?') ? '&' : '?'}export_token=${encodeURIComponent(token)}`;
+}
+
+function aliasTransferExportIsReady(cookieHeader, token) {
+  const marker = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}`;
+  return String(cookieHeader || '').split(';').some((entry) => {
+    const separator = entry.indexOf('=');
+    return separator > 0 && entry.slice(0, separator).trim() === marker &&
+      entry.slice(separator + 1).trim() === '1';
+  });
+}
+
 function openAliasTransferModal(selectedList, action = 'Import') {
   const importing = action === 'Import';
   const listId = aliasListId(selectedList);
@@ -4983,8 +5034,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   review.append(progress.cloneNode(true), destination, summary, filters, rowsHost, pagerHost, confirmLabel,
     aliasModalFooter(reviewBack, node('span', 'alias-modal-footer-spacer'), apply));
   importPanel.append(review);
-  const exportButton = node('button', 'button', 'Download alias list CSV');
-  exportButton.type = 'button';
+  const exportButton = anchor('Download CSV', aliasTransferExportHref(listId), 'button');
   const exportCancel = node('button', 'button secondary', 'Cancel');
   exportCancel.type = 'button';
   const exportSummary = node('div', 'alias-transfer-export-summary');
@@ -4994,9 +5044,36 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     node('p', 'muted', 'The file includes matchers, appearance, recording choices, scan-list memberships, ' +
       'named streaming destinations, and the source Alias List name.'),
     node('p', 'muted', 'Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.'));
-  exportPanel.append(exportSummary,
+  const exportChoices = node('fieldset', 'alias-transfer-mode-choices alias-transfer-export-choices');
+  exportChoices.append(node('legend', '', 'Choose what to export'));
+  [['all', 'All aliases in this Alias List',
+    `Export all ${number(selectedList.alias_count || 0)} aliases, regardless of the current search and filters.`],
+   ['filtered', 'Current filtered results',
+    'Export every matching alias in the current search and filters, not only the visible page.']]
+    .forEach(([value, title, description]) => {
+      const input = node('input'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
+      input.value = value; input.checked = value === 'all';
+      if (value === 'filtered' && !capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) input.disabled = true;
+      const copy = node('span', 'alias-transfer-choice-copy');
+      copy.append(node('strong', '', title), node('span', 'muted',
+        input.disabled ? `${description} CSV export access is required.` : description));
+      const choice = node('label', 'alias-transfer-mode-choice');
+      choice.append(input, copy);
+      input.addEventListener('change', () => {
+        if (input.checked) exportButton.href = aliasTransferExportHref(listId, input.value);
+      });
+      exportChoices.append(choice);
+    });
+  const exportFrame = node('iframe', 'visually-hidden');
+  exportFrame.name = `alias-export-${listId}-${Date.now()}`;
+  exportFrame.title = 'Alias CSV download';
+  exportButton.target = exportFrame.name;
+  exportPanel.append(exportSummary, exportChoices, exportFrame,
     aliasModalFooter(exportCancel, node('span', 'alias-modal-footer-spacer'), exportButton));
   body.insertBefore(errorHost, importing ? importPanel : exportPanel);
+  let exportSequence = 0;
+  let activeExportAttempt = 0;
+  let exportStartPoll = null;
   let request = null;
   let preview = null;
   let selectedFileReady = false;
@@ -5004,6 +5081,11 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   let previewFilter = 'all';
   const modal = openReadOnlyModal(`${importing ? 'Import aliases into' : 'Export aliases from'} ${selectedList.name}`, body, {
     id: `alias-transfer-${listId}`, className: 'alias-editor-modal alias-transfer-modal',
+    cleanup: () => {
+      activeExportAttempt = 0;
+      exportSequence += 1;
+      if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    },
     returnFocusSelector: importing ? '.alias-transfer-import-button' : '.alias-transfer-export-button'
   });
   if (!modal) return;
@@ -5034,7 +5116,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const setBusy = (value) => {
     busy = value; modal.setBusy(value);
     form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
-    exportButton.disabled = value;
+    exportButton.classList.toggle('disabled', value);
+    exportButton.setAttribute('aria-disabled', value ? 'true' : 'false');
     confirm.disabled = value;
     reviewBack.disabled = value;
     scans.sync(); streams.sync();
@@ -5053,13 +5136,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     fileStatus.textContent = 'VCE alias exports and RadioReference talkgroup CSV files are supported.';
     invalidate();
     if (!selected) return;
-    if (selected.size > 8 * 1024 * 1024) {
-      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file no larger than 8 MiB.'));
+    if (selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
+      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file no larger than 128 MiB.'));
       fileStatus.textContent = `${selected.name} · ${number(selected.size)} bytes`;
       return;
     }
     try {
-      const csv = await selected.text();
+      const csv = await selected.slice(0, 16 * 1024).text();
       if (generation !== fileInspection) return;
       const detected = aliasTransferDetectedFormat(csv);
       if (detected) format.value = detected;
@@ -5103,37 +5186,75 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     invalidate();
     setStep(2);
   });
-  exportButton.addEventListener('click', async () => {
-    if (busy) return;
-    setBusy(true); errorHost.replaceChildren();
+  const finishExportAttempt = (attempt, className, message) => {
+    if (attempt !== activeExportAttempt) return;
+    activeExportAttempt = 0;
+    if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    exportStartPoll = null;
+    exportButton.classList.remove('disabled');
+    exportButton.setAttribute('aria-disabled', 'false');
+    errorHost.replaceChildren(node('div', className, message));
+  };
+  const readyExportAttempt = (attempt, token) => {
+    if (!aliasTransferExportIsReady(document.cookie, token)) return false;
+    document.cookie = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}=; Path=/; Max-Age=0; SameSite=Strict`;
+    finishExportAttempt(attempt, 'status',
+      'Download started. The browser verifies the complete file length and will flag an interrupted download.');
+    return true;
+  };
+  exportFrame.addEventListener('load', () => {
+    const attempt = activeExportAttempt;
+    if (!attempt) return;
     try {
-      const response = await fetch(endpoint, {
-        headers: { Accept: 'text/csv' }, cache: 'no-store', credentials: 'same-origin'
-      });
-      if (!response.ok) {
-        const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
-        const payload = contentType.includes('json') ? await response.json().catch(() => null) :
-          { message: await response.text().catch(() => '') };
-        const failure = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
-        throw new Error(failure?.message || `Export failed (${response.status}).`);
+      const text = exportFrame.contentDocument?.body?.textContent?.trim();
+      if (!text) {
+        if (!readyExportAttempt(attempt, exportFrame.dataset.exportToken || '')) {
+          finishExportAttempt(attempt, 'error',
+            'Alias export could not start. Your sign-in or export access may have changed. Refresh and try again.');
+        }
+        return;
       }
-      const downloadUrl = window.URL.createObjectURL(await response.blob());
-      const download = node('a');
-      download.href = downloadUrl;
-      download.download = `vce-alias-list-${listId}.csv`;
-      download.hidden = true;
-      document.body.append(download);
-      download.click();
-      download.remove();
-      window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 0);
-    } catch (error) {
-      const duplicate = /one alias per exact matcher|duplicate matcher/i.test(error.message);
-      errorHost.append(node('div', 'error', duplicate ?
-        'This list contains duplicate exact matchers. Resolve the highlighted identifier conflicts, then export again.' :
-        error.message));
-    } finally {
-      setBusy(false);
+      const payload = JSON.parse(text);
+      const failure = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
+      finishExportAttempt(attempt, 'error', failure?.message || 'Alias export failed.');
+    } catch (_) {
+      finishExportAttempt(attempt, 'error',
+        'Alias export could not start. Your sign-in or export access may have changed. Refresh and try again.');
     }
+  });
+  exportButton.addEventListener('click', (event) => {
+    if (busy || exportButton.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault();
+      return;
+    }
+    let token;
+    try {
+      token = aliasTransferExportToken();
+    } catch (_) {
+      event.preventDefault();
+      errorHost.replaceChildren(node('div', 'error',
+        'This browser could not create a secure export request. Refresh and try again.'));
+      return;
+    }
+    const scope = exportChoices.querySelector('input[name="aliasTransferExportScope"]:checked')?.value || 'all';
+    const attempt = ++exportSequence;
+    activeExportAttempt = attempt;
+    const deadline = Date.now() + ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS;
+    if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    document.cookie = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}=; Path=/; Max-Age=0; SameSite=Strict`;
+    exportFrame.dataset.exportToken = token;
+    exportButton.href = aliasTransferExportDownloadHref(listId, scope, token);
+    exportButton.classList.add('disabled');
+    exportButton.setAttribute('aria-disabled', 'true');
+    errorHost.replaceChildren(node('div', 'status',
+      'Preparing the complete CSV. The browser download will begin after every alias has been validated.'));
+    exportStartPoll = window.setInterval(() => {
+      if (attempt !== activeExportAttempt || readyExportAttempt(attempt, token)) return;
+      if (Date.now() >= deadline) {
+        finishExportAttempt(attempt, 'error',
+          'The export did not start. The server may still be busy, or your sign-in or export access may have changed.');
+      }
+    }, 100);
   });
   const loadPreview = async (offset = 0) => {
     setBusy(true); errorHost.replaceChildren();
@@ -5205,7 +5326,9 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     event.preventDefault(); errorHost.replaceChildren();
     try {
       const selected = file.files?.[0];
-      if(!selected || selected.size > 8 * 1024 * 1024) throw new Error('Select a CSV file no larger than 8 MiB.');
+      if(!selected || selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
+        throw new Error('Select a CSV file no larger than 128 MiB.');
+      }
       setBusy(true);
       request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
         recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
@@ -5766,12 +5889,15 @@ async function renderAliases() {
   const requestedListId = /^[1-9][0-9]*$/.test(route.get('list') || '') ? Number(route.get('list')) : null;
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
+  const activityRequested = ['activity', 'calls', 'evidence'].includes(route.get('aliasTab'));
   const requestedTable = route.get('aliasTab') !== 'discover' &&
     (requestedListId !== null || requestedScanListId !== null);
   clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
   if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
-  const publicListsPromise = apiPage('/api/v1/alias-lists');
-  const adminListsPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
+  const publicListsPromise = apiPage('/api/v1/alias-lists?limit=500');
+  const adminListsPromise = activityRequested ?
+    requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }) :
+    requestJson('/api/v1/admin/alias-lists', { csrf: false });
   const scanListCatalogPromise = requestedScanListId ?
     requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
     Promise.resolve({ revision: null, scan_lists: [] });
@@ -5852,7 +5978,9 @@ async function renderAliases() {
         sort: route.get('sort') || defaultOrder.sort,
         direction: route.get('direction') || defaultOrder.direction }),
       view === 'activity' ? { timeoutMs: 35_000 } : {});
-  const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
+  const optionParameters = { alias_list_id: aliasListId(selectedList) };
+  if (view === 'activity') optionParameters.include_group_names = false;
+  const optionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   activityLoading?.remove();

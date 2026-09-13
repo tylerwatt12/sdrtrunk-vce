@@ -80,15 +80,30 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 
 ### Alias Editor large-list indexes
 
-The web Alias Editor queries at most 100,000 candidates from one selected Alias List, either in stable Alias ID order
-for an in-memory activity snapshot or in case-insensitive name order for configuration browsing. The
-`idx_alias_list_id(alias_list_id, id)` and
-`idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` indexes serve those two concrete queries.
-They add no rows per hour and no retained activity data; each contains one entry per administrator-owned Alias and is
-deleted or rebuilt with that Alias. The cost is two additional B-trees and their write amplification when an Alias List
-is saved. Existing partial matcher indexes cannot serve either whole-list order. At representative volume,
-`EXPLAIN QUERY PLAN` reports `SEARCH alias USING COVERING INDEX idx_alias_list_id (alias_list_id=?)` for snapshot input
-and `SEARCH alias USING INDEX idx_alias_list_name_sort (alias_list_id=?)` for name browsing, without a temporary sort.
+The web Alias Editor never builds a whole-list activity snapshot. SQLite applies the selected Alias List, search, and
+configuration or activity filters first, sorts the complete matching result, and returns only the requested page.
+There is no candidate-count ceiling on Activity browsing. `alias_activity_summary` keeps one fixed-size row per Alias
+for the sortable call, signaling, and first/last-seen values; page and export requests never rebuild it from retained
+identity history.
+
+The background statistics writer updates this projection after it accepts an observation. It uses the saved channel's
+currently assigned, protocol-compatible Alias List and the normal exact-before-range matcher precedence. Reassigning
+a channel changes attribution for later observations without moving or deleting earlier counters. Appearance,
+routing, and imported metadata edits preserve the row; changing the matcher resets it, and a new or cloned Alias starts
+without observed activity. The format-19-to-20 Application Migrator performs the only full reconstruction, seeding the
+projection from retained compact activity where it can still determine an owner.
+
+The global **Reset Stats** action clears every Alias Activity counter and immediately reseeds one empty row per Alias.
+A channel-only statistics clear does not try to subtract that channel's historical contribution from durable Alias
+counters because the projection deliberately keeps no per-channel attribution ledger.
+
+`idx_alias_list_id(alias_list_id, id)` provides deterministic whole-list/export order, while
+`idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` serves normal name browsing. List-first
+matcher, identity-type, group, and displayed-value indexes serve the other sortable Alias fields. The summary's
+list-first indexes serve Calls, Signaling, and Last Seen sorts. Dedicated list-first partial range indexes serve the
+prospective writer's range winner lookup without replacing the older protocol-first matcher indexes used by bounded
+page enrichment. These indexes contain no time-series rows: their size follows administrator-owned Alias
+configuration, not receiver uptime.
 
 ### Receiver status alert history
 

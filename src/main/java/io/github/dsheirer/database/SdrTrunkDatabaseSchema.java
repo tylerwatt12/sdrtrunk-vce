@@ -166,6 +166,60 @@ public final class SdrTrunkDatabaseSchema
             )
         )
         """;
+    private static final String ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_activity_summary (
+            alias_id INTEGER PRIMARY KEY CHECK(typeof(alias_id) = 'integer' AND alias_id > 0),
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
+            protocol_code INTEGER NOT NULL CHECK(
+                typeof(protocol_code) = 'integer' AND protocol_code IN (0, 1, 3, 4)
+            ),
+            metrics_state TEXT NOT NULL CHECK(
+                typeof(metrics_state) = 'text' AND metrics_state IN (
+                    'unsupported', 'not_collected', 'observed'
+                )
+            ),
+            logical_call_count INTEGER CHECK(logical_call_count IS NULL OR
+                (typeof(logical_call_count) = 'integer' AND logical_call_count >= 0)),
+            recorded_logical_call_count INTEGER CHECK(recorded_logical_call_count IS NULL OR
+                (typeof(recorded_logical_call_count) = 'integer' AND recorded_logical_call_count >= 0)),
+            stream_submitted_logical_call_count INTEGER CHECK(stream_submitted_logical_call_count IS NULL OR
+                (typeof(stream_submitted_logical_call_count) = 'integer'
+                    AND stream_submitted_logical_call_count >= 0)),
+            encrypted_logical_call_count INTEGER CHECK(encrypted_logical_call_count IS NULL OR
+                (typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0)),
+            grant_observation_count INTEGER CHECK(grant_observation_count IS NULL OR
+                (typeof(grant_observation_count) = 'integer' AND grant_observation_count >= 0)),
+            join_observation_count INTEGER CHECK(join_observation_count IS NULL OR
+                (typeof(join_observation_count) = 'integer' AND join_observation_count >= 0)),
+            emergency_observation_count INTEGER CHECK(emergency_observation_count IS NULL OR
+                (typeof(emergency_observation_count) = 'integer' AND emergency_observation_count >= 0)),
+            register_observation_count INTEGER CHECK(register_observation_count IS NULL OR
+                (typeof(register_observation_count) = 'integer' AND register_observation_count >= 0)),
+            logout_observation_count INTEGER CHECK(logout_observation_count IS NULL OR
+                (typeof(logout_observation_count) = 'integer' AND logout_observation_count >= 0)),
+            denial_observation_count INTEGER CHECK(denial_observation_count IS NULL OR
+                (typeof(denial_observation_count) = 'integer' AND denial_observation_count >= 0)),
+            data_observation_count INTEGER CHECK(data_observation_count IS NULL OR
+                (typeof(data_observation_count) = 'integer' AND data_observation_count >= 0)),
+            other_signaling_observation_count INTEGER CHECK(other_signaling_observation_count IS NULL OR
+                (typeof(other_signaling_observation_count) = 'integer'
+                    AND other_signaling_observation_count >= 0)),
+            signaling_observation_count INTEGER CHECK(signaling_observation_count IS NULL OR
+                (typeof(signaling_observation_count) = 'integer' AND signaling_observation_count >= 0)),
+            first_evidence_ms INTEGER CHECK(first_evidence_ms IS NULL OR
+                (typeof(first_evidence_ms) = 'integer' AND first_evidence_ms >= 0)),
+            last_evidence_ms INTEGER CHECK(last_evidence_ms IS NULL OR
+                (typeof(last_evidence_ms) = 'integer' AND last_evidence_ms >= 0)),
+            updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0),
+            FOREIGN KEY(alias_id) REFERENCES alias(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+            CHECK((first_evidence_ms IS NULL AND last_evidence_ms IS NULL) OR
+                (first_evidence_ms IS NOT NULL AND last_evidence_ms IS NOT NULL
+                    AND last_evidence_ms >= first_evidence_ms)),
+            CHECK((protocol_code = 0 AND metrics_state = 'unsupported') OR
+                (protocol_code IN (1, 3, 4) AND metrics_state <> 'unsupported'))
+        )
+        """;
     private static final String SCAN_LIST_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS scan_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
@@ -562,6 +616,59 @@ public final class SdrTrunkDatabaseSchema
             CREATE INDEX IF NOT EXISTS idx_alias_list_name_sort
             ON alias(alias_list_id, lower(coalesce(name, '')), id)
             """));
+    private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "alias_activity_summary",
+            ALIAS_ACTIVITY_SUMMARY_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_talkgroup_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_talkgroup_range
+            ON alias(alias_list_id, protocol, min_value DESC, max_value DESC, id DESC)
+            WHERE matcher_type = 'TALKGROUP_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_radio_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_radio_range
+            ON alias(alias_list_id, protocol, min_value DESC, max_value DESC, id DESC)
+            WHERE matcher_type = 'RADIO_ID_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_matcher_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_matcher_sort
+            ON alias(alias_list_id, matcher_type, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_type_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_type_sort
+            ON alias(alias_list_id, CASE
+                WHEN matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
+                WHEN matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                ELSE 'other'
+            END, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_group_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_group_sort
+            ON alias(alias_list_id, lower(coalesce(group_name, '')), id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_value_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_value_sort
+            ON alias(alias_list_id, CASE
+                WHEN matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
+                    THEN printf('%020d–%020d', min_value, max_value)
+                WHEN value IS NOT NULL THEN printf('%020d', value)
+                WHEN numeric_value IS NOT NULL THEN printf('%020d', numeric_value)
+                WHEN text_value IS NOT NULL THEN lower(text_value)
+                WHEN tone_sequence IS NOT NULL THEN lower(tone_sequence)
+                ELSE ''
+            END, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_calls", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_calls
+            ON alias_activity_summary(alias_list_id, logical_call_count DESC, alias_id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_signaling", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_signaling
+            ON alias_activity_summary(alias_list_id, signaling_observation_count DESC, alias_id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_last_seen", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_last_seen
+            ON alias_activity_summary(alias_list_id, last_evidence_ms DESC, alias_id)
+            """));
     private static final List<SqliteSchemaValidator.Definition> EXACT_CONFIGURATION_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "configuration_channel",
             CONFIGURATION_CHANNEL_TABLE_SQL),
@@ -586,6 +693,15 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_radio_range",
         "idx_alias_list_id",
         "idx_alias_list_name_sort",
+        "idx_alias_activity_talkgroup_range",
+        "idx_alias_activity_radio_range",
+        "idx_alias_activity_matcher_sort",
+        "idx_alias_activity_type_sort",
+        "idx_alias_activity_group_sort",
+        "idx_alias_activity_value_sort",
+        "idx_alias_activity_calls",
+        "idx_alias_activity_signaling",
+        "idx_alias_activity_last_seen",
         "idx_alias_broadcast_configuration",
         "idx_scan_list_one_default",
         "idx_alias_scan_list_by_list",
@@ -613,6 +729,13 @@ public final class SdrTrunkDatabaseSchema
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "matcher_type", "protocol", "value", "min_value",
                 "max_value", "text_value", "numeric_value", "tone_sequence"),
+            new SqliteSchemaValidator.Table("alias_activity_summary", "alias_id", "alias_list_id",
+                "protocol_code", "metrics_state",
+                "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
+                "encrypted_logical_call_count", "grant_observation_count", "join_observation_count",
+                "emergency_observation_count", "register_observation_count", "logout_observation_count",
+                "denial_observation_count", "data_observation_count", "other_signaling_observation_count",
+                "signaling_observation_count", "first_evidence_ms", "last_evidence_ms", "updated_at_ms"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id",
                 "broadcast_configuration_id"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
@@ -665,6 +788,7 @@ public final class SdrTrunkDatabaseSchema
             if(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql))
             {
                 createAliasCatalogIndexes(connection);
+                createAliasActivitySummary(connection);
             }
             statement.executeUpdate("""
                 INSERT INTO scan_list (sort_order, name, description, published, is_default)
@@ -692,6 +816,18 @@ public final class SdrTrunkDatabaseSchema
         try(Statement statement = connection.createStatement())
         {
             for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
+        }
+    }
+
+    /** Creates the durable Alias Activity read model for fresh databases and the adjacent staged migrator only. */
+    public static void createAliasActivitySummary(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS)
             {
                 statement.executeUpdate(definition.sql());
             }
@@ -871,6 +1007,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CORE_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);

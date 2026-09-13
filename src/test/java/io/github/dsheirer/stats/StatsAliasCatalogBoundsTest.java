@@ -61,7 +61,7 @@ class StatsAliasCatalogBoundsTest
 
     @Test
     @SuppressWarnings("unchecked")
-    void activitySnapshotAcceptsExactlyOneHundredThousandAliasesAndRejectsMore() throws Exception
+    void activityCatalogAcceptsExactlyOneHundredThousandAliasesAndMore() throws Exception
     {
         Path database = mTemporaryFolder.resolve("one-hundred-thousand-aliases.sqlite");
 
@@ -107,12 +107,20 @@ class StatsAliasCatalogBoundsTest
 
             statement.executeUpdate("""
                 INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
-                VALUES (100001, 1, 'One too many', 'TALKGROUP', 'DMR', 100001)
+                VALUES (100001, 1, 'Alias 100001', 'TALKGROUP', 'DMR', 100001)
                 """);
-            StatsApiException tooLarge = assertThrows(StatsApiException.class,
-                () -> new StatsAliasCatalog(new StatsAliasResolver()).aliases(connection, request));
-            assertEquals(413, tooLarge.status());
-            assertEquals("alias_activity_too_large", tooLarge.code());
+            Map<String,Object> beyond = new StatsAliasCatalog(new StatsAliasResolver()).aliases(connection,
+                new StatsRequest(Map.of("list", "1", "sort", "name", "direction", "asc",
+                    "limit", "1", "offset", "100000")));
+            List<Map<String,Object>> beyondRows = (List<Map<String,Object>>)beyond.get("rows");
+            assertEquals(1, beyondRows.size());
+            assertEquals(100001L, ((Number)beyondRows.getFirst().get("alias_id")).longValue());
+
+            StatsApiException interactiveSelection = assertThrows(StatsApiException.class,
+                () -> new StatsAliasCatalog(new StatsAliasResolver()).matchingAliasIds(connection,
+                    new StatsRequest(Map.of("list", "1"))));
+            assertEquals(413, interactiveSelection.status());
+            assertEquals("alias_selection_too_large", interactiveSelection.code());
         }
     }
 

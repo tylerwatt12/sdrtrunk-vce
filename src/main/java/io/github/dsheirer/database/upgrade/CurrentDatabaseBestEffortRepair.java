@@ -137,6 +137,7 @@ final class CurrentDatabaseBestEffortRepair
         applyChannelRepairs(connection, analysis.channels().repairs());
         reassignUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists(),
             analysis.aliasLists().invalidRowIds());
+        deleteAliasActivitySummaries(connection, analysis.aliases().invalidRowIds());
         deleteRows(connection, "alias", analysis.aliases().invalidRowIds());
         deleteRows(connection, "alias_list", analysis.aliasLists().invalidRowIds());
         deleteRows(connection, "scan_list", analysis.scanLists().invalidRowIds());
@@ -1589,6 +1590,32 @@ final class CurrentDatabaseBestEffortRepair
         try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE rowid=?"))
         {
             for(long rowId: rowIds)
+            {
+                statement.setLong(1, rowId);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    /**
+     * Alias Activity intentionally uses a deferred NO ACTION Alias foreign key so a configuration snapshot may
+     * replace an Alias row without discarding its counters.  A repair that permanently drops an unusable Alias must
+     * therefore remove that Alias's derived summary explicitly before deleting the owning configuration row.
+     */
+    private static void deleteAliasActivitySummaries(Connection connection, List<Long> aliasRowIds)
+        throws SQLException
+    {
+        if(aliasRowIds.isEmpty())
+        {
+            return;
+        }
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM alias_activity_summary
+            WHERE alias_id=(SELECT id FROM alias WHERE rowid=?)
+            """))
+        {
+            for(long rowId: aliasRowIds)
             {
                 statement.setLong(1, rowId);
                 statement.addBatch();

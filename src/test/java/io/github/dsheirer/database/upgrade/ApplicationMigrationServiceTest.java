@@ -1527,6 +1527,31 @@ class ApplicationMigrationServiceTest
                 statement.setString(1, name);
                 statement.executeUpdate();
             }
+
+            boolean activitySummaryPresent;
+            try(ResultSet rows = listStatement.executeQuery("""
+                SELECT 1 FROM sqlite_schema
+                WHERE type='table' AND name='alias_activity_summary'
+                """))
+            {
+                activitySummaryPresent = rows.next();
+            }
+            if(activitySummaryPresent)
+            {
+                try(var statement = connection.prepareStatement("""
+                    INSERT INTO alias_activity_summary(
+                        alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+                    )
+                    SELECT alias.id, alias.alias_list_id, 1, 'not_collected', 1
+                    FROM alias
+                    JOIN alias_list ON alias_list.id=alias.alias_list_id
+                    WHERE alias.name=? AND alias_list.name='Test' COLLATE NOCASE
+                    """))
+                {
+                    statement.setString(1, name);
+                    statement.executeUpdate();
+                }
+            }
         }
     }
 

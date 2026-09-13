@@ -22,11 +22,13 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.StringReader;
+import java.io.StringWriter;
 import java.nio.file.*;
 import java.util.*;
 import org.apache.commons.csv.CSVFormat;
@@ -129,11 +131,28 @@ class AliasImportServiceTest
         fields.put("stream_as_talkgroup", Integer.toString(StreamAsTalkgroup.MAXIMUM_VALUE + 1));
         assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
             AliasTransferCsv.write(List.of(fields)), AliasTransferCsv.Format.VCE, list));
-        assertThrows(IllegalArgumentException.class, () -> AliasTransferCsv.read(
-            "é".repeat(AliasTransferCsv.MAX_BYTES / 2 + 1), AliasTransferCsv.Format.VCE, list));
     }
 
-    @Test void transfersDatabaseValidLongTextAndRejectsAmbiguousTransferExports() throws Exception
+    @Test void parsesMoreThanTenThousandVceRowsWithoutAnAliasCountCeiling() throws Exception
+    {
+        StringWriter output = new StringWriter();
+
+        try(AliasTransferCsv.StreamingWriter writer = AliasTransferCsv.streamingWriter(output))
+        {
+            for(int value = 1; value <= 10_001; value++)
+            {
+                writer.write(AliasTransferCsv.fields(alias(1, value, "Alias " + value), "County",
+                    List.of(), List.of()));
+            }
+        }
+
+        List<AliasImportService.Input> rows = AliasTransferCsv.read(new StringReader(output.toString()),
+            AliasTransferCsv.Format.VCE, new AliasListDefinition("Destination", AliasListFamily.P25));
+        assertEquals(10_001, rows.size());
+        assertEquals(10_001, ((Talkgroup)rows.getLast().alias().getMatchIdentifier()).getValue());
+    }
+
+    @Test void transfersDatabaseValidLongTextAndPreservesRepeatedMatchers() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
         {
@@ -148,14 +167,141 @@ class AliasImportServiceTest
             var importer = new AliasImportService(fixture.service);
             importer.apply(importer.preview(destination, AliasImportService.Mode.UPDATE_ADD, inputs, null));
             Alias transferred = fixture.service.transferSnapshot(destination).aliases().getFirst().alias();
+            long transferredId = transferred.getId();
             assertEquals(longText.getName(), transferred.getName());
             assertEquals(longText.getDescription(), transferred.getDescription());
             assertEquals(longText.getGroup(), transferred.getGroup());
+            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + fixture.database);
+                var statement = connection.prepareStatement("""
+                    UPDATE alias_activity_summary
+                    SET metrics_state='observed', logical_call_count=9
+                    WHERE alias_id=?
+                    """))
+            {
+                statement.setLong(1, transferredId);
+                assertEquals(1, statement.executeUpdate());
+            }
 
-            fixture.service.createAlias(alias(fixture.list, 700, "Duplicate"));
-            IllegalArgumentException duplicate = assertThrows(IllegalArgumentException.class,
-                () -> importer.export(fixture.list));
-            assertTrue(duplicate.getMessage().contains("resolve duplicate matchers"));
+            Alias duplicate = alias(fixture.list, 700, "Duplicate");
+            duplicate.setColor(55);
+            duplicate.setRecordable(true);
+            fixture.service.createAlias(duplicate, Set.of(), fixture.service.currentRevision());
+            List<AliasImportService.Input> repeated = AliasTransferCsv.read(importer.export(fixture.list),
+                AliasTransferCsv.Format.VCE, fixture.service.options(destination).aliasList());
+            assertEquals(2, repeated.size());
+            AliasImportService.Plan repeatedPlan = importer.preview(destination, AliasImportService.Mode.UPDATE_ADD,
+                repeated, null);
+            assertEquals(1L, repeatedPlan.preview().counts().get("unchanged"));
+            assertEquals(1L, repeatedPlan.preview().counts().get("added"));
+            assertEquals(0L, repeatedPlan.preview().counts().get("error"));
+            importer.apply(repeatedPlan);
+            List<AliasAdministrationService.AliasEntry> repeatedEntries =
+                fixture.service.transferSnapshot(destination).aliases();
+            assertEquals(2, repeatedEntries.size());
+            assertEquals(transferredId, repeatedEntries.stream()
+                .filter(entry -> entry.alias().getName().equals(longText.getName())).findFirst().orElseThrow()
+                .alias().getId(), "The matched alias must retain its database ID and activity ownership");
+            Alias addedDuplicate = repeatedEntries.stream()
+                .filter(entry -> entry.alias().getName().equals("Duplicate")).findFirst().orElseThrow().alias();
+            assertTrue(addedDuplicate.getColor() == 55 && addedDuplicate.isRecordable(),
+                repeatedEntries.stream().map(entry -> entry.alias().getName() + ":" + entry.alias().getColor() + ":" +
+                    entry.alias().isRecordable()).toList().toString());
+            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + fixture.database);
+                var statement = connection.prepareStatement("""
+                    SELECT metrics_state, logical_call_count
+                    FROM alias_activity_summary
+                    WHERE alias_id=?
+                    """))
+            {
+                statement.setLong(1, transferredId);
+                try(var result = statement.executeQuery())
+                {
+                    assertTrue(result.next());
+                    assertEquals("observed", result.getString("metrics_state"));
+                    assertEquals(9L, result.getLong("logical_call_count"),
+                        "A matched alias keeps the activity owned by its stable ID");
+                }
+
+                statement.setLong(1, addedDuplicate.getId());
+                try(var result = statement.executeQuery())
+                {
+                    assertTrue(result.next());
+                    assertEquals("not_collected", result.getString("metrics_state"));
+                    assertNull(result.getObject("logical_call_count"),
+                        "A newly imported duplicate must not inherit another alias's counters");
+                }
+            }
+        }
+    }
+
+    @Test void repeatedMatcherRoundTripKeepsTheHighestIdOccurrenceAsTheRuntimeWinner() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            Alias first = alias(fixture.list, 902, "Earlier configuration");
+            first.setColor(11);
+            long firstId = fixture.service.createAlias(first, Set.of(), fixture.service.currentRevision())
+                .aliasIds().getFirst();
+            Alias winner = alias(fixture.list, 902, "Highest ID winner");
+            winner.setColor(22);
+            long winnerId = fixture.service.createAlias(winner, Set.of(), fixture.service.currentRevision())
+                .aliasIds().getFirst();
+            assertTrue(winnerId > firstId);
+
+            long destination = fixture.service.createAliasList("Destination", AliasListFamily.P25).aliasListId();
+            AliasImportService importer = new AliasImportService(fixture.service);
+            List<AliasImportService.Input> rows = AliasTransferCsv.read(importer.export(fixture.list),
+                AliasTransferCsv.Format.VCE, fixture.service.options(destination).aliasList());
+            assertEquals(List.of("Earlier configuration", "Highest ID winner"),
+                rows.stream().map(row -> row.alias().getName()).toList());
+
+            importer.apply(importer.preview(destination, AliasImportService.Mode.UPDATE_ADD, rows, null));
+            List<AliasAdministrationService.AliasEntry> imported =
+                fixture.service.transferSnapshot(destination).aliases();
+            assertEquals(2, imported.size());
+            Alias importedWinner = imported.stream().max(Comparator.comparingLong(entry -> entry.alias().getId()))
+                .orElseThrow().alias();
+            assertEquals("Highest ID winner", importedWinner.getName());
+            assertEquals(22, importedWinner.getColor());
+
+            Alias runtimeWinner = fixture.manager.getAliasModel()
+                .getAliasList(fixture.service.options(destination).aliasList())
+                .getAliases(APCO25Talkgroup.create(902)).getFirst();
+            assertEquals(importedWinner.getId(), runtimeWinner.getId());
+        }
+    }
+
+    @Test void repeatedMatcherImportPrefersExactConfigurationBeforeStableOccurrenceOrder() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            Alias sourceFirst = alias(fixture.list, 901, "First");
+            sourceFirst.setColor(11);
+            Alias sourceSecond = alias(fixture.list, 901, "Second");
+            sourceSecond.setColor(22);
+            fixture.service.createAlias(sourceFirst);
+            fixture.service.createAlias(sourceSecond);
+
+            long destination = fixture.service.createAliasList("Destination", AliasListFamily.P25).aliasListId();
+            Alias destinationSecond = alias(destination, 901, "Second");
+            destinationSecond.setColor(22);
+            long secondId = fixture.service.createAlias(destinationSecond).aliasIds().getFirst();
+            Alias destinationFirst = alias(destination, 901, "First");
+            destinationFirst.setColor(11);
+            long firstId = fixture.service.createAlias(destinationFirst).aliasIds().getFirst();
+
+            AliasImportService importer = new AliasImportService(fixture.service);
+            List<AliasImportService.Input> inputs = AliasTransferCsv.read(importer.export(fixture.list),
+                AliasTransferCsv.Format.VCE, fixture.service.options(destination).aliasList());
+            AliasImportService.Plan plan = importer.preview(destination, AliasImportService.Mode.UPDATE_ADD,
+                inputs, null);
+            assertEquals(2L, plan.preview().counts().get("unchanged"));
+            assertEquals(0L, plan.preview().counts().get("updated"));
+            importer.apply(plan);
+            assertEquals("Second", fixture.service.getAlias(secondId).alias().getName());
+            assertEquals(22, fixture.service.getAlias(secondId).alias().getColor());
+            assertEquals("First", fixture.service.getAlias(firstId).alias().getName());
+            assertEquals(11, fixture.service.getAlias(firstId).alias().getColor());
         }
     }
 
@@ -288,7 +434,7 @@ class AliasImportServiceTest
         }
     }
 
-    @Test void blocksUnknownNamesDuplicatesStalePreviewAndRollsBackFailedSave() throws Exception
+    @Test void blocksUnknownNamesAndStalePreviewsButAllowsRepeatedMatchers() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
         {
@@ -303,7 +449,8 @@ class AliasImportServiceTest
             input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false,
                 List.of(), List.of(), "County");
             var duplicated = importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD, List.of(input, input), null);
-            assertEquals(1L, duplicated.preview().counts().get("error"));
+            assertEquals(0L, duplicated.preview().counts().get("error"));
+            assertEquals(2L, duplicated.preview().counts().get("added"));
             var plan = importer.preview(fixture.list, AliasImportService.Mode.REPLACE, List.of(input), null);
             service.createAlias(alias(fixture.list, 300, "After preview"));
             assertThrows(AliasAdministrationService.StaleRevisionException.class, () -> importer.apply(plan));

@@ -27,7 +27,7 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
-        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists')"));
+        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists?limit=500')"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
             renderer.indexOf("apiPage('/api/v1/aliases'"));
@@ -421,8 +421,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("last_activity_after: route.get('lastActivityAfter')"));
         assertTrue(filters.contains("selectFilter('Calls', 'use'"));
         assertTrue(filters.contains("'No calls observed'"));
-        assertFalse(filters.contains("selectFilter('Evidence'"));
-        assertFalse(filters.contains("'Covered · no evidence'"));
+        assertTrue(filters.contains("selectFilter('Evidence'"));
+        assertTrue(filters.contains("'Assigned, no evidence'"));
+        assertTrue(filters.contains("'Not being collected'"));
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
         assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("A call can also have signaling"));
