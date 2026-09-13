@@ -315,6 +315,34 @@ public final class ChannelAdministrationService
         }));
     }
 
+    /** Enables selected channels at the end of the queue, or disables them and compacts the remaining order. */
+    public MutationResult setAutoStart(Collection<String> configurationIds, boolean enabled, long expectedRevision)
+    {
+        List<String> ids = boundedConfigurationIds(configurationIds);
+        return admitted(() -> mutate(expectedRevision, true, channels ->
+        {
+            ids.forEach(id -> requireChannel(channels, id));
+            List<String> autoStartIds = new ArrayList<>(effectiveAutoStartIds(channels));
+            Set<String> selected = Set.copyOf(ids);
+
+            if(enabled)
+            {
+                Set<String> alreadyEnabled = new HashSet<>(autoStartIds);
+                ids.forEach(id ->
+                {
+                    if(alreadyEnabled.add(id)) autoStartIds.add(id);
+                });
+            }
+            else
+            {
+                autoStartIds.removeIf(selected::contains);
+            }
+
+            Set<String> changed = applyAutoStartOrder(channels, autoStartIds);
+            return new MutationTarget(changed, ids);
+        }));
+    }
+
     public BatchResult setProcessing(Collection<String> configurationIds, boolean start)
     {
         List<String> ids = boundedConfigurationIds(configurationIds);

@@ -92,6 +92,21 @@ class ChannelAdministrationPersistenceTest
                 .noneMatch(channel -> cloneId.equals(channel.configurationId())));
             assertEquals(deleted.revision(), channels.currentRevision());
             assertEquals(2, new ConfigurationDatabaseStore(database).load().channels().size());
+
+            ChannelAdministrationService.MutationResult autoStartEnabled = channels.setAutoStart(List.of(secondId),
+                true, deleted.revision());
+            assertEquals(1, channels.get(firstId).autoStartOrder());
+            assertEquals(2, channels.get(secondId).autoStartOrder(),
+                "Bulk enable appends newly enabled channels to the queue");
+            ChannelAdministrationService.MutationResult autoStartDisabled = channels.setAutoStart(List.of(firstId),
+                false, autoStartEnabled.revision());
+            assertNull(channels.get(firstId).autoStartOrder());
+            assertEquals(1, channels.get(secondId).autoStartOrder(),
+                "Bulk disable compacts the remaining queue");
+            assertFalse(new ConfigurationDatabaseStore(database).load().channels().stream()
+                .filter(channel -> firstId.equals(channel.getConfigurationId())).findFirst().orElseThrow()
+                .isAutoStart());
+            assertEquals(autoStartDisabled.revision(), channels.currentRevision());
         }
         finally
         {

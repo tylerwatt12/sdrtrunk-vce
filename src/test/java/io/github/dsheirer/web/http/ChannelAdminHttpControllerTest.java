@@ -6,6 +6,7 @@
 package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -108,6 +109,23 @@ class ChannelAdminHttpControllerTest
                 channelId + "/auto-start/move"), "POST",
                 "{\"revision\":" + revision + ",\"direction\":\"EARLIER\"}");
             assertEquals(200, move.statusCode(), move.body());
+            assertEquals(1, channels.get(channelId).autoStartOrder());
+
+            revision = MAPPER.readTree(move.body()).path("data").path("revision").longValue();
+            HttpResponse<String> autoStartDisabled = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.ACTIONS_PATH), "POST",
+                "{\"revision\":" + revision + ",\"action\":\"DISABLE_AUTO_START\"," +
+                    "\"configuration_ids\":[\"" + channelId + "\"]}");
+            assertEquals(200, autoStartDisabled.statusCode(), autoStartDisabled.body());
+            assertEquals(1, MAPPER.readTree(autoStartDisabled.body()).path("data").path("affected").asInt());
+            assertNull(channels.get(channelId).autoStartOrder());
+
+            revision = MAPPER.readTree(autoStartDisabled.body()).path("data").path("revision").longValue();
+            HttpResponse<String> autoStartEnabled = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.ACTIONS_PATH), "POST",
+                "{\"revision\":" + revision + ",\"action\":\"ENABLE_AUTO_START\"," +
+                    "\"configuration_ids\":[\"" + channelId + "\"]}");
+            assertEquals(200, autoStartEnabled.statusCode(), autoStartEnabled.body());
             assertEquals(1, channels.get(channelId).autoStartOrder());
 
             HttpResponse<String> unknown = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH),

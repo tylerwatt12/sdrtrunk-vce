@@ -15816,6 +15816,8 @@ async function renderModernChannelCatalog(renderContext, editable) {
     selectedBar.hidden = true;
     const selectedSummary = node('strong');
     const hiddenSummary = node('span', 'muted');
+    let enableAutoStart = null;
+    let disableAutoStart = null;
     let selectAll = null;
     const updateSelection = () => {
       if (!editable) return;
@@ -15825,6 +15827,11 @@ async function renderModernChannelCatalog(renderContext, editable) {
       selectedBar.hidden = selected.size === 0;
       selectedSummary.textContent = `${selected.size} selected`;
       hiddenSummary.textContent = hiddenSelected ? `${hiddenSelected} outside this filter` : '';
+      const selectedRows = (state.catalog.channels || []).filter((row) => selected.has(row.configuration_id));
+      if (enableAutoStart) enableAutoStart.disabled = selectedRows.length > 0 &&
+        selectedRows.every((row) => row.auto_start_order != null);
+      if (disableAutoStart) disableAutoStart.disabled = selectedRows.length > 0 &&
+        selectedRows.every((row) => row.auto_start_order == null);
       if (selectAll) {
         selectAll.checked = state.visibleRows.length > 0 && visibleSelected === state.visibleRows.length;
         selectAll.indeterminate = visibleSelected > 0 && visibleSelected < state.visibleRows.length;
@@ -15864,10 +15871,14 @@ async function renderModernChannelCatalog(renderContext, editable) {
           }, statusHost);
         } catch (_) { /* The inline error remains actionable. */ }
       }, `ui-button ${danger ? 'ui-button-danger' : 'ui-button-secondary'}`);
-    if (editable) selectedBar.append(selectedSummary, hiddenSummary,
-      action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
-      action('Clone', 'icon-copy', 'CLONE'),
-      action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
+    if (editable) {
+      enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
+      disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
+      selectedBar.append(selectedSummary, hiddenSummary,
+        action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
+        enableAutoStart, disableAutoStart, action('Clone', 'icon-copy', 'CLONE'),
+        action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
+    }
 
     const filteredRows = () => {
       const term = search.value.trim().toLowerCase();

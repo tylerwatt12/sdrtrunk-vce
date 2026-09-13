@@ -243,6 +243,10 @@ public final class ChannelAdminHttpController
         {
             case START -> sendData(exchange, 200, mService.setProcessing(ids, true));
             case STOP -> sendData(exchange, 200, mService.setProcessing(ids, false));
+            case ENABLE_AUTO_START -> sendData(exchange, 200, mService.setAutoStart(ids, true,
+                requiredRevision(request.revision())));
+            case DISABLE_AUTO_START -> sendData(exchange, 200, mService.setAutoStart(ids, false,
+                requiredRevision(request.revision())));
             case CLONE -> sendData(exchange, 200, mService.cloneChannels(ids,
                 requiredRevision(request.revision())));
             case DELETE -> sendData(exchange, 200, mService.deleteChannels(ids,
@@ -395,7 +399,7 @@ public final class ChannelAdminHttpController
     private record RevisionRequest(Long revision) {}
     private record MoveRequest(Long revision, ChannelAdministrationService.Direction direction) {}
     private record ActionRequest(Long revision, Action action, List<String> configurationIds) {}
-    private enum Action { START, STOP, CLONE, DELETE }
+    private enum Action { START, STOP, ENABLE_AUTO_START, DISABLE_AUTO_START, CLONE, DELETE }
     private static final class RequestException extends Exception
     {
         private final int mStatus;

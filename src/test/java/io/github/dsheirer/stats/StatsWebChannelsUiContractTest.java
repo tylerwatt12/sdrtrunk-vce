@@ -51,6 +51,10 @@ class StatsWebChannelsUiContractTest
         assertTrue(columns.contains("essential: true, fixed: true, renderHeader: renderSelectionHeader"));
         assertTrue(catalog.contains("const renderSelectionHeader = () =>"));
         assertTrue(catalog.contains("updateSelection, renderSelectionHeader"));
+        assertTrue(catalog.contains("action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START')"));
+        assertTrue(catalog.contains("action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START')"));
+        assertTrue(catalog.contains("selectedRows.every((row) => row.auto_start_order != null)"));
+        assertTrue(catalog.contains("selectedRows.every((row) => row.auto_start_order == null)"));
         assertFalse(catalog.contains("querySelector('thead th')"));
         assertFalse(source.contains("/api/v1/conventional-channels"));
         assertFalse(source.contains("/api/v1/conventional-contexts"));
