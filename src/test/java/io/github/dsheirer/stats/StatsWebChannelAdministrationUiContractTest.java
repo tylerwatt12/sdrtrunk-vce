@@ -18,6 +18,7 @@ class StatsWebChannelAdministrationUiContractTest
     void channelManagementIsWebFirstAndProtocolDriven() throws Exception
     {
         String javascript = Files.readString(Path.of("stats-web/assets/app.js"));
+        String stylesheet = Files.readString(Path.of("stats-web/assets/app.css"));
         String configurationEditor = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java"));
 
@@ -32,6 +33,10 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(javascript.contains("action('Delete', 'icon-trash', 'DELETE'"));
         assertTrue(javascript.contains("direction: 'EARLIER'"));
         assertTrue(javascript.contains("direction: 'LATER'"));
+        assertTrue(javascript.contains("uiSelectFrame(protocolSelect, 'channel-protocol-select')"));
+        assertTrue(javascript.contains("control instanceof HTMLSelectElement ? uiSelectFrame(control) : control"));
+        assertTrue(stylesheet.contains(".ui-select-frame > svg"));
+        assertTrue(stylesheet.contains(".channel-protocol-picker"));
         assertTrue(Files.readString(Path.of("src/main/resources/channel-protocols.json"))
             .contains("\"value\":\"CQPSK\",\"label\":\"CQPSK\""));
         assertFalse(configurationEditor.contains("getChannelsTab()"));

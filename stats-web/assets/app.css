@@ -9031,6 +9031,45 @@ select,
   background-size: 16px;
 }
 
+.ui-select-frame {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  display: block;
+  color: var(--muted);
+}
+
+.ui-select-frame select {
+  width: 100%;
+  padding-right: 44px;
+  background-image: none;
+  cursor: pointer;
+}
+
+.ui-select-frame > svg {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.ui-select-frame:focus-within {
+  color: var(--accent);
+}
+
+.ui-select-frame:has(select:disabled) {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
 select:focus-visible,
 .ui-select:focus-visible,
 .ui-input:focus-visible,
@@ -9481,6 +9520,43 @@ select:focus-visible,
   font-size: 12px;
 }
 
+.channel-protocol-picker {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  align-items: center;
+  gap: 5px 18px;
+  margin: 16px 18px 0;
+  padding: 14px 16px;
+  background: linear-gradient(120deg, var(--accent-soft), var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: var(--radius-card);
+}
+
+.channel-protocol-picker .alias-editor-field-label,
+.channel-protocol-picker .channel-protocol-select {
+  grid-column: 1;
+}
+
+.channel-protocol-picker .alias-editor-field-label {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.channel-protocol-picker .channel-protocol-select select {
+  min-height: 46px;
+  font-weight: 750;
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--interactive-border));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.channel-protocol-picker > small {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  max-width: 560px;
+  line-height: 1.5;
+}
+
 .channel-restart-notice {
   display: flex;
   align-items: center;
@@ -9778,6 +9854,17 @@ select:focus-visible,
     height: 100dvh;
     max-height: none;
     border-radius: 0;
+  }
+
+  .channel-protocol-picker {
+    grid-template-columns: minmax(0, 1fr);
+    margin: 12px 12px 0;
+    padding: 12px;
+  }
+
+  .channel-protocol-picker > small {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .channel-editor-grid,

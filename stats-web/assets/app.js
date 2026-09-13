@@ -15585,6 +15585,12 @@ function uiSelect(values, selectedValue = '', includeBlank = false, blankLabel =
   return select;
 }
 
+function uiSelectFrame(select, className = '') {
+  const frame = node('span', `ui-select-frame${className ? ` ${className}` : ''}`);
+  frame.append(select, iconGlyph('icon-chevron-down'));
+  return frame;
+}
+
 function uiToggle(checked, accessibleLabel = '') {
   const wrapper = node('label', 'ui-toggle');
   const input = node('input');
@@ -16319,8 +16325,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             host.replaceChildren(node('div', 'error', error.message));
           } finally { modal.setBusy(false); }
         });
-        form.append(aliasFormField('Protocol', protocolSelect,
-          'The protocol determines the available source, decoder, logging, and recording settings.'));
+        const protocolField = aliasFormField('Protocol', uiSelectFrame(protocolSelect, 'channel-protocol-select'),
+          'The protocol determines the available source, decoder, logging, and recording settings.');
+        protocolField.classList.add('channel-protocol-picker');
+        form.append(protocolField);
       }
       const panels = {};
       profile.sections.forEach((sectionDefinition) => {
@@ -16337,11 +16345,13 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         const grid = node('div', 'alias-editor-grid channel-editor-grid');
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
+          const presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
           const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
             field.type === 'frequency_map' || field.type === 'frequency_list' ?
-            node('div', 'alias-editor-field channel-wide-field') : aliasFormField(field.label, control, field.help || '');
+            node('div', 'alias-editor-field channel-wide-field') :
+            aliasFormField(field.label, presentedControl, field.help || '');
           if (!wrapper.contains(control)) {
-            wrapper.append(node('span', 'alias-editor-field-label', field.label), control);
+            wrapper.append(node('span', 'alias-editor-field-label', field.label), presentedControl);
             if (field.help) wrapper.append(node('small', '', field.help));
           }
           if (field.path === 'settings.use_bandplan_override' &&

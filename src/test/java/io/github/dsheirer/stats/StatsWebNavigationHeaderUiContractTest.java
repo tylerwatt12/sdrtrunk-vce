@@ -27,10 +27,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"129\">"));
-        assertTrue(html.contains("/assets/app.css?v=105"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"130\">"));
+        assertTrue(html.contains("/assets/app.css?v=106"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=150\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=151\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
