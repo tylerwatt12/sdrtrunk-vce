@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readStylesheetSource } = require('./stylesheet-source');
 const test = require('node:test');
 const vm = require('node:vm');
 const applicationPath = process.argv[2];
@@ -285,7 +286,7 @@ test('saved schema round-trips both boolean values and idle styling is outline-o
   const invalid = JSON.parse(JSON.stringify(schema.defaults));
   invalid.tuner.show_idle_channels = 'false';
   assert.throws(() => schema.validate(invalid), /show_idle_channels/);
-  const css = fs.readFileSync(path.join(path.dirname(applicationPath), 'app.css'), 'utf8');
+  const css = readStylesheetSource(path.join(path.dirname(applicationPath), 'app.css'));
   assert.match(css, /\.tuner-spectrum-flag-swatch\.status-idle\s*\{\s*background: transparent;\s*border: 2px solid/);
 });
 

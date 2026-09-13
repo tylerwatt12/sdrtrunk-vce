@@ -18,7 +18,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebReceiverHealthUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -205,7 +204,7 @@ class StatsWebReceiverHealthUiContractTest
     @Test
     void providesLightAndDarkPresentationContracts() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-healthy"));
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-warning"));

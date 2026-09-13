@@ -27,6 +27,10 @@
     return ids;
   }
 
+  function constrainedColumns(columns, property) {
+    return columns.filter((column) => column?.[property] === true).map(columnId);
+  }
+
   function registerSchema(registry, value, columns) {
     if (!registry || typeof registry.get !== 'function' || typeof registry.set !== 'function') {
       throw new TypeError('A table schema registry is required.');
@@ -51,6 +55,8 @@
     const byId = new Map(columns.map((column) => [columnId(column), column]));
     const groups = Object.fromEntries(columns.map((column) => [columnId(column), String(column.group || '')]));
     const defaults = columns.map(columnId);
+    const essentialColumns = constrainedColumns(columns, 'essential');
+    const fixedColumns = constrainedColumns(columns, 'fixed');
     const fresh = (reset = false, resetReason = null) => ({
       schema: exactSchema.slice(),
       columns: columns.slice(),
@@ -58,6 +64,8 @@
       column_widths: {},
       hidden_columns: [],
       groups,
+      essential_columns: essentialColumns.slice(),
+      fixed_columns: fixedColumns.slice(),
       reset,
       reset_reason: resetReason
     });
@@ -72,9 +80,15 @@
         saved.column_order.some((id) => !byId.has(id))) {
       return fresh(true, 'invalid-order');
     }
+    if (fixedColumns.some((id) => saved.column_order.indexOf(id) !== defaults.indexOf(id))) {
+      return fresh(true, 'fixed-column-moved');
+    }
     const hidden = Array.isArray(saved.hidden_columns) ? saved.hidden_columns.slice() : [];
     if (new Set(hidden).size !== hidden.length || hidden.some((id) => !byId.has(id))) {
       return fresh(true, 'invalid-hidden-columns');
+    }
+    if (hidden.some((id) => essentialColumns.includes(id))) {
+      return fresh(true, 'essential-column-hidden');
     }
     if (hidden.length === defaults.length) return fresh(true, 'all-columns-hidden');
     const widths = saved.column_widths && typeof saved.column_widths === 'object' &&
@@ -94,6 +108,8 @@
       column_widths: normalizedWidths,
       hidden_columns: hidden,
       groups,
+      essential_columns: essentialColumns.slice(),
+      fixed_columns: fixedColumns.slice(),
       reset: false,
       reset_reason: null
     };
@@ -103,6 +119,8 @@
     const order = layout.column_order.slice();
     const from = order.indexOf(id);
     if (from < 0 || (beforeId !== null && !order.includes(beforeId))) throw new Error('Unknown table column.');
+    if ((layout.fixed_columns || []).includes(id)) throw new Error('Fixed table columns cannot be moved.');
+    if (beforeId === id) return { ...layout, column_order: order };
     const group = layout.groups?.[id] || '';
     if (beforeId !== null && (layout.groups?.[beforeId] || '') !== group) {
       throw new Error('Grouped columns can only be reordered within their group.');
@@ -115,7 +133,20 @@
       target = lastInGroup + 1;
     }
     order.splice(target, 0, id);
+    if ((layout.fixed_columns || []).some((column) =>
+      order.indexOf(column) !== layout.schema.indexOf(column))) {
+      throw new Error('Table columns cannot be moved across a fixed column.');
+    }
     return { ...layout, column_order: order };
+  }
+
+  function canMove(layout, id, beforeId = null) {
+    try {
+      const moved = move(layout, id, beforeId);
+      return moved.column_order.some((column, index) => column !== layout.column_order[index]);
+    } catch (_error) {
+      return false;
+    }
   }
 
   function resize(layout, id, value) {
@@ -125,6 +156,9 @@
 
   function setHidden(layout, id, hidden) {
     if (!layout.column_order.includes(id)) throw new Error('Unknown table column.');
+    if (hidden && (layout.essential_columns || []).includes(id)) {
+      throw new Error('Essential table columns cannot be hidden.');
+    }
     const values = new Set(layout.hidden_columns);
     if (hidden) values.add(id);
     else values.delete(id);
@@ -143,5 +177,5 @@
 
 export {
   MINIMUM_WIDTH, MAXIMUM_WIDTH, columnId, tableId, schema, registerSchema,
-  normalize, move, resize, setHidden, persisted
+  normalize, move, canMove, resize, setHidden, persisted
 };

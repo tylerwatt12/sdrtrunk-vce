@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebChannelPresenceUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void rendersOnlyTypedAuthoritativePresence() throws Exception
@@ -57,7 +56,7 @@ class StatsWebChannelPresenceUiContractTest
     {
         String source = source();
         String groupIdentity = function(source, "async function renderGroupIdentity()");
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(groupIdentity.contains("kind === 'talkgroup'"));
         assertTrue(groupIdentity.contains("radioSystemCapability(groupIdentity, 'radio_channel_presence')"));

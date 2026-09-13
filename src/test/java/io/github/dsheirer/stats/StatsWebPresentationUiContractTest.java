@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebPresentationUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
@@ -105,7 +104,7 @@ class StatsWebPresentationUiContractTest
     void keepsDiscoverColumnsAtomicAndDateInputsInsideTheirFilters() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
@@ -136,7 +135,7 @@ class StatsWebPresentationUiContractTest
     void usesReusableMetricCardsAndIndependentObservedDetailColumns() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));

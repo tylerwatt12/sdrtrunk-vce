@@ -2377,7 +2377,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const fullLabel = column.fullLabel || column.label;
     if (fullLabel) header.title = fullLabel;
     const serverSortable = options.serverSort && column.sort;
-    if (serverSortable) {
+    if (typeof column.renderHeader === 'function') {
+      header.append(valueNode(column.renderHeader({ column, tableType, controller: tableController })));
+    } else if (serverSortable) {
       const currentSort = route.get('sort') || options.defaultSort;
       const currentDirection = route.get('direction') || options.defaultDirection || 'desc';
       const direction = currentSort === column.sort && currentDirection === 'desc' ? 'asc' : 'desc';
@@ -2495,7 +2497,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       visibility.dataset.layoutColumnId = id;
       visibility.checked = !layout.hidden_columns.includes(id);
       const visibleCount = layout.column_order.length - layout.hidden_columns.length;
-      visibility.disabled = visibility.checked && visibleCount <= 1;
+      visibility.disabled = (layout.essential_columns || []).includes(id) ||
+        visibility.checked && visibleCount <= 1;
       const displayLabel = byId.get(id).fullLabel || byId.get(id).label || id;
       visibility.setAttribute('aria-label', `Show ${displayLabel} column`);
       visibility.addEventListener('change', () => void replaceForLayout(
@@ -2508,7 +2511,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       earlier.type = 'button';
       earlier.dataset.layoutFocusKey = `earlier:${id}`;
       earlier.dataset.layoutColumnId = id;
-      earlier.disabled = position <= 0;
+      earlier.disabled = position <= 0 ||
+        !tableLayouts.canMove(layout, id, siblings[position - 1]);
       earlier.setAttribute('aria-label', `Move ${label.textContent} left`);
       earlier.addEventListener('click', () => void replaceForLayout(
         tableLayouts.move(layout, id, siblings[position - 1])));
@@ -2516,10 +2520,11 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       later.type = 'button';
       later.dataset.layoutFocusKey = `later:${id}`;
       later.dataset.layoutColumnId = id;
-      later.disabled = position < 0 || position >= siblings.length - 1;
+      const after = siblings[position + 2] || null;
+      later.disabled = position < 0 || position >= siblings.length - 1 ||
+        !tableLayouts.canMove(layout, id, after);
       later.setAttribute('aria-label', `Move ${label.textContent} right`);
       later.addEventListener('click', () => {
-        const after = siblings[position + 2] || null;
         void replaceForLayout(tableLayouts.move(layout, id, after));
       });
       item.append(visibility, label, earlier, later);
@@ -15667,14 +15672,15 @@ async function channelAdminMutation(path, options, statusHost) {
   }
 }
 
-function channelAdminColumns(selected, state, statusHost, editable, selectionChanged) {
+function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader) {
   const selectedChanged = (id, checked) => {
     if (checked) selected.add(id); else selected.delete(id);
     selectionChanged?.();
   };
   const columns = [];
   if (editable) columns.push(
-    { id: 'select', label: 'Select', className: 'channel-select-cell', render: (row) => {
+    { id: 'select', label: 'Select', className: 'channel-select-cell', width: 48,
+      essential: true, fixed: true, renderHeader: renderSelectionHeader, render: (row) => {
       const checkbox = node('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'ui-selection-check';
@@ -15771,7 +15777,8 @@ async function renderModernChannelCatalog(renderContext, editable) {
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
     const state = { revision: Number(catalog.revision), catalog, visibleRows: [] };
-    const wrapper = node('div', 'channel-admin-catalog ui-catalog');
+    const wrapper = node('div', 'channel-admin-catalog ui-catalog data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
     const summaryHost = node('div');
     summaryHost.append(channelSummaryCards(catalog));
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
@@ -15823,6 +15830,23 @@ async function renderModernChannelCatalog(renderContext, editable) {
         selectAll.indeterminate = visibleSelected > 0 && visibleSelected < state.visibleRows.length;
       }
     };
+    const renderSelectionHeader = () => {
+      const checkbox = node('input', 'ui-selection-check');
+      checkbox.type = 'checkbox';
+      checkbox.setAttribute('aria-label', 'Select all visible channels');
+      checkbox.addEventListener('change', () => {
+        state.visibleRows.forEach((row) => checkbox.checked ? selected.add(row.configuration_id) :
+          selected.delete(row.configuration_id));
+        tableHost.querySelectorAll('tbody .ui-selection-check').forEach((rowCheckbox) => {
+          rowCheckbox.checked = checkbox.checked;
+        });
+        tableHost.querySelectorAll('tbody tr').forEach((row) => row.classList.toggle('selected', checkbox.checked));
+        updateSelection();
+      });
+      selectAll = checkbox;
+      updateSelection();
+      return checkbox;
+    };
     const clearSelection = uiActionButton('Clear', null, () => {
       selected.clear();
       tableHost.querySelectorAll('.ui-selection-check').forEach((checkbox) => { checkbox.checked = false; });
@@ -15862,7 +15886,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     search.addEventListener('input', draw);
     state.visibleRows = filteredRows();
     const channelTable = table(state.visibleRows,
-      channelAdminColumns(selected, state, statusHost, editable, updateSelection),
+      channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader),
       'No channels match this view', {
         type: editable ? 'channel-catalog-admin-v1' : 'channel-catalog-readonly-v1',
         clientSort: true, controller: tableController,
@@ -15872,23 +15896,6 @@ async function renderModernChannelCatalog(renderContext, editable) {
         layoutMenuHost: toolbar
       });
     tableHost.append(channelTable);
-    if (editable) {
-      const header = channelTable.querySelector('thead th');
-      header?.replaceChildren();
-      selectAll = node('input', 'ui-selection-check');
-      selectAll.type = 'checkbox';
-      selectAll.setAttribute('aria-label', 'Select all visible channels');
-      selectAll.addEventListener('change', () => {
-        state.visibleRows.forEach((row) => selectAll.checked ? selected.add(row.configuration_id) :
-          selected.delete(row.configuration_id));
-        tableHost.querySelectorAll('tbody .ui-selection-check').forEach((checkbox) => {
-          checkbox.checked = selectAll.checked;
-        });
-        tableHost.querySelectorAll('tbody tr').forEach((row) => row.classList.toggle('selected', selectAll.checked));
-        updateSelection();
-      });
-      header?.append(selectAll);
-    }
     wrapper.append(summaryHost, toolbar, editable ? selectedBar : node('span'), tableHost);
     updateSelection();
 
@@ -15991,11 +15998,17 @@ function channelListEditor(field, values) {
 
 function channelMapEditor(field, values) {
   const editor = node('div', 'ui-repeater channel-map-editor');
+  editor.classList.toggle('channel-map-with-uplink', Boolean(field.show_uplink));
   const header = node('div', 'channel-map-header');
   header.append(node('span', '', field.number_label || 'Channel'), node('span', '', 'Downlink MHz'));
   if (field.show_uplink) header.append(node('span', '', 'Uplink MHz'));
   header.append(node('span'));
   const rows = node('div', 'ui-repeater-rows');
+  const labeledInput = (label, input) => {
+    const wrapper = node('label', 'channel-map-field');
+    wrapper.append(node('span', 'channel-map-mobile-label', label), input);
+    return wrapper;
+  };
   const add = uiActionButton('Add mapping', 'icon-plus', () => {
     append({});
     editor.dispatchEvent(new Event('change', { bubbles: true }));
@@ -16016,7 +16029,7 @@ function channelMapEditor(field, values) {
     downlink.min = '0.000001';
     downlink.value = value.downlink_hz ? channelMHz(value.downlink_hz) : '';
     downlink.setAttribute('aria-label', 'Downlink frequency in MHz');
-    row.append(channel, downlink);
+    row.append(labeledInput(field.number_label || 'Channel', channel), labeledInput('Downlink MHz', downlink));
     if (field.show_uplink) {
       const uplink = node('input', 'ui-input');
       uplink.type = 'number';
@@ -16024,7 +16037,7 @@ function channelMapEditor(field, values) {
       uplink.min = '0.000001';
       uplink.value = value.uplink_hz ? channelMHz(value.uplink_hz) : '';
       uplink.setAttribute('aria-label', 'Uplink frequency in MHz');
-      row.append(uplink);
+      row.append(labeledInput('Uplink MHz', uplink));
     }
     const remove = uiActionButton('', 'icon-trash', () => {
       row.remove();
@@ -16059,11 +16072,8 @@ function channelEditorControl(field, profile, options, channel) {
   } else if (field.type === 'multi_select') {
     const selected = new Set(value || []);
     control = node('fieldset', 'channel-multi-select');
+    control.setAttribute('aria-label', field.label);
     channelFieldOptions(field, profile, options).forEach((entry) => {
-      const checkbox = node('input');
-      checkbox.type = 'checkbox';
-      checkbox.value = entry.value;
-      checkbox.checked = selected.has(entry.value);
       const toggle = uiToggle(selected.has(entry.value), entry.label);
       const input = toggle.querySelector('input');
       input.value = entry.value;
@@ -16096,7 +16106,7 @@ function channelEditorControl(field, profile, options, channel) {
       entries.unshift({ value, label: `Current: ${channelMHz(value)} MHz` });
     control = uiSelect(entries, value ?? '', true);
   } else {
-    control = node('input');
+    control = node('input', 'ui-input');
     control.type = ['integer', 'number', 'frequency', 'frequency_select'].includes(field.type) ? 'number' : 'text';
     control.value = ['frequency', 'frequency_select'].includes(field.type) ? channelMHz(value) :
       (value ?? field.default ?? '');
@@ -16114,39 +16124,47 @@ function channelEditorControl(field, profile, options, channel) {
   return control;
 }
 
-function channelEditorTabs(panels, sections) {
-  const navigation = node('nav', 'tabs alias-modal-tabs channel-modal-tabs');
-  navigation.setAttribute('aria-label', 'Channel editor sections');
-  navigation.setAttribute('role', 'tablist');
-  const activate = (id) => {
-    Object.entries(panels).forEach(([key, panel]) => {
-      panel.hidden = key !== id;
-      panel.setAttribute('aria-hidden', String(key !== id));
-    });
-    [...navigation.children].forEach((button) => {
-      const active = button.dataset.tab === id;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
-    });
+function channelEditorSectionId(value) {
+  const segment = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `channel-editor-section-${segment || 'section'}`;
+}
+
+function channelEditorSectionPlan(sections) {
+  return (Array.isArray(sections) ? sections : []).map((definition) => ({
+    definition,
+    id: channelEditorSectionId(definition?.id),
+    advanced: definition?.id === 'output' && Array.isArray(definition.fields) &&
+      definition.fields.length > 0 && definition.fields.every((field) => field?.required !== true)
+  }));
+}
+
+function channelEditorSectionNavigation(panels, plan) {
+  const navigation = node('nav', 'channel-section-navigation ui-section-navigation');
+  navigation.setAttribute('aria-label', 'Jump to channel editor section');
+  const icons = {
+    general: 'icon-edit',
+    source: 'icon-tuner',
+    protocol: 'icon-channel',
+    output: 'icon-recording'
   };
-  const icons = { general: 'icon-edit', source: 'icon-tuner', protocol: 'icon-channel', output: 'icon-recording' };
-  sections.forEach((section) => {
-    const button = node('button', 'secondary');
-    button.type = 'button';
-    button.setAttribute('role', 'tab');
-    button.dataset.tab = section.id;
-    button.id = `channel-tab-${section.id}`;
-    if (icons[section.id]) button.append(iconGlyph(icons[section.id]));
-    button.append(node('span', '', section.label));
-    const panel = panels[section.id];
-    if (panel) {
-      panel.setAttribute('role', 'tabpanel');
-      panel.setAttribute('aria-labelledby', button.id);
-    }
-    button.addEventListener('click', () => activate(section.id));
-    navigation.append(button);
+  plan.forEach(({ definition, id, advanced }) => {
+    const link = anchor(definition.label, `#${id}`,
+      'channel-section-navigation-link ui-section-navigation-link');
+    link.prepend(iconGlyph(icons[definition.id] || 'icon-channel'));
+    link.setAttribute('aria-controls', id);
+    if (advanced) link.append(node('small', 'muted', 'Optional'));
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const panel = panels.get(definition.id);
+      if (!panel) return;
+      const disclosure = panel.closest('details');
+      if (disclosure) disclosure.open = true;
+      panel.scrollIntoView({ block: 'start' });
+      panel.focus({ preventScroll: true });
+    });
+    navigation.append(link);
   });
-  activate(sections[0]?.id);
   return navigation;
 }
 
@@ -16267,7 +16285,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'alias-editor-modal channel-editor-modal',
-    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .button'
+    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary'
   });
   if (!modal) return;
   try {
@@ -16290,7 +16308,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     const host = node('div');
 
     const draw = () => {
-      const form = node('form', 'alias-editor-form channel-editor-form');
+      const form = node('form', 'alias-editor-form channel-editor-form editor-workspace');
+      form.dataset.uiDensity = 'comfortable';
       const hero = node('div', 'channel-editor-hero');
       const identity = node('div');
       identity.append(node('strong', '', channel.name || 'New channel'),
@@ -16330,18 +16349,28 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         protocolField.classList.add('channel-protocol-picker');
         form.append(protocolField);
       }
-      const panels = {};
-      profile.sections.forEach((sectionDefinition) => {
-        const panel = node('section', 'alias-editor-panel channel-editor-panel');
-        const panelHeader = node('header', 'channel-editor-panel-header');
-        panelHeader.append(node('div', '', sectionDefinition.label));
-        if (sectionDefinition.id === 'protocol') {
-          panelHeader.append(uiActionButton('Restore defaults', 'icon-reset', () => {
-            channelRestoreProtocolDefaults(form, profile);
-            modal.setDirty(true);
-          }, 'ui-button ui-button-secondary'));
+      const panels = new Map();
+      const sectionNodes = [];
+      const sectionPlan = channelEditorSectionPlan(profile.sections);
+      sectionPlan.forEach(({ definition: sectionDefinition, id, advanced }) => {
+        const panel = node('fieldset', 'alias-editor-panel channel-editor-panel ui-form-section');
+        const labelId = `${id}-label`;
+        panel.id = id;
+        panel.tabIndex = -1;
+        panel.dataset.channelSection = sectionDefinition.id;
+        if (!advanced) {
+          const panelHeader = node('div', 'channel-editor-panel-header');
+          const panelLabel = node('h3', 'channel-editor-panel-title', sectionDefinition.label);
+          panelLabel.id = labelId;
+          panel.setAttribute('aria-labelledby', labelId);
+          panelHeader.append(panelLabel);
+          if (sectionDefinition.id === 'protocol') panelHeader.append(
+            uiActionButton('Restore defaults', 'icon-reset', () => {
+              channelRestoreProtocolDefaults(form, profile);
+              modal.setDirty(true);
+            }, 'ui-button ui-button-secondary'));
+          panel.append(panelHeader);
         }
-        panel.append(panelHeader);
         const grid = node('div', 'alias-editor-grid channel-editor-grid');
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
@@ -16366,9 +16395,25 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           grid.append(wrapper);
         });
         panel.append(grid);
-        panels[sectionDefinition.id] = panel;
+        panels.set(sectionDefinition.id, panel);
+        if (advanced) {
+          const disclosure = node('details',
+            'channel-editor-section-disclosure ui-section-disclosure');
+          disclosure.dataset.channelSection = sectionDefinition.id;
+          const summary = node('summary', 'channel-editor-section-summary ui-section-summary');
+          summary.id = labelId;
+          panel.setAttribute('aria-labelledby', labelId);
+          summary.append(node('span', '', sectionDefinition.label), node('small', 'muted', 'Optional'));
+          disclosure.append(summary, panel);
+          sectionNodes.push(disclosure);
+        } else {
+          sectionNodes.push(panel);
+        }
       });
       const errors = node('div', 'alias-form-message');
+      errors.setAttribute('role', 'alert');
+      errors.setAttribute('aria-live', 'assertive');
+      errors.tabIndex = -1;
       const cancel = channelAdminButton('Cancel', modal.close);
       const reset = channelAdminButton('Reset changes', () => {
         channel = structuredClone(baselineChannel);
@@ -16392,10 +16437,18 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           errors.replaceChildren(node('div', 'error', error.message));
         } finally { clearStatistics.disabled = false; }
       }, 'ui-button ui-button-danger') : null;
-      form.append(channelEditorTabs(panels, profile.sections), ...Object.values(panels), errors,
+      const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
+      const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
+      sectionStack.append(...sectionNodes);
+      sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
+      form.append(sectionLayout, errors,
         aliasModalFooter(clearStatistics, reset, node('span', 'alias-modal-footer-spacer'), cancel, save));
       form.addEventListener('input', () => { modal.setDirty(true); channelEditorDependencies(form); });
       form.addEventListener('change', () => { modal.setDirty(true); channelEditorDependencies(form); });
+      form.addEventListener('invalid', (event) => {
+        const disclosure = event.target.closest?.('details.channel-editor-section-disclosure');
+        if (disclosure) disclosure.open = true;
+      }, true);
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (!form.reportValidity()) return;
@@ -16423,6 +16476,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             closeReadOnlyModal(true);
             openChannelEditorModal(mode, configurationId);
           });
+          errors.scrollIntoView({ block: 'nearest' });
+          errors.focus({ preventScroll: true });
           save.disabled = false;
         }
       });

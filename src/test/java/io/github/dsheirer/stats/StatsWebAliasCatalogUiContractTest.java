@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebAliasCatalogUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -528,7 +527,7 @@ class StatsWebAliasCatalogUiContractTest
     @Test
     void providesResponsiveThemeAwareRailTableBulkBarAndModal() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",

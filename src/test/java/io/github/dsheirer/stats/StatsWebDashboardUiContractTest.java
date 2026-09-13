@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebDashboardUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void separatesCallActivityFromReceiverHealth() throws Exception
@@ -298,7 +297,7 @@ class StatsWebDashboardUiContractTest
     @Test
     void stacksDashboardSplitsBeforeTabletTablesOverflow() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".dashboard-identity-split"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains("@media (max-width: 1500px)"));

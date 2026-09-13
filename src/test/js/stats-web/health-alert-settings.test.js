@@ -3,12 +3,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readStylesheetSource } = require('./stylesheet-source');
 const vm = require('node:vm');
 
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
 const application = fs.readFileSync(applicationPath, 'utf8');
-const stylesheet = fs.readFileSync(path.join(path.dirname(applicationPath), 'app.css'), 'utf8');
+const stylesheet = readStylesheetSource(path.join(path.dirname(applicationPath), 'app.css'));
 
 function functionSource(signature) {
   const start = application.indexOf(signature);

@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebChannelsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void usesOneModernCatalogForReadOnlyAndChannelAdministrators() throws Exception
@@ -27,7 +26,8 @@ class StatsWebChannelsUiContractTest
         String configurationRequest = function(source,
             "async function requestChannelConfigurationJson(path, options = {})");
         String columns = function(source,
-            "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged)");
+            "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, " +
+                "renderSelectionHeader)");
 
         assertTrue(render.contains("renderModernChannelCatalog(renderContext, canManageChannels())"));
         assertTrue(catalog.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
@@ -47,6 +47,11 @@ class StatsWebChannelsUiContractTest
         assertTrue(columns.contains("row.auto_start_order == null ? 'Off'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
+        assertTrue(columns.contains("id: 'select'"));
+        assertTrue(columns.contains("essential: true, fixed: true, renderHeader: renderSelectionHeader"));
+        assertTrue(catalog.contains("const renderSelectionHeader = () =>"));
+        assertTrue(catalog.contains("updateSelection, renderSelectionHeader"));
+        assertFalse(catalog.contains("querySelector('thead th')"));
         assertFalse(source.contains("/api/v1/conventional-channels"));
         assertFalse(source.contains("/api/v1/conventional-contexts"));
     }
@@ -77,7 +82,7 @@ class StatsWebChannelsUiContractTest
         String dependencies = function(source, "function channelEditorDependencies(form)");
         String modal = function(source,
             "async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null)");
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         for(String helper: new String[]{"uiActionButton", "uiSelect", "uiToggle", "uiPill", "uiSegmentedControl"})
         {
@@ -94,11 +99,13 @@ class StatsWebChannelsUiContractTest
         assertTrue(css.contains(".ui-toggle input:checked + .ui-toggle-track"));
         assertTrue(css.contains(".channel-catalog-table tbody tr.selected"));
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
-        assertTrue(css.contains(".channel-catalog-table-host {\n  min-width: 0;\n  max-width: 100%;"));
+        assertTrue(css.contains(".channel-catalog-table-host {\n  width: 100%;\n  min-width: 0;\n" +
+            "  max-width: 100%;\n  overflow: hidden;"));
         assertTrue(css.contains(".channel-catalog-table-wrap {\n  width: 100%;\n  min-width: 0;\n" +
-            "  max-width: 100%;\n  overflow-x: auto;\n  overflow-y: hidden;"));
+            "  max-width: 100%;\n  max-height:"));
+        assertTrue(css.contains("overflow: auto;"));
         assertTrue(css.contains("@media (max-width: 720px)"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .link-button"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-admin-catalog .link-button"));
         assertTrue(css.contains(":not(.ui-button):not(.ui-segmented-option)"));
     }
 

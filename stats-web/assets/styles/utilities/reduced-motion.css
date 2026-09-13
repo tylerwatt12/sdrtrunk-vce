@@ -1,0 +1,17 @@
+/* Final-layer accessibility overrides for the opt-in design system. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-select,
+  .ui-input,
+  .ui-textarea,
+  .ui-button,
+  .ui-toggle-track,
+  .ui-toggle-thumb,
+  .ui-section-summary::after,
+  .channel-catalog-table tbody tr {
+    transition: none;
+  }
+
+  .ui-button:active:not(:disabled) {
+    transform: none;
+  }
+}

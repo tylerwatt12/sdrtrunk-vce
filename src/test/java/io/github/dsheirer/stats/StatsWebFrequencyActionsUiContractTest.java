@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebFrequencyActionsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -139,7 +138,7 @@ class StatsWebFrequencyActionsUiContractTest
     @Test
     void stylesResponsiveRadioReferenceResultsAndDisabledFutureActions() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".admin-settings-form"));
         assertTrue(css.contains(".admin-settings-form-stack"));
         assertTrue(css.contains("height: 36px;"));

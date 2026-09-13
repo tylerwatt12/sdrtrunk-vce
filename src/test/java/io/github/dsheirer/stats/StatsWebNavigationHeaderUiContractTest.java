@@ -18,7 +18,6 @@ class StatsWebNavigationHeaderUiContractTest
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -27,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"130\">"));
-        assertTrue(html.contains("/assets/app.css?v=106"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"131\">"));
+        assertTrue(html.contains("/assets/app.css?v=107"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=151\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=152\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
@@ -54,7 +53,7 @@ class StatsWebNavigationHeaderUiContractTest
     void keepsRfPlannerOnTheSharedThemeAndOperatorLanguage() throws Exception
     {
         String planner = readText(RF_PLANNER);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String plannerCss = css.substring(css.indexOf("/* RF planner */"));
 
         assertTrue(planner.contains("Frequencies to cover (MHz)"));
@@ -107,7 +106,7 @@ class StatsWebNavigationHeaderUiContractTest
     void switchesToAnAccessibleDrawerBeforeTheDesktopHeaderCollides() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String setOpen = block(source, "function setNavigationOpen(open, returnFocus = false)");
         String accessibility = block(source, "function synchronizeNavigationAccessibility(");
         String focusTargets = block(source, "function drawerNavigationFocusTargets(");
@@ -151,7 +150,7 @@ class StatsWebNavigationHeaderUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String indicator = block(source, "  updateIndicator()");
 
         assertTrue(html.contains("class=\"receiver-health-indicator receiver-health-loading icon-button\""));

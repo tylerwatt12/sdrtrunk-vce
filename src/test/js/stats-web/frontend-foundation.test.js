@@ -3,11 +3,12 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readStylesheetSource } = require('./stylesheet-source');
 const vm = require('node:vm');
 
 const core = path.resolve(process.argv[2] || path.resolve(__dirname, '../../../../stats-web/assets/core'));
 const appSource = fs.readFileSync(path.resolve(core, '../app.js'), 'utf8');
-const appCssSource = fs.readFileSync(path.resolve(core, '../app.css'), 'utf8');
+const appCssSource = readStylesheetSource(path.resolve(core, '../app.css'));
 const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf8');
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
 
@@ -164,6 +165,8 @@ async function main() {
   assert.match(appSource, /const tableType = tableLayouts\.tableId\(options\.type\)/);
   assert.match(appSource,
     /const defaultSchema = tableLayouts\.registerSchema\(tableSchemaRegistry, tableType, declaredColumns\)/);
+  assert.match(appSource, /typeof column\.renderHeader === 'function'/);
+  assert.match(appSource, /column\.renderHeader\(\{ column, tableType, controller: tableController \}\)/);
   assert.match(appSource, /const wrapper = options\.wrapper \|\| node\('div'\)/);
   assert.match(appSource, /controller: tableController, wrapper/);
   assert.doesNotMatch(appSource, /wrapper\.replaceWith\(table\(/);
@@ -823,6 +826,27 @@ async function main() {
   assert.throws(() => tableLayouts.move(grouped, 'identity', 'calls'), /within their group/);
   assert.throws(() => tableLayouts.setHidden(tableLayouts.setHidden(tableLayouts.setHidden(
     initialLayout, 'name', true), 'frequency', true), 'status', true), /at least one visible/);
+  const constrainedColumns = [
+    { id: 'select', essential: true, fixed: true }, { id: 'name' }, { id: 'status' }
+  ];
+  const constrained = tableLayouts.normalize(constrainedColumns, null);
+  assert.deepEqual(constrained.essential_columns, ['select']);
+  assert.deepEqual(constrained.fixed_columns, ['select']);
+  assert.throws(() => tableLayouts.setHidden(constrained, 'select', true), /Essential table columns/);
+  assert.throws(() => tableLayouts.move(constrained, 'select', 'name'), /Fixed table columns/);
+  assert.throws(() => tableLayouts.move(constrained, 'name', 'select'), /across a fixed column/);
+  assert.equal(tableLayouts.canMove(constrained, 'name', 'select'), false);
+  assert.equal(tableLayouts.canMove(constrained, 'status', 'name'), true);
+  assert.deepEqual(tableLayouts.move(constrained, 'status', 'name').column_order,
+    ['select', 'status', 'name']);
+  assert.equal(tableLayouts.normalize(constrainedColumns, {
+    schema: ['select', 'name', 'status'], column_order: ['name', 'select', 'status'],
+    column_widths: {}, hidden_columns: []
+  }).reset_reason, 'fixed-column-moved');
+  assert.equal(tableLayouts.normalize(constrainedColumns, {
+    schema: ['select', 'name', 'status'], column_order: ['select', 'name', 'status'],
+    column_widths: {}, hidden_columns: ['select']
+  }).reset_reason, 'essential-column-hidden');
 
   assert.equal(pageTitles.derive({ routeId: 'scanner', pageTitle: 'Scanner',
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'WEST (2)');

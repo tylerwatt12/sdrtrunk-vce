@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebInteractionUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
     private static final Path WEB_SERVER = Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
@@ -60,7 +59,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         int topicsStart = source.indexOf("const LIVE_MULTIPLEX_TOPICS");
         String topics = source.substring(topicsStart, source.indexOf("});", topicsStart));
 
@@ -270,7 +269,7 @@ class StatsWebInteractionUiContractTest
     void keepsSharedMetricsAndFittingTablesInsideTheirContainers() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));"));
         assertTrue(css.contains(".metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
@@ -296,7 +295,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"130\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"131\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -313,7 +312,7 @@ class StatsWebInteractionUiContractTest
     @Test
     void keepsSharedTabsScrollableWithoutVisibleScrollbars() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(css.contains(".tabs {"));
         assertTrue(css.contains("overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;"));
@@ -339,7 +338,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(presenter.contains("directory-secondary"));
         assertFalse(presenter.contains("row.site_names && row.site_names"));
         assertFalse(presenter.contains("isP25(row) ? 'P25 System'"));
-        assertFalse(readText(APP_CSS).contains(".directory-secondary"));
+        assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));
     }
 
     @Test
@@ -367,7 +366,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
-        assertTrue(readText(APP_CSS).contains(".entity-info-standalone > .section"));
+        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".entity-info-standalone > .section"));
         assertFalse(source.contains("function talkgroupEvidence"));
         assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
@@ -478,7 +477,7 @@ class StatsWebInteractionUiContractTest
         String content = function(source,
             "function pagedTableContent(page, columns, tableType, options = {})");
         String system = function(source, "async function renderRadioSystem()");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(pager.contains("const totalCount = page.total_count"));
         assertTrue(pager.contains("of ${number(totalCount)}"));
@@ -531,14 +530,14 @@ class StatsWebInteractionUiContractTest
         assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
             .contains("exportCsvLink("));
-        assertTrue(readText(APP_CSS).contains(".export-csv-action"));
+        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".export-csv-action"));
     }
 
     @Test
     void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind, reference)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
@@ -619,7 +618,7 @@ class StatsWebInteractionUiContractTest
     void wrapsAdjacentBadgesWithTwoDimensionalSpacing() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(function(source, "function neighborStatus(value)").contains("badgeGroup("));
         assertTrue(css.contains(".badge-group"));
         assertTrue(css.contains("flex-wrap: wrap"));
@@ -632,10 +631,10 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String html = readText(INDEX_HTML);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=106"));
+        assertTrue(html.contains("/assets/app.css?v=107"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -658,7 +657,7 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
         String application = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
         String applyPreferences = function(source, "  applyPreferences(preferences)");
         String writePreferences = function(source, "  writePreferences()");
@@ -730,7 +729,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
         String replayLast = function(source, "  async replayLastCall()");
@@ -806,7 +805,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String startCurrent = function(source, "  startCurrent()");
         String progress = function(source, "  renderProgress()");
 
@@ -882,7 +881,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String scanner = function(source, "function renderScanner()");
         String scannerCall = function(source, "function renderScannerCall(host, state, channelMetadata)");
         String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
@@ -1020,7 +1019,7 @@ class StatsWebInteractionUiContractTest
     void batchesLiveOnlyEventAndMessageCaptureBeforeFilteringAndRendering() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String catalog = function(source, "function liveDetailFilterCatalog(value)");
         String model = function(source, "function liveDetailFilterModel(options = {})");
         String filters = function(source, "function liveDetailFilterController(options)");
@@ -1117,7 +1116,7 @@ class StatsWebInteractionUiContractTest
     void liveRowsLinkToAliasAndReceiverEditorsAndDismissOnlyStoppedChannels() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String existingAlias = function(source, "function liveExistingAliasHref(reference)");
         String draftAlias = function(source, "function liveAliasDraftHref(row, kind)");
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
@@ -1169,7 +1168,7 @@ class StatsWebInteractionUiContractTest
     void splitsLiveDetailsAndScopesBoundedDecoderEventsToTheCurrentSelection() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String selection = function(source, "function liveDetailSelection(tableValue, row, bindingRow = row)");
         String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
@@ -1350,7 +1349,7 @@ class StatsWebInteractionUiContractTest
         String visibleValuesFor = function(tuner, "function visibleValuesFor(values, metadata)");
         String live = function(source, "async function renderLive()");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         String tunerPage = function(source, "async function renderTunerSpectrum()");
         String html = readText(INDEX_HTML);
