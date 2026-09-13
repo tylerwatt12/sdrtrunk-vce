@@ -206,28 +206,15 @@ public class P25P1NetworkConfigurationMonitor
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST:
-                if(tsbk instanceof SecondaryControlChannelBroadcast)
+                if(tsbk instanceof SecondaryControlChannelBroadcast sccb)
                 {
-                    SecondaryControlChannelBroadcast sccb = (SecondaryControlChannelBroadcast)tsbk;
-                    List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-
-                    for(IChannelDescriptor secondaryControlChannel : sccb.getChannels())
-                    {
-                        addSecondaryControlChannel(channels, secondaryControlChannel);
-                    }
-
-                    return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
+                    return secondaryControlObservation(sccb.getRfss(), sccb.getSite(), sccb.getChannels());
                 }
                 break;
             case OSP_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-                if(tsbk instanceof SecondaryControlChannelBroadcastExplicit)
+                if(tsbk instanceof SecondaryControlChannelBroadcastExplicit sccbe)
                 {
-                    SecondaryControlChannelBroadcastExplicit sccbe = (SecondaryControlChannelBroadcastExplicit)tsbk;
-                    IChannelDescriptor channel = sccbe.getChannel();
-                    List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-                    addSecondaryControlChannel(channels, channel);
-                    return observation(null, null, channels,
-                        Collections.emptyList(), Collections.emptyList());
+                    return secondaryControlObservation(sccbe.getRfss(), sccbe.getSite(), sccbe.getChannels());
                 }
                 break;
             case OSP_ADJACENT_STATUS_BROADCAST:
@@ -403,31 +390,15 @@ public class P25P1NetworkConfigurationMonitor
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST:
-                    if(lcw instanceof LCSecondaryControlChannelBroadcast)
+                    if(lcw instanceof LCSecondaryControlChannelBroadcast sccb)
                     {
-                        LCSecondaryControlChannelBroadcast sccb = (LCSecondaryControlChannelBroadcast)lcw;
-                        List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-
-                        for(IChannelDescriptor channel : sccb.getChannels())
-                        {
-                            addSecondaryControlChannel(channels, channel);
-                        }
-
-                        return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
+                        return secondaryControlObservation(sccb.getRFSS(), sccb.getSite(), sccb.getChannels());
                     }
                     break;
                 case SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
-                    if(lcw instanceof LCSecondaryControlChannelBroadcastExplicit)
+                    if(lcw instanceof LCSecondaryControlChannelBroadcastExplicit sccb)
                     {
-                        LCSecondaryControlChannelBroadcastExplicit sccb = (LCSecondaryControlChannelBroadcastExplicit)lcw;
-                        List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-
-                        for(IChannelDescriptor channel : sccb.getChannels())
-                        {
-                            addSecondaryControlChannel(channels, channel);
-                        }
-
-                        return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
+                        return secondaryControlObservation(sccb.getRFSS(), sccb.getSite(), sccb.getChannels());
                     }
                     break;
                 case SYSTEM_SERVICE_BROADCAST:
@@ -881,6 +852,20 @@ public class P25P1NetworkConfigurationMonitor
             mSecondaryControlChannels.put(channel.toString(), channel);
             addChannelSnapshot(channels, "secondary_control", channel);
         }
+    }
+
+    private P25NetworkConfigurationSnapshot secondaryControlObservation(Identifier<?> rfss, Identifier<?> site,
+                                                                         List<IChannelDescriptor> advertised)
+    {
+        if(advertised == null || advertised.isEmpty() ||
+            !mNetworkConfigurationStabilizer.matchesStableSite(rfss, site))
+        {
+            return null;
+        }
+
+        List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
+        advertised.forEach(channel -> addSecondaryControlChannel(channels, channel));
+        return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
     }
 
     private P25NetworkConfigurationSnapshot processFrequencyBand(IFrequencyBand frequencyBand)

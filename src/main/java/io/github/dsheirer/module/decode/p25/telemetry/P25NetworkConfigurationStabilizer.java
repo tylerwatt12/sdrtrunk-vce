@@ -507,6 +507,17 @@ public class P25NetworkConfigurationStabilizer
     }
 
     /**
+     * Indicates if a site-scoped broadcast belongs to the stabilized serving site.
+     */
+    public boolean matchesStableSite(Identifier<?> rfss, Identifier<?> site)
+    {
+        P25SiteIdentity identity = P25SiteIdentity.from(mNetwork.getStableValue(), mCurrentSite.getStableValue());
+        return identity != null && rfss != null && site != null &&
+            Integer.valueOf(identity.rfss()).equals(rfss.getValue()) &&
+            Integer.valueOf(identity.site()).equals(site.getValue());
+    }
+
+    /**
      * Stable serving-network WACN.  Some valid messages need only this network fact and must not wait for a complete
      * RFSS/site identity.
      */
@@ -570,7 +581,7 @@ public class P25NetworkConfigurationStabilizer
         StableFactTracker<P25NetworkConfigurationSnapshot.Channel,P25NetworkConfigurationSnapshot.Channel> tracker =
             mChannels.computeIfAbsent(key, ignored -> tracker());
 
-        if(isControlChannel(channel))
+        if(isCurrentControlChannel(channel))
         {
             tracker.observeAuthoritative(channel, timestamp, this::allowChannelPromotion);
         }

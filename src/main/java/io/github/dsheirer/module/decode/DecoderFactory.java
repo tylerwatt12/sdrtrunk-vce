@@ -744,6 +744,7 @@ public class DecoderFactory
                     DecodeConfigP25Phase1 copyP25 = new DecodeConfigP25Phase1();
                     copyP25.setIgnoreDataCalls(originalP25.getIgnoreDataCalls());
                     copyP25.setLearnAnnouncedControlChannels(originalP25.getLearnAnnouncedControlChannels());
+                    copyP25.setLearnedControlFrequencies(originalP25.getLearnedControlFrequencies());
                     copyP25.setModulation(originalP25.getModulation());
                     copyP25.setTrafficChannelPoolSize(originalP25.getTrafficChannelPoolSize());
                     copyP25.setUseP25BandplanOverride(originalP25.getUseP25BandplanOverride());
@@ -759,6 +760,7 @@ public class DecoderFactory
                     copyP25P2.setIgnoreDataCalls(originalP25P2.getIgnoreDataCalls());
                     copyP25P2.setLearnAnnouncedControlChannels(
                         originalP25P2.getLearnAnnouncedControlChannels());
+                    copyP25P2.setLearnedControlFrequencies(originalP25P2.getLearnedControlFrequencies());
                     copyP25P2.setTrafficChannelPoolSize(originalP25P2.getTrafficChannelPoolSize());
                     copyP25P2.setUseP25BandplanOverride(originalP25P2.getUseP25BandplanOverride());
 

@@ -125,8 +125,10 @@ public class SecondaryControlChannelBroadcast extends OSPMessage implements IFre
 
     private boolean hasChannelB()
     {
-        return getMessage().getInt(CHANNEL_NUMBER_A) != getMessage().getInt(CHANNEL_NUMBER_B) &&
-            getMessage().getInt(SYSTEM_SERVICE_CLASS_B) != 0;
+        return getMessage().getInt(SYSTEM_SERVICE_CLASS_B) != 0 &&
+            (getMessage().getInt(SYSTEM_SERVICE_CLASS_A) == 0 ||
+                getMessage().getInt(FREQUENCY_BAND_A) != getMessage().getInt(FREQUENCY_BAND_B) ||
+                getMessage().getInt(CHANNEL_NUMBER_A) != getMessage().getInt(CHANNEL_NUMBER_B));
     }
 
     public IChannelDescriptor getChannelB()
@@ -166,7 +168,11 @@ public class SecondaryControlChannelBroadcast extends OSPMessage implements IFre
     public List<IChannelDescriptor> getChannels()
     {
         List<IChannelDescriptor> channels = new ArrayList<>();
-        channels.add(getChannelA());
+
+        if(getMessage().getInt(SYSTEM_SERVICE_CLASS_A) != 0)
+        {
+            channels.add(getChannelA());
+        }
 
         if(hasChannelB())
         {

@@ -138,7 +138,7 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void discoveryPromotesIdentityAndAllControlChannelsImmediately()
+    public void discoveryPromotesIdentityAndCurrentControlImmediately()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
@@ -157,9 +157,9 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(0xBEE00, stable.network().wacn());
         assertNotNull(stable.currentSite());
         assertEquals(new P25SiteIdentity(0xBEE00, 0x348, 2, 1), stabilizer.getStableSiteIdentity());
-        assertEquals(2, stable.channels().size());
+        assertEquals(1, stable.channels().size());
         assertTrue(hasChannel(stable, "primary_control", 856137500L));
-        assertTrue(hasChannel(stable, "secondary_control", 855987500L));
+        assertFalse(hasChannel(stable, "secondary_control", 855987500L));
         assertTrue(stable.neighborSites().isEmpty());
         assertTrue(stable.frequencyBands().isEmpty());
 
@@ -168,6 +168,7 @@ public class P25NetworkConfigurationStabilizerTest
         stable = stabilizer.getSnapshot();
 
         assertEquals(2, stable.channels().size());
+        assertTrue(hasChannel(stable, "secondary_control", 855987500L));
         assertEquals(1, stable.neighborSites().size());
         assertEquals(1, stable.frequencyBands().size());
         assertEquals(61_000L, stable.neighborSites().getFirst().observedAtMs());
@@ -175,11 +176,17 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void controlChannelsPromoteImmediatelyOutsideDiscovery()
+    public void secondaryControlRequiresThreeObservationsOverSixtySeconds()
     {
         P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
 
         stabilizer.observe(snapshot(secondary(851462500L)), 70000L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 100000L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 130000L);
 
         assertTrue(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
     }
@@ -211,7 +218,7 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void candidateResetRetainsGuardedFactsWhileControlsRemainAuthoritative()
+    public void candidateResetRetainsStableFactsWithoutTrustingOneSecondaryObservation()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         P25NetworkConfigurationSnapshot initial = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
@@ -231,7 +238,7 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(initial.network(), stable.network());
         assertEquals(initial.currentSite(), stable.currentSite());
         assertTrue(hasChannel(stable, "primary_control", 856137500L));
-        assertTrue(hasChannel(stable, "secondary_control", 851462500L));
+        assertFalse(hasChannel(stable, "secondary_control", 851462500L));
         assertEquals(1, stable.neighborSites().size());
         assertEquals(1, stable.frequencyBands().size());
     }
@@ -247,6 +254,10 @@ public class P25NetworkConfigurationStabilizerTest
 
         stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
             List.of(), List.of(), List.of(), List.of()), 1000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 31_000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 61_000L);
 
         assertEquals(8, stabilizer.getStableCurrentSiteControlFrequencies().size());
     }

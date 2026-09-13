@@ -131,6 +131,6 @@ public class LCSecondaryControlChannelBroadcastExplicit extends LinkControlWord 
     @Override
     public List<IChannelDescriptor> getChannels()
     {
-        return Collections.singletonList(getChannel());
+        return getInt(SERVICE_CLASS) != 0 ? Collections.singletonList(getChannel()) : Collections.emptyList();
     }
 }

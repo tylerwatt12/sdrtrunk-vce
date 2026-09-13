@@ -13,11 +13,13 @@ package io.github.dsheirer.module.decode.p25.phase2;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
@@ -25,13 +27,53 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessageFactory
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastExplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.RfssStatusBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SNDCPDataChannelAnnouncement;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastExplicit;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SecondaryControlChannelBroadcastImplicit;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class P25P2NetworkConfigurationMonitorTest
 {
+    @Test
+    void acceptsSecondaryControlOnlyForTheStabilizedSite()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = stabilizedSite();
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor(stabilizer);
+
+        P25NetworkConfigurationSnapshot accepted = monitor.processMacMessage(secondaryControl(2, 7, 4));
+        P25NetworkConfigurationSnapshot rejected = monitor.processMacMessage(secondaryControl(2, 8, 4));
+
+        assertNotNull(accepted);
+        assertEquals(770_606_250L, accepted.channels().getFirst().downlink());
+        assertNull(rejected);
+    }
+
+    @Test
+    void ignoresZeroServiceSecondaryControlSlotsAcrossPhaseTwoFormats()
+    {
+        MacMessage implicit = secondaryControl(2, 7, 0);
+        assertTrue(((SecondaryControlChannelBroadcastImplicit)implicit.getMacStructure()).getChannels().isEmpty());
+        assertNull(new P25P2NetworkConfigurationMonitor(stabilizedSite()).processMacMessage(implicit));
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage explicitMessage = new CorrectedBinaryMessage(96);
+        SecondaryControlChannelBroadcastExplicit explicit =
+            new SecondaryControlChannelBroadcastExplicit(explicitMessage, offset);
+        assertTrue(explicit.getChannels().isEmpty());
+        explicitMessage.setInt(4, IntField.length8(56 + offset));
+        assertEquals(1, explicit.getChannels().size());
+    }
+
+    @Test
+    void keepsEachValidImplicitSecondaryControlSlot()
+    {
+        assertEquals(1, secondaryControlSlots(false).getChannels().size());
+        assertEquals(2, secondaryControlSlots(true).getChannels().size());
+    }
+
     @Test
     void projectsConnectedRfssStatusFromImplicitBroadcast()
     {
@@ -213,5 +255,44 @@ class P25P2NetworkConfigurationMonitorTest
         structure.getChannel().setFrequencyBand(new P25FrequencyBand(0, 851_000_000L, -45_000_000L,
             6_250L, 12_500, 1));
         return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+    }
+
+    private static MacMessage secondaryControl(int rfss, int site, int serviceClass)
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.setInt(121, IntField.length8(offset));
+        message.setInt(rfss, IntField.length8(8 + offset));
+        message.setInt(site, IntField.length8(16 + offset));
+        message.setInt(97, IntField.length12(28 + offset));
+        message.setInt(serviceClass, IntField.length8(40 + offset));
+        SecondaryControlChannelBroadcastImplicit structure =
+            new SecondaryControlChannelBroadcastImplicit(message, offset);
+        structure.getChannels().forEach(channel -> ((APCO25Channel)channel).setFrequencyBand(
+            new P25FrequencyBand(0, 770_000_000L, 30_000_000L, 6_250L, 12_500, 1)));
+        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+    }
+
+    private static SecondaryControlChannelBroadcastImplicit secondaryControlSlots(boolean distinctBands)
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.setInt(distinctBands ? 4 : 0, IntField.length8(40 + offset));
+        message.setInt(1, IntField.length4(24 + offset));
+        message.setInt(97, IntField.length12(28 + offset));
+        message.setInt(distinctBands ? 2 : 1, IntField.length4(48 + offset));
+        message.setInt(97, IntField.length12(52 + offset));
+        message.setInt(4, IntField.length8(64 + offset));
+        return new SecondaryControlChannelBroadcastImplicit(message, offset);
+    }
+
+    private static P25NetworkConfigurationStabilizer stabilizedSite()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x346, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x346, 2, 7, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of()), 1_000L);
+        return stabilizer;
     }
 }
