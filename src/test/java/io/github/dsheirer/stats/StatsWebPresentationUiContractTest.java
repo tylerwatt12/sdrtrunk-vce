@@ -24,8 +24,8 @@ class StatsWebPresentationUiContractTest
         String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
         String live = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
 
-        assertTrue(receiver.contains("section('Receiver behavior', body)"));
-        assertTrue(receiver.contains("'Traffic grant timing'"));
+        assertTrue(receiver.contains("settingsCard('Live traffic-row idle delay'"));
+        assertTrue(receiver.contains("'This receiver-wide presentation timing affects every viewer.'"));
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
         assertFalse(receiver.contains("retain_idle_call_details"));
         assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));

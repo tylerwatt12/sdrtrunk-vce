@@ -44,15 +44,11 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     {
         String app = readText(APP_JAVASCRIPT);
         String directory = function(app, "async function renderRadioSystems()");
-        String presenter = function(app, "function radioSystemsDirectoryContent(data)");
 
-        assertTrue(directory.contains("createAsyncSection('Radio Systems'"));
-        assertTrue(directory.contains("radioSystemsDirectory.load(apiPage, pageParameters())"));
-        assertTrue(directory.contains("pageHeader('Radio Systems'"));
-        assertTrue(presenter.contains("radioSystemLink(row.entity_ref, label)"));
-        assertTrue(presenter.contains("channelNameSummary(row)"));
-        assertTrue(presenter.contains("row.alias_lists"));
-        assertTrue(presenter.contains("pager(page, 'bottom', 'Radio systems')"));
+        assertTrue(directory.contains("await renderModernChannelCatalog(renderContext, false)"));
+        assertTrue(app.contains("pageHeader(editable ? 'Channel Setup' : 'Radio Directory'"));
+        assertTrue(app.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
+        assertTrue(app.contains("href('channel', { configuration_id: row.configuration_id })"));
         assertFalse(app.contains("systemApiPath("));
         assertFalse(app.contains("siteApiPath("));
     }
@@ -78,7 +74,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(details.contains("'Scoped to this saved channel'"));
         assertTrue(details.contains("`Network ${identifierNumber(row.network_id)}`"));
         assertTrue(details.contains("`System ${identifierNumber(row.system_id)}`"));
-        assertTrue(directory.contains("saved receiver channels that receive them"));
+        assertTrue(directory.contains("renderModernChannelCatalog(renderContext, false)"));
         assertTrue(page.contains("isSavedChannelRadioSystem(system) ?"));
         assertTrue(page.contains("'Saved Channel Activity' : 'System Activity'"));
         assertTrue(page.contains("'Saved Channel Scope' : 'System Info'"));
@@ -86,18 +82,25 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     }
 
     @Test
-    void placesRadioSystemsAndChannelsTogetherUnderRadioNavigation() throws Exception
+    void separatesTheReadOnlyDirectoryFromAdministrativeChannelSetup() throws Exception
     {
         String html = readText(INDEX_HTML);
-        int group = html.indexOf("data-nav-group=\"radio\"");
-        int systems = html.indexOf("data-view=\"radio-systems\"", group);
-        int channels = html.indexOf("data-view=\"channels\"", systems);
-        int groupEnd = html.indexOf("</details>", group);
+        int radioGroup = html.indexOf("data-nav-group=\"radio\"");
+        int directory = html.indexOf("data-view=\"radio-systems\"", radioGroup);
+        int identities = html.indexOf("data-view=\"identities\"", directory);
+        int radioGroupEnd = html.indexOf("</details>", radioGroup);
+        int manageGroup = html.indexOf("data-nav-group=\"configuration\"");
+        int channelSetup = html.indexOf("data-view=\"channel-setup\"", manageGroup);
+        int manageGroupEnd = html.indexOf("</details>", manageGroup);
 
-        assertTrue(group >= 0);
-        assertTrue(systems > group);
-        assertTrue(channels > systems);
-        assertTrue(groupEnd > channels);
+        assertTrue(radioGroup >= 0);
+        assertTrue(directory > radioGroup);
+        assertTrue(identities > directory);
+        assertTrue(radioGroupEnd > identities);
+        assertTrue(manageGroup > radioGroupEnd);
+        assertTrue(channelSetup > manageGroup);
+        assertTrue(manageGroupEnd > channelSetup);
+        assertFalse(html.contains("data-view=\"channels\""));
         assertFalse(html.contains("data-view=\"conventional\""));
         assertFalse(html.contains("data-view=\"sites\""));
     }

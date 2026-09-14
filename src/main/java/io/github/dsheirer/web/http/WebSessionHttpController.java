@@ -345,7 +345,7 @@ public final class WebSessionHttpController
 
         if(DESKTOP_CHANNEL_HANDOFF_PATH.equals(rawPath))
         {
-            return "/?view=channels";
+            return "/?view=channel-setup";
         }
 
         String channelPrefix = DESKTOP_CHANNEL_HANDOFF_PATH + "/";
@@ -353,7 +353,7 @@ public final class WebSessionHttpController
         {
             try
             {
-                return "/?view=channels&channel=" +
+                return "/?view=channel-setup&channel=" +
                     requireCanonicalConfigurationId(rawPath.substring(channelPrefix.length()));
             }
             catch(IllegalArgumentException exception)
@@ -379,7 +379,7 @@ public final class WebSessionHttpController
                     Integer.parseInt(segments[3], 16));
                 String configurationId = requireCanonicalConfigurationId(segments[4]);
                 return String.format(Locale.ROOT,
-                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
+                    "/?view=admin&tab=protocol-p25&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
                     identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId);
             }
             catch(IllegalArgumentException exception)

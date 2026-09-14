@@ -64,6 +64,7 @@ class StatsWebDatabase
     private static final int ACTIVITY_TARGET_POINTS = 240;
     private static final int DASHBOARD_HOURS = 24;
     private static final int DASHBOARD_IDENTITY_LIMIT = 20;
+    private static final int IDENTITY_DIRECTORY_CANDIDATE_LIMIT = 500;
     private static final int DASHBOARD_SOURCE_LIMIT = 100;
     static final int MAXIMUM_PATCH_GROUP_PAGE = 100;
     static final int MAXIMUM_PATCH_MEMBERS_PER_GROUP = 32;
@@ -1477,6 +1478,59 @@ class StatsWebDatabase
             dashboard.put("call_activity", callActivity(connection));
             dashboard.put("source_activity_24h", sourceActivity24Hours(connection));
             return dashboard;
+        });
+    }
+
+    /**
+     * Returns a bounded, protocol-neutral directory of recently active group and radio identities.  The directory
+     * reuses the same compact summaries and Alias resolution as the dashboard; it never creates a second activity
+     * store or exposes Alias actions and output rules.
+     */
+    Map<String,Object> identityDirectory(StatsRequest request)
+    {
+        ActivityRange range = activityRange(request);
+        int limit = request.limit();
+        int offset = request.offset();
+
+        return readSnapshot(connection -> {
+            long now = System.currentTimeMillis();
+            long from = now - range.milliseconds();
+            List<Map<String,Object>> destinations = topCallIdentities(connection, IDENTITY_ROLE_DESTINATION,
+                from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            List<Map<String,Object>> sources = topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
+                from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            List<Map<String,Object>> rows = new ArrayList<>();
+
+            destinations.stream().filter(row -> {
+                int kind = (int)number(row.get("identity_kind_code"));
+                return kind == IDENTITY_KIND_TALKGROUP || kind == IDENTITY_KIND_PATCH_GROUP;
+            }).forEach(rows::add);
+            sources.stream().filter(row -> number(row.get("identity_kind_code")) == IDENTITY_KIND_RADIO)
+                .forEach(rows::add);
+            rows.sort((left, right) -> {
+                int recent = Long.compare(number(right.get("last_active_ms")),
+                    number(left.get("last_active_ms")));
+                if(recent != 0)
+                {
+                    return recent;
+                }
+                int calls = Long.compare(number(right.get("logical_call_count")),
+                    number(left.get("logical_call_count")));
+                if(calls != 0)
+                {
+                    return calls;
+                }
+                return Long.compare(number(left.get("native_id")), number(right.get("native_id")));
+            });
+
+            int fromIndex = Math.min(offset, rows.size());
+            int toIndex = Math.min(rows.size(), fromIndex + limit + 1);
+            Map<String,Object> response = page(new ArrayList<>(rows.subList(fromIndex, toIndex)), limit, offset);
+            response.put("total_count", rows.size());
+            response.put("range", range.label());
+            response.put("candidate_limit_reached", destinations.size() >= IDENTITY_DIRECTORY_CANDIDATE_LIMIT ||
+                sources.size() >= IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            return response;
         });
     }
 
@@ -5140,6 +5194,14 @@ class StatsWebDatabase
     private List<Map<String,Object>> topCallIdentities(Connection connection, int identityRole,
                                                        long fromTimestamp, long toTimestamp) throws SQLException
     {
+        return topCallIdentities(connection, identityRole, fromTimestamp, toTimestamp,
+            DASHBOARD_IDENTITY_LIMIT);
+    }
+
+    private List<Map<String,Object>> topCallIdentities(Connection connection, int identityRole,
+                                                       long fromTimestamp, long toTimestamp, int limit)
+        throws SQLException
+    {
         if(identityRole != IDENTITY_ROLE_DESTINATION && identityRole != IDENTITY_ROLE_SOURCE)
         {
             throw new IllegalArgumentException("Unsupported call identity role");
@@ -5147,7 +5209,7 @@ class StatsWebDatabase
 
         List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_IDENTITY_ACTIVITY_SQL,
             fromTimestamp, toTimestamp, identityRole,
-            fromTimestamp, toTimestamp, identityRole, DASHBOARD_IDENTITY_LIMIT);
+            fromTimestamp, toTimestamp, identityRole, limit);
         List<Map<String,Object>> trunkedTalkgroups = new ArrayList<>();
         List<Map<String,Object>> trunkedRadios = new ArrayList<>();
         List<Map<String,Object>> p25ConventionalTalkgroups = new ArrayList<>();

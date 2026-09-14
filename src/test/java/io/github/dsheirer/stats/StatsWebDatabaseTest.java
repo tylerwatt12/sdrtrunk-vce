@@ -459,6 +459,17 @@ class StatsWebDatabaseTest
         assertEquals("Shared Unit", trunkedSource.get("alias_name"));
         assertEquals("Conventional Unit", conventionalSource.get("alias_name"));
 
+        Map<String,Object> identities = mDatabase.identityDirectory(request("/?range=24h&limit=500"));
+        assertEquals("24h", identities.get("range"));
+        assertFalse((Boolean)identities.get("candidate_limit_reached"));
+        assertEquals(4, number(identities.get("total_count")));
+        assertEquals("Shared Dispatch", rowWith(rows(identities), "radio_system_key",
+            "dmr:tier3:small:42").get("alias_name"));
+        assertEquals("Conventional Unit", rows(identities).stream()
+            .filter(row -> DMR_CHANNEL.equals(row.get("configuration_id")))
+            .filter(row -> number(row.get("identity_kind_code")) == 2)
+            .findFirst().orElseThrow().get("alias_name"));
+
         Map<String,Object> activity = mDatabase.dashboardActivityRadios(
             request("/?range=1h&action=UNKNOWN&limit=20"));
         Map<String,Object> trunkedActivity = rowWith(rows(activity),

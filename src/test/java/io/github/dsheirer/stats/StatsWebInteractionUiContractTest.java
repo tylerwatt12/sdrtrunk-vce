@@ -182,7 +182,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
         assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
-        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'system'"));
+        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'activity'"));
         assertTrue(loadStatus.contains("refreshAdminSystemStatus();"));
     }
 
@@ -295,7 +295,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"132\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"133\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -324,20 +324,13 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String systems = function(source, "async function renderRadioSystems()");
-        String presenter = function(source, "function radioSystemsDirectoryContent(data)");
-        assertTrue(presenter.contains("row.system_name || radioSystemLabel(row)"));
-        assertTrue(presenter.contains("heading.append(radioSystemLink(row.entity_ref, label))"));
-        assertTrue(presenter.contains("channelNameSummary(row)"));
-        assertTrue(systems.contains("radioSystemsDirectory.load(apiPage"));
-        assertTrue(presenter.contains("tableRows: rows"));
-        assertTrue(presenter.contains("`directory-${row.directory_type}-row`"));
-        assertTrue(presenter.contains("truncatedParentCount"));
-        assertTrue(presenter.contains("previewLimit"));
-        assertFalse(systems.contains("systemApiPath("));
-        assertFalse(source.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
-        assertFalse(presenter.contains("directory-secondary"));
-        assertFalse(presenter.contains("row.site_names && row.site_names"));
-        assertFalse(presenter.contains("isP25(row) ? 'P25 System'"));
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        assertTrue(systems.contains("renderModernChannelCatalog(renderContext, false)"));
+        assertTrue(catalog.contains("'Browse every configured trunked and conventional channel"));
+        assertTrue(catalog.contains("value: 'trunked'"));
+        assertTrue(catalog.contains("value: 'conventional'"));
+        assertTrue(catalog.contains("value: 'running'"));
+        assertTrue(catalog.contains("value: 'stopped'"));
         assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));
     }
 
@@ -427,7 +420,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
         assertFalse(source.contains("groupIdentityLink(row, row.patch_group)"));
         assertFalse(source.contains("target_kind_code"));
-        assertFalse(source.contains("identity_kind_code"));
+        assertFalse(activity.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
         String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
         assertTrue(channelGroups.contains("id: 'group-identity-kind'"));
@@ -634,7 +627,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=107"));
+        assertTrue(html.contains("/assets/app.css?v=108"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

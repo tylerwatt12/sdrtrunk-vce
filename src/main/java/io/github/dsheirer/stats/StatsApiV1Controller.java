@@ -94,6 +94,12 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ALIASES, this::aliases));
         create(server, StatsApiV1.RADIO_SYSTEMS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.RADIO_SYSTEMS, this::radioSystems));
+        create(server, StatsApiV1.IDENTITIES, WebCapability.RADIO_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.IDENTITIES, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly("range", "limit", "offset");
+                return page(mDatabase.identityDirectory(request));
+            }));
         create(server, StatsApiV1.CHANNELS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CHANNELS, this::channels));
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,

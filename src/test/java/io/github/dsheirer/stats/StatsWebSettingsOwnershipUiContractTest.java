@@ -33,9 +33,11 @@ class StatsWebSettingsOwnershipUiContractTest
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
         String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null)");
         String admin = function(source, "async function renderAdmin()");
+        String adminGroups = function(source, "function adminSettingsGroups()");
 
-        assertTrue(admin.contains("id: 'receiver-settings', label: 'Receiver Settings'"));
-        assertTrue(admin.contains("id: 'p25-bandplans', label: 'P25 Bandplan Overrides'"));
+        assertTrue(adminGroups.contains("id: 'live-timing', label: 'Receiver-wide Live timing'"));
+        assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25'"));
+        assertTrue(adminGroups.contains("id: 'protocol-dmr', label: 'DMR'"));
         assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
         assertTrue(request.contains("'/api/v1/admin/receiver-settings'"));
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
@@ -57,6 +59,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(receiver.contains("retain_idle_call_details"));
         assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
+        assertTrue(receiver.contains("Live traffic-row idle delay"));
+        assertTrue(receiver.contains("does not keep ' +"));
         assertFalse(receiver.contains("show_encryption_details"));
         assertFalse(receiver.contains("show_control_decode_quality"));
         assertFalse(receiver.contains("live_detail_row_limit"));

@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"132\">"));
-        assertTrue(html.contains("/assets/app.css?v=107"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"133\">"));
+        assertTrue(html.contains("/assets/app.css?v=108"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=153\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=154\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
@@ -40,7 +40,8 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(hardware.contains("{ id: 'rf-planner', label: 'RF Planner' }"));
         assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner(() =>"));
         assertTrue(hardware.contains("api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })"));
-        assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
+        assertTrue(html.contains("<span>RadioReference</span><svg class=\"nav-lock\""));
+        assertFalse(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
         String channel = fragment(html, "<symbol id=\"icon-channel\"", "</symbol>");
@@ -76,7 +77,7 @@ class StatsWebNavigationHeaderUiContractTest
     }
 
     @Test
-    void keepsRestrictedNavigationVisibleAndMarksEachLockedDestination() throws Exception
+    void hidesUnavailableAdministratorNavigationAfterAccessLoads() throws Exception
     {
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
@@ -98,8 +99,8 @@ class StatsWebNavigationHeaderUiContractTest
         assertFalse(html.contains("nav-group-protected"));
         assertTrue(access.contains("link.classList.toggle('access-locked', locked)"));
         assertTrue(access.contains("lock.hidden = !locked"));
-        assertFalse(access.contains("link.hidden"));
-        assertFalse(access.contains("group.hidden"));
+        assertTrue(access.contains("link.hidden = administratorOnly && locked"));
+        assertTrue(access.contains("group.hidden = !group.querySelector"));
     }
 
     @Test

@@ -27,7 +27,7 @@ class StatsWebReceiverHealthUiContractTest
         String html = readText(INDEX_HTML);
         String viewAllowed = block(source, "function viewAllowed(view)");
         String routeAllowed = block(source, "function routeDefinitionAllowed(definition)");
-        String renderAdmin = block(source, "async function renderAdmin()");
+        String adminGroups = block(source, "function adminSettingsGroups()");
         String desktopEnabled = block(source, "desktopEnabled()");
 
         assertTrue(source.contains("RECEIVER_HEALTH: 'receiver-health'"));
@@ -36,7 +36,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(routeAllowed.contains("ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(html.contains("id=\"receiver-health-indicator\""));
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
-        assertTrue(renderAdmin.contains("id: 'health', label: 'Receiver status', capability: " +
+        assertTrue(adminGroups.contains("id: 'health', label: 'Current status', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(desktopEnabled.contains("return this.authorized()"));
     }

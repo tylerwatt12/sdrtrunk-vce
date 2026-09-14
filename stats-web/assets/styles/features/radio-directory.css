@@ -1,0 +1,81 @@
+.identity-directory {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-layout-gap);
+}
+
+.identity-directory-toolbar .ui-search {
+  flex: 1 1 320px;
+}
+
+.identity-range-select {
+  width: min(170px, 100%);
+  margin-left: auto;
+}
+
+.identity-directory-table-host {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.identity-directory-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(72vh, 760px);
+  max-height: min(72dvh, 760px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-surface-radius);
+}
+
+.identity-directory-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.identity-directory-table thead th {
+  height: 36px;
+  padding: 5px 7px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-dark);
+  font-size: 11px;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+.identity-directory-table td {
+  height: var(--ui-row-height);
+  padding: 5px 7px;
+  border-bottom-color: var(--table-rule);
+}
+
+.identity-directory-table tbody tr:hover {
+  background: var(--table-hover);
+}
+
+.identity-directory-link {
+  color: var(--link);
+  font-weight: 750;
+}
+
+.identity-directory-alias {
+  display: grid;
+  gap: 2px;
+}
+
+.identity-directory-alias > small {
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .identity-range-select {
+    width: 100%;
+    margin-left: 0;
+  }
+}

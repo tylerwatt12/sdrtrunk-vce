@@ -27,6 +27,7 @@ public final class StatsApiV1
     public static final String ALIASES = ROOT + "/aliases";
     public static final String SCAN_LISTS = ROOT + "/scan-lists";
     public static final String RADIO_SYSTEMS = ROOT + "/radio-systems";
+    public static final String IDENTITIES = ROOT + "/identities";
     public static final String CHANNELS = ROOT + "/channels";
     public static final String ACTIVITY = ROOT + "/activity";
     public static final String ACTIVITY_ACTIONS = ACTIVITY + "/actions";

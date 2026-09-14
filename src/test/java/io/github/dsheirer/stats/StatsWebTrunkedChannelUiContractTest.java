@@ -222,7 +222,7 @@ class StatsWebTrunkedChannelUiContractTest
         String channel = function(source(), "async function renderTrunkedChannel(channel, configurationId, renderContext)");
 
         assertTrue(channel.contains("data.band_source === 'P25_OVERRIDE'"));
-        assertTrue(channel.contains("overrideActive ? 'P25 Override' : 'OTA Bandplan'"));
+        assertTrue(channel.contains("overrideActive ? 'P25 override' : 'OTA band plan'"));
         assertTrue(channel.contains("if (!overrideActive) homeBandColumns.push("));
         assertTrue(channel.contains("label: 'Observations'"));
         assertFalse(channel.contains("label: 'Obs'"));

@@ -94,7 +94,7 @@ public final class WebAdministratorNavigator
         }
 
         open(owner, "P25 bandplan override editor", navigation -> navigation.baseUri().resolve(String.format(
-                Locale.ROOT, "?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
+                Locale.ROOT, "?view=admin&tab=protocol-p25&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
                 identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId)),
             () -> mStatsWebServerService.createDesktopAdministratorP25BandplanOverrideHandoffUri(identity,
                 configurationId));

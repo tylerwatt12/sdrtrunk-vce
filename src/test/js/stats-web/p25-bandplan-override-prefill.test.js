@@ -178,9 +178,9 @@ assert.equal(behavior.sameScope(valid, {
 }), false, 'A system-wide profile is not the same scope as the requested site profile.');
 
 assert.deepEqual(plain(behavior.clear(
-  `view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}&q=keep`)), {
-  query: 'view=admin&tab=p25-bandplans&q=keep',
-  replacement: '/?view=admin&tab=p25-bandplans&q=keep'
+  `view=admin&tab=protocol-p25&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=02&configuration_id=${configurationId}&q=keep`)), {
+  query: 'view=admin&tab=protocol-p25&q=keep',
+  replacement: '/?view=admin&tab=protocol-p25&q=keep'
 });
 
 const render = functionSource('renderAdminP25BandplanOverrides');

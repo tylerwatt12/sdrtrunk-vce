@@ -490,6 +490,7 @@ class StatsApiV1HttpContractTest
             Map.entry("ALIASES", "/api/v1/aliases"),
             Map.entry("SCAN_LISTS", "/api/v1/scan-lists"),
             Map.entry("RADIO_SYSTEMS", "/api/v1/radio-systems"),
+            Map.entry("IDENTITIES", "/api/v1/identities"),
             Map.entry("CHANNELS", "/api/v1/channels"),
             Map.entry("ACTIVITY", "/api/v1/activity"),
             Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),

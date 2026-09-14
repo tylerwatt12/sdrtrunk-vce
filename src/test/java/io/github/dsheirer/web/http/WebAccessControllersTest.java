@@ -413,7 +413,7 @@ class WebAccessControllersTest
                 request(origin, WebSessionHttpController.desktopChannelHandoffPath(configurationId))
                     .header("Cookie", cookie).GET());
             assertEquals(303, channelHandoff.statusCode());
-            assertEquals("/?view=channels&channel=" + configurationId,
+            assertEquals("/?view=channel-setup&channel=" + configurationId,
                 channelHandoff.headers().firstValue("Location").orElseThrow());
 
             assertTrue(authenticationService.armDesktopAdministratorHandoff());
@@ -422,7 +422,7 @@ class WebAccessControllersTest
                     configurationId))
                     .header("Cookie", cookie).GET());
             assertEquals(303, p25Handoff.statusCode());
-            assertEquals("/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
+            assertEquals("/?view=admin&tab=protocol-p25&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
                     configurationId,
                 p25Handoff.headers().firstValue("Location").orElseThrow());
 

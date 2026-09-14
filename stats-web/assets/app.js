@@ -303,6 +303,7 @@ let webCallPlayer = null;
 function node(tag, className, textValue) {
   const element = document.createElement(tag);
   if (className) element.className = className;
+  if (String(tag).toLowerCase() === 'select') element.classList.add('ui-select');
   if (textValue !== undefined && textValue !== null) element.textContent = String(textValue);
   return element;
 }
@@ -657,6 +658,9 @@ function routeDefinitionAllowed(definition) {
   if (definition.access === 'admin-aliases') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
   }
+  if (definition.access === 'admin-channels') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
+  }
   if (definition.access === 'admin') {
     return accessSession.tier === 'ADMIN' &&
       (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
@@ -685,11 +689,17 @@ function accessSessionSignature() {
 function updateNavigationAccess() {
   document.querySelectorAll('.primary-nav a[data-view]').forEach((link) => {
     const locked = !viewAllowed(link.dataset.view);
+    const definition = applicationRoutes?.[link.dataset.view];
+    const administratorOnly = String(definition?.access || '').startsWith('admin');
+    link.hidden = administratorOnly && locked;
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
     if (lock) lock.hidden = !locked;
     const label = link.querySelector('span')?.textContent?.trim() || routeViewLabel(link.dataset.view);
     link.title = locked ? `${label}: access required` : '';
+  });
+  document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
+    group.hidden = !group.querySelector('a[data-view]:not([hidden])');
   });
 }
 
@@ -14416,20 +14426,7 @@ function radioSystemsDirectoryContent(data) {
 
 async function renderRadioSystems() {
   const renderContext = captureRenderContext();
-  const directory = createAsyncSection('Radio Systems', {
-    loadingMessage: 'Loading radio systems and channels…',
-    errorMessage: 'The radio system directory could not be loaded.'
-  });
-  if (!beginPage(renderContext,
-    pageHeader('Radio Systems',
-      'Browse trunked radio systems and the saved receiver channels that receive them'),
-    searchBar('Search protocol, system, channel, or name'), directory.element)) return;
-  await directory.load(
-    () => radioSystemsDirectory.load(apiPage, pageParameters()),
-    (data) => radioSystemsDirectoryContent({ ...data, tableOptions: {
-      layoutMenuHost: directory.titleActions, controller: directory.tableController
-    } }),
-    renderContext);
+  await renderModernChannelCatalog(renderContext, false);
 }
 
 async function renderRadioSystem() {
@@ -15107,7 +15104,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     );
-    const bandSource = badge(overrideActive ? 'P25 Override' : 'OTA Bandplan',
+    const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
       overrideActive ? 'state-current' : '');
     content.append(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
       'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource));
@@ -15605,9 +15602,15 @@ function uiToggle(checked, accessibleLabel = '') {
   const track = node('span', 'ui-toggle-track');
   track.append(node('span', 'ui-toggle-thumb'));
   const state = node('span', 'ui-toggle-state', input.checked ? 'On' : 'Off');
-  input.addEventListener('change', () => { state.textContent = input.checked ? 'On' : 'Off'; });
+  input.addEventListener('change', () => setUiToggle(input, input.checked));
   wrapper.append(input, track, state);
   return wrapper;
+}
+
+function setUiToggle(input, checked) {
+  input.checked = Boolean(checked);
+  const state = input.closest('.ui-toggle')?.querySelector('.ui-toggle-state');
+  if (state) state.textContent = input.checked ? 'On' : 'Off';
 }
 
 function uiPill(label, tone = 'neutral', iconId = null) {
@@ -15641,14 +15644,17 @@ function uiSegmentedControl(entries, initialValue, onChange) {
   return group;
 }
 
-function channelSummaryCards(catalog) {
+function channelSummaryCards(catalog, editable) {
   const channels = catalog.channels || [];
   const wrapper = node('div', 'channel-summary-grid');
-  [
+  const cards = [
     ['Configured channels', channels.length, 'icon-channel', 'accent'],
-    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-live', 'success'],
-    ['Auto-start queue', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue']
-  ].forEach(([label, value, icon, tone]) => {
+    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-live', 'success']
+  ];
+  cards.push(editable ?
+    ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue'] :
+    ['Stopped', channels.filter((row) => row.processing_state !== 'RUNNING').length, 'icon-stop', 'neutral']);
+  cards.forEach(([label, value, icon, tone]) => {
     const card = node('div', `ui-summary-card ui-summary-${tone}`);
     card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
     wrapper.append(card);
@@ -15664,7 +15670,7 @@ async function channelAdminMutation(path, options, statusHost) {
     if (failed.length) throw new Error(failed.map((entry) => entry.message ||
       `${entry.configuration_id} could not be changed`).join(' '));
     statusHost?.replaceChildren();
-    await renderChannels();
+    await renderChannelSetup();
     return result;
   } catch (error) {
     statusHost?.replaceChildren(node('span', 'error', error.message));
@@ -15721,8 +15727,10 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') },
-    { id: 'auto-start', label: 'Auto Start', className: 'numeric', render: (row) => {
+      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') }
+  );
+  if (editable) columns.push(
+    { id: 'auto-start', label: 'Startup order', className: 'numeric', render: (row) => {
       if (!editable) return node('span', 'channel-order-readonly',
         row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');
@@ -15749,7 +15757,9 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       later.setAttribute('aria-label', later.title);
       controls.append(earlier, order, later);
       return controls;
-    }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
+    }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order }
+  );
+  columns.push(
     { id: 'alias-list', label: 'Alias List', key: 'alias_list_name',
       sortValue: (row) => row.alias_list_name || '' }
   );
@@ -15757,13 +15767,14 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
 }
 
 async function renderModernChannelCatalog(renderContext, editable) {
-  const loading = createAsyncSection('Channel Configuration', {
-    loadingMessage: 'Loading channel configuration…',
-    errorMessage: 'Channel configuration could not be loaded.'
+  const loading = createAsyncSection(editable ? 'Channel Configuration' : 'Receiver Channels', {
+    loadingMessage: editable ? 'Loading channel configuration…' : 'Loading receiver channels…',
+    errorMessage: editable ? 'Channel configuration could not be loaded.' :
+      'The radio directory could not be loaded.'
   });
-  if (!beginPage(renderContext, pageHeader('Channels', editable ?
-    'Configure and operate every receiver channel from one place' :
-    'Current receiver channels and their operating state'), loading.element)) return;
+  if (!beginPage(renderContext, pageHeader(editable ? 'Channel Setup' : 'Radio Directory', editable ?
+    'Create, configure, order, start, and stop receiver channels' :
+    'Browse every configured trunked and conventional channel and see what is running'), loading.element)) return;
   await loading.load(async () => {
     const catalogPath = editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
     const [catalog, protocols, options] = await Promise.all([
@@ -15780,7 +15791,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const wrapper = node('div', 'channel-admin-catalog ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
     const summaryHost = node('div');
-    summaryHost.append(channelSummaryCards(catalog));
+    summaryHost.append(channelSummaryCards(catalog, editable));
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
     const searchWrap = node('label', 'ui-search');
     searchWrap.append(iconGlyph('icon-search'));
@@ -15791,11 +15802,16 @@ async function renderModernChannelCatalog(renderContext, editable) {
     searchWrap.append(search);
     let activeView = 'all';
     let draw = () => {};
-    const filters = uiSegmentedControl([
-      { value: 'all', label: 'All channels' },
+    const filterEntries = [
+      { value: 'all', label: 'All' },
+      { value: 'trunked', label: 'Trunked' },
+      { value: 'conventional', label: 'Conventional' },
       { value: 'running', label: 'Running' },
-      { value: 'auto-start', label: 'Auto-start' }
-    ], activeView, (value) => { activeView = value; draw(); });
+      { value: 'stopped', label: 'Stopped' }
+    ];
+    if (editable) filterEntries.push({ value: 'auto-start', label: 'Auto-start' });
+    const filters = uiSegmentedControl(filterEntries, activeView,
+      (value) => { activeView = value; draw(); });
     filters.setAttribute('aria-label', 'Filter channels');
     const statusHost = node('div', 'channel-admin-status');
     statusHost.setAttribute('role', 'status');
@@ -15805,7 +15821,8 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const exportLink = exportCsvLink('channels');
     exportLink.classList.add('ui-button', 'ui-button-secondary');
     exportLink.prepend(iconGlyph('icon-download'));
-    const refresh = uiActionButton('', 'icon-refresh', () => renderChannels(), 'ui-button ui-icon-button');
+    const refresh = uiActionButton('', 'icon-refresh', () =>
+      editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.title = 'Refresh channels';
     toolbar.append(searchWrap, filters, exportLink, refresh, statusHost);
@@ -15884,6 +15901,9 @@ async function renderModernChannelCatalog(renderContext, editable) {
       const term = search.value.trim().toLowerCase();
       return (state.catalog.channels || []).filter((row) =>
         (activeView === 'all' || activeView === 'running' && row.processing_state === 'RUNNING' ||
+          activeView === 'stopped' && row.processing_state !== 'RUNNING' ||
+          activeView === 'trunked' && String(row.channel_kind).toUpperCase() === 'TRUNKED' ||
+          activeView === 'conventional' && String(row.channel_kind).toUpperCase() === 'CONVENTIONAL' ||
           activeView === 'auto-start' && row.auto_start_order != null) &&
         (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
           channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
@@ -15921,7 +15941,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
         state.catalog = refreshed;
         const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
         [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
-        summaryHost.replaceChildren(channelSummaryCards(refreshed));
+        summaryHost.replaceChildren(channelSummaryCards(refreshed, editable));
         draw();
       } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
@@ -16396,7 +16416,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           }
           if (field.path === 'settings.use_bandplan_override' &&
               capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
-            wrapper.append(anchor('Manage P25 bandplan profiles', href('admin', { tab: 'p25-bandplans' }),
+            wrapper.append(anchor('Manage P25 band plan profiles', href('admin', { tab: 'protocol-p25' }),
               'channel-field-action'));
           }
           if (field.visible_when) {
@@ -16480,7 +16500,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           revision = Number(result.revision);
           modal.setDirty(false);
           closeReadOnlyModal(true);
-          await renderChannels();
+          await renderChannelSetup();
         } catch (error) {
           aliasMutationError(errors, error, () => {
             modal.setDirty(false);
@@ -16505,9 +16525,131 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   }
 }
 
-async function renderChannels() {
+async function renderChannelSetup() {
   const renderContext = captureRenderContext();
-  await renderModernChannelCatalog(renderContext, canManageChannels());
+  await renderModernChannelCatalog(renderContext, true);
+}
+
+function identityDirectoryKind(row) {
+  const kind = Number(row?.identity_kind_code);
+  if (kind === 1) return 'Talkgroup';
+  if (kind === 2) return 'Radio';
+  if (kind === 3) return 'Patch group';
+  return 'Other';
+}
+
+function identityDirectoryScope(row) {
+  if (String(row?.channel_kind || '').toUpperCase() === 'CONVENTIONAL') {
+    return [row.system_name, row.site_name, row.name].filter(Boolean).join(' · ') || 'Conventional channel';
+  }
+  return row.system_name || radioSystemLabel(row) || 'Trunked radio system';
+}
+
+function identityDirectoryKey(row) {
+  return [row.channel_kind, row.radio_system_key, row.configuration_id, row.identity_kind_code,
+    row.identity_key, row.native_id].map((value) => String(value ?? '')).join('\u0000');
+}
+
+function identityDirectoryName(row) {
+  const label = identityNumber(row, row.native_id) || 'Unknown';
+  const target = entityRefHref(row.entity_ref);
+  return target ? anchor(label, target, 'identity-directory-link') : label;
+}
+
+function identityDirectoryAlias(row) {
+  const wrapper = node('span', 'identity-directory-alias');
+  const alias = aliasLabel(row);
+  wrapper.append(node('strong', '', alias || 'Unassigned'));
+  if (row.last_talker_alias && row.last_talker_alias !== alias) {
+    wrapper.append(node('small', 'muted', `Over the air: ${row.last_talker_alias}`));
+  }
+  return wrapper;
+}
+
+function identityDirectoryColumns() {
+  return [
+    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(protocolFamily(row), 'protocol'),
+      sortValue: (row) => protocolFamily(row) },
+    { id: 'kind', label: 'Type', render: (row) => identityDirectoryKind(row),
+      sortValue: identityDirectoryKind },
+    { id: 'identity', label: 'Identity', className: 'numeric', render: identityDirectoryName,
+      sortValue: (row) => Number(row.native_id || 0) },
+    { id: 'alias', label: 'Alias', render: identityDirectoryAlias, className: 'alias-cell',
+      sortValue: (row) => aliasLabel(row) || '' },
+    { id: 'description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
+    { id: 'scope', label: 'System / Channel', render: identityDirectoryScope,
+      sortValue: identityDirectoryScope },
+    { id: 'calls', label: 'Calls', className: 'numeric', render: (row) => number(row.logical_call_count),
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'last-heard', label: 'Last heard', render: (row) => dateTime(row.last_active_ms),
+      sortValue: (row) => Number(row.last_active_ms || 0) }
+  ];
+}
+
+async function renderIdentities() {
+  const renderContext = captureRenderContext();
+  const selectedRange = route.get('range') || '24h';
+  const directory = createAsyncSection('Recently Active Identities', {
+    loadingMessage: 'Loading identities…',
+    errorMessage: 'The identity directory could not be loaded.'
+  });
+  if (!beginPage(renderContext, pageHeader('Identities',
+    'Look up talkgroups, patch groups, and radios heard by this receiver'), directory.element)) return;
+  await directory.load(() => apiPage('/api/v1/identities', { range: selectedRange, limit: 500 }), (page) => {
+    const wrapper = node('div', 'identity-directory data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
+    const toolbar = node('div', 'ui-catalog-toolbar identity-directory-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    searchWrap.append(iconGlyph('icon-search'));
+    const search = node('input', 'ui-input');
+    search.type = 'search';
+    search.placeholder = 'Search identity, alias, system, or channel';
+    search.setAttribute('aria-label', search.placeholder);
+    searchWrap.append(search);
+    let activeKind = 'all';
+    const tableHost = node('div', 'identity-directory-table-host');
+    const tableController = {};
+    let draw = () => {};
+    const filters = uiSegmentedControl([
+      { value: 'all', label: 'All' },
+      { value: 'talkgroup', label: 'Talkgroups' },
+      { value: 'radio', label: 'Radios' },
+      { value: 'patch-group', label: 'Patch groups' }
+    ], activeKind, (value) => { activeKind = value; draw(); });
+    filters.setAttribute('aria-label', 'Filter identities');
+    const range = uiSelectFrame(uiSelect(ACTIVITY_RANGES.map(([value, label]) => ({ value, label })),
+      selectedRange), 'identity-range-select');
+    const rangeSelect = range.querySelector('select');
+    rangeSelect.setAttribute('aria-label', 'Identity activity range');
+    rangeSelect.addEventListener('change', () => navigateTo(currentHref({ range: rangeSelect.value, offset: null })));
+    toolbar.append(searchWrap, filters, range);
+
+    const rows = Array.isArray(page.rows) ? page.rows : [];
+    const filteredRows = () => {
+      const term = search.value.trim().toLowerCase();
+      return rows.filter((row) => {
+        const kind = Number(row.identity_kind_code);
+        const matchesKind = activeKind === 'all' || activeKind === 'talkgroup' && kind === 1 ||
+          activeKind === 'radio' && kind === 2 || activeKind === 'patch-group' && kind === 3;
+        const matchesText = !term || [row.native_id, aliasLabel(row), row.alias_description,
+          row.last_talker_alias, protocolFamily(row), identityDirectoryKind(row), identityDirectoryScope(row)]
+          .some((value) => String(value || '').toLowerCase().includes(term));
+        return matchesKind && matchesText;
+      });
+    };
+    const identityTable = table(rows, identityDirectoryColumns(), 'No identities were heard in this time range', {
+      type: 'identity-directory-v1', clientSort: true, controller: tableController,
+      rowKey: identityDirectoryKey, tableClass: 'identity-directory-table',
+      wrapperClass: 'identity-directory-table-wrap', layoutMenuHost: toolbar
+    });
+    draw = () => tableController.reconcileRows?.(filteredRows());
+    search.addEventListener('input', draw);
+    tableHost.append(identityTable);
+    wrapper.append(toolbar, tableHost);
+    if (page.candidate_limit_reached === true) wrapper.append(node('p', 'directory-warning',
+      'This view shows the most active recent identities. Narrow the time range to see quieter identities.'));
+    return wrapper;
+  }, renderContext);
 }
 
 function channelTabItems(channel) {
@@ -16923,8 +17065,9 @@ function userActions(account, statusHost) {
   return actions;
 }
 
-async function renderAdminUsers() {
+async function renderAdminUsers(renderContext = captureRenderContext()) {
   const response = await requestJson('/api/v1/admin/users', { csrf: false });
+  if (!renderIsCurrent(renderContext)) return;
   const users = (Array.isArray(response) ? response : response?.users || []).map(adminUserRecord)
     .filter((account) => account.username)
     .sort((left, right) => Number(right.primaryAdmin) - Number(left.primaryAdmin) ||
@@ -17029,8 +17172,9 @@ function webAccessControl(policy, statusHost) {
   return wrapper;
 }
 
-async function renderAdminAccess() {
+async function renderAdminAccess(renderContext = captureRenderContext()) {
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
+  if (!renderIsCurrent(renderContext)) return;
   const policies = adminAccessPolicies(response).sort((left, right) =>
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
   const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
@@ -17310,27 +17454,26 @@ async function renderAdminRadioReferenceSettings() {
   const body = node('div', 'admin-section-body radioreference-settings');
   const accountForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
-  const userName = node('input');
+  const userName = node('input', 'ui-input');
   userName.name = 'radioreference-username';
   userName.autocomplete = 'username';
   userName.maxLength = 256;
   userName.required = true;
-  const password = node('input');
+  const password = node('input', 'ui-input');
   password.type = 'password';
   password.name = 'radioreference-password';
   password.autocomplete = 'current-password';
   password.maxLength = 1024;
   password.required = true;
-  const rememberLabel = node('label', 'radioreference-remember');
-  const remember = node('input');
-  remember.type = 'checkbox';
-  remember.checked = true;
-  rememberLabel.append(remember, node('span', '', 'Remember credentials in this receiver’s portable settings'));
+  const rememberSetting = preferenceCheckbox('radioreference-remember',
+    'Remember credentials on this receiver', true,
+    'Stores the credentials in this receiver’s protected portable settings.');
+  const remember = rememberSetting.input;
   const accountMessage = node('div', 'admin-form-message');
   accountMessage.setAttribute('role', 'status');
   const connect = node('button', '', 'Connect RadioReference');
   connect.type = 'submit';
-  const signOut = node('button', 'secondary danger-outline', 'Sign Out');
+  const signOut = node('button', 'secondary danger-outline', 'Disconnect RadioReference');
   signOut.type = 'button';
   signOut.disabled = true;
   const accountActions = node('div', 'admin-form-actions');
@@ -17339,7 +17482,7 @@ async function renderAdminRadioReferenceSettings() {
     node('p', 'settings-card-description', 'Connect the receiver with a current RadioReference Premium account.'),
     formField('Username', userName), formField('Password', password,
     'A current Premium subscription is required. The password is never returned to the browser.'),
-    rememberLabel, accountMessage, accountActions);
+    rememberSetting.control, accountMessage, accountActions);
 
   const regionForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-region-form');
@@ -17378,7 +17521,7 @@ async function renderAdminRadioReferenceSettings() {
     if (initializeUserName || !userName.value) {
       userName.value = account.user_name || configuration?.stored_user_name || '';
     }
-    remember.checked = configuration?.credentials_stored === true;
+    setUiToggle(remember, configuration?.credentials_stored === true);
     signOut.disabled = account.state === 'SIGNED_OUT';
     country.disabled = !connected;
     state.disabled = !connected || !country.value;
@@ -17485,15 +17628,6 @@ async function renderAdminRadioReferenceSettings() {
     accountMessage.textContent = error.message;
     connect.disabled = false;
   }
-}
-
-async function renderReceiverSettings() {
-  const renderContext = captureRenderContext();
-  await renderAdminReceiverBehaviorSettings();
-  if (!renderIsCurrent(renderContext)) return;
-  await renderAdminSpectrumSnapSettings();
-  if (!renderIsCurrent(renderContext)) return;
-  await renderAdminRadioReferenceSettings();
 }
 
 async function renderAdminSpectrumSnapSettings() {
@@ -17624,15 +17758,16 @@ async function renderAdminReceiverBehaviorSettings() {
   grantAge.disabled = true;
   const message = node('div', 'admin-form-message', 'Loading receiver settings…');
   message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Receiver Settings');
+  const save = node('button', '', 'Save Live Timing');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const group = settingsCard('Traffic grant timing',
-    'This receiver-wide timing controls when inactive traffic grants become idle.',
-    formField('Idle grant retention (milliseconds)', grantAge,
-      'How long inactive traffic grants remain in the shared Live state.'));
+  const group = settingsCard('Live traffic-row idle delay',
+    'This receiver-wide presentation timing affects every viewer.',
+    formField('Mark a traffic row idle after (milliseconds)', grantAge,
+      'After the last grant or call update, wait this long before Live shows the row as idle. This does not keep ' +
+        'the call, tuner, or traffic channel active.'));
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(settingsCardGrid(group), footer);
@@ -17653,17 +17788,17 @@ async function renderAdminReceiverBehaviorSettings() {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     disable(true);
-    message.textContent = 'Saving Receiver Settings…';
+    message.textContent = 'Saving Live timing…';
     try {
       const next = await requestReceiverSettings('PUT', {
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
-      message.textContent = 'Receiver Settings saved.';
+      message.textContent = 'Live timing saved.';
     } catch (error) {
       if (error?.code === 'receiver_settings_conflict' && error.current) {
         apply(error.current);
-        message.textContent = 'Receiver Settings changed in another session. Current server values were reloaded.';
+        message.textContent = 'Live timing changed in another session. Current server values were reloaded.';
       } else {
         if (confirmed) apply(confirmed);
         message.textContent = error.message;
@@ -17888,13 +18023,13 @@ async function renderAdminP25BandplanOverrides() {
   const intro = node('p', 'p25-overrides-intro',
     'A matching profile replaces the complete over-the-air band plan only for P25 channels that have the override enabled. Site-specific profiles take priority over system-wide profiles.');
   const list = node('div', 'p25-override-profile-list');
-  const message = node('div', 'admin-form-message', 'Loading P25 bandplan overrides…');
+  const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
   const add = node('button', 'button secondary', 'Add P25 override');
   add.type = 'button';
   add.disabled = true;
   add.addEventListener('click', () => list.append(p25OverrideProfileCard()));
-  const save = node('button', '', 'Save P25 Bandplan Overrides');
+  const save = node('button', '', 'Save P25 band plan overrides');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
@@ -17903,18 +18038,18 @@ async function renderAdminP25BandplanOverrides() {
   footer.append(message, actions);
   form.append(intro, list, footer);
   body.append(form);
-  content.append(section('P25 Bandplan Overrides', body));
+  content.append(section('P25 band plan overrides', body));
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     add.disabled = true;
     save.disabled = true;
-    message.textContent = 'Saving P25 bandplan overrides…';
+    message.textContent = 'Saving P25 band plan overrides…';
     try {
       const documentValue = await requestP25BandplanOverrides('PUT', p25OverrideProfilesFromForm(list));
       list.replaceChildren(...(documentValue?.profiles || []).map(p25OverrideProfileCard));
-      message.textContent = 'P25 bandplan overrides saved.';
+      message.textContent = 'P25 band plan overrides saved.';
     } catch (error) {
       message.textContent = error.message;
     } finally {
@@ -18412,20 +18547,19 @@ function comingSoonPanel(title) {
 }
 
 function preferenceCheckbox(name, label, checked, detail = '') {
-  const input = node('input');
-  input.type = 'checkbox';
+  const toggle = uiToggle(checked === true, label);
+  const input = toggle.querySelector('input');
   input.name = name;
-  input.checked = checked === true;
   const copy = node('span', 'admin-toggle-copy');
   copy.append(node('strong', '', label));
   if (detail) copy.append(node('span', '', detail));
-  const control = node('label', 'admin-toggle-control');
-  control.append(input, copy);
+  const control = node('div', 'admin-toggle-control');
+  control.append(copy, toggle);
   return { input, control };
 }
 
 function preferenceSelect(name, choices, selected) {
-  const select = node('select');
+  const select = node('select', 'ui-select');
   select.name = name;
   choices.forEach(([value, label]) => {
     const option = node('option', '', label);
@@ -18532,7 +18666,7 @@ function userPreferenceSummaryCards(preferences) {
       ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
       ['Performance profile', semanticLabel(preferences.tuner.profile)]
     ])),
-    settingsCard('Status icon', 'Changed from Administration > Status icon.', settingsSummary([
+    settingsCard('Status icon', 'Changed here in My Settings.', settingsSummary([
       ['Issue types shown', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
         number(receiverHealthAlertIds.length)],
       ['Hidden issue types', disabledHealthAlertSummary(disabledAlerts)]
@@ -18565,7 +18699,7 @@ async function renderAdminAlerts() {
   const apply = (preferences) => {
     receiverHealthAlertIds.forEach((id) => {
       const input = controls.get(id);
-      if (input) input.checked = isReceiverHealthAlertEnabled(preferences, id);
+      if (input) setUiToggle(input, isReceiverHealthAlertEnabled(preferences, id));
     });
   };
   const cards = receiverHealthAlertGroups.map((group) => {
@@ -18655,12 +18789,12 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   rowLimit.required = true;
   rowLimit.value = String(current.live_detail_row_limit);
   const apply = (presentation) => {
-    encryption.input.checked = presentation.show_encryption_details;
-    controlQuality.input.checked = presentation.show_control_decode_quality;
-    voiceQuality.input.checked = presentation.show_voice_decode_quality;
-    activeOnly.input.checked = presentation.show_only_active_trunked_channels;
-    retainLastCall.input.checked = presentation.retain_last_call_on_idle_rows;
-    clearIdleQuality.input.checked = presentation.clear_voice_quality_when_idle;
+    setUiToggle(encryption.input, presentation.show_encryption_details);
+    setUiToggle(controlQuality.input, presentation.show_control_decode_quality);
+    setUiToggle(voiceQuality.input, presentation.show_voice_decode_quality);
+    setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
+    setUiToggle(retainLastCall.input, presentation.retain_last_call_on_idle_rows);
+    setUiToggle(clearIdleQuality.input, presentation.clear_voice_quality_when_idle);
     qualityMode.value = presentation.decode_quality_display_mode;
     rowLimit.value = String(presentation.live_detail_row_limit);
   };
@@ -18757,9 +18891,9 @@ function openScannerSettings(returnFocusSelector = null) {
   targetBurstLimit.required = true;
   targetBurstLimit.value = String(current.playback.target_burst_limit);
   const apply = (preferences) => {
-    targetGrouping.input.checked = preferences.playback.target_grouping;
+    setUiToggle(targetGrouping.input, preferences.playback.target_grouping);
     targetBurstLimit.value = String(preferences.playback.target_burst_limit);
-    prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
+    setUiToggle(prependTitle.input, preferences.page_titles.prepend_playing_call);
   };
   const fields = node('div', 'settings-field-grid');
   fields.append(formField('Calls before switching targets', targetBurstLimit,
@@ -18879,6 +19013,13 @@ function openResetUserPreferences(returnFocusSelector = null) {
 
 async function renderSettings() {
   const renderContext = captureRenderContext();
+  if (route.get('section') === 'status-icon') {
+    if (!beginPage(renderContext, pageHeader('Status icon',
+      'Choose which monitored receiver issues appear in your personal status icon'),
+      anchor('Back to My Settings', href('settings'), 'button secondary'))) return;
+    await renderAdminAlerts();
+    return;
+  }
   if (!beginPage(renderContext, pageHeader('My Settings',
     'A read-only overview of every personal preference for this account'))) return;
   const snapshot = userPreferenceController.snapshot();
@@ -18903,7 +19044,8 @@ async function renderSettings() {
   reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
   const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(reset);
+  actions.append(anchor('Change Status Icon', href('settings', { section: 'status-icon' }),
+    'button secondary'), reset);
   footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
   overview.append(userPreferenceSummaryCards(current), footer);
   content.append(section('Personal preferences', overview));
@@ -18919,11 +19061,11 @@ async function renderConfiguration() {
   ];
   const requested = route.get('tab') || 'scan-lists';
   const active = availableTabs.some((item) => item.id === requested) ? requested : 'scan-lists';
-  if (!beginPage(renderContext, pageHeader('Configuration',
-    'Manage receiver configuration and external data sources'),
+  if (!beginPage(renderContext, pageHeader('Manage',
+    'Set up aliases, scan lists, recordings, streaming, and external data sources'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
   if (active === 'scan-lists') await renderAdminScanLists();
-  else if (active === 'radioreference') content.append(comingSoonPanel('RadioReference'));
+  else if (active === 'radioreference') await renderAdminRadioReferenceSettings();
   else if (active === 'recording') content.append(comingSoonPanel('Recording'));
   else content.append(comingSoonPanel('Streaming'));
 }
@@ -18971,6 +19113,92 @@ function renderAdminSystem() {
   content.append(adminSystemStatusSection());
 }
 
+function adminProtocolEmptyState(protocolName) {
+  const body = node('div', 'settings-empty-state');
+  body.append(iconGlyph('icon-channel'), node('h2', '', `${protocolName} receiver-wide settings`),
+    node('p', '', `There are no shared ${protocolName} settings yet. Settings that belong to one channel remain ` +
+      'in Channel Setup.'),
+    anchor('Open Channel Setup', href('channel-setup'), 'ui-button ui-button-secondary'));
+  content.append(body);
+}
+
+function adminSettingsTree(groups, active) {
+  const navigation = node('nav', 'admin-settings-tree');
+  navigation.setAttribute('aria-label', 'Administration sections');
+  groups.forEach((group) => {
+    const disclosure = node('details', 'admin-settings-branch');
+    disclosure.open = group.items.some((item) => item.id === active || item.items?.some((child) =>
+      child.id === active)) || group.open === true;
+    disclosure.append(node('summary', '', group.label));
+    const links = node('div', 'admin-settings-branch-items');
+    const appendLeaf = (item, host) => {
+      const link = anchor(item.label, href('admin', { tab: item.id }), 'admin-settings-leaf');
+      link.classList.toggle('active', item.id === active);
+      if (item.id === active) link.setAttribute('aria-current', 'page');
+      if (item.scope) link.append(node('small', 'settings-scope-badge', item.scope));
+      host.append(link);
+    };
+    group.items.forEach((item) => {
+      if (Array.isArray(item.items)) {
+        const nested = node('details', 'admin-settings-nested-branch');
+        nested.open = item.items.some((child) => child.id === active);
+        nested.append(node('summary', '', item.label));
+        const nestedLinks = node('div', 'admin-settings-nested-items');
+        item.items.forEach((child) => appendLeaf(child, nestedLinks));
+        nested.append(nestedLinks);
+        links.append(nested);
+      } else appendLeaf(item, links);
+    });
+    disclosure.append(links);
+    navigation.append(disclosure);
+  });
+  return navigation;
+}
+
+function adminSettingsGroups() {
+  const allowed = (capability) => capabilityAllowed(capability);
+  return [
+    { label: 'Receiver status', open: true, items: [
+      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH }
+    ] },
+    { label: 'Accounts & access', items: [
+      { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
+      { id: 'access', label: 'Page access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
+    ] },
+    { label: 'Web interface', items: [
+      { id: 'live-timing', label: 'Receiver-wide Live timing', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' }
+    ] },
+    { label: 'Receiver', items: [
+      { id: 'spectrum', label: 'Spectrum frequency scopes', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' },
+      { label: 'Protocols', items: [
+        { id: 'protocol-p25', label: 'P25', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-dmr', label: 'DMR', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-nxdn', label: 'NXDN', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-am', label: 'AM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-nbfm', label: 'NBFM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' }
+      ] }
+    ] },
+    { label: 'Data & storage', items: [
+      { id: 'activity', label: 'Activity history', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' }
+    ] }
+  ].map((group) => ({ ...group, items: group.items.map((item) => Array.isArray(item.items) ?
+    { ...item, items: item.items.filter((child) => allowed(child.capability)) } : item)
+    .filter((item) => Array.isArray(item.items) ? item.items.length : allowed(item.capability)) }))
+    .filter((group) => group.items.length);
+}
+
+function adminSettingsLeaves(groups) {
+  return groups.flatMap((group) => group.items.flatMap((item) => Array.isArray(item.items) ? item.items : [item]));
+}
+
 function refreshAdminSystemStatus() {
   const current = document.getElementById('admin-system-status');
   if (current) current.replaceWith(adminSystemStatusSection());
@@ -18978,16 +19206,10 @@ function refreshAdminSystemStatus() {
 
 async function renderAdmin() {
   const renderContext = captureRenderContext();
-  const availableTabs = [
-    { id: 'health', label: 'Receiver status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'alerts', label: 'Status icon', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'receiver-settings', label: 'Receiver Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'p25-bandplans', label: 'P25 Bandplan Overrides', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
-    { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
-    { id: 'system', label: 'System', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
-  ].filter((item) => capabilityAllowed(item.capability));
-  if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
+  const groups = adminSettingsGroups();
+  const availableTabs = adminSettingsLeaves(groups);
+  if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'),
+    { status: 403 });
   const requested = route.get('tab') || 'health';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
   if (active !== requested) {
@@ -18995,24 +19217,27 @@ async function renderAdmin() {
     window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('Administration',
-    'Check receiver status and manage settings for this sdrtrunk-vce installation.'),
-    tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
+    'Receiver-wide settings, access, storage, and protocol behavior'))) return;
+  const shell = node('div', 'admin-settings-shell');
+  const body = node('div', 'admin-settings-content');
+  shell.append(adminSettingsTree(groups, active), body);
+  content.append(shell);
   if (active === 'health') await renderAdminHealth();
-  else if (active === 'alerts') {
-    pageTitleController.update({ pageTitle: 'Status icon settings' });
-    await renderAdminAlerts();
+  else if (active === 'live-timing') {
+    pageTitleController.update({ pageTitle: 'Receiver-wide Live timing' });
+    await renderAdminReceiverBehaviorSettings();
   }
-  else if (active === 'receiver-settings') {
-    pageTitleController.update({ pageTitle: 'Receiver Settings' });
-    await renderReceiverSettings();
-  }
-  else if (active === 'p25-bandplans') {
-    pageTitleController.update({ pageTitle: 'P25 Bandplan Overrides' });
+  else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
+  else if (active === 'protocol-p25') {
+    pageTitleController.update({ pageTitle: 'P25 receiver settings' });
     await renderAdminP25BandplanOverrides();
   }
-  else if (active === 'access') await renderAdminAccess();
-  else if (active === 'system') renderAdminSystem();
-  else await renderAdminUsers();
+  else if (active.startsWith('protocol-')) adminProtocolEmptyState(active.slice('protocol-'.length).toUpperCase());
+  else if (active === 'access') await renderAdminAccess(renderContext);
+  else if (active === 'activity') renderAdminSystem();
+  else await renderAdminUsers(renderContext);
+  if (!renderIsCurrent(renderContext)) return;
+  while (shell.nextSibling) body.append(shell.nextSibling);
 }
 
 function routeViewLabel(view) {
@@ -19189,7 +19414,7 @@ async function loadStatus(refreshCurrentView = false) {
   }
 
   const currentView = route.get('view') || 'dashboard';
-  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'system') {
+  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'activity') {
     refreshAdminSystemStatus();
     return;
   }
@@ -19209,7 +19434,9 @@ applicationRoutes = routeFoundation.createRegistry({
   'radio-system': renderRadioSystem,
   'group-identity': renderGroupIdentity,
   radio: renderRadio,
-  channels: renderChannels,
+  identities: renderIdentities,
+  channels: renderRadioSystems,
+  'channel-setup': renderChannelSetup,
   channel: renderChannel,
   aliases: renderAliases,
   configuration: renderConfiguration,
@@ -19221,7 +19448,13 @@ applicationRoutes = routeFoundation.createRegistry({
 
 async function render() {
   setNavigationOpen(false);
-  const view = routeFoundation.requestedView(route);
+  let view = routeFoundation.requestedView(route);
+  if (view === 'channels') {
+    route.set('view', 'radio-systems');
+    route.delete('channel');
+    window.history.replaceState({}, '', currentHref());
+    view = 'radio-systems';
+  }
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;
   restorePlaybackBarBeforeRender();

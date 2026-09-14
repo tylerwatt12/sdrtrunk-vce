@@ -21,7 +21,8 @@ class StatsWebChannelsUiContractTest
     void usesOneModernCatalogForReadOnlyAndChannelAdministrators() throws Exception
     {
         String source = source();
-        String render = function(source, "async function renderChannels()");
+        String setup = function(source, "async function renderChannelSetup()");
+        String directory = function(source, "async function renderRadioSystems()");
         String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
         String configurationRequest = function(source,
             "async function requestChannelConfigurationJson(path, options = {})");
@@ -29,7 +30,8 @@ class StatsWebChannelsUiContractTest
             "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, " +
                 "renderSelectionHeader)");
 
-        assertTrue(render.contains("renderModernChannelCatalog(renderContext, canManageChannels())"));
+        assertTrue(setup.contains("renderModernChannelCatalog(renderContext, true)"));
+        assertTrue(directory.contains("renderModernChannelCatalog(renderContext, false)"));
         assertTrue(catalog.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
         assertTrue(catalog.contains("requestChannelConfigurationJson(catalogPath"));
         assertTrue(catalog.contains("requestChannelConfigurationJson('/api/v1/admin/channels/protocols'"));
@@ -38,13 +40,14 @@ class StatsWebChannelsUiContractTest
         assertTrue(configurationRequest.contains("CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS[attempt]"));
         assertTrue(configurationRequest.contains("waitForRequestRetry(delay, signal)"));
         assertTrue(catalog.contains("exportCsvLink('channels')"));
-        assertTrue(catalog.contains("channelSummaryCards(catalog)"));
+        assertTrue(catalog.contains("channelSummaryCards(catalog, editable)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
         assertTrue(catalog.contains("layoutMenuHost: toolbar"));
         assertTrue(catalog.contains("editable ? 'channel-catalog-admin-v1' : " +
             "'channel-catalog-readonly-v1'"));
         assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
-        assertTrue(columns.contains("row.auto_start_order == null ? 'Off'"));
+        assertTrue(columns.contains("if (editable) columns.push"));
+        assertTrue(columns.contains("label: 'Startup order'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
         assertTrue(columns.contains("id: 'select'"));

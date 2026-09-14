@@ -376,7 +376,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 18, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -393,7 +393,7 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'channelDirectoryColumns', 'channelGroupIdentityColumns',
+    'activityColumns', 'channelDirectoryColumns', 'identityDirectoryColumns', 'channelGroupIdentityColumns',
     'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
@@ -712,7 +712,8 @@ async function main() {
   assert.equal(routes.resolve(registry, '?view=missing'), null);
   assert.equal(registry.admin.allowed(), false);
   assert.equal(registry['radio-system'].parent, 'radio-systems');
-  assert.equal(registry.channel.parent, 'channels');
+  assert.equal(registry.channel.parent, 'radio-systems');
+  assert.equal(registry['channel-setup'].allowed(), true);
   assert.throws(() => routes.createRegistry({ ...handlers, extra: () => {} }, () => true), /Unknown route/);
   assert.throws(() => routes.createRegistry({ ...handlers, scanner: null }, () => true), /Missing route/);
 
