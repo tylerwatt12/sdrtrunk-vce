@@ -24,6 +24,7 @@ import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
+import io.github.dsheirer.stats.activity.ReceiverHealthIncidentRecord;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.FileStore;
@@ -55,6 +56,7 @@ import org.slf4j.LoggerFactory;
 public final class ReceiverHealthService implements AutoCloseable
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ReceiverHealthService.class);
+    static final String LEGACY_SNAPSHOT_FILE_NAME = "receiver-health.json";
     private static final long SAMPLE_INTERVAL_MILLISECONDS = 1_000L;
     private static final long CONDITION_HOLD_MILLISECONDS = 10_000L;
     private static final long STORAGE_SAMPLE_INTERVAL_MILLISECONDS = 30_000L;
@@ -71,7 +73,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final LongSupplier mClock;
     private final long mStartedAtMs;
     private final ScheduledExecutorService mExecutor;
-    private final ReceiverHealthSnapshotWriter mSnapshotWriter;
+    private final Path mLegacySnapshotPath;
     private final ReceiverHealthIncidentTracker mIncidents = new ReceiverHealthIncidentTracker();
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
@@ -90,14 +92,15 @@ public final class ReceiverHealthService implements AutoCloseable
     private StorageSnapshot mStorageSnapshot = StorageSnapshot.unavailable();
     private long mLastGcCollectionTimeMs = -1;
     private long mLastFailureLogMs;
-    private long mLastSnapshotWriteFailureLogMs;
+    private long mLastIncidentPersistenceFailureLogMs;
+    private boolean mLegacySnapshotCleanupAttempted;
 
     public ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                                  ChannelProcessingManager channelProcessingManager,
                                  ReceiverActivityService activityLogService)
     {
         this(userPreferences, tunerManager, channelProcessingManager, activityLogService,
-            System::currentTimeMillis, snapshotWriter(userPreferences));
+            System::currentTimeMillis, legacySnapshotPath(userPreferences));
     }
 
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
@@ -110,7 +113,7 @@ public final class ReceiverHealthService implements AutoCloseable
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                           ChannelProcessingManager channelProcessingManager,
                           ReceiverActivityService activityLogService, LongSupplier clock,
-                          ReceiverHealthSnapshotWriter snapshotWriter)
+                          Path legacySnapshotPath)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
@@ -120,7 +123,7 @@ public final class ReceiverHealthService implements AutoCloseable
             mChannelActivityModel.getSnapshotSet() : new ChannelActivityModel.SnapshotSet(0, List.of());
         mActivityLogService = activityLogService;
         mClock = clock != null ? clock : System::currentTimeMillis;
-        mSnapshotWriter = snapshotWriter;
+        mLegacySnapshotPath = legacySnapshotPath;
         mStartedAtMs = mClock.getAsLong();
         mSnapshot = emptySnapshot(mStartedAtMs);
         mExecutor = Executors.newSingleThreadScheduledExecutor(runnable ->
@@ -197,6 +200,8 @@ public final class ReceiverHealthService implements AutoCloseable
 
     private void sample()
     {
+        removeLegacySnapshotOnce();
+
         if(mClosed.get())
         {
             return;
@@ -215,6 +220,7 @@ public final class ReceiverHealthService implements AutoCloseable
             now - entry.getValue().lastSeenMs > COUNTER_BASELINE_RETENTION_MILLISECONDS);
         mConditionStartTimes.keySet().retainAll(mConditionsEvaluatedThisSample);
         mIncidents.endSample(now);
+        publishIncidentChanges(mIncidents.lifecycleChanges(), now);
         List<Map<String,Object>> active = mIncidents.active();
         LinkedHashMap<String,Object> response = new LinkedHashMap<>();
         response.put("started_at_ms", mStartedAtMs);
@@ -224,27 +230,52 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
         mSnapshot = Map.copyOf(response);
-        publishSnapshot(response, now);
     }
 
-    private void publishSnapshot(Map<String,Object> snapshot, long now)
+    private void publishIncidentChanges(List<Map<String,Object>> incidents, long now)
     {
-        if(mSnapshotWriter == null)
+        if(mActivityLogService == null || incidents.isEmpty())
         {
             return;
         }
 
-        try
+        for(Map<String,Object> incident: incidents)
         {
-            mSnapshotWriter.publish(snapshot);
-        }
-        catch(Exception exception)
-        {
-            if(mLastSnapshotWriteFailureLogMs == 0 ||
-                now - mLastSnapshotWriteFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
+            try
             {
-                mLastSnapshotWriteFailureLogMs = now;
-                LOGGER.warn("Receiver health incident report could not be updated", exception);
+                ReceiverHealthIncidentRecord record = new ReceiverHealthIncidentRecord(mStartedAtMs,
+                    number(incident.get("occurrence_id")), text(incident.get("code")),
+                    text(incident.get("severity")), text(incident.get("title")), text(incident.get("scope")),
+                    number(incident.get("opened_at_ms")), number(incident.get("last_seen_ms")),
+                    number(incident.get("resolved_at_ms")), number(incident.get("count")),
+                    text(incident.get("observed")), text(incident.get("likely_cause")),
+                    text(incident.get("impact")), text(incident.get("check_next")));
+
+                if(!mActivityLogService.receiveReceiverHealthIncident(record))
+                {
+                    logIncidentPersistenceFailure(now, null);
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                logIncidentPersistenceFailure(now, exception);
+            }
+        }
+    }
+
+    private void logIncidentPersistenceFailure(long now, RuntimeException exception)
+    {
+        if(mLastIncidentPersistenceFailureLogMs == 0 ||
+            now - mLastIncidentPersistenceFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
+        {
+            mLastIncidentPersistenceFailureLogMs = now;
+            if(exception != null)
+            {
+                LOGGER.warn("Receiver status alert history could not be queued for SQLite", exception);
+            }
+            else
+            {
+                LOGGER.warn("Receiver status alert history could not be queued for SQLite");
             }
         }
     }
@@ -285,9 +316,10 @@ public final class ReceiverHealthService implements AutoCloseable
 
             if(discovered.isEnabled() && tunerStatus == TunerStatus.ERROR)
             {
-                mIncidents.observe("tuner-error", "critical", "Tuner is in an error state", display, now, 1,
-                    discovered.getErrorMessage(), "USB/device access failure or tuner initialization failure",
-                    "Channels assigned to this tuner cannot receive samples", "Check the tuner error, cable, driver, and power");
+                mIncidents.observe("tuner-error", "critical", "Tuner stopped working", display, now, 1,
+                    discovered.getErrorMessage(), "The USB connection, device access, driver, power, or tuner startup failed",
+                    "Channels assigned to this tuner cannot receive radio data",
+                    "Open the tuner details, then check its error message, USB cable, driver, and power");
             }
 
             if(discovered instanceof DiscoveredUSBTuner usb)
@@ -306,7 +338,7 @@ public final class ReceiverHealthService implements AutoCloseable
             {
                 PolyphaseChannelManager.NativeBufferQueueStatus nativeStatus =
                     polyphase.getNativeBufferQueueStatus();
-                receiverRows.add(row(scope, display + " IQ queue", nativeStatus.queuedMilliseconds(), "ms",
+                receiverRows.add(row(scope, display + " incoming-data backlog", nativeStatus.queuedMilliseconds(), "ms",
                     queueSeverity(nativeStatus.queuedMilliseconds(), nativeStatus.appliedDurationMilliseconds()),
                     "high_water=" + nativeStatus.highWaterMilliseconds() + " ms; capacity=" +
                         nativeStatus.appliedDurationMilliseconds() + " ms; requested=" +
@@ -316,50 +348,51 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(nativeDropDelta > 0)
                 {
-                    mIncidents.observe("receiver-iq-drop", "critical", "Receiver IQ samples were discarded", display,
+                    mIncidents.observe("receiver-iq-drop", "critical", "Radio data was lost before decoding", display,
                         now, nativeStatus.droppedBuffers(), nativeDropDelta + " new buffers; " +
                             nativeStatus.droppedMilliseconds() + " ms discarded since start",
-                        "The tuner sample producer outran the channelizer or its worker was delayed",
-                        "Every channel on this tuner can lose sync or audio", "Check USB integrity, CPU/GC, and receiver queue pressure");
+                        "The tuner delivered data faster than sdrtrunk-vce could process it",
+                        "Every channel using this tuner may lose sync or have missing audio",
+                        "Check the USB connection, computer load, memory-cleanup activity, and incoming radio-data backlog");
                 }
 
                 if(sustained(scope + ":native-pressure",
                     nativeStatus.appliedDurationMilliseconds() > 0 && nativeStatus.queuedMilliseconds() * 4 >=
                         nativeStatus.appliedDurationMilliseconds() * 3, now))
                 {
-                    mIncidents.observe("receiver-queue-pressure", "warning", "Receiver IQ queue is nearly full",
+                    mIncidents.observe("receiver-queue-pressure", "warning", "Receiver processing is falling behind",
                         display, now, nativeStatus.highWaterMilliseconds(), "current=" +
                             nativeStatus.queuedMilliseconds() + " ms; capacity=" +
                             nativeStatus.appliedDurationMilliseconds() + " ms",
-                        "The tuner sample producer is running ahead of receiver processing",
-                        "Continued pressure will discard IQ for every channel on this tuner",
-                        "Check USB delivery, CPU/GC, channelizer load, and active channels");
+                        "Radio data is arriving faster than sdrtrunk-vce can process it",
+                        "If this continues, every channel using this tuner may lose data",
+                        "Check USB delivery, computer load, memory-cleanup activity, channel separation, and the number of active channels");
                 }
 
                 PolyphaseChannelManager.PipelineStatus pipeline = polyphase.getPipelineStatus();
-                channelizerRows.add(row(scope, display + " IFFT queue", pipeline.ifftQueuedBatches(), "batches",
+                channelizerRows.add(row(scope, display + " channel-separation backlog", pipeline.ifftQueuedBatches(), "batches",
                     queueSeverity(pipeline.ifftQueuedBatches(), pipeline.ifftCapacityBatches()),
                     channelizerDetail(pipeline)));
                 long ifftDropDelta = delta(scope + ":ifft-drops", pipeline.ifftDroppedBatches(), now);
 
                 if(ifftDropDelta > 0)
                 {
-                    mIncidents.observe("channelizer-drop", "critical", "Channelizer output batches were discarded",
+                    mIncidents.observe("channelizer-drop", "critical", "Channels lost radio data",
                         display, now, pipeline.ifftDroppedBatches(), ifftDropDelta + " new channelizer batches",
-                        "The channelizer pipeline exhausted a reusable batch or its IFFT queue",
-                        "All extracted channels on this tuner can have missing samples",
-                        "Check CPU/GC and per-channel backlog; reduce avoidable receiver work");
+                        "sdrtrunk-vce ran out of room while separating this tuner's data into channels",
+                        "Every channel using this tuner may have missing radio data",
+                        "Check computer load, memory-cleanup activity, and per-channel backlogs; close unused diagnostic views or reduce active channels");
                 }
 
                 if(sustained(scope + ":ifft-pressure", pipeline.ifftCapacityBatches() > 0 &&
                     pipeline.ifftQueuedBatches() * 4 >= pipeline.ifftCapacityBatches() * 3, now))
                 {
                     mIncidents.observe("channelizer-queue-pressure", "warning",
-                        "Channelizer IFFT queue is nearly full", display, now, pipeline.ifftHighWaterBatches(),
+                        "Channel separation is falling behind", display, now, pipeline.ifftHighWaterBatches(),
                         "current=" + pipeline.ifftQueuedBatches() + "; capacity=" +
-                            pipeline.ifftCapacityBatches(), "The IFFT worker is close to missing its deadline",
-                        "All extracted channels on this tuner are at risk of sample loss",
-                        "Inspect host CPU/GC and reduce receiver or diagnostic load");
+                            pipeline.ifftCapacityBatches(), "Channel separation is close to falling behind",
+                        "Every channel using this tuner may lose data if this continues",
+                        "Check computer load and memory-cleanup activity, then close unused diagnostic views or reduce active channels");
                 }
 
                 long aggregateChannelDrops = pipeline.channelDroppedBatches();
@@ -372,13 +405,13 @@ public final class ReceiverHealthService implements AutoCloseable
                         channel.queuedBatches() * 4 >= channel.capacityBatches() * 3, now))
                     {
                         mIncidents.observe("channel-queue-pressure", "warning",
-                            "A channel output queue is nearly full", display + " · " +
+                            "One channel is falling behind", display + " · " +
                                 formatFrequency(channel.frequencyHz()), now,
                             channel.highWaterBatches(), "current=" + channel.queuedBatches() + "; capacity=" +
                                 channel.capacityBatches() + "; tuner=" + display,
-                            "This channel's extraction or decoder work is not keeping up",
-                            "The affected control or traffic channel can lose sync or audio",
-                            "Inspect host CPU/GC and the work associated with this channel");
+                            "Processing for this channel is not keeping up",
+                            "The listed control or voice channel may lose decoding or audio",
+                            "Check computer load and the work associated with this channel");
                     }
                 }
 
@@ -401,19 +434,19 @@ public final class ReceiverHealthService implements AutoCloseable
 
                 if(channelDropDelta > 0)
                 {
-                    mIncidents.observe("channel-output-drop", "critical", "A channel decoder missed sample batches",
+                    mIncidents.observe("channel-output-drop", "critical", "One or more channels lost radio data",
                         display, now, aggregateChannelDrops, channelDropDelta + " new channel batches",
-                        "One or more channel output workers could not keep up",
-                        "Affected control or traffic channels can lose sync and produce broken audio",
-                        "Inspect the per-channel rows and host load; reduce active channel pressure");
+                        "One or more channel decoders could not keep up",
+                        "Affected control or voice channels may lose decoding or have broken audio",
+                        "Check the per-channel measurements and computer load; reduce the number of active channels if needed");
                 }
             }
             }
             catch(RuntimeException exception)
             {
-                tunerRows.add(row(fallbackScope, "Tuner measurements unavailable", "unavailable", "", "warning",
-                    "A tuner changed lifecycle state while the observer sampled it (" +
-                        exception.getClass().getSimpleName() + "); the next snapshot will retry"));
+                tunerRows.add(row(fallbackScope, "Tuner status is temporarily unavailable", "unavailable", "", "warning",
+                    "The tuner changed state while its status was being checked (" +
+                        exception.getClass().getSimpleName() + "); the next update will try again"));
             }
         }
 
@@ -423,26 +456,26 @@ public final class ReceiverHealthService implements AutoCloseable
         {
             TunerManager.TunerAllocationStatus allocation = mTunerManager.getTunerAllocationStatus();
             long failureDelta = delta("tuner:allocation-failures", allocation.failures(), now);
-            tunerRows.add(row("allocations", "Channel source allocation", allocation.successes(), "successful",
+            tunerRows.add(row("allocations", "Channel start requests", allocation.successes(), "successful",
                 failureDelta > 0 ? "warning" : allocation.failures() > 0 ? "info" : "healthy",
                 "requests=" + allocation.requests() +
                     "; failures=" + allocation.failures()));
 
             if(failureDelta > 0)
             {
-                mIncidents.observe("tuner-allocation-failure", "warning", "A channel could not obtain a tuner source",
+                mIncidents.observe("tuner-allocation-failure", "warning", "No tuner was available for a channel",
                     "Tuner allocation", now, allocation.failures(), failureDelta + " new failed allocation(s)",
-                    "No enabled tuner covered the requested frequency, an in-use tuner could not fit it, Lock Center prevented movement, or allocation raced tuner lifecycle",
-                    "A conventional, control, or granted traffic channel may not start",
-                    "Check enabled tuner frequency spans, Lock Center settings, preferred tuner settings, and active channel count");
+                    "No enabled tuner could receive the requested frequency, an in-use tuner had no room, Lock Center Frequency prevented retuning, or the tuner changed state during the request",
+                    "A conventional channel, control channel, or voice channel may not start",
+                    "Check enabled tuner frequency ranges, Lock Center Frequency, Preferred Tuner settings, and the number of active channels");
             }
         }
 
         measurements.add(section("tuners", "Tuners", tunerRows));
-        measurements.add(section("usb", "USB transfers", usbRows));
-        measurements.add(section("receiver-queues", "Receiver IQ queues", receiverRows));
-        measurements.add(section("channelizer", "Channelizers", channelizerRows));
-        measurements.add(section("channels", "Channel output queues", channelRows));
+        measurements.add(section("usb", "USB tuner connection", usbRows));
+        measurements.add(section("receiver-queues", "Incoming radio data", receiverRows));
+        measurements.add(section("channelizer", "Channel separation", channelizerRows));
+        measurements.add(section("channels", "Per-channel processing", channelRows));
     }
 
     private void collectUsb(long now, String scope, String display, Tuner tuner,
@@ -479,7 +512,7 @@ public final class ReceiverHealthService implements AutoCloseable
             assessment.rateMeasurementWarning() ? "warning" : "healthy";
         String aggregateDetail = Double.isFinite(assessment.twoWindowDeliveryPercent()) ?
             "; two_window_delivery=" + round(assessment.twoWindowDeliveryPercent()) + "%" : "";
-        rows.add(row(scope, display + " delivered", round(usableBytesPerSecond / 1_000_000.0), "MB/s",
+        rows.add(row(scope, display + " radio data rate", round(usableBytesPerSecond / 1_000_000.0), "MB/s",
             rateSeverity, "required=" + round(requiredBytesPerSecond / 1_000_000.0) +
                 " MB/s; callbacks=" + round(callbackBytesPerSecond / 1_000_000.0) + " MB/s; delivery=" +
                 (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" : "warming up") +
@@ -489,33 +522,33 @@ public final class ReceiverHealthService implements AutoCloseable
                 "; expected_bytes=" + assessment.expectedBytesDelta() + "; usable_bytes=" +
                 assessment.usableBytesDelta() + "; streaming=" + usb.streaming() + "; tuner_peak_payload=" +
                 round(tuner.getMaximumUSBBitsPerSecond() / 1_000_000.0) + " Mbit/s"));
-        rows.add(row(scope, display + " transfer status", usb.transferCount(), "transfers",
+        rows.add(row(scope, display + " USB transfer results", usb.transferCount(), "transfers",
             assessment.statusDelta() > 0 ? "warning" : transferStatusCount > 0 ? "info" : "healthy", "completed=" +
                 usb.completedTransferCount() + "; stall=" +
                 usb.stalledTransferCount() + "; timeout=" + usb.timedOutTransferCount() + "; error=" +
                 usb.errorTransferCount() + "; cancelled=" + usb.cancelledTransferCount() + "; unexpected=" +
                 usb.unexpectedStatusTransferCount()));
-        rows.add(row(scope, display + " transfer pool", usb.activeTransferCount(), "active transfers",
+        rows.add(row(scope, display + " active USB transfers", usb.activeTransferCount(), "active transfers",
             usb.retryTransferCount() > 0 ? "warning" : "healthy", "pool=" + usb.transferPoolSize() +
                 "; retrying=" + usb.retryTransferCount() + "; submission_failures=" +
                 usb.submissionFailureCount()));
-        rows.add(row(scope, display + " negotiated USB link", usb.negotiatedDeviceSpeed(), "",
+        rows.add(row(scope, display + " USB connection speed", usb.negotiatedDeviceSpeed(), "",
             "info", "device_speed_code=" + usb.negotiatedDeviceSpeedCode() +
                 "; this is the tuner link speed, not the complete upstream hub/root-controller capacity"));
-        rows.add(row(scope, display + " transfer integrity", usb.shortTransferCount(), "short transfers",
+        rows.add(row(scope, display + " USB data errors", usb.shortTransferCount(), "short transfers",
             assessment.integrityDelta() > 0 ? "critical" : integrityCount > 0 ? "info" : "healthy",
             "zero=" + usb.zeroLengthTransferCount() +
                 "; malformed=" + usb.malformedTransferCount() + "; missing=" + usb.estimatedMissingBytes() +
                 " bytes; unreliable_payload=" + usb.unusableBytes() + " bytes; copy_failures=" +
                 usb.nativeIngressCopyFailures() + "; conversion_failures=" +
                 usb.nativeIngressConversionFailures()));
-        rows.add(row(scope, display + " transfer gap", usb.lastInterTransferGapMilliseconds(), "ms",
+        rows.add(row(scope, display + " USB data pauses", usb.lastInterTransferGapMilliseconds(), "ms",
             assessment.gapDelta() > 0 ? "warning" : usb.longTransferGapCount() > 0 ? "info" : "healthy",
             "worst=" + usb.worstInterTransferGapMilliseconds() + " ms; expected_transfer=" +
                 usb.expectedTransferLengthBytes() + " bytes; long_gaps=" + usb.longTransferGapCount()));
         boolean ingressPressure = usb.nativeIngressCapacity() > 0 &&
             usb.nativeIngressDepth() * 4 >= usb.nativeIngressCapacity() * 3;
-        rows.add(row(scope, display + " receiver handoff", usb.nativeIngressDepth(), "buffers",
+        rows.add(row(scope, display + " radio data waiting after USB", usb.nativeIngressDepth(), "buffers",
             ingressLossDelta > 0 ? "critical" : listenerFailureDelta > 0 || ingressPressure ? "warning" :
                 ingressLossCount > 0 || usb.nativeIngressListenerFailures() > 0 ? "info" : "healthy",
             "capacity=" + usb.nativeIngressCapacity() + "; high_water=" +
@@ -532,27 +565,27 @@ public final class ReceiverHealthService implements AutoCloseable
         if(ingressLossDelta > 0)
         {
             mIncidents.observe("receiver-ingress-drop", "critical",
-                "Receiver discarded samples at the USB handoff", display, now, ingressLossCount,
+                "Radio data was lost entering the receiver", display, now, ingressLossCount,
                 ingressLossDelta + " new dropped native buffers; dropped_samples=" +
                     usb.nativeIngressSaturationDroppedSamples(),
-                "Downstream receiver listeners did not keep up with the bounded USB handoff",
-                "USB transfer processing remained responsive, but live IQ samples were discarded",
-                "Check receiver queue pressure and diagnostic load before increasing any queue limit");
+                "Receiver processing could not accept data from the USB tuner quickly enough",
+                "The USB connection stayed responsive, but live radio data was lost",
+                "Check the incoming radio-data backlog and close unused diagnostic views before changing queue limits");
         }
 
         if(listenerFailureDelta > 0)
         {
             mIncidents.observe("receiver-listener-failure", "warning",
-                "A receiver listener rejected tuner samples", display, now,
+                "A receiver component missed radio data", display, now,
                 usb.nativeIngressListenerFailures(), listenerFailureDelta + " new failed listener delivery attempt(s)",
-                "A receiver or diagnostic consumer threw while accepting a native sample buffer",
-                "The failing consumer can miss a buffer; other registered consumers still receive it",
-                "Inspect the receiver log for the failing listener and its exception");
+                "A receiver or diagnostic component reported an error while accepting radio data",
+                "That component may miss data; other receiver components continue",
+                "Check the application log for the affected component and its error");
         }
 
         if(assessment.hardLoss())
         {
-            mIncidents.observe("usb-sample-loss", "critical", "USB tuner sample delivery is incomplete", display,
+            mIncidents.observe("usb-sample-loss", "critical", "USB tuner data is incomplete", display,
                 now, Math.max(1, integrityCount), assessment.integrityDelta() +
                     " new transfer integrity events; status_events=" + assessment.statusDelta() +
                     "; last_callback_age_ms=" + assessment.lastDeliveryAgeMilliseconds() + "; delivery=" +
@@ -560,16 +593,16 @@ public final class ReceiverHealthService implements AutoCloseable
                     "; missing=" + usb.estimatedMissingBytes() + " bytes; copy_failures=" +
                     usb.nativeIngressCopyFailures() + "; conversion_failures=" +
                     usb.nativeIngressConversionFailures(),
-                "USB bandwidth or device trouble, callback starvation, buffer conversion, host scheduling, cable/power trouble, or a transfer fault",
-                "The tuner can keep showing signal power while every channel loses decode sync",
-                "Separate high-rate tuners across USB root controllers; then check cable, power, and negotiated speed");
+                "The USB connection, cable, power, driver, computer load, or tuner may be interrupting radio data",
+                "Signal strength may still look normal while channels using this tuner lose decoding or have gaps in audio",
+                "If possible, connect high-rate tuners to separate USB controllers; then check the cable, power, and connection speed");
         }
         else if(assessment.rateCritical() || assessment.rateWarning())
         {
             String severity = assessment.rateCritical() ? "critical" : "warning";
-            String title = assessment.gapCorrelated() ? "USB tuner delivery was interrupted" :
-                assessment.rateCritical() ? "USB tuner delivery rate stayed below expected" :
-                    "USB tuner delivery rate dipped below expected";
+            String title = assessment.gapCorrelated() ? "USB tuner data stopped arriving briefly" :
+                assessment.rateCritical() ? "USB tuner data is arriving too slowly" :
+                    "USB tuner data arrived too slowly for a short time";
             String aggregate = Double.isFinite(assessment.twoWindowDeliveryPercent()) ?
                 "; two_window_delivery=" + round(assessment.twoWindowDeliveryPercent()) + "%" : "";
             mIncidents.observe("usb-delivery-rate-low", severity, title, display, now,
@@ -578,31 +611,31 @@ public final class ReceiverHealthService implements AutoCloseable
                     assessment.windowMilliseconds() + "; usable=" + assessment.usableBytesDelta() +
                     " bytes; nominal=" + round(assessment.nominalBytes()) + " bytes; new_long_gaps=" +
                     assessment.gapDelta(),
-                "A USB callback pause, host scheduling delay, or observer-window boundary can lower the measured rate",
-                assessment.rateCritical() ? "Delivery remained low long enough to threaten live decode continuity" :
-                    "One rate window alone does not prove that USB samples were lost",
-                "Correlate with transfer integrity, callback gaps, receiver IQ drops, and the following rate window");
+                "A pause in USB data, high computer load, or the timing of this check can make the measured rate look low",
+                assessment.rateCritical() ? "The slowdown lasted long enough to put live decoding at risk" :
+                    "One brief slowdown does not necessarily mean that radio data was lost",
+                "Compare this with USB data errors, USB pauses, incoming radio-data loss, and the next status update");
         }
         else if(assessment.gapDelta() > 0)
         {
-            mIncidents.observe("usb-transfer-gap", "warning", "USB tuner delivery paused", display, now,
+            mIncidents.observe("usb-transfer-gap", "warning", "USB tuner data paused", display, now,
                 usb.longTransferGapCount(), assessment.gapDelta() + " new gap(s) of at least 200 ms; latest=" +
                     usb.lastInterTransferGapMilliseconds() + " ms; worst=" +
                     usb.worstInterTransferGapMilliseconds() + " ms",
-                "Temporary USB scheduling, host load, or device transfer delay",
-                "A long enough gap can break control-channel sync or clip audio",
-                "Watch for repeated gaps together with receiver or decoder drops");
+                "The USB connection, tuner, or computer briefly delayed radio data",
+                "A long pause can interrupt the control channel or clip call audio",
+                "Watch for repeated pauses together with incoming radio-data or decoder losses");
         }
 
         if(sustained(scope + ":usb-pool-degraded", usb.streaming() && usb.retryTransferCount() > 0, now))
         {
             mIncidents.observe("usb-transfer-pool-degraded", "warning",
-                "USB tuner transfer capacity is degraded", display, now, usb.retryTransferCount(),
+                "USB tuner has reduced transfer capacity", display, now, usb.retryTransferCount(),
                 "active=" + usb.activeTransferCount() + "/" + usb.transferPoolSize() + "; retrying=" +
                     usb.retryTransferCount() + "; submission_failures=" + usb.submissionFailureCount(),
-                "One or more USB transfer buffers cannot be resubmitted",
-                "Reduced transfer concurrency makes sample gaps and control-channel loss more likely",
-                "Check USB bandwidth, hub/root-controller placement, cable, power, and driver stability");
+                "One or more USB transfers could not restart",
+                "With fewer transfers running, data pauses and control-channel loss are more likely",
+                "Check USB capacity, hub or controller placement, cable, power, and driver stability");
         }
     }
 
@@ -654,19 +687,19 @@ public final class ReceiverHealthService implements AutoCloseable
                     !table.siteName().isBlank() ? table.siteName() : "Control channel";
                 String stableScope = scopeLabel + " (" + table.tableId() + ")";
                 long lostForMs = now - continuity.lastValidDecodeMs;
-                mIncidents.observe("control-channel-lock-lost", "critical", "Control-channel lock was lost",
+                mIncidents.observe("control-channel-lock-lost", "critical", "Control channel stopped decoding",
                     stableScope, now, 1, "no valid control frame for " + lostForMs + " ms; last frequency=" +
                         formatFrequency(continuity.frequencyHz) + "; signal=" + continuity.signalDbfs +
                         " dBFS; decoder=" + continuity.decoder,
-                    "RF loss or interference, USB/sample loss, tuner failure, frequency error, or decoder acquisition failure",
-                    "Control messages and traffic grants are not being received",
-                    "Check tuner and USB measurements, then signal level, spectrum, decoder mode, and alternate frequencies");
+                    "The signal may be weak or interrupted, USB or tuner data may be missing, the frequency may be wrong, or the decoder may not have locked on",
+                    "The receiver is not getting control messages or voice-channel assignments",
+                    "Check the tuner and USB status, then the signal level, spectrum, decoder type, and alternate control frequencies");
             }
         }
 
         mControlContinuityByTable.keySet().retainAll(activeTables);
 
-        measurements.add(section("decoders", "Control-channel decode", rows));
+        measurements.add(section("decoders", "Control channel", rows));
     }
 
     private void collectHost(long now, List<Map<String,Object>> measurements)
@@ -688,38 +721,39 @@ public final class ReceiverHealthService implements AutoCloseable
 
         long gcIntervalMs = mLastGcCollectionTimeMs >= 0 ? Math.max(0, gcTimeMs - mLastGcCollectionTimeMs) : 0;
         mLastGcCollectionTimeMs = gcTimeMs;
-        rows.add(row("host", "Process CPU", Double.isFinite(cpuPercent) ? round(cpuPercent) : "n/a", "%",
+        rows.add(row("host", "sdrtrunk-vce processor use", Double.isFinite(cpuPercent) ? round(cpuPercent) : "n/a", "%",
             Double.isFinite(cpuPercent) && cpuPercent >= 90 ? "warning" : "healthy",
-            "percentage of total host CPU capacity"));
-        rows.add(row("host", "JVM heap", round(heapPercent), "%", heapPercent >= 90 ? "critical" :
+            "share of the computer's total processor capacity"));
+        rows.add(row("host", "sdrtrunk-vce memory use", round(heapPercent), "%", heapPercent >= 90 ? "critical" :
             heapPercent >= 80 ? "warning" : "healthy", "used=" + heapUsed + " bytes; max=" + heapMaximum +
                 " bytes"));
-        rows.add(row("host", "Garbage collection", gcIntervalMs, "ms in last sample",
+        rows.add(row("host", "Time spent freeing memory", gcIntervalMs, "ms in last sample",
             gcIntervalMs >= 500 ? "warning" : "healthy", "collections=" + gcCount + "; total_pause=" +
                 gcTimeMs + " ms"));
 
         if(sustained("host:cpu", Double.isFinite(cpuPercent) && cpuPercent >= 90, now))
         {
-            mIncidents.observe("host-cpu-pressure", "warning", "Receiver host CPU is saturated", "Host", now, 1,
-                round(cpuPercent) + "% total CPU", "Too much simultaneous receiver, decoder, diagnostic, or other host work",
-                "Receiver queues may miss their deadlines even before a drop is recorded",
-                "Close expensive diagnostics and inspect active channels and other host processes");
+            mIncidents.observe("host-cpu-pressure", "warning", "Computer is overloaded", "Host", now, 1,
+                round(cpuPercent) + "% total CPU", "Too much receiver, decoder, diagnostic, or other work is running at once",
+                "Radio-data processing may fall behind even before any loss is recorded",
+                "Close unused diagnostic views, review active channels, and check other programs using the processor");
         }
 
         if(sustained("host:heap", heapPercent >= 90, now))
         {
-            mIncidents.observe("heap-pressure", "critical", "JVM heap is nearly full", "Host", now, 1,
-                round(heapPercent) + "% of maximum heap", "Retained backlog, undersized heap, or an unexpected allocation surge",
-                "Long garbage-collection pauses can interrupt USB and decoder processing",
-                "Inspect queue depths and GC; reduce load or adjust the packaged heap limit");
+            mIncidents.observe("heap-pressure", "critical", "sdrtrunk-vce is low on memory", "Host", now, 1,
+                round(heapPercent) + "% of maximum heap",
+                "Waiting output work, too little memory assigned to the app, or an unexpected increase in memory use",
+                "Long memory-cleanup pauses can interrupt USB data and channel decoding",
+                "Check call-output and radio-data backlogs, then reduce load or increase the app's memory limit");
         }
 
         if(gcIntervalMs >= 500)
         {
-            mIncidents.observe("gc-pause", "warning", "Long garbage-collection activity observed", "Host", now,
-                gcTimeMs, gcIntervalMs + " ms in the last sample", "Allocation or heap pressure",
-                "Stop-the-world pauses can cause receiver and channel queues to overflow",
-                "Correlate with heap, receiver queues, and diagnostic usage");
+            mIncidents.observe("gc-pause", "warning", "sdrtrunk-vce spent extra time freeing memory", "Host", now,
+                gcTimeMs, gcIntervalMs + " ms in the last sample", "High memory use or a burst of activity",
+                "This extra work can make incoming radio data and channel processing fall behind",
+                "Compare this with memory use, incoming radio-data backlogs, and open diagnostic views");
         }
 
         if(now - mLastStorageSampleMs >= STORAGE_SAMPLE_INTERVAL_MILLISECONDS)
@@ -728,7 +762,7 @@ public final class ReceiverHealthService implements AutoCloseable
             mStorageSnapshot = storageSnapshot();
         }
 
-        rows.add(row("host", "Application disk free", mStorageSnapshot.freePercent >= 0 ?
+        rows.add(row("host", "Free storage space", mStorageSnapshot.freePercent >= 0 ?
             round(mStorageSnapshot.freePercent) : "n/a", "%", mStorageSnapshot.freePercent >= 0 &&
             mStorageSnapshot.freePercent < 5 ? "critical" : mStorageSnapshot.freePercent >= 0 &&
             mStorageSnapshot.freePercent < 10 ? "warning" : "healthy", mStorageSnapshot.detail));
@@ -736,12 +770,14 @@ public final class ReceiverHealthService implements AutoCloseable
         if(mStorageSnapshot.freePercent >= 0 && mStorageSnapshot.freePercent < 10)
         {
             String severity = mStorageSnapshot.freePercent < 5 ? "critical" : "warning";
-            mIncidents.observe("disk-space", severity, "Receiver storage is running low", "Application data", now,
-                1, round(mStorageSnapshot.freePercent) + "% free", "Recordings, logs, statistics, or other files filled the volume",
-                "Recording and statistics writes can fail", "Free space on the application data volume");
+            mIncidents.observe("disk-space", severity, "Storage space is low", "Application data", now,
+                1, round(mStorageSnapshot.freePercent) + "% free",
+                "Application data or other files are using most of the space on the drive",
+                "Statistics and any recordings stored on this drive may not be saved",
+                "Free up space on the drive that holds the application data");
         }
 
-        measurements.add(section("host", "Host resources", rows));
+        measurements.add(section("host", "Computer resources", rows));
     }
 
     private void collectOutputs(long now, List<Map<String,Object>> measurements)
@@ -755,13 +791,14 @@ public final class ReceiverHealthService implements AutoCloseable
         {
             AudioCallCoordinator.CoordinatorQueueStatus status = coordinator.getQueueStatus();
             long operationDropDelta = observeOutputDrop(now, "audio-coordinator-ingress",
-                "Completed-call handoff events were dropped", status.droppedOperations(),
-                "Call or lifecycle operations could not enter the bounded coordinator queue");
-            long abortedDelta = observeOutputDrop(now, "audio-coordinator-aborted", "Completed calls were aborted",
-                status.abortedCalls(), "The coordinator rejected or abandoned calls after bounded-capacity pressure");
+                "A call could not finish all output steps", status.droppedOperations(),
+                "The app could not queue part of the work needed to finish a call for recording, streaming, or browser audio");
+            long abortedDelta = observeOutputDrop(now, "audio-coordinator-aborted",
+                "Output processing stopped for a call", status.abortedCalls(),
+                "Output processing was overloaded and stopped handling the call");
             String coordinatorSeverity = operationDropDelta + abortedDelta > 0 ? "warning" :
                 queueSeverity(status.ingressDepth(), status.totalIngressCapacity());
-            rows.add(row("audio", "Completed-call coordinator", status.ingressDepth(), "calls",
+            rows.add(row("audio", "Call output work waiting", status.ingressDepth(), "items",
                 coordinatorSeverity, "capacity=" +
                     status.totalIngressCapacity() + "; accepted=" + status.acceptedIngress() + "; dropped=" +
                     status.droppedIngress() + "; lifecycle_dropped=" + status.droppedLifecycle() +
@@ -771,11 +808,11 @@ public final class ReceiverHealthService implements AutoCloseable
                 status.ingressDepth() * 4 >= status.totalIngressCapacity() * 3, now))
             {
                 mIncidents.observe("audio-output-pressure", "warning",
-                    "Completed-call coordinator is nearly full", "Audio output", now, status.ingressDepth(),
+                    "Call outputs are falling behind", "Audio output", now, status.ingressDepth(),
                     "current=" + status.ingressDepth() + "; capacity=" + status.totalIngressCapacity(),
-                    "Recording, streaming, or web completion work is falling behind",
-                    "Completed calls may be dropped, but live decoder processing remains isolated",
-                    "Inspect recording, streaming, web audio, CPU, and disk I/O");
+                    "Recording, streaming, or browser-audio work is falling behind",
+                    "Completed calls may be missed by these outputs, but live receiving continues",
+                    "Check recording, streaming, browser audio, processor use, and disk activity");
             }
         }
 
@@ -784,9 +821,9 @@ public final class ReceiverHealthService implements AutoCloseable
             AudioRecordingManager.RecordingQueueStatus status = recording.getQueueStatus();
             boolean pressure = status.queuedCalls() * 4 >= status.maximumQueuedCalls() * 3 ||
                 status.queuedSourceBytes() * 4 >= status.maximumQueuedSourceBytes() * 3;
-            long droppedDelta = observeOutputDrop(now, "recording", "Call recordings were dropped",
-                status.droppedRecordings(), "The recording queue or source-byte limit was exhausted");
-            rows.add(row("recording", "Recording writer", status.queuedCalls(), "calls",
+            long droppedDelta = observeOutputDrop(now, "recording", "A call recording was not saved",
+                status.droppedRecordings(), "The recording queue was full or had too much audio data waiting");
+            rows.add(row("recording", "Calls waiting to be recorded", status.queuedCalls(), "calls",
                 droppedDelta > 0 || pressure ? "warning" : status.droppedRecordings() > 0 ? "info" : "healthy",
                 "call_capacity=" +
                     status.maximumQueuedCalls() + "; source_bytes=" + status.queuedSourceBytes() + "/" +
@@ -796,12 +833,12 @@ public final class ReceiverHealthService implements AutoCloseable
 
             if(sustained("output:recording-pressure", pressure, now))
             {
-                mIncidents.observe("recording-output-pressure", "warning", "Recording queue is nearly full",
+                mIncidents.observe("recording-output-pressure", "warning", "Saving recordings is falling behind",
                     "Recording", now, status.queuedCalls(), "calls=" + status.queuedCalls() + "/" +
                         status.maximumQueuedCalls() + "; bytes=" + status.queuedSourceBytes() + "/" +
-                        status.maximumQueuedSourceBytes(), "The recording writer or storage is not keeping up",
-                    "Completed-call recordings may be dropped; live decoder processing remains isolated",
-                    "Check disk performance, free space, and recording backlog");
+                        status.maximumQueuedSourceBytes(), "Saving recordings or writing to the drive is not keeping up",
+                    "Some completed-call recordings may not be saved, but live receiving continues",
+                    "Check drive performance, free space, and calls waiting to be recorded");
             }
         }
 
@@ -811,9 +848,9 @@ public final class ReceiverHealthService implements AutoCloseable
             boolean pressure = status.retainedCalls() * 4 >= status.maximumRetainedCalls() * 3 ||
                 status.retainedSourceBytes() * 4 >= status.maximumRetainedSourceBytes() * 3;
             long outputLosses = status.droppedCalls() + status.failedCalls();
-            long outputLossDelta = observeOutputDrop(now, "streaming", "Call streaming output was lost",
-                outputLosses, "The streaming queue filled or an encoder/writer failed");
-            rows.add(row("streaming", "Streaming writer", status.retainedCalls(), "calls",
+            long outputLossDelta = observeOutputDrop(now, "streaming", "A call was not sent to the streaming service",
+                outputLosses, "The streaming queue was full, or encoding or delivery failed");
+            rows.add(row("streaming", "Calls waiting to be streamed", status.retainedCalls(), "calls",
                 outputLossDelta > 0 || pressure ? "warning" : outputLosses > 0 ? "info" : "healthy",
                 "call_capacity=" + status.maximumRetainedCalls() + "; source_bytes=" +
                     status.retainedSourceBytes() + "/" + status.maximumRetainedSourceBytes() + "; accepting=" +
@@ -823,16 +860,17 @@ public final class ReceiverHealthService implements AutoCloseable
 
             if(sustained("output:streaming-pressure", pressure, now))
             {
-                mIncidents.observe("streaming-output-pressure", "warning", "Streaming queue is nearly full",
+                mIncidents.observe("streaming-output-pressure", "warning", "Streaming is falling behind",
                     "Streaming", now, status.retainedCalls(), "calls=" + status.retainedCalls() + "/" +
                         status.maximumRetainedCalls() + "; bytes=" + status.retainedSourceBytes() + "/" +
-                        status.maximumRetainedSourceBytes(), "Streaming encoding or upload work is not keeping up",
-                    "Completed-call streams may be dropped; live decoder processing remains isolated",
-                    "Check streamer health, network performance, CPU, and backlog");
+                        status.maximumRetainedSourceBytes(),
+                    "Encoding or sending calls to the streaming service is not keeping up",
+                    "Some completed calls may not be streamed, but live receiving continues",
+                    "Check the streaming service, network connection, processor use, and calls waiting to be streamed");
             }
         }
 
-        measurements.add(section("outputs", "Audio and output queues", rows));
+        measurements.add(section("outputs", "Recordings, streams, and browser audio", rows));
     }
 
     private void collectSupportingServices(long now, List<Map<String,Object>> measurements)
@@ -843,7 +881,7 @@ public final class ReceiverHealthService implements AutoCloseable
         {
             ReceiverActivityStatus status = mActivityLogService.getStatus();
             delta("observer:statistics", status.recordsDropped(), now);
-            rows.add(row("statistics", "Statistics database writer", status.state().name().toLowerCase(Locale.ROOT),
+            rows.add(row("statistics", "Statistics saving", status.state().name().toLowerCase(Locale.ROOT),
                 "", status.recordsDropped() > 0 ? "info" : "healthy",
                 "written=" + status.recordsWritten() +
                     "; dropped=" + status.recordsDropped() + "; last_success=" + status.lastSuccessfulWriteMs()));
@@ -857,9 +895,9 @@ public final class ReceiverHealthService implements AutoCloseable
         }
         catch(RuntimeException exception)
         {
-            rows.add(row("web", "Web observer measurements", "unavailable", "", "warning",
-                "The web observer changed lifecycle state or did not respond; the next snapshot will retry"));
-            measurements.add(section("supporting", "Supporting and observer services", rows));
+            rows.add(row("web", "Web status details", "unavailable", "", "warning",
+                "The web service changed state or did not respond. The next status update will try again."));
+            measurements.add(section("supporting", "Web and statistics services", rows));
             return;
         }
 
@@ -870,7 +908,7 @@ public final class ReceiverHealthService implements AutoCloseable
         long dropped = number(transport.get("event_drops"));
         long observerTotal = rejected + slow + dropped;
         delta("observer:web", observerTotal, now);
-        rows.add(row("web", "Web live transport", number(transport.get("active_clients")), "clients",
+        rows.add(row("web", "Live web connections", number(transport.get("active_clients")), "clients",
             observerTotal > 0 ? "info" : "healthy", "rejected=" + rejected +
                 "; slow_disconnects=" + slow + "; observer_event_drops=" + dropped));
 
@@ -881,7 +919,7 @@ public final class ReceiverHealthService implements AutoCloseable
         long webObserverDrops = number(webPlayer.get("rejected_feeds"));
         long webAudioDelta = delta("output:web-audio", webAudioLosses, now);
         delta("observer:web-audio", webObserverDrops, now);
-        rows.add(row("web-audio", "Web call audio", number(webPlayer.get("encoder_queue_depth")),
+        rows.add(row("web-audio", "Browser audio", number(webPlayer.get("encoder_queue_depth")),
             "encoder queue", webAudioDelta > 0 ? "warning" : webAudioLosses + webObserverDrops > 0 ?
             "info" : "healthy",
             "published=" + number(webPlayer.get("published_calls")) + "; active_feeds=" +
@@ -892,23 +930,23 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(webAudioDelta > 0)
         {
-            mIncidents.observe("web-audio-drop", "warning", "Web call audio was lost", "Web audio", now,
+            mIncidents.observe("web-audio-drop", "warning", "Browser audio was not available for a call", "Web audio", now,
                 webAudioLosses, webAudioDelta + " new dropped or failed browser calls",
-                "The bounded web audio encoder queue was saturated or browser-call encoding failed",
-                "Browser listeners may miss completed calls; receiver decoding remains protected",
-                "Inspect host CPU, heap, and application logs; reduce browser encoding pressure if capacity drops rise");
+                "The browser-audio queue was full or the call could not be encoded",
+                "Browser listeners may miss the completed call, but live receiving continues",
+                "Check processor and memory use and the application log; reduce browser-audio demand if calls keep being skipped");
         }
 
         Map<String,Object> diagnostics = map(webStatus.get("diagnostics"));
         long channelSessions = number(diagnostics.get("channel_sessions"));
         long tunerSessions = number(diagnostics.get("tuner_sessions"));
-        rows.add(row("diagnostics", "Receiver diagnostics", channelSessions + tunerSessions, "sessions",
+        rows.add(row("diagnostics", "Open diagnostic views", channelSessions + tunerSessions, "sessions",
             "info", "channel_sessions=" + channelSessions + "; channel_producers=" +
                 number(diagnostics.get("channel_producers")) + "; tuner_sessions=" + tunerSessions +
                 "; tuner_producers=" + number(diagnostics.get("tuner_producers")) +
-                "; diagnostic data is expendable and should shed before receiver samples"));
+                "; diagnostic updates may be skipped to protect live receiving"));
 
-        measurements.add(section("supporting", "Supporting and observer services", rows));
+        measurements.add(section("supporting", "Web and statistics services", rows));
     }
 
     private long observeOutputDrop(long now, String code, String title, long count, String cause)
@@ -918,8 +956,8 @@ public final class ReceiverHealthService implements AutoCloseable
         if(dropDelta > 0)
         {
             mIncidents.observe(code, "warning", title, "Audio output", now, count, dropDelta + " new losses",
-                cause, "A recording, stream, or completed-call artifact may be missing or incomplete",
-                "Inspect the corresponding output queue and writer destination");
+                cause, "The call's intended output may be missing or incomplete",
+                "Check the matching output status and its destination");
         }
 
         return dropDelta;
@@ -1033,6 +1071,11 @@ public final class ReceiverHealthService implements AutoCloseable
         return value instanceof Number number ? number.longValue() : 0;
     }
 
+    private static String text(Object value)
+    {
+        return value != null ? String.valueOf(value) : "";
+    }
+
     static Map<String,Object> summarize(List<Map<String,Object>> active)
     {
         long critical = active.stream().filter(incident -> "critical".equals(incident.get("severity"))).count();
@@ -1064,7 +1107,7 @@ public final class ReceiverHealthService implements AutoCloseable
             "measurements", List.of());
     }
 
-    private static ReceiverHealthSnapshotWriter snapshotWriter(UserPreferences userPreferences)
+    private static Path legacySnapshotPath(UserPreferences userPreferences)
     {
         if(userPreferences == null)
         {
@@ -1074,14 +1117,48 @@ public final class ReceiverHealthService implements AutoCloseable
         try
         {
             Path path = userPreferences.getDirectoryPreference().getDirectoryApplicationLog()
-                .resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
-            return new ReceiverHealthSnapshotWriter(path);
+                .resolve(LEGACY_SNAPSHOT_FILE_NAME);
+            return path;
         }
         catch(Exception exception)
         {
-            LOGGER.warn("Receiver health incident report path is unavailable", exception);
+            LOGGER.warn("Legacy receiver health incident report path is unavailable", exception);
             return null;
         }
+    }
+
+    private void removeLegacySnapshotOnce()
+    {
+        if(mLegacySnapshotCleanupAttempted)
+        {
+            return;
+        }
+
+        mLegacySnapshotCleanupAttempted = true;
+        if(mLegacySnapshotPath == null)
+        {
+            return;
+        }
+
+        try
+        {
+            removeLegacySnapshotFiles(mLegacySnapshotPath);
+        }
+        catch(Exception exception)
+        {
+            LOGGER.warn("Legacy receiver health incident report could not be removed", exception);
+        }
+    }
+
+    static void removeLegacySnapshotFiles(Path target) throws java.io.IOException
+    {
+        if(target == null)
+        {
+            return;
+        }
+
+        Files.deleteIfExists(target);
+        Files.deleteIfExists(target.resolveSibling("." + target.getFileName() + ".tmp"));
     }
 
     @Override

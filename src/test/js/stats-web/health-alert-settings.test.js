@@ -3,12 +3,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readStylesheetSource } = require('./stylesheet-source');
 const vm = require('node:vm');
 
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
 const application = fs.readFileSync(applicationPath, 'utf8');
-const stylesheet = fs.readFileSync(path.join(path.dirname(applicationPath), 'app.css'), 'utf8');
+const stylesheet = readStylesheetSource(path.join(path.dirname(applicationPath), 'app.css'));
 
 function functionSource(signature) {
   const start = application.indexOf(signature);
@@ -102,12 +103,12 @@ assert.deepEqual(plain(context.disabledCodesForSave({
 const renderAlerts = functionSource('async function renderAdminAlerts()');
 assert.match(renderAlerts, /receiverHealthAlertGroups\.map/);
 assert.match(renderAlerts, /receiverHealthDisabledCodesForSave\(preferences, controls\)/);
-assert.match(renderAlerts, /Save Alert Settings/);
-assert.match(renderAlerts, /does not stop monitoring/);
+assert.match(renderAlerts, /Save status icon choices/);
+assert.match(renderAlerts, /sdrtrunk-vce still monitors it/);
 
 const renderHealth = functionSource('function renderReceiverHealthPage(host, snapshot, stale, lastError)');
 assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
-  'The Health page must keep the canonical active incident list.');
+  'The Receiver status page must keep the canonical current issue list.');
 assert.match(renderHealth, /receiverHealthAccountSettingNotice\(snapshot\)/);
 
 const updateIndicator = functionSource('  updateIndicator() {');
@@ -117,7 +118,7 @@ assert.match(updateIndicator, /if \(accountAlerts\.critical_count > 0\)/,
   'Stale labels must honor the account alert switches while stale itself remains visible.');
 assert.doesNotMatch(updateIndicator, /if \(summary\?\.severity === 'critical'\)/);
 assert.match(updateIndicator, /className = 'neutral'/);
-assert.match(updateIndicator, /alert\$\{accountAlerts\.disabled_count === 1 \? '' : 's'\} turned off/);
+assert.match(updateIndicator, /hidden from icon/);
 assert.ok(updateIndicator.indexOf('accountAlerts.active_count > 0') <
   updateIndicator.indexOf("className = 'healthy'"),
 'The all-disabled neutral state must be chosen before the healthy fallback.');

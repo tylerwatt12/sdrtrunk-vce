@@ -47,21 +47,6 @@ public class ChannelModel implements Listener<ChannelEvent>
     }
 
     /**
-     * Deletes any aliases that have the alias list name
-     * @param aliasListName to delete
-     */
-    public void deleteAliasList(long aliasListId)
-    {
-        if(aliasListId <= 0)
-        {
-            return;
-        }
-
-        mChannels.stream().filter(channel -> channel.getAliasListId() == aliasListId)
-            .forEach(channel -> channel.setAliasListDefinition(null));
-    }
-
-    /**
      * Observable list of channel configurations managed by this model
      */
     public ObservableList<Channel> channelList()
@@ -209,6 +194,24 @@ public class ChannelModel implements Listener<ChannelEvent>
                     break;
             }
         }
+    }
+
+    /** Replaces one stopped saved channel in place while preserving the operator's table order. */
+    public void replaceChannel(Channel current, Channel replacement)
+    {
+        if(current == null || replacement == null || current.getChannelType() != ChannelType.STANDARD ||
+            replacement.getChannelType() != ChannelType.STANDARD)
+        {
+            throw new IllegalArgumentException("Saved channel replacement requires standard channels");
+        }
+        int index = mChannels.indexOf(current);
+        if(index < 0)
+        {
+            throw new IllegalArgumentException("Channel replacement target is not in the model");
+        }
+        mChannels.set(index, replacement);
+        mChannelEventBroadcaster.broadcast(new ChannelEvent(replacement,
+            Event.NOTIFICATION_CONFIGURATION_CHANGE));
     }
 
     /**

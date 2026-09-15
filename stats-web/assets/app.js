@@ -20,6 +20,9 @@ const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revi
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
   'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
+const ALIAS_TRANSFER_IMPORT_MAX_BYTES = 128 * 1024 * 1024;
+const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
+const ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS = 30_000;
 const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
   'createP25Override', 'wacn', 'system', 'rfss', 'site', 'configuration_id'
 ]);
@@ -42,6 +45,7 @@ const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
 const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
+const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
@@ -57,6 +61,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CALL_AUDIO: 'call-audio',
   RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
+  ADMIN_CHANNELS: 'admin-channels',
   ADMIN_SETTINGS: 'admin-settings',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
@@ -298,6 +303,7 @@ let webCallPlayer = null;
 function node(tag, className, textValue) {
   const element = document.createElement(tag);
   if (className) element.className = className;
+  if (String(tag).toLowerCase() === 'select') element.classList.add('ui-select');
   if (textValue !== undefined && textValue !== null) element.textContent = String(textValue);
   return element;
 }
@@ -652,11 +658,15 @@ function routeDefinitionAllowed(definition) {
   if (definition.access === 'admin-aliases') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
   }
+  if (definition.access === 'admin-channels') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
+  }
   if (definition.access === 'admin') {
     return accessSession.tier === 'ADMIN' &&
       (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
   }
@@ -679,11 +689,17 @@ function accessSessionSignature() {
 function updateNavigationAccess() {
   document.querySelectorAll('.primary-nav a[data-view]').forEach((link) => {
     const locked = !viewAllowed(link.dataset.view);
+    const definition = applicationRoutes?.[link.dataset.view];
+    const administratorOnly = String(definition?.access || '').startsWith('admin');
+    link.hidden = administratorOnly && locked;
     link.classList.toggle('access-locked', locked);
     const lock = link.querySelector('.nav-lock');
     if (lock) lock.hidden = !locked;
     const label = link.querySelector('span')?.textContent?.trim() || routeViewLabel(link.dataset.view);
     link.title = locked ? `${label}: access required` : '';
+  });
+  document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
+    group.hidden = !group.querySelector('a[data-view]:not([hidden])');
   });
 }
 
@@ -1708,12 +1724,14 @@ function closeReadOnlyModal(force = false) {
   active.onClose?.();
   active.backdrop.remove();
   document.body.classList.remove('modal-open');
-  const returnFocus = active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null;
+  const returnFocus = active.returnFocusElement?.isConnected ? active.returnFocusElement :
+    (active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null);
   if (returnFocus instanceof HTMLElement) returnFocus.focus();
   return true;
 }
 
 function openReadOnlyModal(title, body, options = {}) {
+  const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   if (!closeReadOnlyModal()) return null;
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
@@ -1771,7 +1789,7 @@ function openReadOnlyModal(title, body, options = {}) {
   let dirty = false;
   let busy = false;
   modalState = {
-    backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null,
+    backdrop, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
     isBusy: () => busy,
     cleanup: options.cleanup || null,
@@ -2047,6 +2065,7 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   columns.forEach((column) => {
     const className = typeof column.className === 'function' ? column.className(data) : column.className;
     const cell = node('td', className || '');
+    cell.dataset.label = column.fullLabel || column.label || '';
     const title = typeof column.title === 'function' ? column.title(data) : column.title;
     if (title) cell.title = String(title);
     const value = column.render ? column.render(data) : data[column.key];
@@ -2084,6 +2103,38 @@ function setTableColumnWidths(element, columnElements, widths) {
   element.style.minWidth = `${Math.round(total)}px`;
 }
 
+function measureTableColumnContentWidth(element, header, index) {
+  const sourceCells = [header];
+  [...element.tBodies].forEach((tableBody) => [...tableBody.rows].forEach((row) => {
+    const cell = row.cells[index];
+    if (cell && !cell.classList.contains('empty')) sourceCells.push(cell);
+  }));
+  const measurement = element.cloneNode(false);
+  measurement.removeAttribute('id');
+  measurement.removeAttribute('style');
+  measurement.classList.add('table-column-autofit-measurement');
+  const measurementBody = node('tbody');
+  sourceCells.forEach((sourceCell) => {
+    const row = sourceCell.parentElement?.cloneNode(false) || node('tr');
+    row.removeAttribute('id');
+    const cell = sourceCell.cloneNode(true);
+    cell.removeAttribute('id');
+    cell.querySelectorAll('[id]').forEach((candidate) => candidate.removeAttribute('id'));
+    cell.querySelectorAll('.column-resizer').forEach((candidate) => candidate.remove());
+    row.append(cell);
+    measurementBody.append(row);
+  });
+  measurement.append(measurementBody);
+  document.body.append(measurement);
+  let width;
+  try {
+    width = Math.ceil(measurement.getBoundingClientRect().width);
+  } finally {
+    measurement.remove();
+  }
+  return Math.max(TABLE_WIDTH_MINIMUM, Math.min(TABLE_WIDTH_MAXIMUM, width));
+}
+
 function applyPreferredTableWidths(element, columns, columnElements, layout) {
   const widths = columns.map((column, index) => {
     const savedWidth = layout.column_widths[tableColumnKey(column, index)];
@@ -2117,17 +2168,36 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
     const handle = node('span', 'column-resizer');
     handle.setAttribute('role', 'separator');
     handle.setAttribute('aria-orientation', 'vertical');
-    handle.setAttribute('aria-label', `Resize ${columns[index].label} column`);
+    handle.setAttribute('aria-label',
+      `Resize ${columns[index].label} column; double-click or press Enter to fit visible content`);
     handle.setAttribute('aria-valuemin', String(TABLE_WIDTH_MINIMUM));
     handle.setAttribute('aria-valuemax', String(TABLE_WIDTH_MAXIMUM));
     handle.setAttribute('aria-valuenow', String(Math.round(Number(columns[index].width) || TABLE_WIDTH_MINIMUM)));
+    handle.title = 'Drag to resize. Double-click to fit visible content.';
     handle.tabIndex = 0;
     handle.addEventListener('focus', () => handle.setAttribute('aria-valuenow',
       String(Math.round(header.getBoundingClientRect().width))));
-    handle.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const autofitColumn = () => {
+      if (!beginLayoutMutation()) return;
+      const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
+      const fittedWidth = measureTableColumnContentWidth(element, header, index);
+      const widths = resizeColumns(index, startingWidths, fittedWidth - startingWidths[index]);
+      handle.setAttribute('aria-valuenow', String(Math.round(widths[index])));
+      void saveWidths(widths);
+    };
+    handle.addEventListener('dblclick', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      autofitColumn();
+    });
+    handle.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        autofitColumn();
+        return;
+      }
       if (!beginLayoutMutation()) return;
       const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
       const widths = resizeColumns(index, startingWidths, event.key === 'ArrowLeft' ? -10 : 10);
@@ -2152,6 +2222,10 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
         handle.removeEventListener('pointermove', pointerMove);
         handle.removeEventListener('pointerup', pointerUp);
         handle.removeEventListener('pointercancel', pointerUp);
+        if (resizedWidths[index] === startingWidths[index]) {
+          endLayoutMutation();
+          return;
+        }
         void saveWidths(resizedWidths);
       };
       handle.setPointerCapture(event.pointerId);
@@ -2313,7 +2387,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const fullLabel = column.fullLabel || column.label;
     if (fullLabel) header.title = fullLabel;
     const serverSortable = options.serverSort && column.sort;
-    if (serverSortable) {
+    if (typeof column.renderHeader === 'function') {
+      header.append(valueNode(column.renderHeader({ column, tableType, controller: tableController })));
+    } else if (serverSortable) {
       const currentSort = route.get('sort') || options.defaultSort;
       const currentDirection = route.get('direction') || options.defaultDirection || 'desc';
       const direction = currentSort === column.sort && currentDirection === 'desc' ? 'asc' : 'desc';
@@ -2431,7 +2507,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       visibility.dataset.layoutColumnId = id;
       visibility.checked = !layout.hidden_columns.includes(id);
       const visibleCount = layout.column_order.length - layout.hidden_columns.length;
-      visibility.disabled = visibility.checked && visibleCount <= 1;
+      visibility.disabled = (layout.essential_columns || []).includes(id) ||
+        visibility.checked && visibleCount <= 1;
       const displayLabel = byId.get(id).fullLabel || byId.get(id).label || id;
       visibility.setAttribute('aria-label', `Show ${displayLabel} column`);
       visibility.addEventListener('change', () => void replaceForLayout(
@@ -2444,7 +2521,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       earlier.type = 'button';
       earlier.dataset.layoutFocusKey = `earlier:${id}`;
       earlier.dataset.layoutColumnId = id;
-      earlier.disabled = position <= 0;
+      earlier.disabled = position <= 0 ||
+        !tableLayouts.canMove(layout, id, siblings[position - 1]);
       earlier.setAttribute('aria-label', `Move ${label.textContent} left`);
       earlier.addEventListener('click', () => void replaceForLayout(
         tableLayouts.move(layout, id, siblings[position - 1])));
@@ -2452,10 +2530,11 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       later.type = 'button';
       later.dataset.layoutFocusKey = `later:${id}`;
       later.dataset.layoutColumnId = id;
-      later.disabled = position < 0 || position >= siblings.length - 1;
+      const after = siblings[position + 2] || null;
+      later.disabled = position < 0 || position >= siblings.length - 1 ||
+        !tableLayouts.canMove(layout, id, after);
       later.setAttribute('aria-label', `Move ${label.textContent} right`);
       later.addEventListener('click', () => {
-        const after = siblings[position + 2] || null;
         void replaceForLayout(tableLayouts.move(layout, id, after));
       });
       item.append(visibility, label, earlier, later);
@@ -3263,6 +3342,13 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   seenAfter.append(node('span', '', 'Seen after'), lastAfter);
   const seenBefore = node('label', 'alias-filter alias-date-filter');
   seenBefore.append(node('span', '', 'Seen before'), lastBefore);
+  const evidenceFilter = selectFilter('Evidence', 'evidence', [
+    ['', 'Any activity state'],
+    ['observed', 'Observed'],
+    ['covered_no_evidence', 'Assigned, no evidence'],
+    ['not_collected', 'Not being collected'],
+    ['unsupported', 'Unsupported alias type']
+  ]);
   const activeFilters = ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
     'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore'];
   const actions = node('div', 'alias-filter-actions');
@@ -3274,7 +3360,9 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
     }), 'button secondary'));
   }
   form.append(identityGroup, behaviorGroup,
-    filterGroup('Observed activity', 'alias-filter-group-observed', [seenAfter, seenBefore, actions]));
+    filterGroup('Observed activity', 'alias-filter-group-observed', [
+      evidenceFilter, seenAfter, seenBefore, actions
+    ]));
   form.addEventListener('submit', () => {
     [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
       if (!control.value) return;
@@ -3605,9 +3693,10 @@ async function openAliasListDeleteModal(selectedList) {
     if (activeReadOnlyModal !== modal.state) return;
     const body = node('div', 'alias-confirmation');
     body.append(node('p', '', `This permanently deletes ${number(impact.alias_count || 0)} aliases.`));
-    if (Number(impact.channel_count || 0) > 0) {
+    const assignedChannels = Number(impact.channel_count || 0);
+    if (assignedChannels > 0) {
       body.append(node('div', 'logging-notice warning',
-        `${number(impact.channel_count)} configured channels use this list. Their alias-list assignment will be removed.`));
+        `${number(assignedChannels)} configured channels use this list. Reassign them before deleting the list.`));
     }
     const confirm = node('label', 'alias-confirm-check');
     const checkbox = node('input');
@@ -3619,7 +3708,8 @@ async function openAliasListDeleteModal(selectedList) {
     const remove = node('button', 'danger', 'Delete Alias List');
     remove.type = 'button';
     remove.disabled = true;
-    checkbox.addEventListener('change', () => { remove.disabled = !checkbox.checked; });
+    checkbox.disabled = assignedChannels > 0;
+    checkbox.addEventListener('change', () => { remove.disabled = assignedChannels > 0 || !checkbox.checked; });
     cancel.addEventListener('click', modal.close);
     remove.addEventListener('click', async () => {
       remove.disabled = true;
@@ -4723,6 +4813,45 @@ function aliasTransferDetectedFormat(csv) {
   return '';
 }
 
+function aliasTransferExportHref(listId, scope = 'all') {
+  if (scope === 'all') return `/api/v1/admin/alias-lists/${listId}/transfer`;
+  const parameters = new URLSearchParams({ list: String(listId), scope });
+  if (scope === 'filtered') {
+    const filters = new Map([
+      ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['scanListId', 'scan_list_id'],
+      ['record', 'record'], ['stream', 'stream'], ['evidence', 'evidence'], ['use', 'use'],
+      ['lastActivityBefore', 'last_activity_before'], ['lastActivityAfter', 'last_activity_after']
+    ]);
+    filters.forEach((queryKey, routeKey) => {
+      const value = route.get(routeKey);
+      if (value) parameters.set(queryKey, value);
+    });
+    const search = route.get('q');
+    if (search) parameters.set('q', search);
+  }
+  return `/api/v1/exports/alias-list.csv?${parameters}`;
+}
+
+function aliasTransferExportToken() {
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function aliasTransferExportDownloadHref(listId, scope, token) {
+  const href = aliasTransferExportHref(listId, scope);
+  return `${href}${href.includes('?') ? '&' : '?'}export_token=${encodeURIComponent(token)}`;
+}
+
+function aliasTransferExportIsReady(cookieHeader, token) {
+  const marker = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}`;
+  return String(cookieHeader || '').split(';').some((entry) => {
+    const separator = entry.indexOf('=');
+    return separator > 0 && entry.slice(0, separator).trim() === marker &&
+      entry.slice(separator + 1).trim() === '1';
+  });
+}
+
 function openAliasTransferModal(selectedList, action = 'Import') {
   const importing = action === 'Import';
   const listId = aliasListId(selectedList);
@@ -4926,8 +5055,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   review.append(progress.cloneNode(true), destination, summary, filters, rowsHost, pagerHost, confirmLabel,
     aliasModalFooter(reviewBack, node('span', 'alias-modal-footer-spacer'), apply));
   importPanel.append(review);
-  const exportButton = node('button', 'button', 'Download alias list CSV');
-  exportButton.type = 'button';
+  const exportButton = anchor('Download CSV', aliasTransferExportHref(listId), 'button');
   const exportCancel = node('button', 'button secondary', 'Cancel');
   exportCancel.type = 'button';
   const exportSummary = node('div', 'alias-transfer-export-summary');
@@ -4937,9 +5065,36 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     node('p', 'muted', 'The file includes matchers, appearance, recording choices, scan-list memberships, ' +
       'named streaming destinations, and the source Alias List name.'),
     node('p', 'muted', 'Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.'));
-  exportPanel.append(exportSummary,
+  const exportChoices = node('fieldset', 'alias-transfer-mode-choices alias-transfer-export-choices');
+  exportChoices.append(node('legend', '', 'Choose what to export'));
+  [['all', 'All aliases in this Alias List',
+    `Export all ${number(selectedList.alias_count || 0)} aliases, regardless of the current search and filters.`],
+   ['filtered', 'Current filtered results',
+    'Export every matching alias in the current search and filters, not only the visible page.']]
+    .forEach(([value, title, description]) => {
+      const input = node('input'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
+      input.value = value; input.checked = value === 'all';
+      if (value === 'filtered' && !capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) input.disabled = true;
+      const copy = node('span', 'alias-transfer-choice-copy');
+      copy.append(node('strong', '', title), node('span', 'muted',
+        input.disabled ? `${description} CSV export access is required.` : description));
+      const choice = node('label', 'alias-transfer-mode-choice');
+      choice.append(input, copy);
+      input.addEventListener('change', () => {
+        if (input.checked) exportButton.href = aliasTransferExportHref(listId, input.value);
+      });
+      exportChoices.append(choice);
+    });
+  const exportFrame = node('iframe', 'visually-hidden');
+  exportFrame.name = `alias-export-${listId}-${Date.now()}`;
+  exportFrame.title = 'Alias CSV download';
+  exportButton.target = exportFrame.name;
+  exportPanel.append(exportSummary, exportChoices, exportFrame,
     aliasModalFooter(exportCancel, node('span', 'alias-modal-footer-spacer'), exportButton));
   body.insertBefore(errorHost, importing ? importPanel : exportPanel);
+  let exportSequence = 0;
+  let activeExportAttempt = 0;
+  let exportStartPoll = null;
   let request = null;
   let preview = null;
   let selectedFileReady = false;
@@ -4947,6 +5102,11 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   let previewFilter = 'all';
   const modal = openReadOnlyModal(`${importing ? 'Import aliases into' : 'Export aliases from'} ${selectedList.name}`, body, {
     id: `alias-transfer-${listId}`, className: 'alias-editor-modal alias-transfer-modal',
+    cleanup: () => {
+      activeExportAttempt = 0;
+      exportSequence += 1;
+      if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    },
     returnFocusSelector: importing ? '.alias-transfer-import-button' : '.alias-transfer-export-button'
   });
   if (!modal) return;
@@ -4977,7 +5137,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const setBusy = (value) => {
     busy = value; modal.setBusy(value);
     form.querySelectorAll('input,select,button').forEach((control) => { control.disabled = value; });
-    exportButton.disabled = value;
+    exportButton.classList.toggle('disabled', value);
+    exportButton.setAttribute('aria-disabled', value ? 'true' : 'false');
     confirm.disabled = value;
     reviewBack.disabled = value;
     scans.sync(); streams.sync();
@@ -4996,13 +5157,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     fileStatus.textContent = 'VCE alias exports and RadioReference talkgroup CSV files are supported.';
     invalidate();
     if (!selected) return;
-    if (selected.size > 8 * 1024 * 1024) {
-      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file no larger than 8 MiB.'));
+    if (selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
+      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file no larger than 128 MiB.'));
       fileStatus.textContent = `${selected.name} · ${number(selected.size)} bytes`;
       return;
     }
     try {
-      const csv = await selected.text();
+      const csv = await selected.slice(0, 16 * 1024).text();
       if (generation !== fileInspection) return;
       const detected = aliasTransferDetectedFormat(csv);
       if (detected) format.value = detected;
@@ -5046,37 +5207,75 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     invalidate();
     setStep(2);
   });
-  exportButton.addEventListener('click', async () => {
-    if (busy) return;
-    setBusy(true); errorHost.replaceChildren();
+  const finishExportAttempt = (attempt, className, message) => {
+    if (attempt !== activeExportAttempt) return;
+    activeExportAttempt = 0;
+    if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    exportStartPoll = null;
+    exportButton.classList.remove('disabled');
+    exportButton.setAttribute('aria-disabled', 'false');
+    errorHost.replaceChildren(node('div', className, message));
+  };
+  const readyExportAttempt = (attempt, token) => {
+    if (!aliasTransferExportIsReady(document.cookie, token)) return false;
+    document.cookie = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}=; Path=/; Max-Age=0; SameSite=Strict`;
+    finishExportAttempt(attempt, 'status',
+      'Download started. The browser verifies the complete file length and will flag an interrupted download.');
+    return true;
+  };
+  exportFrame.addEventListener('load', () => {
+    const attempt = activeExportAttempt;
+    if (!attempt) return;
     try {
-      const response = await fetch(endpoint, {
-        headers: { Accept: 'text/csv' }, cache: 'no-store', credentials: 'same-origin'
-      });
-      if (!response.ok) {
-        const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
-        const payload = contentType.includes('json') ? await response.json().catch(() => null) :
-          { message: await response.text().catch(() => '') };
-        const failure = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
-        throw new Error(failure?.message || `Export failed (${response.status}).`);
+      const text = exportFrame.contentDocument?.body?.textContent?.trim();
+      if (!text) {
+        if (!readyExportAttempt(attempt, exportFrame.dataset.exportToken || '')) {
+          finishExportAttempt(attempt, 'error',
+            'Alias export could not start. Your sign-in or export access may have changed. Refresh and try again.');
+        }
+        return;
       }
-      const downloadUrl = window.URL.createObjectURL(await response.blob());
-      const download = node('a');
-      download.href = downloadUrl;
-      download.download = `vce-alias-list-${listId}.csv`;
-      download.hidden = true;
-      document.body.append(download);
-      download.click();
-      download.remove();
-      window.setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 0);
-    } catch (error) {
-      const duplicate = /one alias per exact matcher|duplicate matcher/i.test(error.message);
-      errorHost.append(node('div', 'error', duplicate ?
-        'This list contains duplicate exact matchers. Resolve the highlighted identifier conflicts, then export again.' :
-        error.message));
-    } finally {
-      setBusy(false);
+      const payload = JSON.parse(text);
+      const failure = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
+      finishExportAttempt(attempt, 'error', failure?.message || 'Alias export failed.');
+    } catch (_) {
+      finishExportAttempt(attempt, 'error',
+        'Alias export could not start. Your sign-in or export access may have changed. Refresh and try again.');
     }
+  });
+  exportButton.addEventListener('click', (event) => {
+    if (busy || exportButton.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault();
+      return;
+    }
+    let token;
+    try {
+      token = aliasTransferExportToken();
+    } catch (_) {
+      event.preventDefault();
+      errorHost.replaceChildren(node('div', 'error',
+        'This browser could not create a secure export request. Refresh and try again.'));
+      return;
+    }
+    const scope = exportChoices.querySelector('input[name="aliasTransferExportScope"]:checked')?.value || 'all';
+    const attempt = ++exportSequence;
+    activeExportAttempt = attempt;
+    const deadline = Date.now() + ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS;
+    if (exportStartPoll !== null) window.clearInterval(exportStartPoll);
+    document.cookie = `${ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX}${token}=; Path=/; Max-Age=0; SameSite=Strict`;
+    exportFrame.dataset.exportToken = token;
+    exportButton.href = aliasTransferExportDownloadHref(listId, scope, token);
+    exportButton.classList.add('disabled');
+    exportButton.setAttribute('aria-disabled', 'true');
+    errorHost.replaceChildren(node('div', 'status',
+      'Preparing the complete CSV. The browser download will begin after every alias has been validated.'));
+    exportStartPoll = window.setInterval(() => {
+      if (attempt !== activeExportAttempt || readyExportAttempt(attempt, token)) return;
+      if (Date.now() >= deadline) {
+        finishExportAttempt(attempt, 'error',
+          'The export did not start. The server may still be busy, or your sign-in or export access may have changed.');
+      }
+    }, 100);
   });
   const loadPreview = async (offset = 0) => {
     setBusy(true); errorHost.replaceChildren();
@@ -5148,7 +5347,9 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     event.preventDefault(); errorHost.replaceChildren();
     try {
       const selected = file.files?.[0];
-      if(!selected || selected.size > 8 * 1024 * 1024) throw new Error('Select a CSV file no larger than 8 MiB.');
+      if(!selected || selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
+        throw new Error('Select a CSV file no larger than 128 MiB.');
+      }
       setBusy(true);
       request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
         recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
@@ -5709,12 +5910,15 @@ async function renderAliases() {
   const requestedListId = /^[1-9][0-9]*$/.test(route.get('list') || '') ? Number(route.get('list')) : null;
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
+  const activityRequested = ['activity', 'calls', 'evidence'].includes(route.get('aliasTab'));
   const requestedTable = route.get('aliasTab') !== 'discover' &&
     (requestedListId !== null || requestedScanListId !== null);
   clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
   if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
-  const publicListsPromise = apiPage('/api/v1/alias-lists');
-  const adminListsPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
+  const publicListsPromise = apiPage('/api/v1/alias-lists?limit=500');
+  const adminListsPromise = activityRequested ?
+    requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }) :
+    requestJson('/api/v1/admin/alias-lists', { csrf: false });
   const scanListCatalogPromise = requestedScanListId ?
     requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
     Promise.resolve({ revision: null, scan_lists: [] });
@@ -5775,6 +5979,13 @@ async function renderAliases() {
 
   const view = aliasEditorView(selectedList);
   const defaultOrder = aliasEditorDefaultOrder(view);
+  const activityLoading = view === 'activity' ?
+    node('div', 'loading alias-activity-loading', 'Preparing alias activity…') : null;
+  if (activityLoading) {
+    activityLoading.setAttribute('role', 'status');
+    activityLoading.setAttribute('aria-live', 'polite');
+    main.append(activityLoading);
+  }
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
@@ -5784,12 +5995,16 @@ async function renderAliases() {
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
       pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases',
-      pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
+    pageParameters({ ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
         sort: route.get('sort') || defaultOrder.sort,
-        direction: route.get('direction') || defaultOrder.direction }));
-  const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
+        direction: route.get('direction') || defaultOrder.direction }),
+      view === 'activity' ? { timeoutMs: 35_000 } : {});
+  const optionParameters = { alias_list_id: aliasListId(selectedList) };
+  if (view === 'activity') optionParameters.include_group_names = false;
+  const optionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
+  activityLoading?.remove();
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
@@ -6811,7 +7026,7 @@ async function signalHealthSection() {
   const tiles = node('div', 'signal-current-grid');
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
-  const block = section('Signal Health', host, exportCsvLink('signal-health'));
+  const block = section('Signal quality', host, exportCsvLink('signal-health'));
   let currentResponse = null;
   const tileNodes = new Map();
   let loading = false;
@@ -6863,7 +7078,7 @@ async function signalHealthSection() {
     const loadCurrent = async (initial = false, pageOwned = false) => {
       if (loading) return;
       loading = true;
-      if (initial) summary.textContent = 'Loading current signal health…';
+      if (initial) summary.textContent = 'Loading current signal quality…';
       try {
         currentResponse = await apiPage('/api/v1/quality', {
           range: '1h', points: 60, include_history: false
@@ -6871,7 +7086,7 @@ async function signalHealthSection() {
         renderCurrent();
       } catch (error) {
         if (pageOwned) rethrowPageHandlingError(error);
-        summary.textContent = currentResponse ? `Signal health update failed: ${error.message}` : '';
+        summary.textContent = currentResponse ? `Signal quality update failed: ${error.message}` : '';
         if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
       } finally {
         loading = false;
@@ -7182,6 +7397,38 @@ async function requestJson(path, options = {}) {
   return result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
 }
 
+function waitForRequestRetry(delayMilliseconds, signal) {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const complete = () => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    const timeout = window.setTimeout(complete, delayMilliseconds);
+    const abort = () => {
+      window.clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function requestChannelConfigurationJson(path, options = {}) {
+  const signal = options.signal || (options.page === false ? null : activeRenderController?.signal);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await requestJson(path, { ...options, signal });
+    } catch (error) {
+      const delay = CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS[attempt];
+      if (error?.code !== 'configuration_loading' || delay === undefined) throw error;
+      await waitForRequestRetry(delay, signal);
+    }
+  }
+}
+
 async function api(path, parameters = {}, options = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
@@ -7330,11 +7577,11 @@ class ReceiverHealthController {
       this.snapshot = normalizeReceiverHealthSnapshot(response);
       this.stale = this.snapshot.generated_at_ms <= 0 ||
         Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
-      this.lastError = this.stale ? 'Receiver health hasn’t updated recently.' : '';
+      this.lastError = this.stale ? 'Receiver status has not updated recently.' : '';
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;
       this.stale = true;
-      this.lastError = 'Receiver health is temporarily unavailable. Try Refresh now.';
+      this.lastError = 'Receiver status is unavailable right now. Select Check again to try again.';
     } finally {
       if (this.requestController === controller) this.requestController = null;
       if (this.desktopEnabled()) {
@@ -7369,51 +7616,51 @@ class ReceiverHealthController {
     const summary = this.snapshot?.summary;
     const accountAlerts = receiverHealthAccountAlertSummary(this.snapshot, activeUserPreferences());
     let className = 'loading';
-    let label = 'Loading';
-    let detail = 'Receiver health status is loading.';
+    let label = 'Checking';
+    let detail = 'Loading receiver status.';
     if (this.stale) {
       className = 'stale';
       if (accountAlerts.critical_count > 0) {
         const count = accountAlerts.critical_count || accountAlerts.enabled_count;
-        label = `Update delayed · Critical ${number(count)}`;
+        label = `Status out of date · Last report: Action needed (${number(count)})`;
       } else if (accountAlerts.warning_count > 0) {
         const count = accountAlerts.warning_count || accountAlerts.enabled_count;
-        label = `Update delayed · Warning ${number(count)}`;
+        label = `Status out of date · Last report: Check soon (${number(count)})`;
       } else {
-        label = 'Update delayed';
+        label = 'Status out of date';
       }
-      detail = this.lastError || 'Receiver health hasn’t updated recently.';
+      detail = this.lastError || 'Receiver status has not updated recently.';
     } else if (accountAlerts.critical_count > 0) {
       className = 'critical';
       const count = accountAlerts.critical_count || accountAlerts.enabled_count;
-      label = `Critical ${number(count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
-        `${number(accountAlerts.critical_count)} critical.`;
+      label = `Action needed · ${number(count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current issue${accountAlerts.enabled_count === 1 ? '' : 's'}; ` +
+        `Action needed: ${number(accountAlerts.critical_count)}.`;
     } else if (accountAlerts.warning_count > 0) {
       className = 'warning';
       const count = accountAlerts.warning_count || accountAlerts.enabled_count;
-      label = `Warning ${number(count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active alert${accountAlerts.enabled_count === 1 ? '' : 's'}, ` +
-        `${number(accountAlerts.warning_count)} warning.`;
+      label = `Check soon · ${number(count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current issue${accountAlerts.enabled_count === 1 ? '' : 's'}; ` +
+        `Check soon: ${number(accountAlerts.warning_count)}.`;
     } else if (accountAlerts.enabled_count > 0) {
       className = 'warning';
-      label = `Alert ${number(accountAlerts.enabled_count)}`;
-      detail = `${number(accountAlerts.enabled_count)} active receiver health alert` +
+      label = `Current issues · ${number(accountAlerts.enabled_count)}`;
+      detail = `${number(accountAlerts.enabled_count)} current receiver issue` +
         `${accountAlerts.enabled_count === 1 ? '' : 's'}.`;
     } else if (accountAlerts.active_count > 0) {
       className = 'neutral';
-      label = `${number(accountAlerts.disabled_count)} alert${accountAlerts.disabled_count === 1 ? '' : 's'} turned off`;
-      detail = `All ${number(accountAlerts.disabled_count)} active receiver health alert` +
-        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account. ` +
+      label = `${number(accountAlerts.disabled_count)} issue${accountAlerts.disabled_count === 1 ? '' : 's'} hidden from icon`;
+      detail = `All ${number(accountAlerts.disabled_count)} current receiver issue` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} hidden from this account's status icon. ` +
         'Monitoring and history continue.';
     } else if (summary) {
       className = 'healthy';
-      label = 'Healthy';
-      detail = 'No active receiver health incidents.';
+      label = 'Normal';
+      detail = 'No receiver issues need attention.';
     }
     if (!this.stale && accountAlerts.disabled_count > 0 && accountAlerts.enabled_count > 0) {
-      detail += ` ${number(accountAlerts.disabled_count)} alert` +
-        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} turned off for this account.`;
+      detail += ` ${number(accountAlerts.disabled_count)} issue` +
+        `${accountAlerts.disabled_count === 1 ? ' is' : 's are'} hidden from this account's status icon.`;
     }
     if (this.snapshot?.generated_at_ms) {
       detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
@@ -7424,7 +7671,7 @@ class ReceiverHealthController {
     });
     indicator.classList.add(`receiver-health-${className}`);
     indicator.title = detail;
-    indicator.setAttribute('aria-label', `Health: ${label}. ${detail}`);
+    indicator.setAttribute('aria-label', `Receiver status: ${label}. ${detail}`);
   }
 }
 
@@ -9751,7 +9998,7 @@ async function renderDashboard() {
     pageHeader('Dashboard', dashboard.last_seen_ms ?
       fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
     tabs([
-      { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
+      { id: 'health', label: 'Signal quality', href: href('dashboard', { tab: 'health' }) },
       { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
       { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
     ], tab))) return;
@@ -14179,20 +14426,7 @@ function radioSystemsDirectoryContent(data) {
 
 async function renderRadioSystems() {
   const renderContext = captureRenderContext();
-  const directory = createAsyncSection('Radio Systems', {
-    loadingMessage: 'Loading radio systems and channels…',
-    errorMessage: 'The radio system directory could not be loaded.'
-  });
-  if (!beginPage(renderContext,
-    pageHeader('Radio Systems',
-      'Browse trunked radio systems and the saved receiver channels that receive them'),
-    searchBar('Search protocol, system, channel, or name'), directory.element)) return;
-  await directory.load(
-    () => radioSystemsDirectory.load(apiPage, pageParameters()),
-    (data) => radioSystemsDirectoryContent({ ...data, tableOptions: {
-      layoutMenuHost: directory.titleActions, controller: directory.tableController
-    } }),
-    renderContext);
+  await renderModernChannelCatalog(renderContext, false);
 }
 
 async function renderRadioSystem() {
@@ -14535,7 +14769,7 @@ function channelLocationIdentity(channel) {
 }
 
 function p25DecoderMode(value) {
-  return ({ C4FM: 'Normal (C4FM)', CQPSK: 'Simulcast (LSM / CQPSK)' })[
+  return ({ C4FM: 'Normal (C4FM)', CQPSK: 'Simulcast (CQPSK)' })[
     String(value || '').trim().toUpperCase()] || availableValue(value);
 }
 
@@ -14870,7 +15104,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     );
-    const bandSource = badge(overrideActive ? 'P25 Override' : 'OTA Bandplan',
+    const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
       overrideActive ? 'state-current' : '');
     content.append(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
       'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource));
@@ -15314,24 +15548,1108 @@ function channelDirectoryColumns() {
   ];
 }
 
-async function renderChannels() {
-  const renderContext = captureRenderContext();
-  const directory = createAsyncSection('Channels', {
-    action: exportCsvLink('channels'),
-    loadingMessage: 'Loading channels…',
-    errorMessage: 'The channel directory could not be loaded.'
+function canManageChannels() {
+  return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
+}
+
+function channelAdminFrequencyList(values) {
+  return (values || []).map((value) => frequency(value)).filter(Boolean).join(', ');
+}
+
+function uiActionButton(label, iconId, action, className = 'ui-button ui-button-secondary') {
+  const button = node('button', className);
+  button.type = 'button';
+  if (iconId) button.append(iconGlyph(iconId));
+  if (label) button.append(node('span', '', label));
+  button.addEventListener('click', action);
+  return button;
+}
+
+function channelAdminButton(label, action, className = 'ui-button ui-button-secondary', iconId = null) {
+  return uiActionButton(label, iconId, action, className);
+}
+
+function uiSelect(values, selectedValue = '', includeBlank = false, blankLabel = 'None') {
+  const select = node('select', 'ui-select');
+  if (includeBlank) {
+    const blank = node('option', '', blankLabel);
+    blank.value = '';
+    select.append(blank);
+  }
+  values.forEach((entry) => {
+    const value = typeof entry === 'object' ? entry.value : entry;
+    const label = typeof entry === 'object' ? entry.label : entry;
+    const option = node('option', '', label);
+    option.value = String(value ?? '');
+    option.selected = String(value ?? '') === String(selectedValue ?? '');
+    select.append(option);
   });
-  if (!beginPage(renderContext,
-    pageHeader('Channels', 'Every configured trunked and conventional receiver channel'),
-    searchBar('Search name, system, site, protocol, or frequency'), directory.element)) return;
-  await directory.load(
-    () => apiPage('/api/v1/channels', pageParameters()),
-    (page) => pagedTableContent(page, channelDirectoryColumns(), 'channels', {
-      itemLabel: 'Channels', tableOptions: {
-        layoutMenuHost: directory.titleActions, controller: directory.tableController
+  return select;
+}
+
+function uiSelectFrame(select, className = '') {
+  const frame = node('span', `ui-select-frame${className ? ` ${className}` : ''}`);
+  frame.append(select, iconGlyph('icon-chevron-down'));
+  return frame;
+}
+
+function uiToggle(checked, accessibleLabel = '') {
+  const wrapper = node('label', 'ui-toggle');
+  const input = node('input');
+  input.type = 'checkbox';
+  input.checked = Boolean(checked);
+  if (accessibleLabel) input.setAttribute('aria-label', accessibleLabel);
+  const track = node('span', 'ui-toggle-track');
+  track.append(node('span', 'ui-toggle-thumb'));
+  const state = node('span', 'ui-toggle-state', input.checked ? 'On' : 'Off');
+  input.addEventListener('change', () => setUiToggle(input, input.checked));
+  wrapper.append(input, track, state);
+  return wrapper;
+}
+
+function setUiToggle(input, checked) {
+  input.checked = Boolean(checked);
+  const state = input.closest('.ui-toggle')?.querySelector('.ui-toggle-state');
+  if (state) state.textContent = input.checked ? 'On' : 'Off';
+}
+
+function uiPill(label, tone = 'neutral', iconId = null) {
+  const value = node('span', `ui-pill ui-pill-${tone}`);
+  if (iconId) value.append(iconGlyph(iconId));
+  value.append(node('span', '', label));
+  return value;
+}
+
+function uiSegmentedControl(entries, initialValue, onChange) {
+  const group = node('div', 'ui-segmented');
+  group.setAttribute('role', 'group');
+  group.dataset.value = initialValue;
+  entries.forEach((entry) => {
+    const button = node('button', 'ui-segmented-option', entry.label);
+    button.type = 'button';
+    button.dataset.value = entry.value;
+    button.classList.toggle('active', entry.value === initialValue);
+    button.setAttribute('aria-pressed', String(entry.value === initialValue));
+    button.addEventListener('click', () => {
+      group.dataset.value = entry.value;
+      [...group.children].forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-pressed', String(active));
+      });
+      onChange?.(entry.value);
+    });
+    group.append(button);
+  });
+  return group;
+}
+
+function channelSummaryCards(catalog, editable) {
+  const channels = catalog.channels || [];
+  const wrapper = node('div', 'channel-summary-grid');
+  const cards = [
+    ['Configured channels', channels.length, 'icon-channel', 'accent'],
+    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-live', 'success']
+  ];
+  cards.push(editable ?
+    ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue'] :
+    ['Stopped', channels.filter((row) => row.processing_state !== 'RUNNING').length, 'icon-stop', 'neutral']);
+  cards.forEach(([label, value, icon, tone]) => {
+    const card = node('div', `ui-summary-card ui-summary-${tone}`);
+    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
+    wrapper.append(card);
+  });
+  return wrapper;
+}
+
+async function channelAdminMutation(path, options, statusHost) {
+  try {
+    statusHost?.replaceChildren(node('span', 'muted', 'Working…'));
+    const result = await requestJson(path, { timeoutMs: 30_000, ...options });
+    const failed = (result?.results || []).filter((entry) => entry.success !== true);
+    if (failed.length) throw new Error(failed.map((entry) => entry.message ||
+      `${entry.configuration_id} could not be changed`).join(' '));
+    statusHost?.replaceChildren();
+    await renderChannelSetup();
+    return result;
+  } catch (error) {
+    statusHost?.replaceChildren(node('span', 'error', error.message));
+    throw error;
+  }
+}
+
+function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader) {
+  const selectedChanged = (id, checked) => {
+    if (checked) selected.add(id); else selected.delete(id);
+    selectionChanged?.();
+  };
+  const columns = [];
+  if (editable) columns.push(
+    { id: 'select', label: 'Select', className: 'channel-select-cell', width: 48,
+      essential: true, fixed: true, renderHeader: renderSelectionHeader, render: (row) => {
+      const checkbox = node('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'ui-selection-check';
+      checkbox.checked = selected.has(row.configuration_id);
+      checkbox.setAttribute('aria-label', `Select ${row.name || 'channel'}`);
+      checkbox.addEventListener('change', () => {
+        selectedChanged(row.configuration_id, checkbox.checked);
+        checkbox.closest('tr')?.classList.toggle('selected', checkbox.checked);
+      });
+      return checkbox;
+    } });
+  columns.push(
+    { id: 'name', label: 'Name', render: (row) => {
+      const actions = node('div', 'channel-name-actions');
+      if (editable && row.editable !== false) {
+        const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
+        edit.type = 'button';
+        edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
+        actions.append(edit);
+      } else {
+        actions.append(anchor(row.name || 'Unnamed channel',
+          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link'));
       }
-    }),
-    renderContext);
+      actions.append(node('span', 'channel-row-context',
+        [row.system, row.site].filter(Boolean).join(' · ') || 'No system or site'));
+      if (row.editable === false) {
+        const locked = uiPill('Compatibility', 'warning', 'icon-lock');
+        locked.title = row.restriction_message || 'This configuration is read-only on the web';
+        actions.append(locked);
+      }
+      return actions;
+    }, sortValue: (row) => row.name || '' },
+    { id: 'frequency', label: 'Frequencies (MHz)', render: (row) =>
+      channelAdminFrequencyList(row.frequencies_hz), className: 'channel-frequency-cell',
+      sortValue: (row) => Number(row.frequencies_hz?.[0] || 0) },
+    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol_label || 'Unknown', 'protocol'),
+      sortValue: (row) => row.protocol_label || '' },
+    { id: 'status', label: 'Status', render: (row) => uiPill(
+      row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+      row.processing_state === 'RUNNING' ? 'success' : 'neutral',
+      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') }
+  );
+  if (editable) columns.push(
+    { id: 'auto-start', label: 'Startup order', className: 'numeric', render: (row) => {
+      if (!editable) return node('span', 'channel-order-readonly',
+        row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
+      const controls = node('div', 'channel-order-controls');
+      const earlier = uiActionButton('', 'icon-arrow-up', async () => {
+        earlier.disabled = later.disabled = true;
+        try {
+          await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
+            { method: 'POST', body: { revision: state.revision, direction: 'EARLIER' } }, statusHost);
+        } catch (_) { earlier.disabled = later.disabled = false; }
+      }, 'ui-button ui-icon-button');
+      earlier.title = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
+      earlier.setAttribute('aria-label', earlier.title);
+      const order = node('span', 'channel-order-number', row.auto_start_order == null ? '—' : row.auto_start_order);
+      const later = uiActionButton('', 'icon-arrow-down', async () => {
+        if (row.auto_start_order == null) return;
+        later.disabled = earlier.disabled = true;
+        try {
+          await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
+            { method: 'POST', body: { revision: state.revision, direction: 'LATER' } }, statusHost);
+        } catch (_) { later.disabled = earlier.disabled = false; }
+      }, 'ui-button ui-icon-button');
+      later.disabled = row.auto_start_order == null;
+      later.title = 'Start later; moving the last channel later disables auto start';
+      later.setAttribute('aria-label', later.title);
+      controls.append(earlier, order, later);
+      return controls;
+    }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order }
+  );
+  columns.push(
+    { id: 'alias-list', label: 'Alias List', key: 'alias_list_name',
+      sortValue: (row) => row.alias_list_name || '' }
+  );
+  return columns;
+}
+
+async function renderModernChannelCatalog(renderContext, editable) {
+  const loading = createAsyncSection(editable ? 'Channel Configuration' : 'Receiver Channels', {
+    loadingMessage: editable ? 'Loading channel configuration…' : 'Loading receiver channels…',
+    errorMessage: editable ? 'Channel configuration could not be loaded.' :
+      'The radio directory could not be loaded.'
+  });
+  if (!beginPage(renderContext, pageHeader(editable ? 'Channel Setup' : 'Radio Directory', editable ?
+    'Create, configure, order, start, and stop receiver channels' :
+    'Browse every configured trunked and conventional channel and see what is running'), loading.element)) return;
+  await loading.load(async () => {
+    const catalogPath = editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
+    const [catalog, protocols, options] = await Promise.all([
+      requestChannelConfigurationJson(catalogPath, { csrf: false }),
+      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/protocols', { csrf: false }) :
+        Promise.resolve(null),
+      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/options', { csrf: false }) :
+        Promise.resolve(null)
+    ]);
+    return { catalog, protocols, options };
+  }, ({ catalog, protocols, options }) => {
+    const selected = new Set();
+    const state = { revision: Number(catalog.revision), catalog, visibleRows: [] };
+    const wrapper = node('div', 'channel-admin-catalog ui-catalog data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
+    const summaryHost = node('div');
+    summaryHost.append(channelSummaryCards(catalog, editable));
+    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    searchWrap.append(iconGlyph('icon-search'));
+    const search = node('input', 'ui-input');
+    search.type = 'search';
+    search.placeholder = 'Search channels, systems, protocols, frequencies, or alias lists';
+    search.setAttribute('aria-label', search.placeholder);
+    searchWrap.append(search);
+    let activeView = 'all';
+    let draw = () => {};
+    const filterEntries = [
+      { value: 'all', label: 'All' },
+      { value: 'trunked', label: 'Trunked' },
+      { value: 'conventional', label: 'Conventional' },
+      { value: 'running', label: 'Running' },
+      { value: 'stopped', label: 'Stopped' }
+    ];
+    if (editable) filterEntries.push({ value: 'auto-start', label: 'Auto-start' });
+    const filters = uiSegmentedControl(filterEntries, activeView,
+      (value) => { activeView = value; draw(); });
+    filters.setAttribute('aria-label', 'Filter channels');
+    const statusHost = node('div', 'channel-admin-status');
+    statusHost.setAttribute('role', 'status');
+    statusHost.setAttribute('aria-live', 'polite');
+    if (editable) toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
+      openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
+    const exportLink = exportCsvLink('channels');
+    exportLink.classList.add('ui-button', 'ui-button-secondary');
+    exportLink.prepend(iconGlyph('icon-download'));
+    const refresh = uiActionButton('', 'icon-refresh', () =>
+      editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
+    refresh.setAttribute('aria-label', 'Refresh channels');
+    refresh.title = 'Refresh channels';
+    toolbar.append(searchWrap, filters, exportLink, refresh, statusHost);
+
+    const tableHost = node('div', 'channel-catalog-table-host');
+    const tableController = {};
+    const selectedBar = node('div', 'channel-selection-bar');
+    selectedBar.hidden = true;
+    const selectedSummary = node('strong');
+    const hiddenSummary = node('span', 'muted');
+    let enableAutoStart = null;
+    let disableAutoStart = null;
+    let selectAll = null;
+    const updateSelection = () => {
+      if (!editable) return;
+      const visibleIds = new Set(state.visibleRows.map((row) => row.configuration_id));
+      const visibleSelected = [...selected].filter((id) => visibleIds.has(id)).length;
+      const hiddenSelected = selected.size - visibleSelected;
+      selectedBar.hidden = selected.size === 0;
+      selectedSummary.textContent = `${selected.size} selected`;
+      hiddenSummary.textContent = hiddenSelected ? `${hiddenSelected} outside this filter` : '';
+      const selectedRows = (state.catalog.channels || []).filter((row) => selected.has(row.configuration_id));
+      if (enableAutoStart) enableAutoStart.disabled = selectedRows.length > 0 &&
+        selectedRows.every((row) => row.auto_start_order != null);
+      if (disableAutoStart) disableAutoStart.disabled = selectedRows.length > 0 &&
+        selectedRows.every((row) => row.auto_start_order == null);
+      if (selectAll) {
+        selectAll.checked = state.visibleRows.length > 0 && visibleSelected === state.visibleRows.length;
+        selectAll.indeterminate = visibleSelected > 0 && visibleSelected < state.visibleRows.length;
+      }
+    };
+    const renderSelectionHeader = () => {
+      const checkbox = node('input', 'ui-selection-check');
+      checkbox.type = 'checkbox';
+      checkbox.setAttribute('aria-label', 'Select all visible channels');
+      checkbox.addEventListener('change', () => {
+        state.visibleRows.forEach((row) => checkbox.checked ? selected.add(row.configuration_id) :
+          selected.delete(row.configuration_id));
+        tableHost.querySelectorAll('tbody .ui-selection-check').forEach((rowCheckbox) => {
+          rowCheckbox.checked = checkbox.checked;
+        });
+        tableHost.querySelectorAll('tbody tr').forEach((row) => row.classList.toggle('selected', checkbox.checked));
+        updateSelection();
+      });
+      selectAll = checkbox;
+      updateSelection();
+      return checkbox;
+    };
+    const clearSelection = uiActionButton('Clear', null, () => {
+      selected.clear();
+      tableHost.querySelectorAll('.ui-selection-check').forEach((checkbox) => { checkbox.checked = false; });
+      tableHost.querySelectorAll('tr.selected').forEach((row) => row.classList.remove('selected'));
+      updateSelection();
+    });
+    const action = (label, icon, actionName, confirmMessage = null, danger = false) =>
+      uiActionButton(label, icon, async () => {
+        const ids = [...selected];
+        if (!ids.length) return;
+        if (confirmMessage && !window.confirm(confirmMessage.replace('{count}', String(ids.length)))) return;
+        try {
+          await channelAdminMutation('/api/v1/admin/channels/actions', {
+            method: 'POST', body: { revision: state.revision, action: actionName, configuration_ids: ids }
+          }, statusHost);
+        } catch (_) { /* The inline error remains actionable. */ }
+      }, `ui-button ${danger ? 'ui-button-danger' : 'ui-button-secondary'}`);
+    if (editable) {
+      enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
+      disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
+      selectedBar.append(selectedSummary, hiddenSummary,
+        action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
+        enableAutoStart, disableAutoStart, action('Clone', 'icon-copy', 'CLONE'),
+        action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
+    }
+
+    const filteredRows = () => {
+      const term = search.value.trim().toLowerCase();
+      return (state.catalog.channels || []).filter((row) =>
+        (activeView === 'all' || activeView === 'running' && row.processing_state === 'RUNNING' ||
+          activeView === 'stopped' && row.processing_state !== 'RUNNING' ||
+          activeView === 'trunked' && String(row.channel_kind).toUpperCase() === 'TRUNKED' ||
+          activeView === 'conventional' && String(row.channel_kind).toUpperCase() === 'CONVENTIONAL' ||
+          activeView === 'auto-start' && row.auto_start_order != null) &&
+        (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
+          channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
+            String(value || '').toLowerCase().includes(term))));
+    };
+    draw = () => {
+      state.visibleRows = filteredRows();
+      tableController.reconcileRows?.(state.visibleRows);
+      updateSelection();
+    };
+    search.addEventListener('input', draw);
+    state.visibleRows = filteredRows();
+    const channelTable = table(state.visibleRows,
+      channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader),
+      'No channels match this view', {
+        type: editable ? 'channel-catalog-admin-v1' : 'channel-catalog-readonly-v1',
+        clientSort: true, controller: tableController,
+        rowKey: (row) => row.configuration_id,
+        rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
+        tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
+        layoutMenuHost: toolbar
+      });
+    tableHost.append(channelTable);
+    wrapper.append(summaryHost, toolbar, editable ? selectedBar : node('span'), tableHost);
+    updateSelection();
+
+    let refreshInFlight = false;
+    pageInterval(async () => {
+      if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
+      refreshInFlight = true;
+      try {
+        const refreshed = await requestJson(editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog',
+          { csrf: false });
+        state.revision = Number(refreshed.revision);
+        state.catalog = refreshed;
+        const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
+        [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
+        summaryHost.replaceChildren(channelSummaryCards(refreshed, editable));
+        draw();
+      } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
+      finally { refreshInFlight = false; }
+    }, 5_000);
+    const requestedChannel = editable ? route.get('channel') : null;
+    if (requestedChannel && state.catalog.channels?.some((row) =>
+      row.configuration_id === requestedChannel && row.editable !== false)) {
+      route.delete('channel');
+      window.history.replaceState({}, '', currentHref());
+      queueMicrotask(() => openChannelEditorModal('edit', requestedChannel, { protocols, options }));
+    }
+    return wrapper;
+  }, renderContext);
+}
+
+function channelValueAt(value, path) {
+  return String(path || '').split('.').reduce((current, key) => current?.[key], value);
+}
+
+function channelMHz(value) {
+  return value == null || value === '' ? '' : String(Number(value) / 1_000_000);
+}
+
+function channelFrequencyLines(values) {
+  return (values || []).map(channelMHz).join('\n');
+}
+
+function channelFieldOptions(field, profile, options) {
+  if (Array.isArray(field.options)) return field.options;
+  if (field.path === 'alias_list_id') return (options.alias_lists || [])
+    .filter((entry) => entry.family === profile.alias_family)
+    .map((entry) => ({ value: entry.id, label: entry.name }));
+  if (field.path === 'source.preferred_tuner') return (options.tuners || [])
+    .map((value) => ({ value, label: value }));
+  const outputLabels = {
+    CALL_EVENT: 'Call events', DECODED_MESSAGE: 'Decoded messages',
+    TRAFFIC_CALL_EVENT: 'Traffic-channel call events', TRAFFIC_DECODED_MESSAGE: 'Traffic decoded messages',
+    BASEBAND: 'Baseband I/Q', DEMODULATED_BIT_STREAM: 'Demodulated bit stream',
+    MBE_CALL_SEQUENCE: 'MBE call sequence', TRAFFIC_BASEBAND: 'Traffic baseband I/Q',
+    TRAFFIC_DEMODULATED_BIT_STREAM: 'Traffic demodulated bit stream',
+    TRAFFIC_MBE_CALL_SEQUENCE: 'Traffic MBE call sequence'
+  };
+  if (field.path === 'event_logs') return (profile.event_logs || [])
+    .map((value) => ({ value, label: outputLabels[value] || semanticLabel(value) }));
+  if (field.path === 'recorders') return (profile.recorders || [])
+    .map((value) => ({ value, label: outputLabels[value] || semanticLabel(value) }));
+  if (field.path === 'auxiliary_decoders') return (profile.auxiliary_decoders || [])
+    .map((value) => ({ value, label: value }));
+  return [];
+}
+
+function channelListEditor(field, values) {
+  const editor = node('div', 'ui-repeater channel-list-editor');
+  const rows = node('div', 'ui-repeater-rows');
+  const add = uiActionButton('Add frequency', 'icon-plus', () => {
+    append('');
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  const append = (value) => {
+    const row = node('div', 'ui-repeater-row');
+    const input = node('input', 'ui-input');
+    input.type = 'number';
+    input.step = '0.000001';
+    input.min = '0.000001';
+    input.placeholder = '851.012500';
+    input.value = value == null || value === '' ? '' : channelMHz(value);
+    input.setAttribute('aria-label', `${field.label} in MHz`);
+    const unit = node('span', 'ui-input-unit', 'MHz');
+    const remove = uiActionButton('', 'icon-trash', () => {
+      row.remove();
+      add.disabled = false;
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 'ui-button ui-icon-button ui-button-danger-quiet');
+    remove.setAttribute('aria-label', 'Remove frequency');
+    row.append(input, unit, remove);
+    rows.append(row);
+    const maximum = Number(field.maximum_items || 256);
+    add.disabled = rows.children.length >= maximum;
+  };
+  (values || []).forEach(append);
+  if (!rows.children.length) append('');
+  editor.append(rows, add);
+  return editor;
+}
+
+function channelMapEditor(field, values) {
+  const editor = node('div', 'ui-repeater channel-map-editor');
+  editor.classList.toggle('channel-map-with-uplink', Boolean(field.show_uplink));
+  const header = node('div', 'channel-map-header');
+  header.append(node('span', '', field.number_label || 'Channel'), node('span', '', 'Downlink MHz'));
+  if (field.show_uplink) header.append(node('span', '', 'Uplink MHz'));
+  header.append(node('span'));
+  const rows = node('div', 'ui-repeater-rows');
+  const labeledInput = (label, input) => {
+    const wrapper = node('label', 'channel-map-field');
+    wrapper.append(node('span', 'channel-map-mobile-label', label), input);
+    return wrapper;
+  };
+  const add = uiActionButton('Add mapping', 'icon-plus', () => {
+    append({});
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+    'ui-button ui-button-secondary');
+  const append = (value = {}) => {
+    const row = node('div', 'ui-repeater-row channel-map-row');
+    const channel = node('input', 'ui-input');
+    channel.type = 'number';
+    channel.step = '1';
+    channel.min = String(field.number_minimum ?? 1);
+    if (field.number_maximum != null) channel.max = String(field.number_maximum);
+    channel.value = value.number ?? '';
+    channel.setAttribute('aria-label', field.number_label || 'Channel number');
+    const downlink = node('input', 'ui-input');
+    downlink.type = 'number';
+    downlink.step = '0.000001';
+    downlink.min = '0.000001';
+    downlink.value = value.downlink_hz ? channelMHz(value.downlink_hz) : '';
+    downlink.setAttribute('aria-label', 'Downlink frequency in MHz');
+    row.append(labeledInput(field.number_label || 'Channel', channel), labeledInput('Downlink MHz', downlink));
+    if (field.show_uplink) {
+      const uplink = node('input', 'ui-input');
+      uplink.type = 'number';
+      uplink.step = '0.000001';
+      uplink.min = '0.000001';
+      uplink.value = value.uplink_hz ? channelMHz(value.uplink_hz) : '';
+      uplink.setAttribute('aria-label', 'Uplink frequency in MHz');
+      row.append(labeledInput('Uplink MHz', uplink));
+    }
+    const remove = uiActionButton('', 'icon-trash', () => {
+      row.remove();
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+      'ui-button ui-icon-button ui-button-danger-quiet');
+    remove.setAttribute('aria-label', 'Remove mapping');
+    row.append(remove);
+    rows.append(row);
+  };
+  (values || []).forEach(append);
+  editor.append(header, rows, add);
+  if (field.clipboard) {
+    editor.append(node('small', 'ui-field-hint',
+      `Paste is supported directly into each ${field.number_label || 'channel'} or frequency cell.`));
+  }
+  return editor;
+}
+
+function channelEditorControl(field, profile, options, channel) {
+  const value = channelValueAt(channel, field.path);
+  let control;
+  if (field.type === 'boolean') {
+    control = uiToggle(Boolean(value ?? field.default), field.label);
+  } else if (field.type === 'enum' || field.type === 'dynamic_select') {
+    const entries = [...channelFieldOptions(field, profile, options)];
+    if (field.type === 'dynamic_select' && value != null && value !== '' &&
+        !entries.some((entry) => String(entry.value) === String(value))) {
+      entries.unshift({ value, label: `Current (unavailable): ${value}` });
+    }
+    control = uiSelect(entries, value ?? field.default ?? '', field.required !== true);
+  } else if (field.type === 'multi_select') {
+    const selected = new Set(value || []);
+    control = node('fieldset', 'channel-multi-select');
+    control.setAttribute('aria-label', field.label);
+    channelFieldOptions(field, profile, options).forEach((entry) => {
+      const toggle = uiToggle(selected.has(entry.value), entry.label);
+      const input = toggle.querySelector('input');
+      input.value = entry.value;
+      const option = node('div', 'channel-output-option');
+      option.append(node('span', '', entry.label), toggle);
+      control.append(option);
+    });
+    if (!control.children.length) control.append(node('div', 'empty', 'No options for this protocol'));
+  } else if (field.type === 'frequency_list') {
+    control = channelListEditor(field, value);
+  } else if (field.type === 'frequency_map') {
+    control = channelMapEditor(field, value);
+  } else if (field.type === 'read_only') {
+    const empty = value == null || Array.isArray(value) && !value.length ||
+      typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length;
+    control = node('div', 'channel-read-only');
+    if (empty) control.append(uiPill('Not observed', 'neutral'));
+    else if (Array.isArray(value)) value.forEach((entry) =>
+      control.append(uiPill(field.path.includes('frequencies') ? `${channelMHz(entry)} MHz` : String(entry), 'blue')));
+    else if (typeof value === 'object') Object.entries(value).forEach(([key, entry]) => {
+      const item = node('div', 'channel-observed-item');
+      item.append(node('span', '', semanticLabel(key)), node('strong', '', String(entry)));
+      control.append(item);
+    });
+    else control.append(node('span', '', String(value)));
+  } else if (field.type === 'frequency_select') {
+    const frequencies = channelValueAt(channel, 'source.frequencies_hz') || [];
+    const entries = frequencies.map((entry) => ({ value: entry, label: `${channelMHz(entry)} MHz` }));
+    if (value != null && !entries.some((entry) => String(entry.value) === String(value)))
+      entries.unshift({ value, label: `Current: ${channelMHz(value)} MHz` });
+    control = uiSelect(entries, value ?? '', true);
+  } else {
+    control = node('input', 'ui-input');
+    control.type = ['integer', 'number', 'frequency', 'frequency_select'].includes(field.type) ? 'number' : 'text';
+    control.value = ['frequency', 'frequency_select'].includes(field.type) ? channelMHz(value) :
+      (value ?? field.default ?? '');
+    if (control.type === 'number') control.step = field.step || (field.type === 'integer' ? '1' : 'any');
+    if (field.max_length != null && control.type === 'text') control.maxLength = Number(field.max_length);
+    if (field.minimum != null && !['frequency', 'frequency_select'].includes(field.type)) control.min = field.minimum;
+    if (field.maximum != null && !['frequency', 'frequency_select'].includes(field.type)) control.max = field.maximum;
+  }
+  if (field.type !== 'read_only') {
+    const dataControl = field.type === 'boolean' ? control.querySelector('input') : control;
+    dataControl.dataset.channelPath = field.path;
+    dataControl.dataset.channelType = field.type;
+    if (field.required === true && 'required' in dataControl) dataControl.required = true;
+  }
+  return control;
+}
+
+function channelEditorSectionId(value) {
+  const segment = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `channel-editor-section-${segment || 'section'}`;
+}
+
+function channelEditorSectionPlan(sections) {
+  return (Array.isArray(sections) ? sections : []).map((definition) => ({
+    definition,
+    id: channelEditorSectionId(definition?.id),
+    advanced: definition?.id === 'output' && Array.isArray(definition.fields) &&
+      definition.fields.length > 0 && definition.fields.every((field) => field?.required !== true)
+  }));
+}
+
+function channelEditorSectionNavigation(panels, plan) {
+  const navigation = node('nav', 'channel-section-navigation ui-section-navigation');
+  navigation.setAttribute('aria-label', 'Jump to channel editor section');
+  const icons = {
+    general: 'icon-edit',
+    source: 'icon-tuner',
+    protocol: 'icon-channel',
+    output: 'icon-recording'
+  };
+  plan.forEach(({ definition, id, advanced }) => {
+    const link = anchor(definition.label, `#${id}`,
+      'channel-section-navigation-link ui-section-navigation-link');
+    link.prepend(iconGlyph(icons[definition.id] || 'icon-channel'));
+    link.setAttribute('aria-controls', id);
+    if (advanced) link.append(node('small', 'muted', 'Optional'));
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const panel = panels.get(definition.id);
+      if (!panel) return;
+      const disclosure = panel.closest('details');
+      if (disclosure) disclosure.open = true;
+      panel.scrollIntoView({ block: 'start' });
+      panel.focus({ preventScroll: true });
+    });
+    navigation.append(link);
+  });
+  return navigation;
+}
+
+function channelEditorVisibility(form) {
+  form.querySelectorAll('[data-visible-path]').forEach((wrapper) => {
+    const source = form.querySelector(`[data-channel-path="${CSS.escape(wrapper.dataset.visiblePath)}"]`);
+    const actual = source?.dataset.channelType === 'boolean' ? source.checked : source?.value;
+    const expected = JSON.parse(wrapper.dataset.visibleEquals);
+    wrapper.hidden = actual !== expected && String(actual) !== String(expected);
+  });
+}
+
+function channelEditorDependencies(form) {
+  channelEditorVisibility(form);
+  const preferred = form.querySelector('[data-channel-type="frequency_select"]');
+  const frequencies = form.querySelector('[data-channel-type="frequency_list"]');
+  if (!(preferred instanceof HTMLSelectElement) || !frequencies) return;
+  const current = preferred.value;
+  const values = [...frequencies.querySelectorAll('.ui-repeater-row input[type="number"]')]
+    .map((input) => input.value.trim()).filter(Boolean)
+    .map((value) => Math.round(Number(value) * 1_000_000)).filter(Number.isFinite);
+  preferred.replaceChildren();
+  const blank = node('option', '', 'None');
+  blank.value = '';
+  preferred.append(blank);
+  values.forEach((value) => {
+    const option = node('option', '', `${channelMHz(value)} MHz`);
+    option.value = String(value);
+    option.selected = String(value) === current;
+    preferred.append(option);
+  });
+  if (current && !values.some((value) => String(value) === current)) preferred.value = '';
+}
+
+function channelParseFrequency(value, label, nullable = false) {
+  if (String(value).trim() === '' && nullable) return null;
+  const mhz = Number(value);
+  if (!Number.isFinite(mhz) || mhz <= 0) throw new Error(`${label} must be a positive MHz frequency.`);
+  return Math.round(mhz * 1_000_000);
+}
+
+function channelEditorFieldValue(control, field) {
+  if (field.type === 'boolean') return control.checked;
+  if (field.type === 'multi_select') return [...control.querySelectorAll('input:checked')]
+    .map((input) => input.value);
+  if (field.type === 'frequency_list') {
+    const values = [...control.querySelectorAll('.ui-repeater-row input[type="number"]')]
+      .map((input) => input.value.trim()).filter(Boolean)
+      .map((value) => channelParseFrequency(value, field.label));
+    if (field.required && !values.length) throw new Error(`${field.label} requires at least one frequency.`);
+    if (field.minimum_items != null && values.length < Number(field.minimum_items))
+      throw new Error(`${field.label} requires at least ${field.minimum_items} value(s).`);
+    if (field.maximum_items != null && values.length > Number(field.maximum_items))
+      throw new Error(`${field.label} allows at most ${field.maximum_items} value(s).`);
+    return values;
+  }
+  if (field.type === 'frequency_map') return [...control.querySelectorAll('.channel-map-row')].map((row, index) => {
+    const inputs = row.querySelectorAll('input');
+    const channelNumber = Number(inputs[0]?.value);
+    const minimum = Number(field.number_minimum ?? 1);
+    const maximum = Number(field.number_maximum ?? Number.MAX_SAFE_INTEGER);
+    if (!Number.isInteger(channelNumber) || channelNumber < minimum || channelNumber > maximum || !inputs[1]?.value)
+      throw new Error(`${field.label} row ${index + 1} needs a valid ${field.number_label || 'channel'} and downlink.`);
+    return { number: channelNumber, downlink_hz: channelParseFrequency(inputs[1].value, field.label),
+      uplink_hz: field.show_uplink && inputs[2]?.value ? channelParseFrequency(inputs[2].value, field.label) : 0 };
+  });
+  if (field.type === 'frequency_select') return control.value ? Number(control.value) : null;
+  if (field.type === 'frequency')
+    return channelParseFrequency(control.value, field.label, field.nullable === true || field.required !== true);
+  if (field.type === 'integer') {
+    if (control.value === '' && field.nullable) return null;
+    const value = Number(control.value);
+    if (!Number.isInteger(value)) throw new Error(`${field.label} must be a whole number.`);
+    return value;
+  }
+  if (field.type === 'number') {
+    if (control.value === '' && field.nullable) return null;
+    const value = Number(control.value);
+    if (!Number.isFinite(value)) throw new Error(`${field.label} must be a number.`);
+    return value;
+  }
+  const text = control.value.trim();
+  return text || null;
+}
+
+function channelEditorPayload(form, profile) {
+  const payload = { protocol_id: profile.id, settings: {}, source: {}, frequency_map: [],
+    event_logs: [], recorders: [], auxiliary_decoders: [] };
+  profile.sections.forEach((section) => section.fields.forEach((field) => {
+    if (field.type === 'read_only') return;
+    const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
+    const value = channelEditorFieldValue(control, field);
+    if (field.path.startsWith('settings.')) payload.settings[field.path.substring(9)] = value;
+    else if (field.path.startsWith('source.')) payload.source[field.path.substring(7)] = value;
+    else payload[field.path] = value;
+  }));
+  return payload;
+}
+
+function channelRestoreProtocolDefaults(form, profile) {
+  profile.sections.flatMap((section) => section.fields).filter((field) =>
+    field.path.startsWith('settings.') && Object.hasOwn(field, 'default')).forEach((field) => {
+      const control = form.querySelector(`[data-channel-path="${CSS.escape(field.path)}"]`);
+      if (!control) return;
+      if (field.type === 'boolean') {
+        control.checked = Boolean(field.default);
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        control.value = String(field.default ?? '');
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+  });
+  channelEditorDependencies(form);
+}
+
+async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null) {
+  const editing = mode === 'edit';
+  const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
+  const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
+    id: `${mode}-channel-${configurationId || 'new'}`, className: 'alias-editor-modal channel-editor-modal',
+    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary'
+  });
+  if (!modal) return;
+  try {
+    const [protocols, options, entry] = await Promise.all([
+      prefetched?.protocols ? Promise.resolve(prefetched.protocols) :
+        requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
+      prefetched?.options ? Promise.resolve(prefetched.options) :
+        requestJson('/api/v1/admin/channels/options', { csrf: false }),
+      editing ? requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`, { csrf: false }) :
+        Promise.resolve(null)
+    ]);
+    if (activeReadOnlyModal !== modal.state) return;
+    const profiles = protocols.profiles || [];
+    let revision = Number(entry?.revision ?? options.revision ?? 0);
+    let profile = profiles.find((candidate) => candidate.id === entry?.channel?.protocol_id) || profiles[0];
+    let channel = entry?.channel || await requestJson(
+      `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
+    let baselineChannel = structuredClone(channel);
+    let templateGeneration = 0;
+    const host = node('div');
+
+    const draw = () => {
+      const form = node('form', 'alias-editor-form channel-editor-form editor-workspace');
+      form.dataset.uiDensity = 'comfortable';
+      const hero = node('div', 'channel-editor-hero');
+      const identity = node('div');
+      identity.append(node('strong', '', channel.name || 'New channel'),
+        node('span', '', `${profile.label} · ${semanticLabel(profile.channel_kind || 'Dynamic')}`));
+      hero.append(iconGlyph('icon-channel'), identity);
+      if (editing) hero.append(uiPill(entry.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+        entry.processing_state === 'RUNNING' ? 'success' : 'neutral',
+        entry.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop'));
+      form.append(hero);
+      if (editing && entry.processing_state === 'RUNNING') {
+        const notice = node('div', 'channel-restart-notice');
+        notice.append(iconGlyph('icon-warning'), node('span', '',
+          'Saving safely stops this channel, applies the change, and restores its running state.'));
+        form.append(notice);
+      }
+      if (!editing) {
+        const protocolSelect = uiSelect(profiles.map((candidate) =>
+          ({ value: candidate.id, label: candidate.label })), profile.id);
+        protocolSelect.addEventListener('change', async () => {
+          const generation = ++templateGeneration;
+          modal.setBusy(true);
+          try {
+            profile = profiles.find((candidate) => candidate.id === protocolSelect.value);
+            const loaded = await requestJson(
+              `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
+            if (generation !== templateGeneration || activeReadOnlyModal !== modal.state) return;
+            channel = loaded;
+            baselineChannel = structuredClone(loaded);
+            draw();
+            modal.setDirty(false);
+          } catch (error) {
+            host.replaceChildren(node('div', 'error', error.message));
+          } finally { modal.setBusy(false); }
+        });
+        const protocolField = aliasFormField('Protocol', uiSelectFrame(protocolSelect, 'channel-protocol-select'),
+          'The protocol determines the available source, decoder, logging, and recording settings.');
+        protocolField.classList.add('channel-protocol-picker');
+        form.append(protocolField);
+      }
+      const panels = new Map();
+      const sectionNodes = [];
+      const sectionPlan = channelEditorSectionPlan(profile.sections);
+      sectionPlan.forEach(({ definition: sectionDefinition, id, advanced }) => {
+        const panel = node('fieldset', 'alias-editor-panel channel-editor-panel ui-form-section');
+        const labelId = `${id}-label`;
+        panel.id = id;
+        panel.tabIndex = -1;
+        panel.dataset.channelSection = sectionDefinition.id;
+        if (!advanced) {
+          const panelHeader = node('div', 'channel-editor-panel-header');
+          const panelLabel = node('h3', 'channel-editor-panel-title', sectionDefinition.label);
+          panelLabel.id = labelId;
+          panel.setAttribute('aria-labelledby', labelId);
+          panelHeader.append(panelLabel);
+          if (sectionDefinition.id === 'protocol') panelHeader.append(
+            uiActionButton('Restore defaults', 'icon-reset', () => {
+              channelRestoreProtocolDefaults(form, profile);
+              modal.setDirty(true);
+            }, 'ui-button ui-button-secondary'));
+          panel.append(panelHeader);
+        }
+        const grid = node('div', 'alias-editor-grid channel-editor-grid');
+        sectionDefinition.fields.forEach((field) => {
+          const control = channelEditorControl(field, profile, options, channel);
+          const presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
+          const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
+            field.type === 'frequency_map' || field.type === 'frequency_list' ?
+            node('div', 'alias-editor-field channel-wide-field') :
+            aliasFormField(field.label, presentedControl, field.help || '');
+          if (!wrapper.contains(control)) {
+            wrapper.append(node('span', 'alias-editor-field-label', field.label), presentedControl);
+            if (field.help) wrapper.append(node('small', '', field.help));
+          }
+          if (field.path === 'settings.use_bandplan_override' &&
+              capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+            wrapper.append(anchor('Manage P25 band plan profiles', href('admin', { tab: 'protocol-p25' }),
+              'channel-field-action'));
+          }
+          if (field.visible_when) {
+            wrapper.dataset.visiblePath = field.visible_when.path;
+            wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
+          }
+          grid.append(wrapper);
+        });
+        panel.append(grid);
+        panels.set(sectionDefinition.id, panel);
+        if (advanced) {
+          const disclosure = node('details',
+            'channel-editor-section-disclosure ui-section-disclosure');
+          disclosure.dataset.channelSection = sectionDefinition.id;
+          const summary = node('summary', 'channel-editor-section-summary ui-section-summary');
+          summary.id = labelId;
+          panel.setAttribute('aria-labelledby', labelId);
+          summary.append(node('span', '', sectionDefinition.label), node('small', 'muted', 'Optional'));
+          disclosure.append(summary, panel);
+          sectionNodes.push(disclosure);
+        } else {
+          sectionNodes.push(panel);
+        }
+      });
+      const errors = node('div', 'alias-form-message');
+      errors.setAttribute('role', 'alert');
+      errors.setAttribute('aria-live', 'assertive');
+      errors.tabIndex = -1;
+      const cancel = channelAdminButton('Cancel', modal.close);
+      const reset = channelAdminButton('Reset changes', () => {
+        channel = structuredClone(baselineChannel);
+        draw();
+        modal.setDirty(false);
+      }, 'ui-button ui-button-secondary', 'icon-reset');
+      const save = uiActionButton(editing && entry.processing_state === 'RUNNING' ? 'Save & restart' :
+        (editing ? 'Save changes' : 'Create channel'), editing ? 'icon-edit' : 'icon-plus', () => {},
+        'ui-button ui-button-primary');
+      save.type = 'submit';
+      const clearStatistics = editing ? channelAdminButton('Clear Statistics', async () => {
+        if (!window.confirm(`Clear learned observations and activity history for ${channel.name || 'this channel'}?`))
+          return;
+        clearStatistics.disabled = true;
+        try {
+          const result = await requestJson(
+            `/api/v1/admin/channels/${encodeURIComponent(configurationId)}/statistics/clear`,
+            { method: 'POST', timeoutMs: 35_000 });
+          errors.replaceChildren(node('div', 'logging-notice', result.summary || 'Channel statistics cleared.'));
+        } catch (error) {
+          errors.replaceChildren(node('div', 'error', error.message));
+        } finally { clearStatistics.disabled = false; }
+      }, 'ui-button ui-button-danger') : null;
+      const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
+      const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
+      sectionStack.append(...sectionNodes);
+      sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
+      form.append(sectionLayout, errors,
+        aliasModalFooter(clearStatistics, reset, node('span', 'alias-modal-footer-spacer'), cancel, save));
+      form.addEventListener('input', () => { modal.setDirty(true); channelEditorDependencies(form); });
+      form.addEventListener('change', () => { modal.setDirty(true); channelEditorDependencies(form); });
+      form.addEventListener('invalid', (event) => {
+        const disclosure = event.target.closest?.('details.channel-editor-section-disclosure');
+        if (disclosure) disclosure.open = true;
+      }, true);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        errors.replaceChildren();
+        save.disabled = true;
+        try {
+          const payload = channelEditorPayload(form, profile);
+          if (editing && entry.processing_state === 'RUNNING') {
+            if (!window.confirm('Save these settings and restart the running channel?')) {
+              save.disabled = false;
+              return;
+            }
+          }
+          const result = await requestJson(editing ?
+            `/api/v1/admin/channels/${encodeURIComponent(configurationId)}` : '/api/v1/admin/channels', {
+            method: editing ? 'PUT' : 'POST', body: { revision, ...payload }, timeoutMs: 30_000
+          });
+          revision = Number(result.revision);
+          modal.setDirty(false);
+          closeReadOnlyModal(true);
+          await renderChannelSetup();
+        } catch (error) {
+          aliasMutationError(errors, error, () => {
+            modal.setDirty(false);
+            closeReadOnlyModal(true);
+            openChannelEditorModal(mode, configurationId);
+          });
+          errors.scrollIntoView({ block: 'nearest' });
+          errors.focus({ preventScroll: true });
+          save.disabled = false;
+        }
+      });
+      host.replaceChildren(form);
+      channelEditorDependencies(form);
+      modal.content.replaceChildren(host);
+      modal.dialog.querySelector('.modal-header h2').textContent = editing ?
+        `Edit ${channel.name || 'Channel'}` : 'Create Channel';
+      modal.setDirty(false);
+    };
+    draw();
+  } catch (error) {
+    modal.content.replaceChildren(node('div', 'error', error.message));
+  }
+}
+
+async function renderChannelSetup() {
+  const renderContext = captureRenderContext();
+  await renderModernChannelCatalog(renderContext, true);
+}
+
+function identityDirectoryKind(row) {
+  const kind = Number(row?.identity_kind_code);
+  if (kind === 1) return 'Talkgroup';
+  if (kind === 2) return 'Radio';
+  if (kind === 3) return 'Patch group';
+  return 'Other';
+}
+
+function identityDirectoryScope(row) {
+  if (String(row?.channel_kind || '').toUpperCase() === 'CONVENTIONAL') {
+    return [row.system_name, row.site_name, row.name].filter(Boolean).join(' · ') || 'Conventional channel';
+  }
+  return row.system_name || radioSystemLabel(row) || 'Trunked radio system';
+}
+
+function identityDirectoryKey(row) {
+  return [row.channel_kind, row.radio_system_key, row.configuration_id, row.identity_kind_code,
+    row.identity_key, row.native_id].map((value) => String(value ?? '')).join('\u0000');
+}
+
+function identityDirectoryName(row) {
+  const label = identityNumber(row, row.native_id) || 'Unknown';
+  const target = entityRefHref(row.entity_ref);
+  return target ? anchor(label, target, 'identity-directory-link') : label;
+}
+
+function identityDirectoryAlias(row) {
+  const wrapper = node('span', 'identity-directory-alias');
+  const alias = aliasLabel(row);
+  wrapper.append(node('strong', '', alias || 'Unassigned'));
+  if (row.last_talker_alias && row.last_talker_alias !== alias) {
+    wrapper.append(node('small', 'muted', `Over the air: ${row.last_talker_alias}`));
+  }
+  return wrapper;
+}
+
+function identityDirectoryColumns() {
+  return [
+    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(protocolFamily(row), 'protocol'),
+      sortValue: (row) => protocolFamily(row) },
+    { id: 'kind', label: 'Type', render: (row) => identityDirectoryKind(row),
+      sortValue: identityDirectoryKind },
+    { id: 'identity', label: 'Identity', className: 'numeric', render: identityDirectoryName,
+      sortValue: (row) => Number(row.native_id || 0) },
+    { id: 'alias', label: 'Alias', render: identityDirectoryAlias, className: 'alias-cell',
+      sortValue: (row) => aliasLabel(row) || '' },
+    { id: 'description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
+    { id: 'scope', label: 'System / Channel', render: identityDirectoryScope,
+      sortValue: identityDirectoryScope },
+    { id: 'calls', label: 'Calls', className: 'numeric', render: (row) => number(row.logical_call_count),
+      sortValue: (row) => Number(row.logical_call_count || 0) },
+    { id: 'last-heard', label: 'Last heard', render: (row) => dateTime(row.last_active_ms),
+      sortValue: (row) => Number(row.last_active_ms || 0) }
+  ];
+}
+
+async function renderIdentities() {
+  const renderContext = captureRenderContext();
+  const selectedRange = route.get('range') || '24h';
+  const directory = createAsyncSection('Recently Active Identities', {
+    loadingMessage: 'Loading identities…',
+    errorMessage: 'The identity directory could not be loaded.'
+  });
+  if (!beginPage(renderContext, pageHeader('Identities',
+    'Look up talkgroups, patch groups, and radios heard by this receiver'), directory.element)) return;
+  await directory.load(() => apiPage('/api/v1/identities', { range: selectedRange, limit: 500 }), (page) => {
+    const wrapper = node('div', 'identity-directory data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
+    const toolbar = node('div', 'ui-catalog-toolbar identity-directory-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    searchWrap.append(iconGlyph('icon-search'));
+    const search = node('input', 'ui-input');
+    search.type = 'search';
+    search.placeholder = 'Search identity, alias, system, or channel';
+    search.setAttribute('aria-label', search.placeholder);
+    searchWrap.append(search);
+    let activeKind = 'all';
+    const tableHost = node('div', 'identity-directory-table-host');
+    const tableController = {};
+    let draw = () => {};
+    const filters = uiSegmentedControl([
+      { value: 'all', label: 'All' },
+      { value: 'talkgroup', label: 'Talkgroups' },
+      { value: 'radio', label: 'Radios' },
+      { value: 'patch-group', label: 'Patch groups' }
+    ], activeKind, (value) => { activeKind = value; draw(); });
+    filters.setAttribute('aria-label', 'Filter identities');
+    const range = uiSelectFrame(uiSelect(ACTIVITY_RANGES.map(([value, label]) => ({ value, label })),
+      selectedRange), 'identity-range-select');
+    const rangeSelect = range.querySelector('select');
+    rangeSelect.setAttribute('aria-label', 'Identity activity range');
+    rangeSelect.addEventListener('change', () => navigateTo(currentHref({ range: rangeSelect.value, offset: null })));
+    toolbar.append(searchWrap, filters, range);
+
+    const rows = Array.isArray(page.rows) ? page.rows : [];
+    const filteredRows = () => {
+      const term = search.value.trim().toLowerCase();
+      return rows.filter((row) => {
+        const kind = Number(row.identity_kind_code);
+        const matchesKind = activeKind === 'all' || activeKind === 'talkgroup' && kind === 1 ||
+          activeKind === 'radio' && kind === 2 || activeKind === 'patch-group' && kind === 3;
+        const matchesText = !term || [row.native_id, aliasLabel(row), row.alias_description,
+          row.last_talker_alias, protocolFamily(row), identityDirectoryKind(row), identityDirectoryScope(row)]
+          .some((value) => String(value || '').toLowerCase().includes(term));
+        return matchesKind && matchesText;
+      });
+    };
+    const identityTable = table(rows, identityDirectoryColumns(), 'No identities were heard in this time range', {
+      type: 'identity-directory-v1', clientSort: true, controller: tableController,
+      rowKey: identityDirectoryKey, tableClass: 'identity-directory-table',
+      wrapperClass: 'identity-directory-table-wrap', layoutMenuHost: toolbar
+    });
+    draw = () => tableController.reconcileRows?.(filteredRows());
+    search.addEventListener('input', draw);
+    tableHost.append(identityTable);
+    wrapper.append(toolbar, tableHost);
+    if (page.candidate_limit_reached === true) wrapper.append(node('p', 'directory-warning',
+      'This view shows the most active recent identities. Narrow the time range to see quieter identities.'));
+    return wrapper;
+  }, renderContext);
 }
 
 function channelTabItems(channel) {
@@ -15747,8 +17065,9 @@ function userActions(account, statusHost) {
   return actions;
 }
 
-async function renderAdminUsers() {
+async function renderAdminUsers(renderContext = captureRenderContext()) {
   const response = await requestJson('/api/v1/admin/users', { csrf: false });
+  if (!renderIsCurrent(renderContext)) return;
   const users = (Array.isArray(response) ? response : response?.users || []).map(adminUserRecord)
     .filter((account) => account.username)
     .sort((left, right) => Number(right.primaryAdmin) - Number(left.primaryAdmin) ||
@@ -15853,8 +17172,9 @@ function webAccessControl(policy, statusHost) {
   return wrapper;
 }
 
-async function renderAdminAccess() {
+async function renderAdminAccess(renderContext = captureRenderContext()) {
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
+  if (!renderIsCurrent(renderContext)) return;
   const policies = adminAccessPolicies(response).sort((left, right) =>
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
   const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
@@ -16134,27 +17454,26 @@ async function renderAdminRadioReferenceSettings() {
   const body = node('div', 'admin-section-body radioreference-settings');
   const accountForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
-  const userName = node('input');
+  const userName = node('input', 'ui-input');
   userName.name = 'radioreference-username';
   userName.autocomplete = 'username';
   userName.maxLength = 256;
   userName.required = true;
-  const password = node('input');
+  const password = node('input', 'ui-input');
   password.type = 'password';
   password.name = 'radioreference-password';
   password.autocomplete = 'current-password';
   password.maxLength = 1024;
   password.required = true;
-  const rememberLabel = node('label', 'radioreference-remember');
-  const remember = node('input');
-  remember.type = 'checkbox';
-  remember.checked = true;
-  rememberLabel.append(remember, node('span', '', 'Remember credentials in this receiver’s portable settings'));
+  const rememberSetting = preferenceCheckbox('radioreference-remember',
+    'Remember credentials on this receiver', true,
+    'Stores the credentials in this receiver’s protected portable settings.');
+  const remember = rememberSetting.input;
   const accountMessage = node('div', 'admin-form-message');
   accountMessage.setAttribute('role', 'status');
   const connect = node('button', '', 'Connect RadioReference');
   connect.type = 'submit';
-  const signOut = node('button', 'secondary danger-outline', 'Sign Out');
+  const signOut = node('button', 'secondary danger-outline', 'Disconnect RadioReference');
   signOut.type = 'button';
   signOut.disabled = true;
   const accountActions = node('div', 'admin-form-actions');
@@ -16163,7 +17482,7 @@ async function renderAdminRadioReferenceSettings() {
     node('p', 'settings-card-description', 'Connect the receiver with a current RadioReference Premium account.'),
     formField('Username', userName), formField('Password', password,
     'A current Premium subscription is required. The password is never returned to the browser.'),
-    rememberLabel, accountMessage, accountActions);
+    rememberSetting.control, accountMessage, accountActions);
 
   const regionForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-region-form');
@@ -16202,7 +17521,7 @@ async function renderAdminRadioReferenceSettings() {
     if (initializeUserName || !userName.value) {
       userName.value = account.user_name || configuration?.stored_user_name || '';
     }
-    remember.checked = configuration?.credentials_stored === true;
+    setUiToggle(remember, configuration?.credentials_stored === true);
     signOut.disabled = account.state === 'SIGNED_OUT';
     country.disabled = !connected;
     state.disabled = !connected || !country.value;
@@ -16309,15 +17628,6 @@ async function renderAdminRadioReferenceSettings() {
     accountMessage.textContent = error.message;
     connect.disabled = false;
   }
-}
-
-async function renderReceiverSettings() {
-  const renderContext = captureRenderContext();
-  await renderAdminReceiverBehaviorSettings();
-  if (!renderIsCurrent(renderContext)) return;
-  await renderAdminSpectrumSnapSettings();
-  if (!renderIsCurrent(renderContext)) return;
-  await renderAdminRadioReferenceSettings();
 }
 
 async function renderAdminSpectrumSnapSettings() {
@@ -16448,15 +17758,16 @@ async function renderAdminReceiverBehaviorSettings() {
   grantAge.disabled = true;
   const message = node('div', 'admin-form-message', 'Loading receiver settings…');
   message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Receiver Settings');
+  const save = node('button', '', 'Save Live Timing');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
-  const group = settingsCard('Traffic grant timing',
-    'This receiver-wide timing controls when inactive traffic grants become idle.',
-    formField('Idle grant retention (milliseconds)', grantAge,
-      'How long inactive traffic grants remain in the shared Live state.'));
+  const group = settingsCard('Live traffic-row idle delay',
+    'This receiver-wide presentation timing affects every viewer.',
+    formField('Mark a traffic row idle after (milliseconds)', grantAge,
+      'After the last grant or call update, wait this long before Live shows the row as idle. This does not keep ' +
+        'the call, tuner, or traffic channel active.'));
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(settingsCardGrid(group), footer);
@@ -16477,17 +17788,17 @@ async function renderAdminReceiverBehaviorSettings() {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     disable(true);
-    message.textContent = 'Saving Receiver Settings…';
+    message.textContent = 'Saving Live timing…';
     try {
       const next = await requestReceiverSettings('PUT', {
         traffic_grant_age_out_milliseconds: Number(grantAge.value)
       }, confirmed?.revision);
       apply(next);
-      message.textContent = 'Receiver Settings saved.';
+      message.textContent = 'Live timing saved.';
     } catch (error) {
       if (error?.code === 'receiver_settings_conflict' && error.current) {
         apply(error.current);
-        message.textContent = 'Receiver Settings changed in another session. Current server values were reloaded.';
+        message.textContent = 'Live timing changed in another session. Current server values were reloaded.';
       } else {
         if (confirmed) apply(confirmed);
         message.textContent = error.message;
@@ -16712,13 +18023,13 @@ async function renderAdminP25BandplanOverrides() {
   const intro = node('p', 'p25-overrides-intro',
     'A matching profile replaces the complete over-the-air band plan only for P25 channels that have the override enabled. Site-specific profiles take priority over system-wide profiles.');
   const list = node('div', 'p25-override-profile-list');
-  const message = node('div', 'admin-form-message', 'Loading P25 bandplan overrides…');
+  const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
   const add = node('button', 'button secondary', 'Add P25 override');
   add.type = 'button';
   add.disabled = true;
   add.addEventListener('click', () => list.append(p25OverrideProfileCard()));
-  const save = node('button', '', 'Save P25 Bandplan Overrides');
+  const save = node('button', '', 'Save P25 band plan overrides');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
@@ -16727,18 +18038,18 @@ async function renderAdminP25BandplanOverrides() {
   footer.append(message, actions);
   form.append(intro, list, footer);
   body.append(form);
-  content.append(section('P25 Bandplan Overrides', body));
+  content.append(section('P25 band plan overrides', body));
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!form.reportValidity() || save.disabled) return;
     add.disabled = true;
     save.disabled = true;
-    message.textContent = 'Saving P25 bandplan overrides…';
+    message.textContent = 'Saving P25 band plan overrides…';
     try {
       const documentValue = await requestP25BandplanOverrides('PUT', p25OverrideProfilesFromForm(list));
       list.replaceChildren(...(documentValue?.profiles || []).map(p25OverrideProfileCard));
-      message.textContent = 'P25 bandplan overrides saved.';
+      message.textContent = 'P25 band plan overrides saved.';
     } catch (error) {
       message.textContent = error.message;
     } finally {
@@ -16831,7 +18142,7 @@ function receiverHealthTime(value) {
 
 function receiverHealthSeverityBadge(value) {
   const severity = receiverHealthSeverity(value);
-  const label = severity === 'critical' ? 'Critical' : severity === 'warning' ? 'Warning' : 'Healthy';
+  const label = severity === 'critical' ? 'Action needed' : severity === 'warning' ? 'Check soon' : 'Normal';
   return badge(label, `receiver-health-severity receiver-health-${severity}`);
 }
 
@@ -16841,26 +18152,26 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
   const heading = node(resolved ? 'summary' : 'div', 'receiver-health-incident-heading');
   const identity = node('div', 'receiver-health-incident-identity');
   identity.append(node('h3', '', receiverHealthText(incident.title, receiverHealthText(incident.code,
-    'Receiver health incident'))), node('div', 'receiver-health-incident-scope',
+    'Receiver issue'))), node('div', 'receiver-health-incident-scope',
     receiverHealthText(incident.scope, 'Receiver')));
   if (resolved) {
     const observations = receiverHealthCount(incident.count, 1);
     const resolvedSummary = node('div', 'receiver-health-incident-resolved-summary');
-    resolvedSummary.append('Resolved ', receiverHealthTime(incident.resolved_at_ms),
-      ` · ${number(observations)} observation${observations === 1 ? '' : 's'}`);
+    resolvedSummary.append('Cleared ', receiverHealthTime(incident.resolved_at_ms),
+      ` · ${number(observations)} recorded value${observations === 1 ? '' : 's'}`);
     identity.append(resolvedSummary);
   }
   heading.append(identity, receiverHealthSeverityBadge(incident.severity));
 
   const facts = node('dl', 'receiver-health-incident-facts');
   const entries = [
-    ['Code', receiverHealthText(incident.code)],
-    ['Occurrence ID', receiverHealthText(incident.occurrence_id)],
-    ['Observations', number(receiverHealthCount(incident.count, 1))],
-    ['Opened', receiverHealthTime(incident.opened_at_ms)],
-    ['Last seen', receiverHealthTime(incident.last_seen_ms)]
+    ['Issue code', receiverHealthText(incident.code)],
+    ['Event ID', receiverHealthText(incident.occurrence_id)],
+    ['Recorded value', number(receiverHealthCount(incident.count, 1))],
+    ['Started', receiverHealthTime(incident.opened_at_ms)],
+    ['Last detected', receiverHealthTime(incident.last_seen_ms)]
   ];
-  if (resolved) entries.push(['Resolved', receiverHealthTime(incident.resolved_at_ms)]);
+  if (resolved) entries.push(['Cleared', receiverHealthTime(incident.resolved_at_ms)]);
   entries.forEach(([label, value]) => {
     facts.append(node('dt', '', label));
     const detail = node('dd');
@@ -16870,10 +18181,10 @@ function receiverHealthIncident(incident, resolved = false, expanded = false, on
 
   const guidance = node('div', 'receiver-health-incident-guidance');
   [
-    ['Observed', incident.observed],
-    ['Likely cause', incident.likely_cause],
-    ['Impact', incident.impact],
-    ['Check next', incident.check_next]
+    ['What happened', incident.observed],
+    ['Possible cause', incident.likely_cause],
+    ['What this may affect', incident.impact],
+    ['What to do', incident.check_next]
   ].forEach(([label, value]) => {
     const item = node('div', 'receiver-health-guidance-item');
     item.append(node('h4', '', label), node('p', '', receiverHealthText(value)));
@@ -16944,7 +18255,7 @@ function receiverHealthPruneExpandedResolvedIncidents(incidents) {
 function receiverHealthIncidentList(incidents, resolved = false) {
   if (!incidents.length) {
     return node('div', resolved ? 'receiver-health-empty' : 'receiver-health-empty receiver-health-empty-healthy',
-      resolved ? 'No recently resolved incidents.' : 'No active receiver health incidents.');
+      resolved ? 'No issues have cleared recently.' : 'No receiver issues need attention.');
   }
   const list = node('div', 'receiver-health-incident-list');
   list.append(...incidents.map((incident) => {
@@ -16961,13 +18272,13 @@ function receiverHealthIncidentList(incidents, resolved = false) {
 
 function receiverHealthResolvedPager(page, onPage) {
   const navigation = node('nav', 'pager receiver-health-resolved-pager');
-  navigation.setAttribute('aria-label', 'Recently resolved pagination');
+  navigation.setAttribute('aria-label', 'Recently cleared issues');
   navigation.dataset.receiverHealthFocus = 'resolved-pager';
   navigation.tabIndex = -1;
   const first = page.offset + 1;
   const last = page.offset + page.rows.length;
   navigation.append(node('span', 'muted',
-    `Resolved alerts ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
+    `Cleared issues ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
       `Page ${number(page.page + 1)} of ${number(page.page_count)}`));
   const previous = node('button', 'secondary', 'Previous');
   previous.type = 'button';
@@ -16987,13 +18298,13 @@ function receiverHealthResolvedSection(incidents) {
   receiverHealthPruneExpandedResolvedIncidents(incidents);
   if (!incidents.length) {
     receiverHealthController.resolvedPage = 0;
-    return receiverHealthSection('resolved', 'Recently resolved', receiverHealthIncidentList(incidents, true));
+    return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true));
   }
   const body = node('div');
   const sort = node('select');
-  sort.setAttribute('aria-label', 'Sort resolved alerts');
+  sort.setAttribute('aria-label', 'Sort cleared issues');
   sort.dataset.receiverHealthFocus = 'resolved-sort';
-  [['recent', 'Newest resolved'], ['type', 'Alert type (A–Z)']].forEach(([value, label]) => {
+  [['recent', 'Most recently cleared'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
     option.selected = receiverHealthController.resolvedSort === value;
@@ -17018,7 +18329,7 @@ function receiverHealthResolvedSection(incidents) {
     draw();
   });
   draw();
-  return receiverHealthSection('resolved', 'Recently resolved', body, control);
+  return receiverHealthSection('resolved', 'Recently cleared', body, control);
 }
 
 let receiverHealthSectionSequence = 0;
@@ -17059,7 +18370,7 @@ function receiverHealthResourceScale(row) {
   const label = receiverHealthText(row?.label).toLowerCase();
   const unit = receiverHealthText(row?.unit, '').toLowerCase();
   const maximum = unit === '%' ? 100 :
-    label === 'garbage collection' && unit === 'ms in last sample' ?
+    label === 'time spent freeing memory' && unit === 'ms in last sample' ?
       RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS : available ? Math.max(1, numeric) : 100;
   return {
     available,
@@ -17070,7 +18381,7 @@ function receiverHealthResourceScale(row) {
 
 function receiverHealthResourceBar(row) {
   const severity = receiverHealthSeverity(row.severity);
-  const label = receiverHealthText(row.label, 'Host resource');
+  const label = receiverHealthText(row.label, 'Computer resource');
   const value = receiverHealthText(row.value);
   const unit = receiverHealthText(row.unit, '');
   const formattedValue = unit ? `${value} ${unit}` : value;
@@ -17096,8 +18407,8 @@ function receiverHealthHostResourceOverview(snapshot) {
     receiverHealthText(measurement.id).toLowerCase() === 'host');
   const body = node('div', 'receiver-health-resource-bars');
   if (group?.rows?.length) body.append(...group.rows.map(receiverHealthResourceBar));
-  else body.append(node('div', 'receiver-health-empty', 'No host resource measurements were reported.'));
-  return receiverHealthSection('host-overview', 'Host resource overview', body);
+  else body.append(node('div', 'receiver-health-empty', 'Computer resource information is not available yet.'));
+  return receiverHealthSection('host-overview', 'Computer resources', body);
 }
 
 function receiverHealthMeasurementRow(row) {
@@ -17119,14 +18430,14 @@ function receiverHealthMeasurementGroup(group, index) {
   const body = node('div', 'receiver-health-measurement-list');
   body.setAttribute('role', 'list');
   if (group.rows.length) body.append(...group.rows.map(receiverHealthMeasurementRow));
-  else body.append(node('div', 'receiver-health-empty', 'No measurements were reported.'));
-  const title = receiverHealthText(group.title, receiverHealthText(group.id, 'Measurements'));
+  else body.append(node('div', 'receiver-health-empty', 'No detailed measurements were reported.'));
+  const title = receiverHealthText(group.title, receiverHealthText(group.id, 'Detailed measurements'));
   const key = `measurement:${receiverHealthText(group.id, `${title}:${index}`)}`;
   return receiverHealthSection(key, title, body);
 }
 
 function receiverHealthRefreshButton() {
-  const refresh = node('button', 'secondary', 'Refresh now');
+  const refresh = node('button', 'secondary', 'Check again');
   refresh.type = 'button';
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
@@ -17140,19 +18451,19 @@ function receiverHealthRefreshButton() {
 function receiverHealthAccountSettingNotice(snapshot) {
   const settings = receiverHealthAccountAlertSummary(snapshot, activeUserPreferences());
   const notice = node('aside', 'receiver-health-account-setting');
-  let message = 'Alert switches affect only this account\'s header indicator. Monitoring, measurements, and ' +
-    'history always continue.';
+  let message = 'Your choices only control the status icon at the top of the page. Every issue is still monitored ' +
+    'and listed here. Issues clear automatically after the condition stops; this feature does not send email or push notifications.';
   if (settings.disabled_count > 0) {
-    message = `${number(settings.disabled_count)} of ${number(settings.active_count)} active incident` +
-      `${settings.active_count === 1 ? ' is' : 's are'} turned off for this account's header alert. ` +
-      'They remain visible below because monitoring and history always continue.';
+    message = `${number(settings.disabled_count)} of ${number(settings.active_count)} current issue` +
+      `${settings.active_count === 1 ? ' is' : 's are'} hidden from your status icon. ` +
+      'They are still monitored and listed below. This feature does not send email or push notifications.';
   } else if (settings.active_count > 0) {
-    message = `All ${number(settings.active_count)} active incident` +
+    message = `All ${number(settings.active_count)} current issue` +
       `${settings.active_count === 1 ? '' : 's'} currently ` +
-      `${settings.active_count === 1 ? 'affects' : 'affect'} this account's header alert. ` +
-      'Monitoring, measurements, and history always continue.';
+      `${settings.active_count === 1 ? 'appears' : 'appear'} in your status icon. ` +
+      'Every issue remains monitored and clears automatically when the condition stops. This feature does not send email or push notifications.';
   }
-  const settingsLink = anchor('Manage alert switches', href('admin', { tab: 'alerts' }));
+  const settingsLink = anchor('Choose what appears in my status icon', href('admin', { tab: 'alerts' }));
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
   notice.append(node('span', '', message), settingsLink);
   return notice;
@@ -17174,29 +18485,29 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   const focusedControl = receiverHealthFocusedControl(host);
   host.replaceChildren();
   if (!snapshot) {
-    const message = stale ? (lastError || 'Receiver health is temporarily unavailable. Try Refresh now.') :
-      'Loading receiver health status…';
+    const message = stale ? (lastError || 'Receiver status is unavailable right now. Select Check again to try again.') :
+      'Loading receiver status…';
     const body = node('div', 'admin-section-body');
     body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
-    host.append(receiverHealthSection('current', 'Current status', body, receiverHealthRefreshButton()));
+    host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()));
     receiverHealthRestoreFocus(host, focusedControl);
     return;
   }
 
   const summary = snapshot.summary;
-  const stateLabel = stale ? 'Update delayed' : summary.severity === 'critical' ? 'Critical' :
-    summary.severity === 'warning' ? 'Warning' : 'Healthy';
+  const stateLabel = stale ? 'Status out of date' : summary.severity === 'critical' ? 'Action needed' :
+    summary.severity === 'warning' ? 'Check soon' : 'Normal';
   const overview = node('div', 'receiver-health-overview');
   const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
-  status.append(node('span', '', 'Receiver health'), node('strong', '', stateLabel));
+  status.append(node('span', '', 'Receiver status'), node('strong', '', stateLabel));
   overview.append(status, metrics([
-    ['Active incidents', summary.active_count],
-    ['Critical', summary.critical_count],
-    ['Warnings', summary.warning_count]
+    ['Current issues', summary.active_count],
+    ['Need action', summary.critical_count],
+    ['Check soon', summary.warning_count]
   ], true));
   const timing = node('dl', 'receiver-health-timing');
   [
-    ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)],
+    ['Status tracking started', receiverHealthTime(snapshot.started_at_ms)],
     ['Last update', receiverHealthTime(snapshot.generated_at_ms)]
   ].forEach(([label, value]) => {
     timing.append(node('dt', '', label));
@@ -17206,18 +18517,18 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   });
   overview.append(timing);
   if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
-    'Showing the most recent receiver health information available.'));
+    'Live status is delayed. Showing the last update received.'));
 
   host.append(receiverHealthHostResourceOverview(snapshot),
-    receiverHealthSection('current', 'Current status', overview, receiverHealthRefreshButton()),
+    receiverHealthSection('current', 'Summary', overview, receiverHealthRefreshButton()),
     receiverHealthAccountSettingNotice(snapshot),
-    receiverHealthSection('active', 'Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
+    receiverHealthSection('active', 'Issues needing attention', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));
   if (snapshot.measurements.length) {
     host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
   } else {
-    host.append(receiverHealthSection('measurements', 'Measurements', node('div', 'receiver-health-empty',
-      'No receiver health measurements were reported.')));
+    host.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'receiver-health-empty',
+      'Detailed measurements are not available yet.')));
   }
   receiverHealthRestoreFocus(host, focusedControl);
 }
@@ -17236,20 +18547,19 @@ function comingSoonPanel(title) {
 }
 
 function preferenceCheckbox(name, label, checked, detail = '') {
-  const input = node('input');
-  input.type = 'checkbox';
+  const toggle = uiToggle(checked === true, label);
+  const input = toggle.querySelector('input');
   input.name = name;
-  input.checked = checked === true;
   const copy = node('span', 'admin-toggle-copy');
   copy.append(node('strong', '', label));
   if (detail) copy.append(node('span', '', detail));
-  const control = node('label', 'admin-toggle-control');
-  control.append(input, copy);
+  const control = node('div', 'admin-toggle-control');
+  control.append(copy, toggle);
   return { input, control };
 }
 
 function preferenceSelect(name, choices, selected) {
-  const select = node('select');
+  const select = node('select', 'ui-select');
   select.name = name;
   choices.forEach(([value, label]) => {
     const option = node('option', '', label);
@@ -17356,10 +18666,10 @@ function userPreferenceSummaryCards(preferences) {
       ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
       ['Performance profile', semanticLabel(preferences.tuner.profile)]
     ])),
-    settingsCard('Health alerts', 'Changed from Administration > Alerts.', settingsSummary([
-      ['Header alerts enabled', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
+    settingsCard('Status icon', 'Changed here in My Settings.', settingsSummary([
+      ['Issue types shown', `${number(receiverHealthAlertIds.length - knownDisabledAlerts)} of ` +
         number(receiverHealthAlertIds.length)],
-      ['Disabled alerts', disabledHealthAlertSummary(disabledAlerts)]
+      ['Hidden issue types', disabledHealthAlertSummary(disabledAlerts)]
     ])),
     settingsCard('Table layouts', 'Changed with the Columns control on each table.',
       tableLayoutSummary(preferences.tables))
@@ -17370,7 +18680,7 @@ async function renderAdminAlerts() {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message ||
-      'Alert settings could not be loaded for this account.');
+      'Your status icon choices could not be loaded.');
     const retry = node('button', 'button secondary', 'Retry');
     retry.type = 'button';
     retry.addEventListener('click', async () => {
@@ -17378,7 +18688,7 @@ async function renderAdminAlerts() {
       await synchronizeUserPreferences();
       void render();
     });
-    content.append(section('Alert settings unavailable', unavailable, retry));
+    content.append(section('Status icon choices unavailable', unavailable, retry));
     return;
   }
 
@@ -17389,7 +18699,7 @@ async function renderAdminAlerts() {
   const apply = (preferences) => {
     receiverHealthAlertIds.forEach((id) => {
       const input = controls.get(id);
-      if (input) input.checked = isReceiverHealthAlertEnabled(preferences, id);
+      if (input) setUiToggle(input, isReceiverHealthAlertEnabled(preferences, id));
     });
   };
   const cards = receiverHealthAlertGroups.map((group) => {
@@ -17405,42 +18715,43 @@ async function renderAdminAlerts() {
   });
   apply(snapshot.preferences);
 
-  const save = node('button', '', 'Save Alert Settings');
+  const save = node('button', '', 'Save status icon choices');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(node('p', 'health-alert-settings-intro',
-    'Choose which receiver-health incidents can change the health icon in this account\'s header. ' +
-    'Turning an alert off does not stop monitoring, remove measurements, or hide current and resolved incidents ' +
-    'from the Health page.'), settingsCardGrid(...cards), footer);
+    'Choose which issues appear in the status icon at the top of the page. ' +
+    'Hiding an issue here changes only your icon. sdrtrunk-vce still monitors it, and current or recently cleared ' +
+    'issues still appear on Receiver status.'),
+    settingsCardGrid(...cards), footer);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (save.disabled) return;
     controls.forEach((input) => { input.disabled = true; });
     save.disabled = true;
-    message.textContent = 'Saving alert settings…';
+    message.textContent = 'Saving status icon choices…';
     try {
       await updateUserPreferences((preferences) => {
         preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
       }, false);
-      message.textContent = 'Alert settings saved.';
+      message.textContent = 'Status icon choices saved.';
     } catch (error) {
       if (error?.code === 'preference_conflict' && !error.reloadError) {
         const current = userPreferenceController.snapshot();
         if (current.loaded) apply(current.preferences);
-        message.textContent = 'These settings changed in another session. The current saved values were loaded.';
+        message.textContent = 'Your status icon choices changed in another browser or tab, so the latest saved choices are shown.';
       } else if (error?.code === 'preference_conflict') {
-        message.textContent = 'These settings changed in another session, but the current values could not be ' +
-          'reloaded. Try saving again or reload this page.';
+        message.textContent = 'Your status icon choices changed elsewhere, but the latest choices could not be ' +
+          'loaded. Reload the page before saving again.';
       } else message.textContent = error.message;
     } finally {
       controls.forEach((input) => { input.disabled = false; });
       save.disabled = false;
     }
   });
-  content.append(section('Header alerts', form));
+  content.append(section('Issues shown in the status icon', form));
 }
 
 function openLivePresentationSettings(returnFocusSelector = null) {
@@ -17478,12 +18789,12 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   rowLimit.required = true;
   rowLimit.value = String(current.live_detail_row_limit);
   const apply = (presentation) => {
-    encryption.input.checked = presentation.show_encryption_details;
-    controlQuality.input.checked = presentation.show_control_decode_quality;
-    voiceQuality.input.checked = presentation.show_voice_decode_quality;
-    activeOnly.input.checked = presentation.show_only_active_trunked_channels;
-    retainLastCall.input.checked = presentation.retain_last_call_on_idle_rows;
-    clearIdleQuality.input.checked = presentation.clear_voice_quality_when_idle;
+    setUiToggle(encryption.input, presentation.show_encryption_details);
+    setUiToggle(controlQuality.input, presentation.show_control_decode_quality);
+    setUiToggle(voiceQuality.input, presentation.show_voice_decode_quality);
+    setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
+    setUiToggle(retainLastCall.input, presentation.retain_last_call_on_idle_rows);
+    setUiToggle(clearIdleQuality.input, presentation.clear_voice_quality_when_idle);
     qualityMode.value = presentation.decode_quality_display_mode;
     rowLimit.value = String(presentation.live_detail_row_limit);
   };
@@ -17580,9 +18891,9 @@ function openScannerSettings(returnFocusSelector = null) {
   targetBurstLimit.required = true;
   targetBurstLimit.value = String(current.playback.target_burst_limit);
   const apply = (preferences) => {
-    targetGrouping.input.checked = preferences.playback.target_grouping;
+    setUiToggle(targetGrouping.input, preferences.playback.target_grouping);
     targetBurstLimit.value = String(preferences.playback.target_burst_limit);
-    prependTitle.input.checked = preferences.page_titles.prepend_playing_call;
+    setUiToggle(prependTitle.input, preferences.page_titles.prepend_playing_call);
   };
   const fields = node('div', 'settings-field-grid');
   fields.append(formField('Calls before switching targets', targetBurstLimit,
@@ -17654,7 +18965,7 @@ function openResetUserPreferences(returnFocusSelector = null) {
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', 'Reset every personal preference for this account to its default value?'),
     node('p', 'muted', 'This resets the theme, Scanner and Live choices, volume and scan-list subscriptions, ' +
-      'tuner display, health alert switches, and saved table layouts. It does not change the username, password, ' +
+      'tuner display, status icon choices, and saved table layouts. It does not change the username, password, ' +
       'access, receiver configuration, or other users.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
@@ -17702,6 +19013,13 @@ function openResetUserPreferences(returnFocusSelector = null) {
 
 async function renderSettings() {
   const renderContext = captureRenderContext();
+  if (route.get('section') === 'status-icon') {
+    if (!beginPage(renderContext, pageHeader('Status icon',
+      'Choose which monitored receiver issues appear in your personal status icon'),
+      anchor('Back to My Settings', href('settings'), 'button secondary'))) return;
+    await renderAdminAlerts();
+    return;
+  }
   if (!beginPage(renderContext, pageHeader('My Settings',
     'A read-only overview of every personal preference for this account'))) return;
   const snapshot = userPreferenceController.snapshot();
@@ -17726,7 +19044,8 @@ async function renderSettings() {
   reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
   const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(reset);
+  actions.append(anchor('Change Status Icon', href('settings', { section: 'status-icon' }),
+    'button secondary'), reset);
   footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
   overview.append(userPreferenceSummaryCards(current), footer);
   content.append(section('Personal preferences', overview));
@@ -17742,11 +19061,11 @@ async function renderConfiguration() {
   ];
   const requested = route.get('tab') || 'scan-lists';
   const active = availableTabs.some((item) => item.id === requested) ? requested : 'scan-lists';
-  if (!beginPage(renderContext, pageHeader('Configuration',
-    'Manage receiver configuration and external data sources'),
+  if (!beginPage(renderContext, pageHeader('Manage',
+    'Set up aliases, scan lists, recordings, streaming, and external data sources'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
   if (active === 'scan-lists') await renderAdminScanLists();
-  else if (active === 'radioreference') content.append(comingSoonPanel('RadioReference'));
+  else if (active === 'radioreference') await renderAdminRadioReferenceSettings();
   else if (active === 'recording') content.append(comingSoonPanel('Recording'));
   else content.append(comingSoonPanel('Streaming'));
 }
@@ -17759,9 +19078,12 @@ function renderHardware() {
   ];
   const requested = route.get('tab') || 'tuners';
   const active = availableTabs.some((item) => item.id === requested) ? requested : 'tuners';
-  if (!beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
+  const description = active === 'rf-planner' ? 'Plan channel coverage and tuner center frequencies' :
+    'Inspect and configure receiver hardware';
+  if (!beginPage(renderContext, pageHeader('Hardware', description),
     tabs(availableTabs.map((item) => ({ ...item, href: href('hardware', { tab: item.id }) })), active))) return;
-  content.append(active === 'rf-planner' ? rfPlanner.createPlanner() : comingSoonPanel('Tuners'));
+  content.append(active === 'rf-planner' ? rfPlanner.createPlanner(() =>
+    api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })) : comingSoonPanel('Tuners'));
 }
 
 function adminSystemStatusSection() {
@@ -17791,6 +19113,92 @@ function renderAdminSystem() {
   content.append(adminSystemStatusSection());
 }
 
+function adminProtocolEmptyState(protocolName) {
+  const body = node('div', 'settings-empty-state');
+  body.append(iconGlyph('icon-channel'), node('h2', '', `${protocolName} receiver-wide settings`),
+    node('p', '', `There are no shared ${protocolName} settings yet. Settings that belong to one channel remain ` +
+      'in Channel Setup.'),
+    anchor('Open Channel Setup', href('channel-setup'), 'ui-button ui-button-secondary'));
+  content.append(body);
+}
+
+function adminSettingsTree(groups, active) {
+  const navigation = node('nav', 'admin-settings-tree');
+  navigation.setAttribute('aria-label', 'Administration sections');
+  groups.forEach((group) => {
+    const disclosure = node('details', 'admin-settings-branch');
+    disclosure.open = group.items.some((item) => item.id === active || item.items?.some((child) =>
+      child.id === active)) || group.open === true;
+    disclosure.append(node('summary', '', group.label));
+    const links = node('div', 'admin-settings-branch-items');
+    const appendLeaf = (item, host) => {
+      const link = anchor(item.label, href('admin', { tab: item.id }), 'admin-settings-leaf');
+      link.classList.toggle('active', item.id === active);
+      if (item.id === active) link.setAttribute('aria-current', 'page');
+      if (item.scope) link.append(node('small', 'settings-scope-badge', item.scope));
+      host.append(link);
+    };
+    group.items.forEach((item) => {
+      if (Array.isArray(item.items)) {
+        const nested = node('details', 'admin-settings-nested-branch');
+        nested.open = item.items.some((child) => child.id === active);
+        nested.append(node('summary', '', item.label));
+        const nestedLinks = node('div', 'admin-settings-nested-items');
+        item.items.forEach((child) => appendLeaf(child, nestedLinks));
+        nested.append(nestedLinks);
+        links.append(nested);
+      } else appendLeaf(item, links);
+    });
+    disclosure.append(links);
+    navigation.append(disclosure);
+  });
+  return navigation;
+}
+
+function adminSettingsGroups() {
+  const allowed = (capability) => capabilityAllowed(capability);
+  return [
+    { label: 'Receiver status', open: true, items: [
+      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH }
+    ] },
+    { label: 'Accounts & access', items: [
+      { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
+      { id: 'access', label: 'Page access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
+    ] },
+    { label: 'Web interface', items: [
+      { id: 'live-timing', label: 'Receiver-wide Live timing', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' }
+    ] },
+    { label: 'Receiver', items: [
+      { id: 'spectrum', label: 'Spectrum frequency scopes', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' },
+      { label: 'Protocols', items: [
+        { id: 'protocol-p25', label: 'P25', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-dmr', label: 'DMR', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-nxdn', label: 'NXDN', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-am', label: 'AM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' },
+        { id: 'protocol-nbfm', label: 'NBFM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+          scope: 'Receiver-wide' }
+      ] }
+    ] },
+    { label: 'Data & storage', items: [
+      { id: 'activity', label: 'Activity history', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' }
+    ] }
+  ].map((group) => ({ ...group, items: group.items.map((item) => Array.isArray(item.items) ?
+    { ...item, items: item.items.filter((child) => allowed(child.capability)) } : item)
+    .filter((item) => Array.isArray(item.items) ? item.items.length : allowed(item.capability)) }))
+    .filter((group) => group.items.length);
+}
+
+function adminSettingsLeaves(groups) {
+  return groups.flatMap((group) => group.items.flatMap((item) => Array.isArray(item.items) ? item.items : [item]));
+}
+
 function refreshAdminSystemStatus() {
   const current = document.getElementById('admin-system-status');
   if (current) current.replaceWith(adminSystemStatusSection());
@@ -17798,16 +19206,10 @@ function refreshAdminSystemStatus() {
 
 async function renderAdmin() {
   const renderContext = captureRenderContext();
-  const availableTabs = [
-    { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'alerts', label: 'Alerts', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'receiver-settings', label: 'Receiver Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'p25-bandplans', label: 'P25 Bandplan Overrides', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
-    { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
-    { id: 'system', label: 'System', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
-  ].filter((item) => capabilityAllowed(item.capability));
-  if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
+  const groups = adminSettingsGroups();
+  const availableTabs = adminSettingsLeaves(groups);
+  if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'),
+    { status: 403 });
   const requested = route.get('tab') || 'health';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
   if (active !== requested) {
@@ -17815,24 +19217,27 @@ async function renderAdmin() {
     window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('Administration',
-    'Monitor receiver health and manage receiver-wide web settings'),
-    tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
+    'Receiver-wide settings, access, storage, and protocol behavior'))) return;
+  const shell = node('div', 'admin-settings-shell');
+  const body = node('div', 'admin-settings-content');
+  shell.append(adminSettingsTree(groups, active), body);
+  content.append(shell);
   if (active === 'health') await renderAdminHealth();
-  else if (active === 'alerts') {
-    pageTitleController.update({ pageTitle: 'Health Alerts' });
-    await renderAdminAlerts();
+  else if (active === 'live-timing') {
+    pageTitleController.update({ pageTitle: 'Receiver-wide Live timing' });
+    await renderAdminReceiverBehaviorSettings();
   }
-  else if (active === 'receiver-settings') {
-    pageTitleController.update({ pageTitle: 'Receiver Settings' });
-    await renderReceiverSettings();
-  }
-  else if (active === 'p25-bandplans') {
-    pageTitleController.update({ pageTitle: 'P25 Bandplan Overrides' });
+  else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
+  else if (active === 'protocol-p25') {
+    pageTitleController.update({ pageTitle: 'P25 receiver settings' });
     await renderAdminP25BandplanOverrides();
   }
-  else if (active === 'access') await renderAdminAccess();
-  else if (active === 'system') renderAdminSystem();
-  else await renderAdminUsers();
+  else if (active.startsWith('protocol-')) adminProtocolEmptyState(active.slice('protocol-'.length).toUpperCase());
+  else if (active === 'access') await renderAdminAccess(renderContext);
+  else if (active === 'activity') renderAdminSystem();
+  else await renderAdminUsers(renderContext);
+  if (!renderIsCurrent(renderContext)) return;
+  while (shell.nextSibling) body.append(shell.nextSibling);
 }
 
 function routeViewLabel(view) {
@@ -18009,7 +19414,7 @@ async function loadStatus(refreshCurrentView = false) {
   }
 
   const currentView = route.get('view') || 'dashboard';
-  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'system') {
+  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'activity') {
     refreshAdminSystemStatus();
     return;
   }
@@ -18029,7 +19434,9 @@ applicationRoutes = routeFoundation.createRegistry({
   'radio-system': renderRadioSystem,
   'group-identity': renderGroupIdentity,
   radio: renderRadio,
-  channels: renderChannels,
+  identities: renderIdentities,
+  channels: renderRadioSystems,
+  'channel-setup': renderChannelSetup,
   channel: renderChannel,
   aliases: renderAliases,
   configuration: renderConfiguration,
@@ -18041,7 +19448,13 @@ applicationRoutes = routeFoundation.createRegistry({
 
 async function render() {
   setNavigationOpen(false);
-  const view = routeFoundation.requestedView(route);
+  let view = routeFoundation.requestedView(route);
+  if (view === 'channels') {
+    route.set('view', 'radio-systems');
+    route.delete('channel');
+    window.history.replaceState({}, '', currentHref());
+    view = 'radio-systems';
+  }
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;
   restorePlaybackBarBeforeRender();
@@ -18051,7 +19464,10 @@ async function render() {
   activeRenderController = renderController;
   const renderContext = Object.freeze({ epoch, signal: renderController.signal });
   closePageConnections();
-  const loading = node('div', 'loading', 'Loading');
+  const aliasTab = route.get('aliasTab');
+  const loadingLabel = view === 'aliases' && ['activity', 'calls', 'evidence'].includes(aliasTab) ?
+    'Preparing alias activity…' : 'Loading';
+  const loading = node('div', 'loading', loadingLabel);
   loading.setAttribute('role', 'status');
   content.setAttribute('aria-busy', 'true');
   content.replaceChildren(loading);

@@ -17,6 +17,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationSnapshot;
 import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
+import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
@@ -130,8 +131,7 @@ public final class ConfigurationRepository
     }
 
     /** Commits Alias-owned state without rewriting unrelated channel or broadcast rows. */
-    public synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
-                                                                             Collection<Long> removedAliasListIds)
+    public synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed)
         throws IOException, SQLException
     {
         AliasConfigurationSnapshot detached = AliasConfigurationSnapshot.detachedCopyOf(proposed);
@@ -139,8 +139,39 @@ public final class ConfigurationRepository
         {
             mAliasStore.replaceAliases(connection, detached.aliases(), detached.definitions());
             mScanListStore.replaceConfiguration(connection, detached.scanLists());
-            mChannelAndBroadcastStore.clearAliasListAssignments(connection, removedAliasListIds);
             return loadAliasConfiguration(connection);
+        });
+    }
+
+    /** Loads only saved channels from one consistent database view. */
+    public ChannelConfigurationSnapshot loadChannelConfiguration() throws IOException, SQLException
+    {
+        return inReadTransaction(connection ->
+            new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection)));
+    }
+
+    /**
+     * Commits channel-owned state without rewriting Alias, scan-list, or broadcast rows and returns the canonical
+     * read-back from the same transaction.
+     */
+    public synchronized ChannelConfigurationSnapshot commitChannelConfiguration(ChannelConfigurationSnapshot proposed)
+        throws IOException, SQLException
+    {
+        if(proposed == null)
+        {
+            throw new IllegalArgumentException("Channel configuration cannot be null");
+        }
+
+        return inTransaction(connection ->
+        {
+            List<AliasListDefinition> definitions = mAliasStore.loadAliasListDefinitions(connection);
+            List<Alias> aliases = mAliasStore.loadAliases(connection, definitions);
+            List<BroadcastConfiguration> broadcasts =
+                mChannelAndBroadcastStore.load(connection).broadcastConfigurations();
+            ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
+                proposed.channels(), broadcasts);
+            mChannelAndBroadcastStore.replaceChannels(connection, proposed.channels());
+            return new ChannelConfigurationSnapshot(mChannelAndBroadcastStore.loadChannels(connection));
         });
     }
 

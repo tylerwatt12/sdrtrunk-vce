@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
 class StatsWebNavigationHeaderUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"123\">"));
-        assertTrue(html.contains("/assets/app.css?v=100"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"133\">"));
+        assertTrue(html.contains("/assets/app.css?v=108"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=144\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=154\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
@@ -38,8 +38,10 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js';"));
         String hardware = block(source, "function renderHardware()");
         assertTrue(hardware.contains("{ id: 'rf-planner', label: 'RF Planner' }"));
-        assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner()"));
-        assertTrue(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
+        assertTrue(hardware.contains("active === 'rf-planner' ? rfPlanner.createPlanner(() =>"));
+        assertTrue(hardware.contains("api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })"));
+        assertTrue(html.contains("<span>RadioReference</span><svg class=\"nav-lock\""));
+        assertFalse(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
         String channel = fragment(html, "<symbol id=\"icon-channel\"", "</symbol>");
@@ -49,7 +51,33 @@ class StatsWebNavigationHeaderUiContractTest
     }
 
     @Test
-    void keepsRestrictedNavigationVisibleAndMarksEachLockedDestination() throws Exception
+    void keepsRfPlannerOnTheSharedThemeAndOperatorLanguage() throws Exception
+    {
+        String planner = readText(RF_PLANNER);
+        String css = StatsWebStylesheetTestSupport.readAll();
+        String plannerCss = css.substring(css.indexOf("/* RF planner */"));
+
+        assertTrue(planner.contains("Frequencies to cover (MHz)"));
+        assertTrue(planner.contains("Loaded ${loaded.length} tuner"));
+        assertTrue(planner.contains("target?.usable_bandwidth_hz"));
+        assertTrue(planner.contains("if (planBuilt) calculate();"));
+        assertTrue(planner.contains("button secondary rfp-small rfp-add-tuner"));
+        assertFalse(planner.contains("DSheirer"));
+        assertFalse(planner.contains("upstream"));
+        assertFalse(planner.contains("rfp-placement-engine"));
+        assertFalse(planner.contains("Planning model verified"));
+        assertFalse(planner.contains("polyphase channelizer"));
+        assertTrue(plannerCss.contains("--rfp-channel: var(--chart-decode)"));
+        assertTrue(plannerCss.contains("background: var(--surface-2)"));
+        assertFalse(plannerCss.contains("#28a7d5"));
+        assertFalse(plannerCss.contains("#31a56c"));
+        assertFalse(plannerCss.contains("#d38a22"));
+        assertFalse(plannerCss.contains("#d84b62"));
+        assertFalse(plannerCss.contains("#061118"));
+    }
+
+    @Test
+    void hidesUnavailableAdministratorNavigationAfterAccessLoads() throws Exception
     {
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
@@ -71,15 +99,15 @@ class StatsWebNavigationHeaderUiContractTest
         assertFalse(html.contains("nav-group-protected"));
         assertTrue(access.contains("link.classList.toggle('access-locked', locked)"));
         assertTrue(access.contains("lock.hidden = !locked"));
-        assertFalse(access.contains("link.hidden"));
-        assertFalse(access.contains("group.hidden"));
+        assertTrue(access.contains("link.hidden = administratorOnly && locked"));
+        assertTrue(access.contains("group.hidden = !group.querySelector"));
     }
 
     @Test
     void switchesToAnAccessibleDrawerBeforeTheDesktopHeaderCollides() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String setOpen = block(source, "function setNavigationOpen(open, returnFocus = false)");
         String accessibility = block(source, "function synchronizeNavigationAccessibility(");
         String focusTargets = block(source, "function drawerNavigationFocusTargets(");
@@ -123,7 +151,7 @@ class StatsWebNavigationHeaderUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String indicator = block(source, "  updateIndicator()");
 
         assertTrue(html.contains("class=\"receiver-health-indicator receiver-health-loading icon-button\""));

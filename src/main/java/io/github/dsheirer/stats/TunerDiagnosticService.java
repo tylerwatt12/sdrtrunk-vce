@@ -21,6 +21,8 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
@@ -296,6 +298,8 @@ public final class TunerDiagnosticService implements AutoCloseable
                 }
 
                 long sampleRate = Math.round(rawSampleRate);
+                int usableBandwidth = Math.max(0, controller.getUsableBandwidth());
+                int centerExclusionHalfBandwidth = Math.max(0, controller.getMiddleUnusableHalfBandwidth());
                 int activeChannelCount = Math.max(0, available.activeChannelCount().get());
 
                 RuntimeIdentity identity = mRuntimeIdentities.computeIfAbsent(available.identity(), ignored ->
@@ -305,8 +309,8 @@ public final class TunerDiagnosticService implements AutoCloseable
                 String name = displayIdentity(available.name(), tunerClass);
                 String serial = displayIdentity(available.serial(), "Unknown");
                 String label = name.toLowerCase().contains(serial.toLowerCase()) ? name : name + " · " + serial;
-                Target target = new Target(identity.targetId(), label, name, serial, centerFrequency, sampleRate,
-                    activeChannelCount);
+                Target target = new Target(identity.targetId(), label, name, serial, available.tunerType().name(),
+                    centerFrequency, sampleRate, usableBandwidth, centerExclusionHalfBandwidth, activeChannelCount);
                 snapshots.add(new TargetSnapshot(available.identity(), controller, available.activeChannelCount(),
                     available.receiverQueueControl(), target));
             }
@@ -378,10 +382,13 @@ public final class TunerDiagnosticService implements AutoCloseable
 
                 if(tuner != null && controller != null && channelManager != null)
                 {
+                    TunerConfiguration configuration = candidate.getTunerConfiguration();
+                    TunerType tunerType = configuration != null && configuration.getTunerType() != null ?
+                        configuration.getTunerType() : TunerType.UNKNOWN;
                     ReceiverQueueControl queueControl = channelManager instanceof PolyphaseChannelSourceManager manager ?
                         new PolyphaseReceiverQueueControl(manager) : ReceiverQueueControl.UNSUPPORTED;
-                    available.add(new AvailableTarget(tuner, candidate.getTunerClass(), tuner.getPreferredName(),
-                        tuner.getUniqueID(), controller,
+                    available.add(new AvailableTarget(tuner, candidate.getTunerClass(), tunerType,
+                        tuner.getPreferredName(), tuner.getUniqueID(), controller,
                         channelManager::getTunerChannelCount, queueControl));
                 }
             }
@@ -407,8 +414,9 @@ public final class TunerDiagnosticService implements AutoCloseable
     {
     }
 
-    public record Target(String targetId, String label, String name, String serial, long centerFrequencyHz, long sampleRateHz,
-                         int activeChannelCount)
+    public record Target(String targetId, String label, String name, String serial, String tunerType,
+                         long centerFrequencyHz, long sampleRateHz, int usableBandwidthHz,
+                         int centerExclusionHalfBandwidthHz, int activeChannelCount)
     {
     }
 
@@ -1476,27 +1484,38 @@ public final class TunerDiagnosticService implements AutoCloseable
     {
     }
 
-    record AvailableTarget(Object identity, TunerClass tunerClass, String name, String serial,
+    record AvailableTarget(Object identity, TunerClass tunerClass, TunerType tunerType, String name, String serial,
                            TunerController controller,
                            ChannelCount activeChannelCount, ReceiverQueueControl receiverQueueControl)
     {
         AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,
                         ChannelCount activeChannelCount)
         {
-            this(identity, tunerClass, tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(),
-                "Unknown", controller, activeChannelCount, ReceiverQueueControl.UNSUPPORTED);
+            this(identity, tunerClass, TunerType.UNKNOWN,
+                tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(), "Unknown", controller,
+                activeChannelCount, ReceiverQueueControl.UNSUPPORTED);
         }
 
         AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,
                         ChannelCount activeChannelCount, ReceiverQueueControl receiverQueueControl)
         {
-            this(identity, tunerClass, tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(),
-                "Unknown", controller, activeChannelCount, receiverQueueControl);
+            this(identity, tunerClass, TunerType.UNKNOWN,
+                tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(), "Unknown", controller,
+                activeChannelCount, receiverQueueControl);
+        }
+
+        AvailableTarget(Object identity, TunerClass tunerClass, String name, String serial,
+                        TunerController controller, ChannelCount activeChannelCount,
+                        ReceiverQueueControl receiverQueueControl)
+        {
+            this(identity, tunerClass, TunerType.UNKNOWN, name, serial, controller, activeChannelCount,
+                receiverQueueControl);
         }
 
         AvailableTarget
         {
             Objects.requireNonNull(identity, "Tuner target identity cannot be null");
+            Objects.requireNonNull(tunerType, "Tuner type cannot be null");
             Objects.requireNonNull(controller, "Tuner target controller cannot be null");
             Objects.requireNonNull(activeChannelCount, "Tuner channel count cannot be null");
             Objects.requireNonNull(receiverQueueControl, "Receiver IQ queue control cannot be null");

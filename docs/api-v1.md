@@ -78,6 +78,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/me/preferences` | The signed-in user's bounded browser preference document and revision. |
 | `GET /api/v1/dashboard` | Bounded summary counts, recent channels, call activity, and top identities. |
 | `GET /api/v1/quality` | Current quality across a bounded channel page. Global requests cannot include history. |
+| `GET /api/v1/identities` | Bounded directory of recently active talkgroups, patch groups, and radios. |
 | `GET /api/v1/alias-lists` | Paged Alias List catalog. |
 | `GET /api/v1/alias-lists/{id}/observed-group-identities` | Paged unmatched talkgroup and patch-group discovery for one Alias List. |
 | `GET /api/v1/aliases` | Paged Alias catalog and bounded activity metrics. |
@@ -126,6 +127,12 @@ The complete channel collection is always available at
 to their channels. A radio system never selects one arbitrary Alias List as its owner. A system-level identity Alias
 is returned only when every applicable channel Alias List resolves to the same effective Alias; a conflict leaves the
 Alias blank. Channel resources resolve Aliases through that exact channel's `alias_list_id`.
+
+The browser's **Radio Directory** uses the saved channel collection so trunked and conventional channels appear in
+one read-only view with their current running or stopped status. `GET /api/v1/identities` supplies its companion
+**Identities** page. It accepts `range`, `limit`, and `offset`, reuses the existing compact activity summaries and
+Alias resolution, and reports `candidate_limit_reached` when the selected range is too broad for an exhaustive view.
+It does not create a separate identity or activity store.
 
 ### Channels and protocol features
 
@@ -198,6 +205,7 @@ decoder-specific protocol labels. Database integer codes and internal surrogate 
 CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 
 - `aliases`
+- `alias-list`
 - `signal-health`
 - `radio-system-group-identities`
 - `radio-system-radios`
@@ -209,7 +217,11 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are:
 - `channel-neighbors`
 - `channel-quality`
 
-One export runs at a time. Buffered exports stop at 10,000 rows or 16 MiB. Radio-system exports use
+One export runs at a time. General reporting exports stop at 10,000 rows or 16 MiB. The importable `alias-list.csv`
+export instead requires a positive `list` and `scope=all` or `scope=filtered`. The filtered scope accepts the Alias
+catalog filters, applies them to the complete result, and has no row limit. Importable alias rows are always written
+in ascending durable alias-ID order, independent of the table's presentation sort. The export is prepared in bounded
+database batches and downloaded from a validated temporary spool. Radio-system exports use
 `radio_system_key`; channel exports use `configuration_id`. Radio-system radio exports also accept `affiliated` and
 `configuration_id`. Talker-alias exports contain only radios with a nonblank over-the-air alias. Alias catalog reads
 and `aliases.csv` require administrator Alias access.
@@ -267,6 +279,19 @@ Authentication uses `GET /api/v1/auth/session`, `POST /api/v1/auth/login`, and `
 users own one complete preference document at `GET, PUT /api/v1/me/preferences`. Mutations require the session CSRF
 token and the capability assigned to the resource.
 
+Authenticated browser sessions have no idle timeout or absolute time limit, so session responses do not include an
+expiration timestamp. Sessions exist only in receiver memory and end when the user signs out, signs in again and a
+replacement session is delivered, the account password or tier changes, the account is deleted, the primary
+administrator password is reset, the web server is disabled, or the session service shuts down. A receiver restart
+therefore ends every session.
+
+Session storage is bounded to 64 sessions with no per-account limit, and two slots are reserved for the primary
+administrator. When a successful sign-in reaches an ordinary-user or global limit, the presented current session is
+reused when it already belongs to that account. Otherwise, the least-recently-used eligible session is replaced.
+Replacement prefers a session from the same account, then a non-primary session when ordinary-user capacity is full,
+and finally a globally eligible session when the receiver-wide limit is full. The two administrator reservations are
+preserved even when capacity replacement is necessary.
+
 Central administration uses:
 
 - `GET, POST /api/v1/admin/users`
@@ -275,7 +300,9 @@ Central administration uses:
 - `GET, PUT /api/v1/admin/receiver-settings`
 - `GET, PUT /api/v1/admin/p25-bandplan-overrides`
 
-The receiver-wide settings document currently contains only the traffic-grant age-out value. P25 bandplan override
+The receiver-wide settings document currently contains only the Live traffic-row idle-delay value. That value changes
+how long completed traffic remains visible in the Live presentation; it does not keep a radio call, tuner, or traffic
+channel active. P25 band plan override
 profiles are selected for a saved channel by `configuration_id`; their matching RF facts remain WACN, System ID, and
 optional RFSS/Site ID.
 

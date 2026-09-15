@@ -18,6 +18,7 @@ import io.github.dsheirer.jmbe.*;
 import io.github.dsheirer.jmbe.github.GitHub;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.TunerHardwareDiscovery;
@@ -288,6 +289,7 @@ public final class SetupWizard extends JDialog
         });
         JPanel diagnosticActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         diagnosticActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        diagnosticActions.setBorder(new EmptyBorder(20, 0, 0, 0));
         diagnosticActions.add(detailsToggle); diagnosticActions.add(copyError);
         footer.add(diagnosticActions);
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.RIGHT));
@@ -695,12 +697,14 @@ public final class SetupWizard extends JDialog
         addTo(networkDetails,text("Your firewall controls who can reach this computer. This choice is not limited to your home network; we do not change firewall rules or open router ports."));
         networkChoice.setDetails(networkDetails);
         JRadioButton network=networkChoice.radio();
-        JSpinner port = WizardStyles.integerSpinner(app.getStatsWebServerPort(),1024,65535);
+        JSpinner port = WizardStyles.integerSpinner(app.getStatsWebServerPort(),
+            ApplicationPreference.MIN_STATS_WEB_SERVER_PORT, ApplicationPreference.MAX_STATS_WEB_SERVER_PORT);
         labelled("Web port", port);
         paragraph("8090 works for most installations. Change it only if another application already uses this port.");
         details("About secure access", "Connections use HTTPS to protect your sign-in. Your existing certificate settings are kept. We’ll check that web access works before you finish setup.");
         accept = () -> {
-            commitNumber(port,"Enter a port from 1024 to 65535.");
+            commitNumber(port, "Enter a port from " + ApplicationPreference.MIN_STATS_WEB_SERVER_PORT + " to " +
+                ApplicationPreference.MAX_STATS_WEB_SERVER_PORT + ".");
             boolean changed = !app.isStatsWebServerHttpsEnabled() || app.getStatsWebServerPort() != (Integer)port.getValue() || app.isStatsWebServerAnyIpEnabled() != network.isSelected();
             app.setStatsWebServerHttpsEnabled(true);
             app.setStatsWebServerPort((Integer)port.getValue());

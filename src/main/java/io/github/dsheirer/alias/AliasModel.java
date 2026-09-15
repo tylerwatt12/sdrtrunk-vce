@@ -386,6 +386,45 @@ public class AliasModel
         return false;
     }
 
+    /**
+     * Ensures a newly added saved channel has one compatible Alias List. The canonical factory list is preferred;
+     * if it was removed, the oldest compatible administrator-owned list is used instead.
+     */
+    public void requireAliasListAssignment(Channel channel)
+    {
+        if(channel == null)
+        {
+            throw new IllegalArgumentException("Channel cannot be null");
+        }
+        if(isAliasListCompatible(channel))
+        {
+            return;
+        }
+        if(channel.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ||
+            channel.getAliasListName() != null && !channel.getAliasListName().isBlank())
+        {
+            throw new IllegalArgumentException("Channel [" + channel.getName() +
+                "] references an incompatible Alias List");
+        }
+
+        DecoderType decoderType = channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+        AliasListFamily family = AliasListFamily.from(decoderType);
+        AliasListDefinition definition = getDefaultAliasListDefinition(decoderType);
+        if(definition == null && family != null)
+        {
+            definition = mAliasListDefinitions.stream()
+                .filter(candidate -> candidate.getFamily() == family)
+                .findFirst().orElse(null);
+        }
+        if(definition == null)
+        {
+            throw new IllegalStateException("Create a compatible Alias List before adding a " + decoderType +
+                " channel");
+        }
+        channel.setAliasListDefinition(definition);
+    }
+
     public AliasListDefinition getAliasListDefinition(Alias alias)
     {
         if(alias == null)

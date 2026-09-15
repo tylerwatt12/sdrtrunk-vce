@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.preference.application;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +16,39 @@ import org.junit.jupiter.api.Test;
 
 class ApplicationPreferenceWebServerDefaultTest
 {
+    @Test
+    void acceptsFullPortRangeAndClampsInvalidValues() throws Exception
+    {
+        Preferences node = Preferences.userRoot().node("/sdrtrunk-vce-tests/web-server-port-" + UUID.randomUUID());
+        Preferences parent = node.parent();
+
+        try
+        {
+            ApplicationPreference preference = new ApplicationPreference(ignored -> {});
+            usePreferences(preference, node);
+
+            preference.setStatsWebServerPort(1);
+            assertEquals(1, preference.getStatsWebServerPort());
+
+            preference.setStatsWebServerPort(80);
+            assertEquals(80, preference.getStatsWebServerPort());
+
+            preference.setStatsWebServerPort(65_535);
+            assertEquals(65_535, preference.getStatsWebServerPort());
+
+            preference.setStatsWebServerPort(0);
+            assertEquals(ApplicationPreference.MIN_STATS_WEB_SERVER_PORT, preference.getStatsWebServerPort());
+
+            preference.setStatsWebServerPort(65_536);
+            assertEquals(ApplicationPreference.MAX_STATS_WEB_SERVER_PORT, preference.getStatsWebServerPort());
+        }
+        finally
+        {
+            node.removeNode();
+            parent.flush();
+        }
+    }
+
     @Test
     void enablesFreshWebServerAndPreservesExplicitDisable() throws Exception
     {

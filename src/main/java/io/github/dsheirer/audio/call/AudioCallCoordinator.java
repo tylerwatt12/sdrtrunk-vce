@@ -34,6 +34,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IncompleteIdentifier;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
@@ -1313,7 +1314,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                 leg.snapshot.identifierCollection() != null ?
                     leg.snapshot.identifierCollection().getFromIdentifier() : null,
                 leg.snapshot.identifierCollection() != null ?
-                    leg.snapshot.identifierCollection().getToIdentifier() : null)).toList();
+                    leg.snapshot.identifierCollection().getToIdentifier() : null,
+                leg.voiceFrameFingerprints, frequency(leg.snapshot.identifierCollection()),
+                positiveTimeslot(leg.snapshot.timeslot()))).toList();
 
         return new CompletedAudioCall(new LogicalCallId(mCoordinatorId, mNextLogicalCallSequence++),
             resolvedSnapshot, winner.audioBuffers, policy, summaries);
@@ -2374,6 +2377,19 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
     }
 
+    private static Long frequency(IdentifierCollection identifiers)
+    {
+        Identifier<?> identifier = identifiers != null ? identifiers.getIdentifier(IdentifierClass.CONFIGURATION,
+            Form.CHANNEL_FREQUENCY, Role.ANY) : null;
+        return identifier instanceof ConfigurationLongIdentifier value && value.getValue() > 0L ?
+            value.getValue() : null;
+    }
+
+    private static Integer positiveTimeslot(int timeslot)
+    {
+        return timeslot > 0 ? timeslot : null;
+    }
+
     private static boolean validP25System(int wacn, int system)
     {
         return wacn >= 0 && wacn <= 0xFFFFF && system >= 0 && system <= 0xFFF;
@@ -2673,10 +2689,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             return voiceFingerprintIndex;
         }
-    }
-
-    private record TimestampedVoiceFingerprint(long fingerprint, long carrierTimestamp)
-    {
     }
 
     /** Worker-owned bounded timestamp index for content proof. */

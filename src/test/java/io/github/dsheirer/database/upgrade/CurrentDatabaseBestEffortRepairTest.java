@@ -70,16 +70,19 @@ class CurrentDatabaseBestEffortRepairTest
             ObjectNode channelPayload = MAPPER.valueToTree(channel);
             channelPayload.remove(CHANNEL_ROW_OWNED_JSON_FIELDS);
             channelPayload.put("ignoredPadding", oversizedPadding);
+            long channelAliasListId = number(connection,
+                "SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, name, auto_start, decoder_type,
+                    configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start, decoder_type,
                     address_domain_code, primary_frequency_hz, config_json
-                ) VALUES (?, 'CONVENTIONAL', 0, ?, 0, 'NBFM', 0, 155250000, ?)
+                ) VALUES (?, 'CONVENTIONAL', 0, ?, ?, 0, 'NBFM', 0, 155250000, ?)
                 """))
             {
                 insert.setString(1, channel.getConfigurationId());
                 insert.setString(2, channel.getName());
-                insert.setString(3, MAPPER.writeValueAsString(channelPayload));
+                insert.setLong(3, channelAliasListId);
+                insert.setString(4, MAPPER.writeValueAsString(channelPayload));
                 assertEquals(1, insert.executeUpdate());
             }
             try(var insert = connection.prepareStatement("""
@@ -150,6 +153,16 @@ class CurrentDatabaseBestEffortRepairTest
                 insert.setLong(4, p25List);
                 assertEquals(5, insert.executeUpdate());
             }
+            execute(connection, """
+                INSERT INTO alias_activity_summary(
+                    alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+                ) VALUES
+                    (99001, %d, 1, 'not_collected', 1),
+                    (99002, %d, 0, 'unsupported', 1),
+                    (99003, %d, 0, 'unsupported', 1),
+                    (99004, %d, 0, 'unsupported', 1),
+                    (99005, 999999, 1, 'not_collected', 1)
+                """.formatted(p25List, p25List, nbfmList, p25List));
             try(var insert = connection.prepareStatement("""
                 INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
                 VALUES (99001, ?), (99002, ?), (99003, ?), (99004, ?), (99005, ?)
@@ -172,6 +185,8 @@ class CurrentDatabaseBestEffortRepairTest
 
             CurrentDatabaseBestEffortRepair.repair(connection);
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id BETWEEN 99001 AND 99005"));
+            assertEquals(1, number(connection,
+                "SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id BETWEEN 99001 AND 99005"));
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership " +
                 "WHERE alias_id BETWEEN 99001 AND 99005"));
             assertEquals("Keep this Alias", text(connection, "SELECT name FROM alias WHERE id=99001"));
@@ -532,18 +547,19 @@ class CurrentDatabaseBestEffortRepairTest
             execute(connection, "PRAGMA ignore_check_constraints=ON");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, name, radioresolve_id, auto_start,
+                    configuration_id, channel_kind, sort_order, name, alias_list_id, radioresolve_id, auto_start,
                     decoder_type, address_domain_code, primary_frequency_hz, config_json
-                ) VALUES (?, 'CONVENTIONAL', 0, ?, ?, 0, ?, ?, ?, ?)
+                ) VALUES (?, 'CONVENTIONAL', 0, ?, ?, ?, 0, ?, ?, ?, ?)
                 """))
             {
                 insert.setString(1, channelId.toUpperCase(java.util.Locale.ROOT));
                 insert.setString(2, channel.getName());
-                insert.setString(3, radioResolveId.toUpperCase(java.util.Locale.ROOT));
-                insert.setString(4, projection.decoderType());
-                insert.setInt(5, projection.addressDomainCode());
-                insert.setLong(6, projection.primaryFrequencyHz());
-                insert.setString(7, MAPPER.writeValueAsString(channelPayload));
+                insert.setLong(3, aliasListId);
+                insert.setString(4, radioResolveId.toUpperCase(java.util.Locale.ROOT));
+                insert.setString(5, projection.decoderType());
+                insert.setInt(6, projection.addressDomainCode());
+                insert.setLong(7, projection.primaryFrequencyHz());
+                insert.setString(8, MAPPER.writeValueAsString(channelPayload));
                 assertEquals(1, insert.executeUpdate());
             }
             try(var insert = connection.prepareStatement("""
@@ -625,14 +641,15 @@ class CurrentDatabaseBestEffortRepairTest
             ObjectNode providerPayload = MAPPER.valueToTree(provider);
             providerPayload.remove("configurationId");
             long aliasListId = number(connection, "SELECT id FROM alias_list WHERE family='P25' LIMIT 1");
+            long channelAliasListId = number(connection, "SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1");
 
             execute(connection, "PRAGMA foreign_keys=OFF");
             execute(connection, "PRAGMA ignore_check_constraints=ON");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    id, configuration_id, channel_kind, sort_order, name, auto_start,
+                    id, configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start,
                     decoder_type, address_domain_code, primary_frequency_hz, config_json
-                ) VALUES (?, ?, 'CONVENTIONAL', ?, ?, 0, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'CONVENTIONAL', ?, ?, ?, 0, ?, ?, ?, ?)
                 """))
             {
                 for(int index = 0; index < 2; index++)
@@ -642,10 +659,11 @@ class CurrentDatabaseBestEffortRepairTest
                         sharedChannelId.toUpperCase(java.util.Locale.ROOT) : sharedChannelId);
                     insert.setInt(3, index);
                     insert.setString(4, channel.getName());
-                    insert.setString(5, projection.decoderType());
-                    insert.setInt(6, projection.addressDomainCode());
-                    insert.setLong(7, projection.primaryFrequencyHz());
-                    insert.setString(8, MAPPER.writeValueAsString(channelPayload));
+                    insert.setLong(5, channelAliasListId);
+                    insert.setString(6, projection.decoderType());
+                    insert.setInt(7, projection.addressDomainCode());
+                    insert.setLong(8, projection.primaryFrequencyHz());
+                    insert.setString(9, MAPPER.writeValueAsString(channelPayload));
                     insert.addBatch();
                 }
                 assertEquals(2, insert.executeBatch().length);
@@ -796,21 +814,23 @@ class CurrentDatabaseBestEffortRepairTest
             invalidRecord.putArray("recorders").add("NOT_A_RECORDER");
             payload.set("recordConfiguration", invalidRecord);
             ConfigurationChannelProjection projection = ConfigurationChannelProjection.from(channel);
+            long aliasListId = number(connection, "SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1");
             try(var insert = connection.prepareStatement("""
                 INSERT INTO configuration_channel(
-                    configuration_id, channel_kind, sort_order, system_name, site_name, name, auto_start,
+                    configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id, auto_start,
                     decoder_type, address_domain_code, primary_frequency_hz, config_json
-                ) VALUES (?, 'CONVENTIONAL', 0, ?, ?, ?, 0, ?, ?, ?, ?)
+                ) VALUES (?, 'CONVENTIONAL', 0, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                 """))
             {
                 insert.setString(1, channel.getConfigurationId());
                 insert.setString(2, channel.getSystem());
                 insert.setString(3, channel.getSite());
                 insert.setString(4, channel.getName());
-                insert.setString(5, projection.decoderType());
-                insert.setInt(6, projection.addressDomainCode());
-                insert.setLong(7, projection.primaryFrequencyHz());
-                insert.setString(8, MAPPER.writeValueAsString(payload));
+                insert.setLong(5, aliasListId);
+                insert.setString(6, projection.decoderType());
+                insert.setInt(7, projection.addressDomainCode());
+                insert.setLong(8, projection.primaryFrequencyHz());
+                insert.setString(9, MAPPER.writeValueAsString(payload));
                 assertEquals(1, insert.executeUpdate());
             }
 

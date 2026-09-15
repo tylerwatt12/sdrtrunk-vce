@@ -19,6 +19,15 @@ import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,7 +39,106 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class P25NetworkConfigurationStabilizerTest
 {
     @Test
-    public void discoveryPromotesIdentityAndAllControlChannelsImmediately()
+    public void blockedObserverProjectionNeverDelaysDecoderObservationResetOrSaturation() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicBoolean blockFirstProjection = new AtomicBoolean(true);
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1", () -> {
+            if(blockFirstProjection.compareAndSet(true, false))
+            {
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        stabilizer.observe(snapshot(primary(856137500L)), 1_000L);
+        ExecutorService observer = Executors.newSingleThreadExecutor();
+        ExecutorService decoder = Executors.newSingleThreadExecutor();
+
+        try
+        {
+            Future<P25NetworkConfigurationSnapshot> projected = observer.submit(stabilizer::getSnapshot);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+            Future<?> decoderWork = decoder.submit(() -> {
+                P25NetworkConfigurationSnapshot observation = snapshot(secondary(855987500L));
+
+                for(int index = 0; index < 1_000; index++)
+                {
+                    stabilizer.observe(observation, 2_000L + index);
+
+                    if(index % 100 == 0)
+                    {
+                        stabilizer.resetCandidates();
+                    }
+                }
+
+                stabilizer.reset();
+                stabilizer.observe(snapshot(primary(851012500L)), 10_000L);
+            });
+
+            decoderWork.get(2, TimeUnit.SECONDS);
+            releaseProjection.countDown();
+            P25NetworkConfigurationSnapshot snapshot = projected.get(2, TimeUnit.SECONDS);
+            assertTrue(hasChannel(snapshot, "primary_control", 851012500L));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            observer.shutdownNow();
+            decoder.shutdownNow();
+        }
+    }
+
+    @Test
+    public void concurrentPatchMutationFailsClosedInsteadOfPublishingMixedCompleteness()
+    {
+        AtomicReference<P25NetworkConfigurationStabilizer> reference = new AtomicReference<>();
+        AtomicLong timestamp = new AtomicLong(71_000L);
+        AtomicInteger patchId = new AtomicInteger(65192);
+        AtomicBoolean mutateDuringProjection = new AtomicBoolean(true);
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1", () -> {
+            if(mutateDuringProjection.get())
+            {
+                PatchGroupIdentifier concurrentPatch = patchGroup(patchId.getAndIncrement(), 10, 40003);
+                long firstObservation = timestamp.addAndGet(20_000L);
+                reference.get().observePatchGroup(concurrentPatch, firstObservation);
+                reference.get().observePatchGroup(concurrentPatch, firstObservation + 10_000L);
+            }
+        });
+        reference.set(stabilizer);
+        P25NetworkConfigurationSnapshot.PatchGroup patchSnapshot =
+            new P25NetworkConfigurationSnapshot.PatchGroup(65191, 9, List.of(40002), List.of());
+        P25NetworkConfigurationSnapshot observation = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x123, null), null,
+            List.of(primary(856137500L)), List.of(), List.of(),
+            List.of(patchSnapshot), List.of());
+        stabilizer.observe(observation, 1_000L);
+        stabilizer.observe(observation, 11_000L);
+        stabilizer.observe(observation, 61_000L);
+
+        P25NetworkConfigurationSnapshot projected = stabilizer.getSnapshot();
+
+        assertNull(projected,
+            "bounded optimistic retries must fail closed while every projection overlaps decoder mutation");
+
+        mutateDuringProjection.set(false);
+        P25NetworkConfigurationSnapshot coherent = stabilizer.getSnapshot();
+        assertNotNull(coherent);
+        assertEquals(2, coherent.patchGroups().size(), "both fresh patches added during projection became stable");
+        assertEquals(121_000L, coherent.activePatchesObservedAtMs());
+    }
+
+    @Test
+    public void discoveryPromotesIdentityAndCurrentControlImmediately()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
@@ -49,9 +157,9 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(0xBEE00, stable.network().wacn());
         assertNotNull(stable.currentSite());
         assertEquals(new P25SiteIdentity(0xBEE00, 0x348, 2, 1), stabilizer.getStableSiteIdentity());
-        assertEquals(2, stable.channels().size());
+        assertEquals(1, stable.channels().size());
         assertTrue(hasChannel(stable, "primary_control", 856137500L));
-        assertTrue(hasChannel(stable, "secondary_control", 855987500L));
+        assertFalse(hasChannel(stable, "secondary_control", 855987500L));
         assertTrue(stable.neighborSites().isEmpty());
         assertTrue(stable.frequencyBands().isEmpty());
 
@@ -60,16 +168,25 @@ public class P25NetworkConfigurationStabilizerTest
         stable = stabilizer.getSnapshot();
 
         assertEquals(2, stable.channels().size());
+        assertTrue(hasChannel(stable, "secondary_control", 855987500L));
         assertEquals(1, stable.neighborSites().size());
         assertEquals(1, stable.frequencyBands().size());
+        assertEquals(61_000L, stable.neighborSites().getFirst().observedAtMs());
+        assertEquals(61_000L, stable.frequencyBands().getFirst().observedAtMs());
     }
 
     @Test
-    public void controlChannelsPromoteImmediatelyOutsideDiscovery()
+    public void secondaryControlRequiresThreeObservationsOverSixtySeconds()
     {
         P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
 
         stabilizer.observe(snapshot(secondary(851462500L)), 70000L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 100000L);
+        assertFalse(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+
+        stabilizer.observe(snapshot(secondary(851462500L)), 130000L);
 
         assertTrue(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
     }
@@ -101,7 +218,7 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void candidateResetRetainsGuardedFactsWhileControlsRemainAuthoritative()
+    public void candidateResetRetainsStableFactsWithoutTrustingOneSecondaryObservation()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         P25NetworkConfigurationSnapshot initial = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
@@ -121,7 +238,7 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(initial.network(), stable.network());
         assertEquals(initial.currentSite(), stable.currentSite());
         assertTrue(hasChannel(stable, "primary_control", 856137500L));
-        assertTrue(hasChannel(stable, "secondary_control", 851462500L));
+        assertFalse(hasChannel(stable, "secondary_control", 851462500L));
         assertEquals(1, stable.neighborSites().size());
         assertEquals(1, stable.frequencyBands().size());
     }
@@ -131,11 +248,16 @@ public class P25NetworkConfigurationStabilizerTest
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         List<P25NetworkConfigurationSnapshot.Channel> channels = java.util.stream.LongStream.range(0, 9)
-            .mapToObj(index -> secondary(851000000L + index * 12500L))
+            .mapToObj(index -> new P25NetworkConfigurationSnapshot.Channel("secondary_control", "0-" + index,
+                851000000L + index * 12500L, null, false, 1))
             .toList();
 
         stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
             List.of(), List.of(), List.of(), List.of()), 1000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 31_000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 61_000L);
 
         assertEquals(8, stabilizer.getStableCurrentSiteControlFrequencies().size());
     }
@@ -205,7 +327,7 @@ public class P25NetworkConfigurationStabilizerTest
         stabilizer.observe(snapshot(unresolved), 61_000L);
 
         assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
-        assertEquals(0L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
+        assertNull(stabilizer.getSnapshot().neighborSites().get(0).downlink());
 
         stabilizer.observe(snapshot(resolved), 70_000L);
         stabilizer.observe(snapshot(resolved), 100_000L);
@@ -213,6 +335,42 @@ public class P25NetworkConfigurationStabilizerTest
 
         assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
         assertEquals(855237500L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
+    }
+
+    @Test
+    public void neighborChannelChangeUpdatesOneCanonicalNativeSite()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot.NeighborSite original = neighbor(855237500L);
+        P25NetworkConfigurationSnapshot.NeighborSite changed = new P25NetworkConfigurationSnapshot.NeighborSite(
+            original.system(), original.nac(), original.rfss(), original.site(), original.lra(), "1-100",
+            856_000_000L, 811_000_000L, original.status());
+
+        stabilizer.observe(snapshot(original), 1_000L);
+        stabilizer.observe(snapshot(original), 31_000L);
+        stabilizer.observe(snapshot(original), 61_000L);
+        stabilizer.observe(snapshot(changed), 70_000L);
+        stabilizer.observe(snapshot(changed), 100_000L);
+        stabilizer.observe(snapshot(changed), 130_000L);
+
+        assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
+        assertEquals("1-100", stabilizer.getSnapshot().neighborSites().getFirst().channel());
+    }
+
+    @Test
+    public void changingChannelRoleDoesNotDuplicateItsNativeDescriptor()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot.Channel secondary = secondary(855987500L);
+        P25NetworkConfigurationSnapshot.Channel primary = new P25NetworkConfigurationSnapshot.Channel(
+            "primary_control", secondary.descriptor(), secondary.downlink(), secondary.uplink(), secondary.tdma(),
+            secondary.timeslots());
+
+        stabilizer.observe(snapshot(secondary), 1_000L);
+        stabilizer.observe(snapshot(primary), 2_000L);
+
+        assertEquals(1, stabilizer.getSnapshot().channels().size());
+        assertEquals("primary_control", stabilizer.getSnapshot().channels().getFirst().role());
     }
 
     @Test
@@ -234,8 +392,87 @@ public class P25NetworkConfigurationStabilizerTest
         stabilizer.observe(observation, 61_000L);
 
         assertEquals(3, stabilizer.getSnapshot().foreignSystemBands().size());
-        assertTrue(stabilizer.getSnapshot().foreignSystemBands().containsAll(bands));
+        assertTrue(stabilizer.getSnapshot().foreignSystemBands().stream()
+            .map(P25NetworkConfigurationSnapshot.ForeignSystemBand::withoutObservedAt).toList()
+            .containsAll(bands));
+        assertTrue(stabilizer.getSnapshot().foreignSystemBands().stream()
+            .allMatch(band -> band.observedAtMs() == 61_000L));
         assertTrue(stabilizer.getSnapshot().frequencyBands().isEmpty());
+    }
+
+    @Test
+    public void cachedMergeFactsRetainTheirActualLastObservationTimes()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot neighbor = snapshot(neighbor(855237500L));
+        stabilizer.observe(neighbor, 1_000L);
+        stabilizer.observe(neighbor, 31_000L);
+        stabilizer.observe(neighbor, 61_000L);
+        stabilizer.observeTalkerAlias(700_001, "UNIT 7", 62_000L);
+        stabilizer.observeTalkerAlias(700_001, "UNIT 7", 72_000L);
+
+        stabilizer.observe(snapshot(primary(856137500L)), 80_000L);
+        P25NetworkConfigurationSnapshot stable = stabilizer.getSnapshot();
+
+        assertEquals(61_000L, stable.neighborSites().getFirst().observedAtMs(),
+            "an unrelated newer root observation must not re-stamp a cached neighbor");
+        assertEquals(72_000L, stable.talkerAliases().getFirst().observedAtMs(),
+            "OTA aliases retain the time that exact alias was last decoded");
+        assertEquals(80_000L, stable.channels().getFirst().observedAtMs());
+    }
+
+    @Test
+    public void expiresDeliveredTalkerAliasesFromTheBoundedReceiverSnapshot()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        stabilizer.observeTalkerAlias(700_001, "UNIT 7", 1_000L);
+        stabilizer.observeTalkerAlias(700_001, "UNIT 7", 11_000L);
+        assertEquals(1, stabilizer.getSnapshot().talkerAliases().size());
+
+        //A later unrelated observation drives bounded cache maintenance. The server's merge-only canonical alias is
+        //not deleted merely because the receiver stops repeating it.
+        stabilizer.observe(snapshot(primary(856137500L)), 611_001L);
+        assertTrue(stabilizer.getSnapshot().talkerAliases().isEmpty());
+    }
+
+    @Test
+    public void activePatchSnapshotRequiresSixtySecondsOfContinuousFreshEvidence()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        P25NetworkConfigurationSnapshot empty = new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null,
+            List.of(), List.of(), List.of(), List.of(), List.of());
+
+        stabilizer.observe(empty, 1_000L);
+        stabilizer.observe(empty, 31_000L);
+        assertNull(stabilizer.getSnapshot().activePatchesObservedAtMs());
+        stabilizer.observe(empty, 61_000L);
+        assertEquals(61_000L, stabilizer.getSnapshot().activePatchesObservedAtMs());
+
+        stabilizer.resetCandidates();
+        assertNull(stabilizer.getSnapshot().activePatchesObservedAtMs());
+        stabilizer.observe(empty, 70_000L);
+        stabilizer.observe(empty, 100_000L);
+        stabilizer.observe(empty, 130_000L);
+        assertEquals(130_000L, stabilizer.getSnapshot().activePatchesObservedAtMs());
+    }
+
+    @Test
+    public void patchFreshnessGapRestartsCompletenessAndExpiresOldPatchState()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+        PatchGroupIdentifier patch = patchGroup(65191, 9, 40002);
+        stabilizer.observePatchGroup(patch, 1_000L);
+        stabilizer.observePatchGroup(patch, 11_000L);
+        assertEquals(1, stabilizer.getSnapshot().patchGroups().size());
+
+        P25NetworkConfigurationSnapshot empty = new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null,
+            List.of(), List.of(), List.of(), List.of(), List.of());
+        stabilizer.observe(empty, 41_001L);
+
+        assertTrue(stabilizer.getSnapshot().patchGroups().isEmpty(),
+            "the telemetry list uses the PatchGroupManager 30-second freshness boundary");
+        assertNull(stabilizer.getSnapshot().activePatchesObservedAtMs(),
+            "a control-channel evidence gap restarts complete patch discovery");
     }
 
     @Test

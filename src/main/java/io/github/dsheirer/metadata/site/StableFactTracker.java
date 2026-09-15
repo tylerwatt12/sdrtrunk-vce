@@ -24,9 +24,7 @@ import java.util.function.Predicate;
 public class StableFactTracker<V,K>
 {
     private final Function<V,K> mKeyFunction;
-    private V mStableValue;
-    private K mStableKey;
-    private long mStableLastSeenTimestamp;
+    private volatile StableObservation<V,K> mStableObservation = StableObservation.empty();
     private V mCandidateValue;
     private K mCandidateKey;
     private long mCandidateFirstSeenTimestamp;
@@ -47,9 +45,7 @@ public class StableFactTracker<V,K>
 
     public void reset()
     {
-        mStableValue = null;
-        mStableKey = null;
-        mStableLastSeenTimestamp = 0;
+        mStableObservation = StableObservation.empty();
         resetCandidate();
     }
 
@@ -67,17 +63,26 @@ public class StableFactTracker<V,K>
 
     public V getStableValue()
     {
-        return mStableValue;
+        return mStableObservation.value();
+    }
+
+    /**
+     * Atomically published stable value and last-seen timestamp. This lets an observer project an immutable snapshot
+     * without acquiring the decoder-owned lock that protects candidate mutation.
+     */
+    public StableObservation<V,K> getStableObservation()
+    {
+        return mStableObservation;
     }
 
     public boolean hasStableValue()
     {
-        return mStableValue != null;
+        return mStableObservation.value() != null;
     }
 
     public boolean isEmpty()
     {
-        return mStableValue == null && mCandidateValue == null;
+        return mStableObservation.value() == null && mCandidateValue == null;
     }
 
     public K getCandidateKey()
@@ -130,7 +135,9 @@ public class StableFactTracker<V,K>
             return Result.NONE;
         }
 
-        if(mStableValue != null && timestamp < mStableLastSeenTimestamp)
+        StableObservation<V,K> stable = mStableObservation;
+
+        if(stable.value() != null && timestamp < stable.lastSeenTimestamp())
         {
             return Result.NONE;
         }
@@ -156,23 +163,24 @@ public class StableFactTracker<V,K>
             return Result.NONE;
         }
 
-        if(mStableValue != null && timestamp < mStableLastSeenTimestamp)
+        StableObservation<V,K> stable = mStableObservation;
+
+        if(stable.value() != null && timestamp < stable.lastSeenTimestamp())
         {
             //A stale observation cannot update the incumbent or become a challenger that later rewinds it.
             return Result.NONE;
         }
 
-        if(mStableValue == null && policy.trustInitialValue())
+        if(stable.value() == null && policy.trustInitialValue())
         {
             return promoteIfAllowed(value, key, timestamp, promotionGuard);
         }
 
-        if(Objects.equals(key, mStableKey))
+        if(Objects.equals(key, stable.key()))
         {
-            if(timestamp >= mStableLastSeenTimestamp)
+            if(timestamp >= stable.lastSeenTimestamp())
             {
-                mStableValue = value;
-                mStableLastSeenTimestamp = timestamp;
+                mStableObservation = new StableObservation<>(value, key, timestamp);
 
                 if(mCandidateValue == null || timestamp >= mCandidateLastSeenTimestamp)
                 {
@@ -224,11 +232,11 @@ public class StableFactTracker<V,K>
 
     public boolean expireStable(long timestamp, long expirationMilliseconds)
     {
-        if(mStableValue != null && timestamp - mStableLastSeenTimestamp > expirationMilliseconds)
+        StableObservation<V,K> stable = mStableObservation;
+
+        if(stable.value() != null && timestamp - stable.lastSeenTimestamp() > expirationMilliseconds)
         {
-            mStableValue = null;
-            mStableKey = null;
-            mStableLastSeenTimestamp = 0;
+            mStableObservation = StableObservation.empty();
             return true;
         }
 
@@ -239,13 +247,20 @@ public class StableFactTracker<V,K>
     {
         if(promotionGuard.test(value))
         {
-            mStableValue = value;
-            mStableKey = key;
-            mStableLastSeenTimestamp = timestamp;
+            mStableObservation = new StableObservation<>(value, key, timestamp);
             resetCandidate();
             return Result.PROMOTED;
         }
 
         return Result.REJECTED;
+    }
+
+    /** Immutable publication unit for stable-fact readers. */
+    public record StableObservation<V,K>(V value, K key, long lastSeenTimestamp)
+    {
+        private static <V,K> StableObservation<V,K> empty()
+        {
+            return new StableObservation<>(null, null, 0);
+        }
     }
 }

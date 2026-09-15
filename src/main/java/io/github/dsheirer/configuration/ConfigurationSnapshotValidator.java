@@ -126,12 +126,8 @@ public final class ConfigurationSnapshotValidator
             long aliasListId = channel.getAliasListId();
             if(aliasListId <= AliasListDefinition.UNASSIGNED_ID)
             {
-                if(channel.getAliasListName() != null && !channel.getAliasListName().isBlank())
-                {
-                    throw new IllegalArgumentException("Channel [" + channel.getName() +
-                        "] has an Alias List name without a durable Alias List ID");
-                }
-                continue;
+                throw new IllegalArgumentException("Channel [" + channel.getName() +
+                    "] requires a compatible Alias List");
             }
 
             AliasListDefinition definition = definitionsById.get(aliasListId);

@@ -16,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -99,6 +101,11 @@ class RadioSystemIdentityModelTest
         ConfigurationRepository repository = new ConfigurationRepository(database);
         Channel first = p25Channel("First P25 site", 851_012_500L);
         Channel second = p25Channel("Other P25 site", 852_012_500L);
+        AliasListDefinition p25 = repository.loadAliasConfiguration().definitions().stream()
+            .filter(definition -> definition.getFamily() == AliasListFamily.P25)
+            .findFirst().orElseThrow();
+        first.setAliasListDefinition(p25);
+        second.setAliasListDefinition(p25);
         repository.replaceChannelAndBroadcastConfiguration(List.of(first, second), List.of());
 
         P25SiteIdentity verified = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);

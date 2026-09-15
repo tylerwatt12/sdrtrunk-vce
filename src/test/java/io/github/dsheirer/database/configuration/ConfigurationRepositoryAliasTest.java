@@ -13,7 +13,6 @@ package io.github.dsheirer.database.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -65,7 +64,7 @@ class ConfigurationRepositoryAliasTest
             List.of(proposedAlias), new ScanListConfiguration(List.of(proposedDefault), Map.of(), Map.of()));
 
         AliasConfigurationSnapshot committed = new ConfigurationRepository(database)
-            .commitAliasConfiguration(proposed, Set.of());
+            .commitAliasConfiguration(proposed);
 
         AliasListDefinition committedDefinition = committed.definitions().getFirst();
         Alias committedAlias = committed.aliases().getFirst();
@@ -111,7 +110,7 @@ class ConfigurationRepositoryAliasTest
         replacement.setDescription("Updated description");
 
         AliasConfigurationSnapshot committed = store.commitAliasConfiguration(new AliasConfigurationSnapshot(
-            baseline.definitions(), List.of(replacement), baseline.scanLists()), Set.of());
+            baseline.definitions(), List.of(replacement), baseline.scanLists()));
 
         assertEquals("Updated description", committed.aliases().getFirst().getDescription());
         assertEquals(channelsBefore, rows(database, "configuration_channel"));
@@ -119,7 +118,7 @@ class ConfigurationRepositoryAliasTest
     }
 
     @Test
-    void aliasListDeletionClearsOnlyMatchingChannelAssignments() throws Exception
+    void aliasListDeletionFailsWhileAChannelUsesTheList() throws Exception
     {
         Path database = database("list-delete.sqlite");
         ConfigurationRepository store = new ConfigurationRepository(database);
@@ -129,82 +128,21 @@ class ConfigurationRepositoryAliasTest
         {
             insertChannel(connection, 41L, baseline.definitions().getFirst().getId(),
                 "{\"payload\":\"matching channel\"}");
-            insertChannel(connection, 42L, null,
-                "{ \"payload\" : \"unrelated channel bytes\" }");
             insertBroadcast(connection, 71L, "{  \"payload\" : \"broadcast bytes\"  }");
-        }
-
-        List<Object> unrelatedChannelBefore = row(database, "configuration_channel", 42L);
-        List<List<Object>> broadcastsBefore = rows(database, "configuration_broadcast_stream");
-        ScanListConfiguration retainedScanLists = new ScanListConfiguration(
-            baseline.scanLists().scanLists(), Map.of(), Map.of());
-
-        AliasConfigurationSnapshot committed = store.commitAliasConfiguration(new AliasConfigurationSnapshot(
-            List.of(), List.of(), retainedScanLists), Set.of(baseline.definitions().getFirst().getId()));
-
-        assertTrue(committed.definitions().isEmpty());
-        assertTrue(committed.aliases().isEmpty());
-        try(Connection connection = SdrTrunkDatabase.open(database);
-            PreparedStatement statement = connection.prepareStatement("""
-                SELECT alias_list_id,
-                       json_extract(config_json, '$.payload') AS payload
-                FROM configuration_channel
-                WHERE id = 41
-                """))
-        {
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertNull(resultSet.getObject("alias_list_id"));
-                assertEquals("matching channel", resultSet.getString("payload"));
-            }
-        }
-
-        assertEquals(unrelatedChannelBefore, row(database, "configuration_channel", 42L));
-        assertEquals(broadcastsBefore, rows(database, "configuration_broadcast_stream"));
-    }
-
-    @Test
-    void lateChannelFailureRollsBackAliasAndScanListChanges() throws Exception
-    {
-        Path database = database("late-rollback.sqlite");
-        ConfigurationRepository store = new ConfigurationRepository(database);
-        AliasConfigurationSnapshot seeded = seedAlias(store, database, "County P25", 1001);
-        long aliasId = seeded.aliases().getFirst().getId();
-        long defaultScanListId = seeded.scanLists().defaultScanList().getId();
-        AliasConfigurationSnapshot baseline = store.commitAliasConfiguration(new AliasConfigurationSnapshot(seeded.definitions(),
-            seeded.aliases(), new ScanListConfiguration(seeded.scanLists().scanLists(),
-                Map.of(aliasId, Set.of(defaultScanListId)), Map.of())), Set.of());
-
-        try(Connection connection = SdrTrunkDatabase.open(database);
-            Statement statement = connection.createStatement())
-        {
-            insertChannel(connection, 41L, baseline.definitions().getFirst().getId(),
-                "{\"payload\":\"must survive\"}");
-            statement.executeUpdate("""
-                CREATE TRIGGER reject_alias_list_clear
-                BEFORE UPDATE OF alias_list_id ON configuration_channel
-                WHEN OLD.id = 41
-                BEGIN
-                    SELECT RAISE(ABORT, 'forced late Alias-list clear failure');
-                END
-                """);
         }
 
         Map<String,List<List<Object>>> rowsBefore = aliasOwnedRows(database);
         List<Object> channelBefore = row(database, "configuration_channel", 41L);
-        ScanListConfiguration proposedScanLists = new ScanListConfiguration(
+        List<List<Object>> broadcastsBefore = rows(database, "configuration_broadcast_stream");
+        ScanListConfiguration retainedScanLists = new ScanListConfiguration(
             baseline.scanLists().scanLists(), Map.of(), Map.of());
 
         assertThrows(SQLException.class, () -> store.commitAliasConfiguration(new AliasConfigurationSnapshot(
-            List.of(), List.of(), proposedScanLists), Set.of(baseline.definitions().getFirst().getId())));
+            List.of(), List.of(), retainedScanLists)));
 
         assertEquals(rowsBefore, aliasOwnedRows(database));
         assertEquals(channelBefore, row(database, "configuration_channel", 41L));
-        AliasConfigurationSnapshot reloaded = store.loadAliasConfiguration();
-        assertEquals(baseline.definitions().getFirst().getId(), reloaded.definitions().getFirst().getId());
-        assertEquals(aliasId, reloaded.aliases().getFirst().getId());
-        assertEquals(Set.of(defaultScanListId), reloaded.scanLists().scanListIdsForAlias(aliasId));
+        assertEquals(broadcastsBefore, rows(database, "configuration_broadcast_stream"));
     }
 
     @Test
@@ -220,7 +158,7 @@ class ConfigurationRepositoryAliasTest
         seeded.definitions().getFirst().setUnmatchedTalkgroupPolicy(
             new UnmatchedTalkgroupPolicy(false, List.of(destination)));
         seeded.aliases().getFirst().addBroadcastChannel(destination);
-        store.commitAliasConfiguration(seeded, Set.of());
+        store.commitAliasConfiguration(seeded);
         List<List<Object>> aliasRowsBefore = rows(database, "alias_broadcast_channel");
 
         stream.setName("New Stream");
@@ -248,8 +186,7 @@ class ConfigurationRepositoryAliasTest
         Alias alias = alias("Dispatch", definition, talkgroup);
         ScanListConfiguration currentScanLists = new ScanListDatabaseStore(database).loadConfiguration();
         ScanListConfiguration scanLists = new ScanListConfiguration(currentScanLists.scanLists(), Map.of(), Map.of());
-        return store.commitAliasConfiguration(new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists),
-            Set.of());
+        return store.commitAliasConfiguration(new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists));
     }
 
     private static Alias alias(String name, AliasListDefinition definition, int talkgroup)

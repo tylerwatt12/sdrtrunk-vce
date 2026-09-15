@@ -78,6 +78,49 @@ rows when counters in an existing talkgroup, site, frequency, or time bucket ans
 - Do not make dashboard requests scan detailed event history. Dashboards and directory pages must use summaries and
   buckets only.
 
+### Alias Editor large-list indexes
+
+The web Alias Editor never builds a whole-list activity snapshot. SQLite applies the selected Alias List, search, and
+configuration or activity filters first, sorts the complete matching result, and returns only the requested page.
+There is no candidate-count ceiling on Activity browsing. `alias_activity_summary` keeps one fixed-size row per Alias
+for the sortable call, signaling, and first/last-seen values; page and export requests never rebuild it from retained
+identity history.
+
+The background statistics writer updates this projection after it accepts an observation. It uses the saved channel's
+currently assigned, protocol-compatible Alias List and the normal exact-before-range matcher precedence. Reassigning
+a channel changes attribution for later observations without moving or deleting earlier counters. Appearance,
+routing, and imported metadata edits preserve the row; changing the matcher resets it, and a new or cloned Alias starts
+without observed activity. The format-19-to-20 Application Migrator performs the only full reconstruction, seeding the
+projection from retained compact activity where it can still determine an owner.
+
+The global **Reset Stats** action clears every Alias Activity counter and immediately reseeds one empty row per Alias.
+A channel-only statistics clear does not try to subtract that channel's historical contribution from durable Alias
+counters because the projection deliberately keeps no per-channel attribution ledger.
+
+`idx_alias_list_id(alias_list_id, id)` provides deterministic whole-list/export order, while
+`idx_alias_list_name_sort(alias_list_id, lower(coalesce(name, '')), id)` serves normal name browsing. List-first
+matcher, identity-type, group, and displayed-value indexes serve the other sortable Alias fields. The summary's
+list-first indexes serve Calls, Signaling, and Last Seen sorts. Dedicated list-first partial range indexes serve the
+prospective writer's range winner lookup without replacing the older protocol-first matcher indexes used by bounded
+page enrichment. These indexes contain no time-series rows: their size follows administrator-owned Alias
+configuration, not receiver uptime.
+
+### Receiver status alert history
+
+The `receiver_health_incident` table retains the lifecycle of recent Receiver status alerts so a debug report that
+includes the SQLite database also includes the issue name, affected scope, explanation, suggested next check, and
+open or resolved times. Existing hourly statistics cannot reconstruct those alert-specific fields or their lifecycle.
+
+Rows are written only when an alert opens, changes severity or title, or resolves. A healthy receiver writes zero rows
+per hour. Even if an alert repeatedly clears and reopens, the table retains no more than 200 occurrences. Each row has
+at most 9,048 bytes of bounded UTF-8 text plus integer, row, and unique-index overhead, so the retained raw text is
+bounded below 1.8 MiB and normal usage is much smaller. Lifecycle changes update the same occurrence row, and the
+oldest rows are deleted in the same background-writer transaction after the limit is exceeded.
+
+The unique `(process_started_at_ms, occurrence_id)` index supports lifecycle upserts. The integer primary key supports
+newest-first reads and pruning without another index. Representative-volume tests require `EXPLAIN QUERY PLAN` for
+`ORDER BY id DESC LIMIT 200` to use the primary-key order without a temporary B-tree.
+
 ## Verification Required
 
 Schema and query changes must include tests that cover:

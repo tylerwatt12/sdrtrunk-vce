@@ -39,6 +39,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.UserPreferences;
@@ -850,7 +851,7 @@ class AliasAdministrationServiceTest
             channel.setAliasListDefinition(manager.getAliasModel().getAliasListDefinition(aliasListId));
             channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
             long beforeChannelAssignment = service.catalog().revision();
-            manager.getChannelModel().addChannel(channel);
+            manager.addChannel(channel);
             assertNotEquals(beforeChannelAssignment, service.catalog().revision());
             AliasAdministrationService.Catalog countedCatalog = service.catalog();
             assertEquals(2, countedCatalog.aliasCounts().get(aliasListId).intValue());
@@ -881,18 +882,23 @@ class AliasAdministrationServiceTest
                 service.aliasListDeleteImpact(aliasListId, 1);
             assertEquals(2, boundedImpact.aliasCount());
             assertEquals(1, boundedImpact.channelCount());
-            AliasAdministrationService.ConfirmationRequiredException confirmation = assertThrows(
-                AliasAdministrationService.ConfirmationRequiredException.class,
+            IllegalStateException assigned = assertThrows(IllegalStateException.class,
                 () -> service.deleteAliasList(aliasListId, impact.revision(), false));
-            assertEquals(impact, confirmation.getImpact());
+            assertTrue(assigned.getMessage().contains("Reassign 1 configured channel"));
+            assertThrows(IllegalStateException.class,
+                () -> service.deleteAliasList(aliasListId, impact.revision(), true));
             assertEquals(2, manager.getAliasModel().getAliases().size());
 
+            AliasListDefinition defaultP25 = manager.getAliasModel().getDefaultAliasListDefinition(
+                DecoderType.P25_PHASE1);
+            channel.setAliasListDefinition(defaultP25);
+
             AliasAdministrationService.MutationResult deleted = service.deleteAliasList(
-                aliasListId, impact.revision(), true);
+                aliasListId, service.currentRevision(), true);
             assertEquals(2, deleted.affected());
             assertTrue(manager.getAliasModel().getAliases().isEmpty());
             assertNull(manager.getAliasModel().getAliasListDefinition(aliasListId));
-            assertNull(channel.getAliasListName());
+            assertEquals("Default P25", channel.getAliasListName());
             assertTrue(liveList.getAliases(APCO25Talkgroup.createAny(101)).isEmpty());
 
             List<AliasListDefinition> remainingDefinitions = aliasStore.loadAliasListDefinitions();
@@ -902,7 +908,7 @@ class AliasAdministrationServiceTest
             List<Channel> storedChannels = new ConfigurationDatabaseStore(database)
                 .load().channels();
             assertEquals(1, storedChannels.size());
-            assertNull(storedChannels.getFirst().getAliasListName());
+            assertEquals("Default P25", storedChannels.getFirst().getAliasListName());
             assertTrue(storedChannels.getFirst().hasRadioResolveId());
         }
         finally

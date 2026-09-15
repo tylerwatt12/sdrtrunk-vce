@@ -29,10 +29,11 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                             String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
                             TrunkedIdentityDomain identityDomain,
                             ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
-                            String radioSystemKey)
+                            String radioSystemKey, long siteEvidenceProcessingIncarnation,
+                            long siteEvidenceTuningGeneration)
 {
     public static final CallLegSource UNKNOWN = new CallLegSource(null, null, null, null, 0, null,
-        TrunkedIdentityDomain.STANDARD, null, false, null);
+        TrunkedIdentityDomain.STANDARD, null, false, null, 0L, 0L);
 
     public CallLegSource
     {
@@ -43,6 +44,8 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
             decoderType == DecoderType.NXDN ? TrunkedIdentityDomain.NXDN_TYPE_C :
                 TrunkedIdentityDomain.STANDARD;
         radioSystemKey = normalize(radioSystemKey);
+        siteEvidenceProcessingIncarnation = Math.max(0L, siteEvidenceProcessingIncarnation);
+        siteEvidenceTuningGeneration = Math.max(0L, siteEvidenceTuningGeneration);
         if(radioSystemKey != null)
         {
             radioSystemKey = RadioSystemKey.validateForReceiver(
@@ -57,7 +60,29 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
                          ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel)
     {
         this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
-            identityDomain, channelKind, trafficChannel, null);
+            identityDomain, channelKind, trafficChannel, null, 0L, 0L);
+    }
+
+    /** Compatibility constructor for call sources captured before tuning-generation evidence was added. */
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                         String radioSystemKey)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, radioSystemKey, 0L, 0L);
+    }
+
+    /** Compatibility constructor for call sources captured before tuning-generation evidence was added. */
+    public CallLegSource(DecoderType decoderType, String channelConfigurationId, String channelName,
+                         String radioResolveId, long aliasListId, P25SiteIdentity p25SiteIdentity,
+                         TrunkedIdentityDomain identityDomain,
+                         ChannelConfigurationPolicy.ChannelKind channelKind, boolean trafficChannel,
+                         String radioSystemKey, long siteEvidenceProcessingIncarnation)
+    {
+        this(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId, p25SiteIdentity,
+            identityDomain, channelKind, trafficChannel, radioSystemKey, siteEvidenceProcessingIncarnation, 0L);
     }
 
     public boolean hasDurableAliasListId()
@@ -89,14 +114,39 @@ public record CallLegSource(DecoderType decoderType, String channelConfiguration
     {
         return trafficChannel ? this : new CallLegSource(decoderType, channelConfigurationId, channelName,
             radioResolveId, aliasListId, p25SiteIdentity, identityDomain, channelKind, true,
-            radioSystemKey);
+            radioSystemKey, siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration);
     }
 
     /** Returns a new source template for calls created after a processing-chain-local system identity change. */
     public CallLegSource withRadioSystemKey(String radioSystemKey)
     {
         return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
-            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey);
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
+            siteEvidenceProcessingIncarnation, siteEvidenceTuningGeneration);
+    }
+
+    /** Returns a source template tied to the exact control-channel processing incarnation that can verify its site. */
+    public CallLegSource withSiteEvidenceProcessingIncarnation(long processingIncarnation)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
+            siteEvidenceTuningGeneration);
+    }
+
+    /** Returns a source tied to the exact control-source tuning generation within the processing run. */
+    public CallLegSource withSiteEvidenceTuningGeneration(long tuningGeneration)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey,
+            siteEvidenceProcessingIncarnation, tuningGeneration);
+    }
+
+    /** Returns a source tied to one exact verified control-channel processing and tuning generation. */
+    public CallLegSource withSiteEvidenceGeneration(long processingIncarnation, long tuningGeneration)
+    {
+        return new CallLegSource(decoderType, channelConfigurationId, channelName, radioResolveId, aliasListId,
+            p25SiteIdentity, identityDomain, channelKind, trafficChannel, radioSystemKey, processingIncarnation,
+            tuningGeneration);
     }
 
     private static String normalize(String value)

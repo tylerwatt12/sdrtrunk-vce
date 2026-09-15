@@ -221,6 +221,20 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         receiveCallOutput(call, ReceiverActivityRecords.CallOutput.STREAMED);
     }
 
+    /**
+     * Sends one low-rate receiver-health lifecycle update to the same bounded background SQLite writer used by
+     * receiver statistics. This remains enabled when optional activity collection is off.
+     */
+    public boolean receiveReceiverHealthIncident(ReceiverHealthIncidentRecord incident)
+    {
+        synchronized(this)
+        {
+            ReceiverActivityWriter writer = mWriter;
+            return writer != null && incident != null && !mDisposed.get() && !mWriterTransitionActive.get() &&
+                writer.enqueue(incident);
+        }
+    }
+
     private void receiveCallOutput(CompletedAudioCall call, ReceiverActivityRecords.CallOutput output)
     {
         offerObservation(withoutAudio(call), output);

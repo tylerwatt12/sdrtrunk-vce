@@ -331,6 +331,7 @@ class TrunkedSiteSchemaTest
             statement.execute("PRAGMA foreign_keys=ON");
         }
         SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
@@ -342,11 +343,14 @@ class TrunkedSiteSchemaTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                radioresolve_id, auto_start, decoder_type, address_domain_code,
+                alias_list_id, radioresolve_id, auto_start, decoder_type, address_domain_code,
                 primary_frequency_hz, config_json)
-            VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control', '%s', 0, '%s', %d, 451000000,
+            VALUES ('%s', 'TRUNKED', 0, 'System', 'Site', 'Control',
+                    (SELECT id FROM alias_list WHERE family=CASE WHEN '%s'='NXDN' THEN 'NXDN' ELSE 'DMR' END LIMIT 1),
+                    '%s', 0, '%s', %d, 451000000,
                     '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
-            """.formatted(configurationId, configurationId, decoder, "NXDN".equals(decoder) ? 1 : 0));
+            """.formatted(configurationId, decoder, configurationId, decoder,
+                "NXDN".equals(decoder) ? 1 : 0));
         execute(connection, """
             INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
             VALUES ('%s', 1, 1)

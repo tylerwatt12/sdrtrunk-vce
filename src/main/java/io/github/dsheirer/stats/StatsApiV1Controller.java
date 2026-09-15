@@ -21,6 +21,7 @@ import io.github.dsheirer.web.http.WebRequestSecurity;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -93,6 +94,12 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ALIASES, this::aliases));
         create(server, StatsApiV1.RADIO_SYSTEMS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.RADIO_SYSTEMS, this::radioSystems));
+        create(server, StatsApiV1.IDENTITIES, WebCapability.RADIO_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.IDENTITIES, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly("range", "limit", "offset");
+                return page(mDatabase.identityDirectory(request));
+            }));
         create(server, StatsApiV1.CHANNELS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CHANNELS, this::channels));
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
@@ -371,11 +378,7 @@ final class StatsApiV1Controller
             return;
         }
 
-        if(!mCsvExportPermit.tryAcquire())
-        {
-            ApiHttpResponse.sendError(exchange, 429, "export_busy", "Another CSV export is already running");
-            return;
-        }
+        boolean admitted = false;
 
         try
         {
@@ -392,15 +395,89 @@ final class StatsApiV1Controller
 
             StatsRequest request = StatsRequest.from(exchange.getRequestURI());
             validateExportQuery(request, dataset);
-            StatsCsvExport export = mDatabase.csvExport(dataset, request);
-            request.requireFullyConsumed();
-            Headers headers = exchange.getResponseHeaders();
-            StatsWebServerService.applyCsvHeaders(headers, export.fileName());
-            exchange.sendResponseHeaders(200, export.content().length);
+            String exportToken = null;
 
-            try(OutputStream outputStream = exchange.getResponseBody())
+            if("alias-list".equals(dataset))
             {
-                outputStream.write(export.content());
+                exportToken = request.text("export_token");
+
+                if(exportToken != null)
+                {
+                    if(!WebRequestSecurity.isValidAliasExportToken(exportToken))
+                    {
+                        throw new StatsApiException(400, "invalid_parameter", "export_token is invalid",
+                            "export_token");
+                    }
+
+                    // Both CSV_EXPORT and ADMIN_ALIASES have been rechecked above for this logical export.
+                    WebRequestSecurity.allowSameOriginDownloadFrame(exchange);
+                }
+            }
+
+            if(!mCsvExportPermit.tryAcquire())
+            {
+                throw new StatsApiException(429, "export_busy", "Another CSV export is already running");
+            }
+
+            admitted = true;
+
+            if("alias-list".equals(dataset))
+            {
+                AliasTransferExport.Prepared export = null;
+
+                try
+                {
+                    export = mDatabase.aliasTransferExport(request);
+                    request.requireFullyConsumed();
+                    Headers headers = exchange.getResponseHeaders();
+                    StatsWebServerService.applyCsvHeaders(headers, export.fileName());
+                    headers.set("X-Export-Row-Count", Long.toString(export.rowCount()));
+
+                    if(exportToken != null)
+                    {
+                        WebRequestSecurity.markAliasExportReady(exchange, exportToken);
+                    }
+
+                    exchange.sendResponseHeaders(200, export.byteCount());
+
+                    try(OutputStream outputStream = exchange.getResponseBody())
+                    {
+                        Files.copy(export.path(), outputStream);
+                    }
+                    catch(IOException exception)
+                    {
+                        // The exact Content-Length makes an interrupted native download incomplete instead of a
+                        // valid-looking partial CSV.  Headers have already been sent, so only log the disconnect.
+                        LOGGER.warn("Alias CSV download was interrupted after validation", exception);
+                    }
+                }
+                finally
+                {
+                    if(export != null)
+                    {
+                        try
+                        {
+                            export.close();
+                        }
+                        catch(IOException exception)
+                        {
+                            LOGGER.warn("Unable to remove prepared Alias CSV export [{}]", export.path(), exception);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                StatsCsvExport export = mDatabase.csvExport(dataset, request);
+                request.requireFullyConsumed();
+                Headers headers = exchange.getResponseHeaders();
+                StatsWebServerService.applyCsvHeaders(headers, export.fileName());
+                exchange.sendResponseHeaders(200, export.content().length);
+
+                try(OutputStream outputStream = exchange.getResponseBody())
+                {
+                    outputStream.write(export.content());
+                }
             }
         }
         catch(StatsApiException exception)
@@ -415,7 +492,10 @@ final class StatsApiV1Controller
         }
         finally
         {
-            mCsvExportPermit.release();
+            if(admitted)
+            {
+                mCsvExportPermit.release();
+            }
         }
     }
 
@@ -441,7 +521,7 @@ final class StatsApiV1Controller
                  "channel-quality" ->
                 WebCapability.RADIO_VIEW;
             case "signal-health" -> WebCapability.DASHBOARD_VIEW;
-            case "aliases" -> WebCapability.ADMIN_ALIASES;
+            case "aliases", "alias-list" -> WebCapability.ADMIN_ALIASES;
             default -> throw invalidExport();
         };
     }
@@ -469,6 +549,9 @@ final class StatsApiV1Controller
             case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group",
                 "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
                 "last_activity_after", "last_activity_before");
+            case "alias-list" -> request.requireOnly("scope", "family", "type", "matcher", "list", "group",
+                "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
+                "last_activity_after", "last_activity_before", "export_token");
             default -> throw invalidExport();
         }
     }

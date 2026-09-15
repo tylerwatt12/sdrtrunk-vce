@@ -73,6 +73,33 @@ class WebAuthenticationServiceTest
     }
 
     @Test
+    void browserSessionsRemainValidAcrossAuthenticationClockChanges() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("non-expiring-session.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        WebAccessService accessService = new WebAccessService(database);
+        char[] password = "primary admin password".toCharArray();
+        accessService.provisionOrResetPrimaryAdmin(password);
+        MutableClock clock = new MutableClock();
+
+        try(WebAuthenticationService authenticationService = new WebAuthenticationService(accessService,
+            new WebAccessSessionManager(), LoginThrottle.Configuration.defaults(),
+            AccountLoginAdmissionLimiter.Configuration.defaults(), clock, 2))
+        {
+            WebAccessSession session = authenticationService.login("admin", password, "long-lived-session")
+                .get(10, TimeUnit.SECONDS).session().orElseThrow();
+
+            clock.advance(Duration.ofDays(365));
+            assertTrue(authenticationService.resolveSession(session.sessionId()).isPresent(),
+                "browser sessions must not expire as authentication time advances");
+            assertTrue(authenticationService.validateCsrf(session.sessionId(), session.csrfToken()));
+            assertTrue(authenticationService.logout(session.sessionId()));
+            assertTrue(authenticationService.resolveSession(session.sessionId()).isEmpty(),
+                "an explicit logout must still revoke a non-expiring session");
+        }
+    }
+
+    @Test
     void desktopAdministratorHandoffIsShortLivedAndSingleUse() throws Exception
     {
         Path database = mTemporaryFolder.resolve("desktop-handoff.sqlite");
@@ -123,14 +150,15 @@ class WebAuthenticationServiceTest
     }
 
     @Test
-    void httpReloginReusesItsAuthenticatedSessionAtPerAccountCapacity() throws Exception
+    void httpReloginReusesCurrentSessionAndCookieLessLoginReplacesLeastRecentlyUsedSession() throws Exception
     {
         Path database = mTemporaryFolder.resolve("capacity-relogin.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         WebAccessService accessService = new WebAccessService(database);
         char[] password = "primary admin password".toCharArray();
         accessService.provisionOrResetPrimaryAdmin(password);
-        WebAccessSessionManager sessionManager = new WebAccessSessionManager();
+        WebAccessSessionManager sessionManager = new WebAccessSessionManager(
+            new WebAccessSessionManager.Configuration(8, 32));
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService,
             sessionManager, LoginThrottle.Configuration.defaults(),
             new AccountLoginAdmissionLimiter.Configuration(16, Duration.ofMinutes(1)), Clock.systemUTC(), 2);
@@ -160,14 +188,6 @@ class WebAuthenticationServiceTest
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             String body = "{\"username\":\"admin\",\"password\":\"primary admin password\"}";
-            HttpResponse<String> ninth = client.send(HttpRequest.newBuilder(origin.resolve(
-                    WebSessionHttpController.LOGIN_PATH))
-                .timeout(Duration.ofSeconds(10))
-                .header("Origin", origin.toString())
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(503, ninth.statusCode(), "a cookie-less ninth session must be rejected");
-
             String cookie = WebRequestSecurity.SESSION_COOKIE_NAME + "=" + current.sessionId();
             HttpResponse<String> relogin = client.send(HttpRequest.newBuilder(origin.resolve(
                     WebSessionHttpController.LOGIN_PATH))
@@ -179,6 +199,23 @@ class WebAuthenticationServiceTest
             assertEquals(200, relogin.statusCode(), relogin.body());
             assertTrue(relogin.headers().firstValue("Set-Cookie").orElseThrow().startsWith(cookie + ";"));
             assertTrue(relogin.body().contains(current.csrfToken()));
+            assertFalse(relogin.body().contains("expires_at_epoch_millis"));
+            assertEquals(8, authenticationService.getActiveSessionCount());
+
+            HttpResponse<String> ninth = client.send(HttpRequest.newBuilder(origin.resolve(
+                    WebSessionHttpController.LOGIN_PATH))
+                .timeout(Duration.ofSeconds(10))
+                .header("Origin", origin.toString())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, ninth.statusCode(), ninth.body());
+            assertFalse(ninth.headers().firstValue("Set-Cookie").orElseThrow().startsWith(cookie + ";"),
+                "a cookie-less login must receive a replacement session");
+            assertFalse(ninth.body().contains("expires_at_epoch_millis"));
+            assertTrue(authenticationService.resolveSession(sessions.get(1).sessionId()).isEmpty(),
+                "the least-recently-used session must be replaced");
+            assertTrue(authenticationService.resolveSession(current.sessionId()).isPresent(),
+                "reusing the current cookie must keep it out of the replacement position");
             assertEquals(8, authenticationService.getActiveSessionCount());
 
             CompletableFuture<WebAuthenticationService.LoginResult> blocker = authenticationService
@@ -190,7 +227,8 @@ class WebAuthenticationServiceTest
                 blocker.get(10, TimeUnit.SECONDS).status());
             WebAuthenticationService.LoginResult drained = authenticationService
                 .login("admin", password, "cancel-drain").get(10, TimeUnit.SECONDS);
-            assertEquals(WebAuthenticationService.LoginStatus.SESSION_CAPACITY, drained.status());
+            assertEquals(WebAuthenticationService.LoginStatus.SUCCESS, drained.status());
+            assertTrue(drained.session().isPresent());
             assertEquals(8, authenticationService.getActiveSessionCount());
             assertTrue(authenticationService.resolveSession(current.sessionId()).isPresent(),
                 "a canceled caller must not revoke the capacity-reused current session");

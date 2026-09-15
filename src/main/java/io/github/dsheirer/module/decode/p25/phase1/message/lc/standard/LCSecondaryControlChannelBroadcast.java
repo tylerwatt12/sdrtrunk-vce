@@ -112,7 +112,9 @@ public class LCSecondaryControlChannelBroadcast extends LinkControlWord implemen
 
     private boolean hasChannelB()
     {
-        return getInt(CHANNEL_NUMBER_A) != getInt(CHANNEL_NUMBER_B) && getInt(SERVICE_CLASS_B) != 0;
+        return getInt(SERVICE_CLASS_B) != 0 &&
+            (getInt(SERVICE_CLASS_A) == 0 || getInt(FREQUENCY_BAND_A) != getInt(FREQUENCY_BAND_B) ||
+                getInt(CHANNEL_NUMBER_A) != getInt(CHANNEL_NUMBER_B));
     }
 
     public IChannelDescriptor getChannelB()
@@ -167,7 +169,12 @@ public class LCSecondaryControlChannelBroadcast extends LinkControlWord implemen
     public List<IChannelDescriptor> getChannels()
     {
         List<IChannelDescriptor> channels = new ArrayList<>();
-        channels.add(getChannelA());
+
+        if(getInt(SERVICE_CLASS_A) != 0)
+        {
+            channels.add(getChannelA());
+        }
+
         if(hasChannelB())
         {
             channels.add(getChannelB());

@@ -12,6 +12,7 @@
 package io.github.dsheirer.metadata.site;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -21,8 +22,7 @@ public class SiteMetadataPublicationRateLimiter
 {
     private final long mIntervalNanoseconds;
     private final LongSupplier mMonotonicClock;
-    private boolean mAcquired;
-    private long mLastAcquiredNanoseconds;
+    private final AtomicLong mLastAcquiredNanoseconds = new AtomicLong(Long.MIN_VALUE);
 
     public SiteMetadataPublicationRateLimiter(long intervalMilliseconds)
     {
@@ -41,17 +41,19 @@ public class SiteMetadataPublicationRateLimiter
     /**
      * Claims the current publication window. A decoder reset does not reopen the window.
      */
-    public synchronized boolean tryAcquire()
+    public boolean tryAcquire()
     {
         long now = mMonotonicClock.getAsLong();
 
-        if(!mAcquired || now - mLastAcquiredNanoseconds >= mIntervalNanoseconds)
+        //Phase-two timeslots can call this concurrently from separate decoder paths. Keep the callback to one CAS;
+        //a loser drops this observer update instead of retrying or delaying decoding.
+        long previous = mLastAcquiredNanoseconds.get();
+
+        if(previous != Long.MIN_VALUE && now - previous < mIntervalNanoseconds)
         {
-            mAcquired = true;
-            mLastAcquiredNanoseconds = now;
-            return true;
+            return false;
         }
 
-        return false;
+        return mLastAcquiredNanoseconds.compareAndSet(previous, now);
     }
 }

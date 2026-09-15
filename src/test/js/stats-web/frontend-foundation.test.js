@@ -3,11 +3,12 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readStylesheetSource } = require('./stylesheet-source');
 const vm = require('node:vm');
 
 const core = path.resolve(process.argv[2] || path.resolve(__dirname, '../../../../stats-web/assets/core'));
 const appSource = fs.readFileSync(path.resolve(core, '../app.js'), 'utf8');
-const appCssSource = fs.readFileSync(path.resolve(core, '../app.css'), 'utf8');
+const appCssSource = readStylesheetSource(path.resolve(core, '../app.css'));
 const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf8');
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
 
@@ -164,6 +165,8 @@ async function main() {
   assert.match(appSource, /const tableType = tableLayouts\.tableId\(options\.type\)/);
   assert.match(appSource,
     /const defaultSchema = tableLayouts\.registerSchema\(tableSchemaRegistry, tableType, declaredColumns\)/);
+  assert.match(appSource, /typeof column\.renderHeader === 'function'/);
+  assert.match(appSource, /column\.renderHeader\(\{ column, tableType, controller: tableController \}\)/);
   assert.match(appSource, /const wrapper = options\.wrapper \|\| node\('div'\)/);
   assert.match(appSource, /controller: tableController, wrapper/);
   assert.doesNotMatch(appSource, /wrapper\.replaceWith\(table\(/);
@@ -254,8 +257,18 @@ async function main() {
   assert.match(resizerSource, /setCurrentLayout\(nextLayout\)/);
   assert.match(resizerSource, /if \(!beginLayoutMutation\(\)\) return/);
   assert.match(resizerSource, /endLayoutMutation\(\)/);
+  assert.match(resizerSource, /addEventListener\('dblclick'/);
+  assert.match(resizerSource, /event\.key === 'Enter'/);
+  assert.match(resizerSource, /measureTableColumnContentWidth\(element, header, index\)/);
+  assert.match(resizerSource, /resizedWidths\[index\] === startingWidths\[index\]/);
+  const autofitSource = functionBinding(appSource, 'measureTableColumnContentWidth');
+  assert.match(autofitSource, /\.\.\.element\.tBodies/);
+  assert.match(autofitSource, /!cell\.classList\.contains\('empty'\)/);
+  assert.match(autofitSource, /measurement\.getBoundingClientRect\(\)\.width/);
+  assert.match(autofitSource, /Math\.max\(TABLE_WIDTH_MINIMUM, Math\.min\(TABLE_WIDTH_MAXIMUM, width\)\)/);
   assert.match(appSource, /let layoutMutationPending = false/);
   assert.match(appCssSource, /\.resizable-table\.table-layout-busy \.column-resizer/);
+  assert.match(appCssSource, /\.table-column-autofit-measurement \{/);
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
@@ -363,7 +376,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 17, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -380,7 +393,7 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'channelDirectoryColumns', 'channelGroupIdentityColumns',
+    'activityColumns', 'channelDirectoryColumns', 'identityDirectoryColumns', 'channelGroupIdentityColumns',
     'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
@@ -636,16 +649,16 @@ async function main() {
       receiverHealthText, RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS: 1_000
     });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'Process CPU', value: 42.5, unit: '%'
+    label: 'sdrtrunk-vce processor use', value: 42.5, unit: '%'
   }))), { available: true, maximum: 100, value: 42.5 });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'Garbage collection', value: 250, unit: 'ms in last sample'
+    label: 'Time spent freeing memory', value: 250, unit: 'ms in last sample'
   }))), { available: true, maximum: 1000, value: 250 });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'Garbage collection', value: 1400, unit: 'ms in last sample'
+    label: 'Time spent freeing memory', value: 1400, unit: 'ms in last sample'
   }))), { available: true, maximum: 1000, value: 1000 });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'Process CPU', value: 'n/a', unit: '%'
+    label: 'sdrtrunk-vce processor use', value: 'n/a', unit: '%'
   }))), { available: false, maximum: 100, value: 0 });
 
   const radioTableType = vm.runInNewContext(
@@ -699,7 +712,8 @@ async function main() {
   assert.equal(routes.resolve(registry, '?view=missing'), null);
   assert.equal(registry.admin.allowed(), false);
   assert.equal(registry['radio-system'].parent, 'radio-systems');
-  assert.equal(registry.channel.parent, 'channels');
+  assert.equal(registry.channel.parent, 'radio-systems');
+  assert.equal(registry['channel-setup'].allowed(), true);
   assert.throws(() => routes.createRegistry({ ...handlers, extra: () => {} }, () => true), /Unknown route/);
   assert.throws(() => routes.createRegistry({ ...handlers, scanner: null }, () => true), /Missing route/);
 
@@ -813,6 +827,27 @@ async function main() {
   assert.throws(() => tableLayouts.move(grouped, 'identity', 'calls'), /within their group/);
   assert.throws(() => tableLayouts.setHidden(tableLayouts.setHidden(tableLayouts.setHidden(
     initialLayout, 'name', true), 'frequency', true), 'status', true), /at least one visible/);
+  const constrainedColumns = [
+    { id: 'select', essential: true, fixed: true }, { id: 'name' }, { id: 'status' }
+  ];
+  const constrained = tableLayouts.normalize(constrainedColumns, null);
+  assert.deepEqual(constrained.essential_columns, ['select']);
+  assert.deepEqual(constrained.fixed_columns, ['select']);
+  assert.throws(() => tableLayouts.setHidden(constrained, 'select', true), /Essential table columns/);
+  assert.throws(() => tableLayouts.move(constrained, 'select', 'name'), /Fixed table columns/);
+  assert.throws(() => tableLayouts.move(constrained, 'name', 'select'), /across a fixed column/);
+  assert.equal(tableLayouts.canMove(constrained, 'name', 'select'), false);
+  assert.equal(tableLayouts.canMove(constrained, 'status', 'name'), true);
+  assert.deepEqual(tableLayouts.move(constrained, 'status', 'name').column_order,
+    ['select', 'status', 'name']);
+  assert.equal(tableLayouts.normalize(constrainedColumns, {
+    schema: ['select', 'name', 'status'], column_order: ['name', 'select', 'status'],
+    column_widths: {}, hidden_columns: []
+  }).reset_reason, 'fixed-column-moved');
+  assert.equal(tableLayouts.normalize(constrainedColumns, {
+    schema: ['select', 'name', 'status'], column_order: ['select', 'name', 'status'],
+    column_widths: {}, hidden_columns: ['select']
+  }).reset_reason, 'essential-column-hidden');
 
   assert.equal(pageTitles.derive({ routeId: 'scanner', pageTitle: 'Scanner',
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'WEST (2)');

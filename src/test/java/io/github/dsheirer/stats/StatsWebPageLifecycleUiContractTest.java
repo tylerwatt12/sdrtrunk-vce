@@ -25,7 +25,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=144\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=154\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -63,11 +63,15 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(system.contains("loadingMessage: 'Loading radios…'"));
         assertTrue(system.contains("loadingMessage: 'Loading talker aliases…'"));
 
-        String receiverSettings = function(source, "async function renderReceiverSettings()");
-        assertOrdered(receiverSettings, "await renderAdminReceiverBehaviorSettings();",
+        String admin = function(source, "async function renderAdmin()");
+        assertOrdered(admin, "else await renderAdminUsers(renderContext);",
             "if (!renderIsCurrent(renderContext)) return;");
-        assertOrdered(receiverSettings, "if (!renderIsCurrent(renderContext)) return;",
-            "await renderAdminRadioReferenceSettings();");
+        assertOrdered(admin, "if (!renderIsCurrent(renderContext)) return;",
+            "while (shell.nextSibling) body.append(shell.nextSibling);");
+        assertTrue(function(source, "async function renderAdminUsers(renderContext = captureRenderContext())")
+            .contains("if (!renderIsCurrent(renderContext)) return;"));
+        assertTrue(function(source, "async function renderAdminAccess(renderContext = captureRenderContext())")
+            .contains("if (!renderIsCurrent(renderContext)) return;"));
     }
 
     @Test
@@ -77,7 +81,7 @@ class StatsWebPageLifecycleUiContractTest
         String render = function(source, "async function render()");
         String popState = function(source, "window.addEventListener('popstate', () =>");
 
-        assertOrdered(render, "setNavigationOpen(false);", "const view = routeFoundation.requestedView(route);");
+        assertOrdered(render, "setNavigationOpen(false);", "let view = routeFoundation.requestedView(route);");
         assertOrdered(popState, "setNavigationOpen(false);", "const previous = `/?${route.toString()}`;");
     }
 

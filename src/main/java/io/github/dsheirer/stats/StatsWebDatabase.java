@@ -64,6 +64,7 @@ class StatsWebDatabase
     private static final int ACTIVITY_TARGET_POINTS = 240;
     private static final int DASHBOARD_HOURS = 24;
     private static final int DASHBOARD_IDENTITY_LIMIT = 20;
+    private static final int IDENTITY_DIRECTORY_CANDIDATE_LIMIT = 500;
     private static final int DASHBOARD_SOURCE_LIMIT = 100;
     static final int MAXIMUM_PATCH_GROUP_PAGE = 100;
     static final int MAXIMUM_PATCH_MEMBERS_PER_GROUP = 32;
@@ -822,6 +823,94 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
+    /** Streams the exact Alias table selection from one read-only SQLite snapshot in bounded batches. */
+    void forEachFilteredAliasBatch(StatsRequest request, int batchSize,
+                                   StatsAliasCatalog.AliasBatchConsumer consumer)
+    {
+        readSnapshot(connection -> {
+            mAliasCatalog.forEachFilteredAliasBatch(connection, request, batchSize, consumer);
+            return null;
+        });
+    }
+
+    /** Prepares one complete, importable Alias List CSV without materializing the selection in memory. */
+    AliasTransferExport.Prepared aliasTransferExport(StatsRequest request)
+    {
+        String scope = request.requiredText("scope");
+        boolean filtered;
+
+        if("all".equals(scope))
+        {
+            request.requireOnly("scope", "list", "export_token");
+            filtered = false;
+        }
+        else if("filtered".equals(scope))
+        {
+            filtered = true;
+        }
+        else
+        {
+            throw new StatsApiException(400, "invalid_parameter", "scope must be all or filtered", "scope");
+        }
+
+        String list = request.requiredText("list");
+        long aliasListId;
+
+        try
+        {
+            if(!list.matches("[1-9][0-9]*"))
+            {
+                throw new NumberFormatException();
+            }
+
+            aliasListId = Long.parseLong(list);
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "list must be a positive integer", "list");
+        }
+
+        try
+        {
+            return AliasTransferExport.prepare(aliasListId, filtered, consumer ->
+                readSnapshot(connection ->
+                {
+                    if(queryRows(connection, "SELECT id FROM alias_list WHERE id=?", aliasListId).isEmpty())
+                    {
+                        throw new StatsApiException(404, "Alias List was not found");
+                    }
+
+                    if(filtered)
+                    {
+                        mAliasCatalog.forEachFilteredAliasBatch(connection, request, AliasTransferExport.BATCH_SIZE,
+                            consumer::accept);
+                    }
+                    else
+                    {
+                        mAliasCatalog.forEachAliasConfigurationBatch(connection, aliasListId,
+                            AliasTransferExport.BATCH_SIZE, consumer::accept);
+                    }
+                    return null;
+                }));
+        }
+        catch(IOException | SQLException exception)
+        {
+            mLog.warn("Unable to prepare Alias CSV export", exception);
+            throw new StatsApiException(503, "export_failed", "Alias CSV export could not be prepared");
+        }
+    }
+
+    AliasTransferExport.Prepared aliasTransferExport(long aliasListId)
+    {
+        return aliasTransferExport(new StatsRequest(Map.of("scope", "all", "list",
+            Long.toString(aliasListId))));
+    }
+
+    void invalidateAliasActivitySnapshots()
+    {
+        mAliasCatalog.invalidateActivitySnapshots();
+    }
+
     List<Long> matchingAliasIds(StatsRequest request)
     {
         return readSnapshot(connection -> mAliasCatalog.matchingAliasIds(connection, request));
@@ -1389,6 +1478,59 @@ class StatsWebDatabase
             dashboard.put("call_activity", callActivity(connection));
             dashboard.put("source_activity_24h", sourceActivity24Hours(connection));
             return dashboard;
+        });
+    }
+
+    /**
+     * Returns a bounded, protocol-neutral directory of recently active group and radio identities.  The directory
+     * reuses the same compact summaries and Alias resolution as the dashboard; it never creates a second activity
+     * store or exposes Alias actions and output rules.
+     */
+    Map<String,Object> identityDirectory(StatsRequest request)
+    {
+        ActivityRange range = activityRange(request);
+        int limit = request.limit();
+        int offset = request.offset();
+
+        return readSnapshot(connection -> {
+            long now = System.currentTimeMillis();
+            long from = now - range.milliseconds();
+            List<Map<String,Object>> destinations = topCallIdentities(connection, IDENTITY_ROLE_DESTINATION,
+                from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            List<Map<String,Object>> sources = topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
+                from, now, IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            List<Map<String,Object>> rows = new ArrayList<>();
+
+            destinations.stream().filter(row -> {
+                int kind = (int)number(row.get("identity_kind_code"));
+                return kind == IDENTITY_KIND_TALKGROUP || kind == IDENTITY_KIND_PATCH_GROUP;
+            }).forEach(rows::add);
+            sources.stream().filter(row -> number(row.get("identity_kind_code")) == IDENTITY_KIND_RADIO)
+                .forEach(rows::add);
+            rows.sort((left, right) -> {
+                int recent = Long.compare(number(right.get("last_active_ms")),
+                    number(left.get("last_active_ms")));
+                if(recent != 0)
+                {
+                    return recent;
+                }
+                int calls = Long.compare(number(right.get("logical_call_count")),
+                    number(left.get("logical_call_count")));
+                if(calls != 0)
+                {
+                    return calls;
+                }
+                return Long.compare(number(left.get("native_id")), number(right.get("native_id")));
+            });
+
+            int fromIndex = Math.min(offset, rows.size());
+            int toIndex = Math.min(rows.size(), fromIndex + limit + 1);
+            Map<String,Object> response = page(new ArrayList<>(rows.subList(fromIndex, toIndex)), limit, offset);
+            response.put("total_count", rows.size());
+            response.put("range", range.label());
+            response.put("candidate_limit_reached", destinations.size() >= IDENTITY_DIRECTORY_CANDIDATE_LIMIT ||
+                sources.size() >= IDENTITY_DIRECTORY_CANDIDATE_LIMIT);
+            return response;
         });
     }
 
@@ -5052,6 +5194,14 @@ class StatsWebDatabase
     private List<Map<String,Object>> topCallIdentities(Connection connection, int identityRole,
                                                        long fromTimestamp, long toTimestamp) throws SQLException
     {
+        return topCallIdentities(connection, identityRole, fromTimestamp, toTimestamp,
+            DASHBOARD_IDENTITY_LIMIT);
+    }
+
+    private List<Map<String,Object>> topCallIdentities(Connection connection, int identityRole,
+                                                       long fromTimestamp, long toTimestamp, int limit)
+        throws SQLException
+    {
         if(identityRole != IDENTITY_ROLE_DESTINATION && identityRole != IDENTITY_ROLE_SOURCE)
         {
             throw new IllegalArgumentException("Unsupported call identity role");
@@ -5059,7 +5209,7 @@ class StatsWebDatabase
 
         List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_IDENTITY_ACTIVITY_SQL,
             fromTimestamp, toTimestamp, identityRole,
-            fromTimestamp, toTimestamp, identityRole, DASHBOARD_IDENTITY_LIMIT);
+            fromTimestamp, toTimestamp, identityRole, limit);
         List<Map<String,Object>> trunkedTalkgroups = new ArrayList<>();
         List<Map<String,Object>> trunkedRadios = new ArrayList<>();
         List<Map<String,Object>> p25ConventionalTalkgroups = new ArrayList<>();

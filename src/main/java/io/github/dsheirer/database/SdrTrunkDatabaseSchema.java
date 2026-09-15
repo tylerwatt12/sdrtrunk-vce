@@ -27,12 +27,59 @@ import java.util.Map;
  */
 public final class SdrTrunkDatabaseSchema
 {
+    public static final int MAXIMUM_RECEIVER_HEALTH_INCIDENTS = 200;
     private static final String DATABASE_METADATA_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS database_metadata (
             key TEXT NOT NULL PRIMARY KEY CHECK(typeof(key) = 'text' AND length(trim(key)) > 0),
             value TEXT NOT NULL CHECK(typeof(value) = 'text'),
             updated_at_ms INTEGER NOT NULL
                 CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
+        )
+        """;
+    private static final String RECEIVER_HEALTH_INCIDENT_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS receiver_health_incident (
+            id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
+            process_started_at_ms INTEGER NOT NULL CHECK(
+                typeof(process_started_at_ms) = 'integer' AND process_started_at_ms > 0
+            ),
+            occurrence_id INTEGER NOT NULL CHECK(typeof(occurrence_id) = 'integer' AND occurrence_id > 0),
+            code TEXT NOT NULL CHECK(
+                typeof(code) = 'text' AND length(trim(code)) > 0
+                AND length(CAST(code AS BLOB)) <= 80
+            ),
+            severity TEXT NOT NULL CHECK(
+                typeof(severity) = 'text' AND severity IN ('warning', 'critical')
+            ),
+            title TEXT NOT NULL CHECK(
+                typeof(title) = 'text' AND length(trim(title)) > 0
+                AND length(CAST(title AS BLOB)) <= 256
+            ),
+            scope TEXT NOT NULL CHECK(
+                typeof(scope) = 'text' AND length(trim(scope)) > 0
+                AND length(CAST(scope AS BLOB)) <= 512
+            ),
+            opened_at_ms INTEGER NOT NULL CHECK(typeof(opened_at_ms) = 'integer' AND opened_at_ms > 0),
+            last_seen_at_ms INTEGER NOT NULL CHECK(
+                typeof(last_seen_at_ms) = 'integer' AND last_seen_at_ms >= opened_at_ms
+            ),
+            resolved_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(
+                typeof(resolved_at_ms) = 'integer'
+                AND (resolved_at_ms = 0 OR resolved_at_ms >= last_seen_at_ms)
+            ),
+            count INTEGER NOT NULL CHECK(typeof(count) = 'integer' AND count >= 0),
+            observed TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(observed) = 'text' AND length(CAST(observed AS BLOB)) <= 2048
+            ),
+            likely_cause TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(likely_cause) = 'text' AND length(CAST(likely_cause AS BLOB)) <= 2048
+            ),
+            impact TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(impact) = 'text' AND length(CAST(impact AS BLOB)) <= 2048
+            ),
+            check_next TEXT NOT NULL DEFAULT '' CHECK(
+                typeof(check_next) = 'text' AND length(CAST(check_next AS BLOB)) <= 2048
+            ),
+            UNIQUE(process_started_at_ms, occurrence_id)
         )
         """;
     private static final String ALIAS_LIST_TABLE_SQL = """
@@ -117,6 +164,60 @@ public final class SdrTrunkDatabaseSchema
                     AND protocol IS NULL AND value IS NULL AND min_value IS NULL AND max_value IS NULL
                     AND text_value IS NOT NULL AND numeric_value IS NULL AND tone_sequence IS NULL)
             )
+        )
+        """;
+    private static final String ALIAS_ACTIVITY_SUMMARY_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_activity_summary (
+            alias_id INTEGER PRIMARY KEY CHECK(typeof(alias_id) = 'integer' AND alias_id > 0),
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
+            protocol_code INTEGER NOT NULL CHECK(
+                typeof(protocol_code) = 'integer' AND protocol_code IN (0, 1, 3, 4)
+            ),
+            metrics_state TEXT NOT NULL CHECK(
+                typeof(metrics_state) = 'text' AND metrics_state IN (
+                    'unsupported', 'not_collected', 'observed'
+                )
+            ),
+            logical_call_count INTEGER CHECK(logical_call_count IS NULL OR
+                (typeof(logical_call_count) = 'integer' AND logical_call_count >= 0)),
+            recorded_logical_call_count INTEGER CHECK(recorded_logical_call_count IS NULL OR
+                (typeof(recorded_logical_call_count) = 'integer' AND recorded_logical_call_count >= 0)),
+            stream_submitted_logical_call_count INTEGER CHECK(stream_submitted_logical_call_count IS NULL OR
+                (typeof(stream_submitted_logical_call_count) = 'integer'
+                    AND stream_submitted_logical_call_count >= 0)),
+            encrypted_logical_call_count INTEGER CHECK(encrypted_logical_call_count IS NULL OR
+                (typeof(encrypted_logical_call_count) = 'integer' AND encrypted_logical_call_count >= 0)),
+            grant_observation_count INTEGER CHECK(grant_observation_count IS NULL OR
+                (typeof(grant_observation_count) = 'integer' AND grant_observation_count >= 0)),
+            join_observation_count INTEGER CHECK(join_observation_count IS NULL OR
+                (typeof(join_observation_count) = 'integer' AND join_observation_count >= 0)),
+            emergency_observation_count INTEGER CHECK(emergency_observation_count IS NULL OR
+                (typeof(emergency_observation_count) = 'integer' AND emergency_observation_count >= 0)),
+            register_observation_count INTEGER CHECK(register_observation_count IS NULL OR
+                (typeof(register_observation_count) = 'integer' AND register_observation_count >= 0)),
+            logout_observation_count INTEGER CHECK(logout_observation_count IS NULL OR
+                (typeof(logout_observation_count) = 'integer' AND logout_observation_count >= 0)),
+            denial_observation_count INTEGER CHECK(denial_observation_count IS NULL OR
+                (typeof(denial_observation_count) = 'integer' AND denial_observation_count >= 0)),
+            data_observation_count INTEGER CHECK(data_observation_count IS NULL OR
+                (typeof(data_observation_count) = 'integer' AND data_observation_count >= 0)),
+            other_signaling_observation_count INTEGER CHECK(other_signaling_observation_count IS NULL OR
+                (typeof(other_signaling_observation_count) = 'integer'
+                    AND other_signaling_observation_count >= 0)),
+            signaling_observation_count INTEGER CHECK(signaling_observation_count IS NULL OR
+                (typeof(signaling_observation_count) = 'integer' AND signaling_observation_count >= 0)),
+            first_evidence_ms INTEGER CHECK(first_evidence_ms IS NULL OR
+                (typeof(first_evidence_ms) = 'integer' AND first_evidence_ms >= 0)),
+            last_evidence_ms INTEGER CHECK(last_evidence_ms IS NULL OR
+                (typeof(last_evidence_ms) = 'integer' AND last_evidence_ms >= 0)),
+            updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0),
+            FOREIGN KEY(alias_id) REFERENCES alias(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+            CHECK((first_evidence_ms IS NULL AND last_evidence_ms IS NULL) OR
+                (first_evidence_ms IS NOT NULL AND last_evidence_ms IS NOT NULL
+                    AND last_evidence_ms >= first_evidence_ms)),
+            CHECK((protocol_code = 0 AND metrics_state = 'unsupported') OR
+                (protocol_code IN (1, 3, 4) AND metrics_state <> 'unsupported'))
         )
         """;
     private static final String SCAN_LIST_TABLE_SQL = """
@@ -222,9 +323,9 @@ public final class SdrTrunkDatabaseSchema
             system_name TEXT CHECK(system_name IS NULL OR typeof(system_name) = 'text'),
             site_name TEXT CHECK(site_name IS NULL OR typeof(site_name) = 'text'),
             name TEXT CHECK(name IS NULL OR typeof(name) = 'text'),
-            alias_list_id INTEGER REFERENCES alias_list(id)
-                DEFERRABLE INITIALLY DEFERRED CHECK(alias_list_id IS NULL OR
-                    (typeof(alias_list_id) = 'integer' AND alias_list_id > 0)),
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT
+                DEFERRABLE INITIALLY DEFERRED
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
             radioresolve_id TEXT CHECK(
                 radioresolve_id IS NULL OR (
                     typeof(radioresolve_id) = 'text'
@@ -294,6 +395,21 @@ public final class SdrTrunkDatabaseSchema
             )
         )
         """;
+    /** Frozen predecessor DDL used only while the adjacent format-14 migration constructs exact format 15. */
+    private static final String FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL = CONFIGURATION_CHANNEL_TABLE_SQL.replace(
+        """
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT
+                DEFERRABLE INITIALLY DEFERRED
+                CHECK(typeof(alias_list_id) = 'integer' AND alias_list_id > 0),
+        """,
+        """
+            alias_list_id INTEGER REFERENCES alias_list(id)
+                DEFERRABLE INITIALLY DEFERRED CHECK(alias_list_id IS NULL OR
+                    (typeof(alias_list_id) = 'integer' AND alias_list_id > 0)),
+        """);
+    private static final String FORMAT_16_CONFIGURATION_CHANNEL_MIGRATION_TABLE_SQL =
+        CONFIGURATION_CHANNEL_TABLE_SQL.replaceFirst(
+            "(?i)configuration_channel", "configuration_channel_format16");
     private static final String CONFIGURATION_BROADCAST_STREAM_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS configuration_broadcast_stream (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
@@ -491,6 +607,68 @@ public final class SdrTrunkDatabaseSchema
               )
             """)
     );
+    private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_id", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_id
+            ON alias(alias_list_id, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_name_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_name_sort
+            ON alias(alias_list_id, lower(coalesce(name, '')), id)
+            """));
+    private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "alias_activity_summary",
+            ALIAS_ACTIVITY_SUMMARY_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_talkgroup_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_talkgroup_range
+            ON alias(alias_list_id, protocol, min_value DESC, max_value DESC, id DESC)
+            WHERE matcher_type = 'TALKGROUP_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_radio_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_radio_range
+            ON alias(alias_list_id, protocol, min_value DESC, max_value DESC, id DESC)
+            WHERE matcher_type = 'RADIO_ID_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_matcher_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_matcher_sort
+            ON alias(alias_list_id, matcher_type, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_type_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_type_sort
+            ON alias(alias_list_id, CASE
+                WHEN matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
+                WHEN matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                ELSE 'other'
+            END, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_group_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_group_sort
+            ON alias(alias_list_id, lower(coalesce(group_name, '')), id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_value_sort", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_value_sort
+            ON alias(alias_list_id, CASE
+                WHEN matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
+                    THEN printf('%020d–%020d', min_value, max_value)
+                WHEN value IS NOT NULL THEN printf('%020d', value)
+                WHEN numeric_value IS NOT NULL THEN printf('%020d', numeric_value)
+                WHEN text_value IS NOT NULL THEN lower(text_value)
+                WHEN tone_sequence IS NOT NULL THEN lower(tone_sequence)
+                ELSE ''
+            END, id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_calls", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_calls
+            ON alias_activity_summary(alias_list_id, logical_call_count DESC, alias_id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_signaling", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_signaling
+            ON alias_activity_summary(alias_list_id, signaling_observation_count DESC, alias_id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_activity_last_seen", """
+            CREATE INDEX IF NOT EXISTS idx_alias_activity_last_seen
+            ON alias_activity_summary(alias_list_id, last_evidence_ms DESC, alias_id)
+            """));
     private static final List<SqliteSchemaValidator.Definition> EXACT_CONFIGURATION_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "configuration_channel",
             CONFIGURATION_CHANNEL_TABLE_SQL),
@@ -499,7 +677,9 @@ public final class SdrTrunkDatabaseSchema
     private static final List<SqliteSchemaValidator.Definition> EXACT_CORE_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "database_metadata", DATABASE_METADATA_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "application_settings", APPLICATION_SETTINGS_TABLE_SQL),
-        new SqliteSchemaValidator.Definition("table", "application_icons", APPLICATION_ICONS_TABLE_SQL));
+        new SqliteSchemaValidator.Definition("table", "application_icons", APPLICATION_ICONS_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "receiver_health_incident",
+            RECEIVER_HEALTH_INCIDENT_TABLE_SQL));
     private static final List<SqliteSchemaValidator.Definition> EXACT_WEB_SETTINGS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "web_user", WEB_USER_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "web_access_policy", WEB_ACCESS_POLICY_TABLE_SQL),
@@ -511,6 +691,17 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_talkgroup_range",
         "idx_alias_radio_value",
         "idx_alias_radio_range",
+        "idx_alias_list_id",
+        "idx_alias_list_name_sort",
+        "idx_alias_activity_talkgroup_range",
+        "idx_alias_activity_radio_range",
+        "idx_alias_activity_matcher_sort",
+        "idx_alias_activity_type_sort",
+        "idx_alias_activity_group_sort",
+        "idx_alias_activity_value_sort",
+        "idx_alias_activity_calls",
+        "idx_alias_activity_signaling",
+        "idx_alias_activity_last_seen",
         "idx_alias_broadcast_configuration",
         "idx_scan_list_one_default",
         "idx_alias_scan_list_by_list",
@@ -538,6 +729,13 @@ public final class SdrTrunkDatabaseSchema
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "matcher_type", "protocol", "value", "min_value",
                 "max_value", "text_value", "numeric_value", "tone_sequence"),
+            new SqliteSchemaValidator.Table("alias_activity_summary", "alias_id", "alias_list_id",
+                "protocol_code", "metrics_state",
+                "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
+                "encrypted_logical_call_count", "grant_observation_count", "join_observation_count",
+                "emergency_observation_count", "register_observation_count", "logout_observation_count",
+                "denial_observation_count", "data_observation_count", "other_signaling_observation_count",
+                "signaling_observation_count", "first_evidence_ms", "last_evidence_ms", "updated_at_ms"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id",
                 "broadcast_configuration_id"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
@@ -555,6 +753,9 @@ public final class SdrTrunkDatabaseSchema
                 "sort_order", "config_json"),
             new SqliteSchemaValidator.Table("application_settings", "key", "settings_json", "updated_at_ms"),
             new SqliteSchemaValidator.Table("application_icons", "key", "icons_json", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("receiver_health_incident", "id", "process_started_at_ms",
+                "occurrence_id", "code", "severity", "title", "scope", "opened_at_ms", "last_seen_at_ms",
+                "resolved_at_ms", "count", "observed", "likely_cause", "impact", "check_next"),
             new SqliteSchemaValidator.Table("web_user", "id", "username", "tier", "primary_admin",
                 "credential_version", "password_algorithm", "password_iterations", "password_derived_key_bits",
                 "password_salt", "password_hash", "password_changed_at_ms", "auth_revision", "preferences_json",
@@ -565,6 +766,18 @@ public final class SdrTrunkDatabaseSchema
 
     public static void create(Connection connection) throws SQLException
     {
+        create(connection, CONFIGURATION_CHANNEL_TABLE_SQL);
+        createReceiverHealthIncidentTable(connection);
+    }
+
+    /** Creates the exact format-15 target for its immutable adjacent migration. */
+    public static void createFormat15(Connection connection) throws SQLException
+    {
+        create(connection, FORMAT_15_CONFIGURATION_CHANNEL_TABLE_SQL);
+    }
+
+    private static void create(Connection connection, String configurationChannelTableSql) throws SQLException
+    {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(DATABASE_METADATA_TABLE_SQL);
@@ -572,18 +785,87 @@ public final class SdrTrunkDatabaseSchema
             {
                 statement.executeUpdate(definition.sql());
             }
+            if(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql))
+            {
+                createAliasCatalogIndexes(connection);
+                createAliasActivitySummary(connection);
+            }
             statement.executeUpdate("""
                 INSERT INTO scan_list (sort_order, name, description, published, is_default)
                 SELECT 0, 'Default', NULL, 1, 1
                 WHERE NOT EXISTS (SELECT 1 FROM scan_list)
                 """);
-            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+            statement.executeUpdate(configurationChannelTableSql);
             statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate(APPLICATION_SETTINGS_TABLE_SQL);
             statement.executeUpdate(APPLICATION_ICONS_TABLE_SQL);
             statement.executeUpdate(WEB_USER_TABLE_SQL);
             statement.executeUpdate(WEB_ACCESS_POLICY_TABLE_SQL);
             statement.executeUpdate(WEB_USER_PRIMARY_INDEX_SQL);
+            createConfigurationChannelIndexes(connection);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
+                "ON alias_broadcast_channel(broadcast_configuration_id)");
+        }
+
+    }
+
+    /** Creates the current bounded Alias Editor browse and name-sort indexes. */
+    public static void createAliasCatalogIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
+        }
+    }
+
+    /** Creates the durable Alias Activity read model for fresh databases and the adjacent staged migrator only. */
+    public static void createAliasActivitySummary(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
+        }
+    }
+
+    /** Creates the authoritative saved-channel table. Used by fresh databases and the adjacent staged migrator. */
+    public static void createConfigurationChannelTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL);
+        }
+    }
+
+    /** Creates the bounded receiver-health history for fresh databases and the adjacent staged migrator only. */
+    public static void createReceiverHealthIncidentTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(RECEIVER_HEALTH_INCIDENT_TABLE_SQL);
+        }
+    }
+
+    /** Creates the current saved-channel table under its fixed adjacent-migration staging name. */
+    public static void createConfigurationChannelMigrationTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(FORMAT_16_CONFIGURATION_CHANNEL_MIGRATION_TABLE_SQL);
+        }
+    }
+
+    /** Creates the complete authoritative saved-channel index set. */
+    public static void createConfigurationChannelIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_sort " +
                 "ON configuration_channel(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_alias_list " +
@@ -596,11 +878,7 @@ public final class SdrTrunkDatabaseSchema
                 "idx_configuration_channel_unique_radioresolve_id " +
                 "ON configuration_channel(lower(radioresolve_id)) " +
                 "WHERE radioresolve_id IS NOT NULL");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_broadcast_sort ON configuration_broadcast_stream(sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_configuration " +
-                "ON alias_broadcast_channel(broadcast_configuration_id)");
         }
-
     }
 
     /**
@@ -728,9 +1006,21 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS, List.of());
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CORE_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_INDEX_OBJECTS);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_ACTIVITY_SUMMARY_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
         Format5WebStateValidator.validate(connection);
+
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM receiver_health_incident"))
+        {
+            if(!rows.next() || rows.getLong(1) > MAXIMUM_RECEIVER_HEALTH_INCIDENTS)
+            {
+                throw new SQLException("Receiver-health incident history exceeds its " +
+                    MAXIMUM_RECEIVER_HEALTH_INCIDENTS + "-row limit");
+            }
+        }
     }
 
 }

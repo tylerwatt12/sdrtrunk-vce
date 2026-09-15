@@ -34,7 +34,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
             "ALTER\\s+TABLE|DROP\\s+(?:TABLE|INDEX|VIEW|TRIGGER))\\b");
     private static final Pattern SCHEMA_DDL_CALL = Pattern.compile(
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
-            "EncryptionKeyVaultSchema|TrunkedIdentitySchema)\\.create|ReceiverActivitySchema\\.create|" +
+            "EncryptionKeyVaultSchema|TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
             "Format(?:2|4|5)SchemaSql\\.create\\w*)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
         "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
@@ -53,6 +53,8 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format4SchemaSql.java",
         "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format14To15DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format15To16DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format17To18DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
@@ -61,7 +63,12 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java",
-        "java/io/github/dsheirer/database/upgrade/Format14To15DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format14To15DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format15To16DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format16To17DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format17To18DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format18To19DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format19To20DatabaseMigration.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",
         "java/io/github/dsheirer/database/importer/LegacyXmlConfigurationImporter.java");

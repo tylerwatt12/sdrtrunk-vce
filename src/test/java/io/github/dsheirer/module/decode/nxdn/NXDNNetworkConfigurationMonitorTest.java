@@ -22,6 +22,7 @@ import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataSnapshotRequest;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.DigitalStationIDInformation;
@@ -31,11 +32,86 @@ import io.github.dsheirer.module.decode.nxdn.layer3.scch.SiteID;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.StationIDOption;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class NXDNNetworkConfigurationMonitorTest
 {
+    @Test
+    void blockedObserverProjectionNeverDelaysDecoderProcessOrReset() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicBoolean blockFirstProjection = new AtomicBoolean(true);
+        NXDNNetworkConfigurationMonitor monitor = new NXDNNetworkConfigurationMonitor(() -> {
+            if(blockFirstProjection.compareAndSet(true, false))
+            {
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        monitor.process(siteInformation(341, 837, 12, 1_000L));
+        ExecutorService observer = Executors.newSingleThreadExecutor();
+        ExecutorService decoder = Executors.newSingleThreadExecutor();
+
+        try
+        {
+            Future<NXDNNetworkConfigurationSnapshot> projected = observer.submit(monitor::getSnapshot);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+            Future<?> decoderWork = decoder.submit(() -> {
+                for(int index = 0; index < 1_000; index++)
+                {
+                    monitor.process(siteInformation(342, 838, 13, 2_000L + index));
+                }
+
+                monitor.reset();
+                monitor.process(siteInformation(343, 839, 14, 4_000L));
+            });
+
+            decoderWork.get(2, TimeUnit.SECONDS);
+            releaseProjection.countDown();
+            NXDNNetworkConfigurationSnapshot snapshot = projected.get(2, TimeUnit.SECONDS);
+            assertEquals(14, snapshot.ran());
+            assertEquals(343, snapshot.currentLocation().system());
+            assertEquals(839, snapshot.currentLocation().site());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            observer.shutdownNow();
+            decoder.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentResetFailsClosedInsteadOfPublishingMixedNxdnGeneration()
+    {
+        AtomicReference<NXDNNetworkConfigurationMonitor> reference = new AtomicReference<>();
+        NXDNNetworkConfigurationMonitor monitor = new NXDNNetworkConfigurationMonitor(() -> reference.get().reset());
+        reference.set(monitor);
+        monitor.process(siteInformation(341, 837, 12, 1_000L));
+
+        NXDNNetworkConfigurationSnapshot snapshot = monitor.getSnapshot();
+
+        assertNull(snapshot,
+            "bounded optimistic retries must fail closed while every projection overlaps decoder reset");
+    }
+
     @Test
     void publicationCarriesTypedStationFactsWithoutFormattingOnTheDecoderCallback()
     {
@@ -74,14 +150,16 @@ class NXDNNetworkConfigurationMonitorTest
         Channel channel = new Channel("NXDN", Channel.ChannelType.STANDARD);
         channel.setConfigurationId("00000000-0000-0000-0000-000000000401");
         channel.setDecodeConfiguration(new DecodeConfigNXDN());
-        AtomicReference<ProtocolSiteMetadataEvent> published = new AtomicReference<>();
+        AtomicReference<ProtocolSiteMetadataSnapshotRequest> published = new AtomicReference<>();
         ProtocolSiteMetadataPublisher publisher = new ProtocolSiteMetadataPublisher(channel, monitor::getSnapshot,
             () -> true, published::set);
 
         assertDoesNotThrow(() -> publisher.publish(1_000L));
         assertNotNull(published.get());
+        ProtocolSiteMetadataEvent event = published.get().resolve();
+        assertNotNull(event);
         NXDNNetworkConfigurationSnapshot snapshot =
-            (NXDNNetworkConfigurationSnapshot)published.get().snapshot();
+            (NXDNNetworkConfigurationSnapshot)event.snapshot();
         assertEquals("WXYZ", snapshot.station().identifier());
         assertEquals(1, snapshot.station().option().value());
         assertTrue(snapshot.station().option().complete());

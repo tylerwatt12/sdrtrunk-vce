@@ -1,0 +1,158 @@
+{
+  "catalog_version": 1,
+  "profiles": [
+    {
+      "id": "am",
+      "label": "AM",
+      "decoder_type": "AM",
+      "alias_family": "NBFM",
+      "channel_kind": "CONVENTIONAL",
+      "source_mode": "SINGLE",
+      "event_logs": ["CALL_EVENT", "DECODED_MESSAGE"],
+      "recorders": ["BASEBAND"],
+      "auxiliary_decoders": ["DCS", "FLEETSYNC2", "LJ_1200", "MDC1200", "TAIT_1200"],
+      "sections": [
+        {"id":"general","label":"General","fields":[
+          {"path":"system","label":"System","type":"text","max_length":256},
+          {"path":"site","label":"Site","type":"text","max_length":256},
+          {"path":"name","label":"Name","type":"text","required":true,"max_length":256},
+          {"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},
+          {"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}
+        ]},
+        {"id":"source","label":"Source","fields":[
+          {"path":"source.frequencies_hz","label":"Frequency","type":"frequency_list","minimum_items":1,"maximum_items":1,"required":true},
+          {"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true}
+        ]},
+        {"id":"protocol","label":"Decoder","fields":[
+          {"path":"settings.bandwidth","label":"Bandwidth","type":"enum","default":"BW_15_0","options":[{"value":"BW_3_0","label":"3.0 kHz"},{"value":"BW_5_0","label":"5.0 kHz"},{"value":"BW_8_33","label":"8.33 kHz"},{"value":"BW_15_0","label":"15.0 kHz"},{"value":"BW_25_0","label":"25.0 kHz"}]},
+          {"path":"settings.talkgroup","label":"Talkgroup","type":"integer","default":1,"minimum":1,"maximum":65535},
+          {"path":"settings.high_pass_enabled","label":"High-pass filter","type":"boolean","default":true},
+          {"path":"settings.low_pass_enabled","label":"Low-pass filter","type":"boolean","default":false},
+          {"path":"settings.low_pass_cutoff_hz","label":"Low-pass cutoff","type":"integer","unit":"Hz","default":3400,"minimum":2000,"maximum":4000,"visible_when":{"path":"settings.low_pass_enabled","equals":true}},
+          {"path":"settings.voice_enhance_percent","label":"Voice enhancement","type":"number","unit":"%","default":30,"minimum":0,"maximum":100,"step":1},
+          {"path":"settings.bass_boost_db","label":"Bass boost","type":"number","unit":"dB","default":0,"minimum":0,"maximum":12,"step":0.5},
+          {"path":"settings.output_gain","label":"Output gain","type":"number","default":1,"minimum":0.25,"maximum":4,"step":0.05},
+          {"path":"settings.squelch_noise_open","label":"Squelch noise open","type":"number","default":0.1,"minimum":0.1,"maximum":0.5,"step":0.01},
+          {"path":"settings.squelch_noise_close","label":"Squelch noise close","type":"number","default":0.19,"minimum":0.1,"maximum":0.5,"step":0.01},
+          {"path":"settings.squelch_hysteresis_open","label":"Squelch hysteresis open","type":"integer","default":4,"minimum":1,"maximum":10},
+          {"path":"settings.squelch_hysteresis_close","label":"Squelch hysteresis close","type":"integer","default":6,"minimum":1,"maximum":10},
+          {"path":"settings.squelch_trim_enabled","label":"Trim squelch transitions","type":"boolean","default":false},
+          {"path":"settings.squelch_tail_ms","label":"Tail trim","type":"integer","unit":"ms","default":100,"minimum":0,"maximum":300,"visible_when":{"path":"settings.squelch_trim_enabled","equals":true}},
+          {"path":"settings.squelch_head_ms","label":"Head trim","type":"integer","unit":"ms","default":0,"minimum":0,"maximum":150,"visible_when":{"path":"settings.squelch_trim_enabled","equals":true}}
+        ]},
+        {"id":"output","label":"Logging & Recording","fields":[
+          {"path":"event_logs","label":"Event logs","type":"multi_select","options":[{"value":"CALL_EVENT","label":"Call Events"},{"value":"DECODED_MESSAGE","label":"Decoded Messages"}]},
+          {"path":"recorders","label":"Recordings","type":"multi_select","options":[{"value":"BASEBAND","label":"Baseband I/Q"}]},
+          {"path":"auxiliary_decoders","label":"Auxiliary decoders","type":"multi_select","options":[{"value":"DCS","label":"Digital Coded Squelch"},{"value":"FLEETSYNC2","label":"Fleetsync II"},{"value":"LJ_1200","label":"LJ1200"},{"value":"MDC1200","label":"MDC1200"},{"value":"TAIT_1200","label":"Tait 1200"}]}
+        ]}
+      ]
+    },
+    {
+      "id": "nbfm",
+      "label": "NBFM",
+      "decoder_type": "NBFM",
+      "alias_family": "NBFM",
+      "channel_kind": "CONVENTIONAL",
+      "source_mode": "SINGLE",
+      "event_logs": ["CALL_EVENT", "DECODED_MESSAGE"],
+      "recorders": ["BASEBAND"],
+      "auxiliary_decoders": ["DCS", "FLEETSYNC2", "LJ_1200", "MDC1200", "TAIT_1200"],
+      "sections": [
+        {"id":"general","label":"General","fields":[
+          {"path":"system","label":"System","type":"text","max_length":256},
+          {"path":"site","label":"Site","type":"text","max_length":256},
+          {"path":"name","label":"Name","type":"text","required":true,"max_length":256},
+          {"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},
+          {"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}
+        ]},
+        {"id":"source","label":"Source","fields":[
+          {"path":"source.frequencies_hz","label":"Frequency","type":"frequency_list","minimum_items":1,"maximum_items":1,"required":true},
+          {"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true}
+        ]},
+        {"id":"protocol","label":"Decoder","fields":[
+          {"path":"settings.bandwidth","label":"Bandwidth","type":"enum","default":"BW_12_5","options":[{"value":"BW_7_5","label":"7.5 kHz"},{"value":"BW_12_5","label":"12.5 kHz"},{"value":"BW_25_0","label":"25.0 kHz"}]},
+          {"path":"settings.talkgroup","label":"Talkgroup","type":"integer","default":1,"minimum":1,"maximum":65535},
+          {"path":"settings.deemphasis","label":"De-emphasis","type":"enum","default":"NONE","options":[{"value":"NONE","label":"None"},{"value":"US_750US","label":"750 µs (North America)"},{"value":"CEPT_530US","label":"530 µs (Europe/CEPT)"}]},
+          {"path":"settings.high_pass_enabled","label":"High-pass filter","type":"boolean","default":true},
+          {"path":"settings.low_pass_enabled","label":"Low-pass filter","type":"boolean","default":false},
+          {"path":"settings.low_pass_cutoff_hz","label":"Low-pass cutoff","type":"integer","unit":"Hz","default":3400,"minimum":2000,"maximum":4000,"visible_when":{"path":"settings.low_pass_enabled","equals":true}},
+          {"path":"settings.voice_enhance_percent","label":"Voice enhancement","type":"number","unit":"%","default":30,"minimum":0,"maximum":100,"step":1},
+          {"path":"settings.bass_boost_db","label":"Bass boost","type":"number","unit":"dB","default":0,"minimum":0,"maximum":12,"step":0.5},
+          {"path":"settings.output_gain","label":"Output gain","type":"number","default":1,"minimum":0.25,"maximum":4,"step":0.05},
+          {"path":"settings.squelch_noise_open","label":"Squelch noise open","type":"number","default":0.1,"minimum":0.1,"maximum":0.5,"step":0.01},
+          {"path":"settings.squelch_noise_close","label":"Squelch noise close","type":"number","default":0.19,"minimum":0.1,"maximum":0.5,"step":0.01},
+          {"path":"settings.squelch_hysteresis_open","label":"Squelch hysteresis open","type":"integer","default":4,"minimum":1,"maximum":10},
+          {"path":"settings.squelch_hysteresis_close","label":"Squelch hysteresis close","type":"integer","default":6,"minimum":1,"maximum":10},
+          {"path":"settings.squelch_trim_enabled","label":"Trim squelch transitions","type":"boolean","default":false},
+          {"path":"settings.squelch_tail_ms","label":"Tail trim","type":"integer","unit":"ms","default":100,"minimum":0,"maximum":300,"visible_when":{"path":"settings.squelch_trim_enabled","equals":true}},
+          {"path":"settings.squelch_head_ms","label":"Head trim","type":"integer","unit":"ms","default":0,"minimum":0,"maximum":150,"visible_when":{"path":"settings.squelch_trim_enabled","equals":true}}
+        ]},
+        {"id":"output","label":"Logging & Recording","fields":[
+          {"path":"event_logs","label":"Event logs","type":"multi_select","options":[{"value":"CALL_EVENT","label":"Call Events"},{"value":"DECODED_MESSAGE","label":"Decoded Messages"}]},
+          {"path":"recorders","label":"Recordings","type":"multi_select","options":[{"value":"BASEBAND","label":"Baseband I/Q"}]},
+          {"path":"auxiliary_decoders","label":"Auxiliary decoders","type":"multi_select","options":[{"value":"DCS","label":"Digital Coded Squelch"},{"value":"FLEETSYNC2","label":"Fleetsync II"},{"value":"LJ_1200","label":"LJ1200"},{"value":"MDC1200","label":"MDC1200"},{"value":"TAIT_1200","label":"Tait 1200"}]}
+        ]}
+      ]
+    },
+    {
+      "id":"dmr","label":"DMR","decoder_type":"DMR","alias_family":"DMR","channel_kind":"DYNAMIC","source_mode":"MULTIPLE",
+      "event_logs":["CALL_EVENT","DECODED_MESSAGE","TRAFFIC_CALL_EVENT","TRAFFIC_DECODED_MESSAGE"],
+      "recorders":["BASEBAND","DEMODULATED_BIT_STREAM","MBE_CALL_SEQUENCE","TRAFFIC_BASEBAND","TRAFFIC_DEMODULATED_BIT_STREAM","TRAFFIC_MBE_CALL_SEQUENCE"],
+      "auxiliary_decoders":[],
+      "sections":[
+        {"id":"general","label":"General","fields":[
+          {"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}
+        ]},
+        {"id":"source","label":"Source","fields":[
+          {"path":"source.frequencies_hz","label":"Control frequencies","type":"frequency_list","minimum_items":1,"required":true},{"path":"source.minimum_frequency_hz","label":"Minimum working frequency","type":"frequency","nullable":true},{"path":"source.maximum_frequency_hz","label":"Maximum working frequency","type":"frequency","nullable":true},{"path":"source.preferred_frequency_hz","label":"Preferred control frequency","type":"frequency_select","nullable":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true},{"path":"source.rotation_delay_ms","label":"Frequency rotation delay","type":"integer","unit":"ms","default":2000,"minimum":200,"maximum":10000}
+        ]},
+        {"id":"protocol","label":"Decoder","fields":[
+          {"path":"settings.channel_mode","label":"Channel type","type":"enum","default":"CONVENTIONAL","options":[{"value":"CONVENTIONAL","label":"Conventional"},{"value":"TRUNKED","label":"Trunked"}]},{"path":"settings.traffic_channel_pool_size","label":"Maximum traffic channels","type":"integer","default":20,"minimum":0,"maximum":50,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"settings.ignore_data_calls","label":"Ignore data calls","type":"boolean","default":true,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"settings.ignore_crc_checksums","label":"Ignore CRC checksums (RAS)","type":"boolean","default":false},{"path":"settings.use_compressed_talkgroups","label":"Use compressed talkgroups","type":"boolean","default":false,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"frequency_map","label":"LCN to frequency map","type":"frequency_map","number_label":"LCN","number_minimum":1,"show_uplink":true,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"},"clipboard":true}
+        ]},
+        {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
+      ]
+    },
+    {
+      "id":"nxdn","label":"NXDN","decoder_type":"NXDN","alias_family":"NXDN","channel_kind":"DYNAMIC","source_mode":"MULTIPLE",
+      "event_logs":["CALL_EVENT","DECODED_MESSAGE","TRAFFIC_CALL_EVENT","TRAFFIC_DECODED_MESSAGE"],
+      "recorders":["BASEBAND","DEMODULATED_BIT_STREAM","MBE_CALL_SEQUENCE","TRAFFIC_BASEBAND","TRAFFIC_DEMODULATED_BIT_STREAM","TRAFFIC_MBE_CALL_SEQUENCE"],
+      "auxiliary_decoders":[],
+      "sections":[
+        {"id":"general","label":"General","fields":[{"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}]},
+        {"id":"source","label":"Source","fields":[{"path":"source.frequencies_hz","label":"Control frequencies","type":"frequency_list","minimum_items":1,"required":true},{"path":"source.minimum_frequency_hz","label":"Minimum working frequency","type":"frequency","nullable":true},{"path":"source.maximum_frequency_hz","label":"Maximum working frequency","type":"frequency","nullable":true},{"path":"source.preferred_frequency_hz","label":"Preferred control frequency","type":"frequency_select","nullable":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true},{"path":"source.rotation_delay_ms","label":"Frequency rotation delay","type":"integer","unit":"ms","default":2000,"minimum":200,"maximum":10000}]},
+        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.channel_mode","label":"Channel type","type":"enum","default":"TRUNKED","options":[{"value":"CONVENTIONAL","label":"Conventional"},{"value":"TRUNKED","label":"Trunked"}]},{"path":"settings.transmission_mode","label":"Transmission mode","type":"enum","default":"M4800","options":[{"value":"M4800","label":"4800"},{"value":"M9600","label":"9600"},{"value":"TYPE_D","label":"Type-D"}]},{"path":"settings.talker_alias_encoding","label":"Talker alias encoding","type":"enum","default":"UTF8","options":[{"value":"UTF8","label":"Latin/English (UTF-8)"},{"value":"BIG5","label":"Taiwan/China (BIG5)"}]},{"path":"settings.traffic_channel_pool_size","label":"Maximum traffic channels","type":"integer","default":20,"minimum":0,"maximum":50,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"settings.ignore_data_calls","label":"Ignore data calls","type":"boolean","default":false,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"settings.ignore_encrypted_calls","label":"Ignore encrypted calls","type":"boolean","default":false,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}},{"path":"frequency_map","label":"Channel to frequency map","type":"frequency_map","number_label":"Channel","number_minimum":1,"number_maximum":2048,"show_uplink":false,"visible_when":{"path":"settings.channel_mode","equals":"TRUNKED"}}]},
+        {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
+      ]
+    },
+    {
+      "id":"p25-conventional","label":"P25 Conventional","decoder_type":"P25_CONVENTIONAL","alias_family":"P25","channel_kind":"CONVENTIONAL","source_mode":"SINGLE",
+      "event_logs":["CALL_EVENT","DECODED_MESSAGE"],"recorders":["BASEBAND","DEMODULATED_BIT_STREAM","MBE_CALL_SEQUENCE"],"auxiliary_decoders":[],
+      "sections":[
+        {"id":"general","label":"General","fields":[{"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}]},
+        {"id":"source","label":"Source","fields":[{"path":"source.frequencies_hz","label":"Frequency","type":"frequency_list","minimum_items":1,"maximum_items":1,"required":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true}]},
+        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.modulation","label":"Modulation","type":"enum","default":"CQPSK","options":[{"value":"C4FM","label":"C4FM"},{"value":"CQPSK","label":"CQPSK"}]}]},
+        {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
+      ]
+    },
+    {
+      "id":"p25-phase1","label":"P25 Phase 1","decoder_type":"P25_PHASE1","alias_family":"P25","channel_kind":"TRUNKED","source_mode":"MULTIPLE",
+      "event_logs":["CALL_EVENT","DECODED_MESSAGE","TRAFFIC_CALL_EVENT","TRAFFIC_DECODED_MESSAGE"],"recorders":["BASEBAND","DEMODULATED_BIT_STREAM","MBE_CALL_SEQUENCE","TRAFFIC_BASEBAND","TRAFFIC_DEMODULATED_BIT_STREAM","TRAFFIC_MBE_CALL_SEQUENCE"],"auxiliary_decoders":[],
+      "sections":[
+        {"id":"general","label":"General","fields":[{"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}]},
+        {"id":"source","label":"Source","fields":[{"path":"source.frequencies_hz","label":"Control frequencies","type":"frequency_list","minimum_items":1,"required":true},{"path":"source.minimum_frequency_hz","label":"Minimum working frequency","type":"frequency","nullable":true},{"path":"source.maximum_frequency_hz","label":"Maximum working frequency","type":"frequency","nullable":true},{"path":"source.preferred_frequency_hz","label":"Preferred control frequency","type":"frequency_select","nullable":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true},{"path":"source.rotation_delay_ms","label":"Frequency rotation delay","type":"integer","unit":"ms","default":500,"minimum":400,"maximum":2000}]},
+        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.modulation","label":"Modulation","type":"enum","default":"CQPSK","options":[{"value":"C4FM","label":"C4FM"},{"value":"CQPSK","label":"CQPSK"}]},{"path":"settings.traffic_channel_pool_size","label":"Maximum traffic channels","type":"integer","default":20,"minimum":0,"maximum":50},{"path":"settings.ignore_data_calls","label":"Ignore data calls","type":"boolean","default":false},{"path":"settings.learn_announced_control_channels","label":"Learn announced control channels","type":"boolean","default":false},{"path":"settings.use_bandplan_override","label":"Use P25 bandplan override","type":"boolean","default":false},{"path":"observed.learned_control_frequencies_hz","label":"Learned control frequencies","type":"read_only"},{"path":"observed.p25_site_identity","label":"Learned site identity","type":"read_only"}]},
+        {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
+      ]
+    },
+    {
+      "id":"p25-phase2","label":"P25 Phase 2","decoder_type":"P25_PHASE2","alias_family":"P25","channel_kind":"TRUNKED","source_mode":"MULTIPLE",
+      "event_logs":["CALL_EVENT","DECODED_MESSAGE"],"recorders":["BASEBAND","DEMODULATED_BIT_STREAM","MBE_CALL_SEQUENCE","TRAFFIC_BASEBAND","TRAFFIC_DEMODULATED_BIT_STREAM","TRAFFIC_MBE_CALL_SEQUENCE"],"auxiliary_decoders":[],
+      "sections":[
+        {"id":"general","label":"General","fields":[{"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}]},
+        {"id":"source","label":"Source","fields":[{"path":"source.frequencies_hz","label":"Control frequencies","type":"frequency_list","minimum_items":1,"required":true},{"path":"source.minimum_frequency_hz","label":"Minimum working frequency","type":"frequency","nullable":true},{"path":"source.maximum_frequency_hz","label":"Maximum working frequency","type":"frequency","nullable":true},{"path":"source.preferred_frequency_hz","label":"Preferred control frequency","type":"frequency_select","nullable":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true},{"path":"source.rotation_delay_ms","label":"Frequency rotation delay","type":"integer","unit":"ms","default":2000,"minimum":200,"maximum":10000}]},
+        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.traffic_channel_pool_size","label":"Maximum traffic channels","type":"integer","default":20,"minimum":0,"maximum":50},{"path":"settings.ignore_data_calls","label":"Ignore data calls","type":"boolean","default":false},{"path":"settings.learn_announced_control_channels","label":"Learn announced control channels","type":"boolean","default":false},{"path":"settings.use_bandplan_override","label":"Use P25 bandplan override","type":"boolean","default":false},{"path":"settings.auto_detect_scramble_parameters","label":"Automatically detect scramble parameters","type":"boolean","default":false},{"path":"settings.scramble_wacn","label":"Scramble WACN","type":"integer","minimum":0,"maximum":1048575,"default":0,"visible_when":{"path":"settings.auto_detect_scramble_parameters","equals":false}},{"path":"settings.scramble_system","label":"Scramble System","type":"integer","minimum":0,"maximum":4095,"default":0,"visible_when":{"path":"settings.auto_detect_scramble_parameters","equals":false}},{"path":"settings.scramble_nac","label":"Scramble NAC","type":"integer","minimum":0,"maximum":4095,"default":0,"visible_when":{"path":"settings.auto_detect_scramble_parameters","equals":false}},{"path":"observed.learned_control_frequencies_hz","label":"Learned control frequencies","type":"read_only"},{"path":"observed.p25_site_identity","label":"Learned site identity","type":"read_only"}]},
+        {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
+      ]
+    }
+  ]
+}

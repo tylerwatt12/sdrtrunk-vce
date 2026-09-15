@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebAliasCatalogUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -27,7 +26,7 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
-        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists')"));
+        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists?limit=500')"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
             renderer.indexOf("apiPage('/api/v1/aliases'"));
@@ -94,6 +93,15 @@ class StatsWebAliasCatalogUiContractTest
             .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
         assertTrue(function(source, "async function renderAliases()")
             .contains("sort: route.get('sort') || defaultOrder.sort"));
+        String renderer = function(source, "async function renderAliases()");
+        assertTrue(renderer.contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
+        assertTrue(renderer.contains("loading alias-activity-loading', 'Preparing alias activity…'"));
+        String activityAwait = "const [page, options] = await Promise.all";
+        assertTrue(renderer.indexOf("main.append(activityLoading)") < renderer.indexOf(activityAwait),
+            "The in-panel activity status must be visible while the snapshot request is pending");
+        assertTrue(renderer.indexOf("activityLoading?.remove()") > renderer.indexOf(activityAwait),
+            "The in-panel activity status must remain until the snapshot request finishes");
+        assertTrue(source.contains("'Preparing alias activity…' : 'Loading'"));
         assertTrue(columns.contains("view === 'activity'"));
         assertFalse(columns.contains("view === 'calls'"));
         assertFalse(columns.contains("view === 'evidence'"));
@@ -412,8 +420,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("last_activity_after: route.get('lastActivityAfter')"));
         assertTrue(filters.contains("selectFilter('Calls', 'use'"));
         assertTrue(filters.contains("'No calls observed'"));
-        assertFalse(filters.contains("selectFilter('Evidence'"));
-        assertFalse(filters.contains("'Covered · no evidence'"));
+        assertTrue(filters.contains("selectFilter('Evidence'"));
+        assertTrue(filters.contains("'Assigned, no evidence'"));
+        assertTrue(filters.contains("'Not being collected'"));
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
         assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("A call can also have signaling"));
@@ -518,7 +527,7 @@ class StatsWebAliasCatalogUiContractTest
     @Test
     void providesResponsiveThemeAwareRailTableBulkBarAndModal() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",

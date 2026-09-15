@@ -34,6 +34,7 @@ public class AudioRecording implements Comparable<AudioRecording>
     private IdentifierCollection mIdentifierCollection;
     private Collection<BroadcastChannel> mBroadcastChannels;
     private final BroadcastDeliveryEvidence mDeliveryEvidence;
+    private final CompletedCallBroadcastMetadata mCompletedCallMetadata;
 
     /**
      * Audio recording that is ready to be streamed
@@ -47,7 +48,7 @@ public class AudioRecording implements Comparable<AudioRecording>
                           IdentifierCollection identifierCollection, long start, long recordingLength)
     {
         this(path, broadcastChannels, identifierCollection, start, recordingLength,
-            BroadcastDeliveryEvidence.EMPTY);
+            BroadcastDeliveryEvidence.EMPTY, CompletedCallBroadcastMetadata.EMPTY);
     }
 
     /**
@@ -64,12 +65,26 @@ public class AudioRecording implements Comparable<AudioRecording>
                           IdentifierCollection identifierCollection, long start, long recordingLength,
                           BroadcastDeliveryEvidence deliveryEvidence)
     {
+        this(path, broadcastChannels, identifierCollection, start, recordingLength, deliveryEvidence,
+            CompletedCallBroadcastMetadata.EMPTY);
+    }
+
+    /**
+     * Audio recording with immutable provider-routing evidence and completed-call facts.
+     */
+    public AudioRecording(Path path, Collection<BroadcastChannel> broadcastChannels,
+                          IdentifierCollection identifierCollection, long start, long recordingLength,
+                          BroadcastDeliveryEvidence deliveryEvidence,
+                          CompletedCallBroadcastMetadata completedCallMetadata)
+    {
         mPath = path;
         mBroadcastChannels = broadcastChannels;
         mIdentifierCollection = identifierCollection;
         mStartTime = start;
         mRecordingLength = recordingLength;
         mDeliveryEvidence = deliveryEvidence != null ? deliveryEvidence : BroadcastDeliveryEvidence.EMPTY;
+        mCompletedCallMetadata = completedCallMetadata != null ? completedCallMetadata :
+            CompletedCallBroadcastMetadata.EMPTY;
     }
 
     /**
@@ -94,6 +109,14 @@ public class AudioRecording implements Comparable<AudioRecording>
     public BroadcastDeliveryEvidence getDeliveryEvidence()
     {
         return mDeliveryEvidence;
+    }
+
+    /**
+     * Immutable completed-call facts captured before the encoded recording entered the broadcast pipeline.
+     */
+    public CompletedCallBroadcastMetadata getCompletedCallMetadata()
+    {
+        return mCompletedCallMetadata;
     }
 
     /**

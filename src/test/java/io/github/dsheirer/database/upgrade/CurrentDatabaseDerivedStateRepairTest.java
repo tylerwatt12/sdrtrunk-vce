@@ -45,13 +45,14 @@ class CurrentDatabaseDerivedStateRepairTest
 
         try(Connection connection = open(database))
         {
-            assertEquals(42, CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES.size());
+            assertEquals(44, CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES.size());
             for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
             {
                 assertEquals(1, number(connection,
                     "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='" + table + "'"), table);
             }
             configurationId = insertValidChannel(connection, "Preserve this channel");
+            insertObservedAliasSummary(connection, 9_001L);
             try(var insert = connection.prepareStatement("""
                 INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
                 VALUES (?, 1, 1)
@@ -80,18 +81,27 @@ class CurrentDatabaseDerivedStateRepairTest
                 CurrentDatabaseDerivedStateRepair.inspect(connection);
             assertTrue(inspection.requiresRepair());
             assertEquals(1, inspection.damagedTables());
-            assertEquals(2, inspection.resetRows());
-            assertEquals(2,
+            assertEquals(3, inspection.resetRows());
+            assertEquals(3,
                 CurrentDatabaseDerivedStateRepair.preflight(inspection).effects().getFirst().affectedRows());
 
             CurrentDatabaseDerivedStateRepair.Inspection repaired =
                 CurrentDatabaseDerivedStateRepair.repair(connection);
-            assertEquals(2, repaired.resetRows());
+            assertEquals(3, repaired.resetRows());
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM receiver_channel"));
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM statistics_status"));
             assertEquals(0, number(connection,
                 "SELECT COUNT(*) FROM sqlite_sequence WHERE name='receiver_channel'"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_activity_summary"));
+            assertEquals("not_collected", text(connection, """
+                SELECT metrics_state FROM alias_activity_summary WHERE alias_id=9001
+                """));
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM alias_activity_summary
+                WHERE logical_call_count IS NOT NULL OR signaling_observation_count IS NOT NULL
+                   OR first_evidence_ms IS NOT NULL OR last_evidence_ms IS NOT NULL
+                """));
             assertEquals(3, number(connection, """
                 SELECT COUNT(*) FROM database_metadata
                 WHERE key IN (
@@ -104,6 +114,118 @@ class CurrentDatabaseDerivedStateRepairTest
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).resetRows());
             new ConfigurationRepository(database).load(connection);
+        }
+    }
+
+    @Test
+    void repairsCorruptAliasActivitySummaryAndReseedsItFromAliasConfiguration() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-derived-alias-summary-check.sqlite");
+        SdrTrunkTestDatabase.create(database);
+
+        try(Connection connection = open(database))
+        {
+            insertObservedAliasSummary(connection, 9_002L);
+            execute(connection, "PRAGMA ignore_check_constraints=ON");
+            execute(connection, """
+                UPDATE alias_activity_summary SET logical_call_count=-1 WHERE alias_id=9002
+                """);
+            execute(connection, "PRAGMA ignore_check_constraints=OFF");
+
+            CurrentDatabaseDerivedStateRepair.Inspection inspection =
+                CurrentDatabaseDerivedStateRepair.inspect(connection);
+            assertTrue(inspection.requiresRepair());
+            assertEquals(1, inspection.damagedTables());
+            assertEquals(1, inspection.resetRows());
+
+            CurrentDatabaseDerivedStateRepair.repair(connection);
+
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id=9002"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id=9002"));
+            assertEquals("not_collected", text(connection, """
+                SELECT metrics_state FROM alias_activity_summary WHERE alias_id=9002
+                """));
+            assertEquals(0, number(connection, """
+                SELECT COUNT(*) FROM alias_activity_summary
+                WHERE alias_id=9002 AND (
+                    logical_call_count IS NOT NULL OR signaling_observation_count IS NOT NULL
+                    OR first_evidence_ms IS NOT NULL OR last_evidence_ms IS NOT NULL
+                )
+                """));
+            assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).damagedTables());
+            assertEquals("ok", text(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
+    void repairsMissingAliasActivitySummaryAndReseedsEveryAlias() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-derived-missing-alias-summary.sqlite");
+        SdrTrunkTestDatabase.create(database);
+
+        try(Connection connection = open(database))
+        {
+            insertObservedAliasSummary(connection, 9_003L);
+            insertObservedAliasSummary(connection, 9_004L);
+            execute(connection, "DELETE FROM alias_activity_summary WHERE alias_id=9004");
+
+            CurrentDatabaseDerivedStateRepair.Inspection inspection =
+                CurrentDatabaseDerivedStateRepair.inspect(connection);
+            assertTrue(inspection.requiresRepair());
+            assertEquals(1, inspection.damagedTables());
+            assertEquals(1, inspection.resetRows(),
+                "The retained observed row is reset before every configured Alias is reseeded");
+
+            CurrentDatabaseDerivedStateRepair.repair(connection);
+
+            assertEquals(2, number(connection, """
+                SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id IN (9003,9004)
+                """));
+            assertEquals(2, number(connection, """
+                SELECT COUNT(*) FROM alias_activity_summary
+                WHERE alias_id IN (9003,9004) AND metrics_state='not_collected'
+                  AND protocol_code=1
+                  AND logical_call_count IS NULL AND signaling_observation_count IS NULL
+                  AND first_evidence_ms IS NULL AND last_evidence_ms IS NULL
+                """));
+            assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).damagedTables());
+            assertEquals("ok", text(connection, "PRAGMA quick_check"));
+        }
+    }
+
+    @Test
+    void repairsAliasActivitySummaryOwnerAndProtocolDrift() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("current-derived-alias-summary-drift.sqlite");
+        SdrTrunkTestDatabase.create(database);
+
+        try(Connection connection = open(database))
+        {
+            insertObservedAliasSummary(connection, 9_005L);
+            execute(connection, """
+                UPDATE alias_activity_summary
+                SET alias_list_id=(SELECT id FROM alias_list WHERE family='DMR' LIMIT 1), protocol_code=3
+                WHERE alias_id=9005
+                """);
+
+            CurrentDatabaseDerivedStateRepair.Inspection inspection =
+                CurrentDatabaseDerivedStateRepair.inspect(connection);
+            assertTrue(inspection.requiresRepair());
+            assertEquals(1, inspection.damagedTables());
+            assertEquals(1, inspection.resetRows());
+
+            CurrentDatabaseDerivedStateRepair.repair(connection);
+
+            assertEquals(1, number(connection, """
+                SELECT COUNT(*)
+                FROM alias_activity_summary summary
+                JOIN alias configured ON configured.id=summary.alias_id
+                WHERE summary.alias_id=9005
+                  AND summary.alias_list_id=configured.alias_list_id
+                  AND summary.protocol_code=1
+                  AND summary.metrics_state='not_collected'
+                """));
+            assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).damagedTables());
         }
     }
 
@@ -255,9 +377,10 @@ class CurrentDatabaseDerivedStateRepairTest
         payload.remove(CHANNEL_ROW_OWNED_JSON_FIELDS);
         try(var insert = connection.prepareStatement("""
             INSERT INTO configuration_channel(
-                configuration_id, channel_kind, sort_order, name, auto_start, decoder_type,
+                configuration_id, channel_kind, sort_order, name, alias_list_id, auto_start, decoder_type,
                 address_domain_code, primary_frequency_hz, config_json
-            ) VALUES (?, 'CONVENTIONAL', 0, ?, 0, 'NBFM', 0, 155250000, ?)
+            ) VALUES (?, 'CONVENTIONAL', 0, ?,
+                (SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1), 0, 'NBFM', 0, 155250000, ?)
             """))
         {
             insert.setString(1, channel.getConfigurationId());
@@ -266,6 +389,24 @@ class CurrentDatabaseDerivedStateRepairTest
             assertEquals(1, insert.executeUpdate());
         }
         return channel.getConfigurationId();
+    }
+
+    private static void insertObservedAliasSummary(Connection connection, long aliasId) throws Exception
+    {
+        execute(connection, """
+            INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+            SELECT %d, id, 'Observed Alias', 'TALKGROUP', 'APCO25', 56138
+            FROM alias_list WHERE family='P25' LIMIT 1
+            """.formatted(aliasId));
+        execute(connection, """
+            INSERT INTO alias_activity_summary(
+                alias_id, alias_list_id, protocol_code, metrics_state,
+                logical_call_count, signaling_observation_count,
+                first_evidence_ms, last_evidence_ms, updated_at_ms
+            )
+            SELECT id, alias_list_id, 1, 'observed', 7, 9, 1000, 2000, 2000
+            FROM alias WHERE id=%d
+            """.formatted(aliasId));
     }
 
     private static void execute(Connection connection, String sql) throws Exception

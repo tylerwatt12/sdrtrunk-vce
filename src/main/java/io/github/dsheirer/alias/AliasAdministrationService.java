@@ -94,7 +94,16 @@ public final class AliasAdministrationService
      */
     public Catalog catalog()
     {
-        return onConfigurationThread(this::catalogOnConfigurationThread);
+        return catalog(true);
+    }
+
+    /**
+     * Returns Alias List configuration without forcing count reconstruction when a database-backed caller already
+     * supplies those counts.  Existing administration clients retain the complete counted catalog by default.
+     */
+    public Catalog catalog(boolean includeCounts)
+    {
+        return onConfigurationThread(() -> catalogOnConfigurationThread(includeCounts));
     }
 
     /**
@@ -110,17 +119,13 @@ public final class AliasAdministrationService
         });
     }
 
-    /** One bounded, detached configuration view for transfer previews and exports. */
+    /** One detached configuration view for transfer previews. Database-backed exports do not use this model copy. */
     public TransferSnapshot transferSnapshot(long listId)
     {
         return onConfigurationThread(() ->
         {
             AliasListDefinition definition = requireAliasList(listId);
             List<Alias> aliases = aliasesForList(definition);
-            if(aliases.size() > 10_000)
-            {
-                throw new IllegalArgumentException("Alias transfer is limited to 10,000 aliases per list");
-            }
             return new TransferSnapshot(options(listId), aliases.stream().map(alias ->
                 new AliasEntry(revision(), copyAlias(alias),
                     scanListModel().scanListIdsForAlias(alias.getId()))).toList());
@@ -133,10 +138,6 @@ public final class AliasAdministrationService
     public MutationResult applyTransfer(long listId, List<AliasEntry> entries, List<Long> deletions,
                                         long expectedRevision)
     {
-        if(entries.size() > 10_000 || deletions.size() > 10_000)
-        {
-            throw new IllegalArgumentException("Alias transfer exceeds 10,000 rows");
-        }
         List<AliasEntry> detached = entries.stream().map(entry -> new AliasEntry(expectedRevision,
             entry.alias().getId() == 0 ? prepareNewAlias(entry.alias()) :
                 prepareReplacement(entry.alias().getId(), entry.alias()), entry.scanListIds())).toList();
@@ -216,6 +217,15 @@ public final class AliasAdministrationService
      */
     public Options options(long aliasListId)
     {
+        return options(aliasListId, true);
+    }
+
+    /**
+     * Returns editor choices for one Alias List.  Activity browsing can omit the global group-name suggestion list
+     * while retaining the exact typed group filter and every mutation choice.
+     */
+    public Options options(long aliasListId, boolean includeGroupNames)
+    {
         return onConfigurationThread(() ->
         {
             AliasListDefinition definition = requireAliasList(aliasListId);
@@ -230,7 +240,7 @@ public final class AliasAdministrationService
                 .sorted(Comparator.comparing(BroadcastDestination::name, String.CASE_INSENSITIVE_ORDER))
                 .toList();
             return new Options(revision(), copyDefinition(definition), AliasMatchRegistry.allowed(definition), icons,
-                streams, aliasModel().getGroupNames(), scanListConfiguration.scanLists(),
+                streams, includeGroupNames ? aliasModel().getGroupNames() : List.of(), scanListConfiguration.scanLists(),
                 scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId));
         });
     }
@@ -591,6 +601,12 @@ public final class AliasAdministrationService
             AliasListDefinition definition = requireAliasList(aliasListId);
             DeleteImpact impact = deleteImpact(definition);
 
+            if(impact.channelCount() > 0)
+            {
+                throw new IllegalStateException("Reassign " + impact.channelCount() +
+                    " configured channel(s) before deleting Alias List [" + impact.name() + "]");
+            }
+
             if(!confirmed)
             {
                 throw new ConfirmationRequiredException(impact);
@@ -851,7 +867,7 @@ public final class AliasAdministrationService
             {
                 mutation = operation.get();
                 mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
-                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true, Set.of()),
+                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true),
                     null);
             }
             catch(ConfigurationManager.ConfigurationCommitException |
@@ -1053,29 +1069,33 @@ public final class AliasAdministrationService
         return new MutationTarget(null, aliasIds, aliases.size(), PublicationMode.ALIASES_THEN_SCAN_LISTS);
     }
 
-    private Catalog catalogOnConfigurationThread()
+    private Catalog catalogOnConfigurationThread(boolean includeCounts)
     {
         List<AliasListDefinition> definitions = aliasModel().aliasListDefinitions().stream()
             .map(AliasAdministrationService::copyDefinition).toList();
         Map<Long,Integer> aliasCounts = new LinkedHashMap<>();
         Map<Long,Integer> channelCounts = new LinkedHashMap<>();
-        for(AliasListDefinition definition : definitions)
+
+        if(includeCounts)
         {
-            aliasCounts.put(definition.getId(), 0);
-            channelCounts.put(definition.getId(), 0);
-        }
-        for(Alias alias : aliasModel().getAliases())
-        {
-            if(aliasCounts.containsKey(alias.getAliasListId()))
+            for(AliasListDefinition definition : definitions)
             {
-                aliasCounts.merge(alias.getAliasListId(), 1, Integer::sum);
+                aliasCounts.put(definition.getId(), 0);
+                channelCounts.put(definition.getId(), 0);
             }
-        }
-        for(Channel channel : mConfigurationManager.getChannelModel().getChannels())
-        {
-            if(channel != null && channelCounts.containsKey(channel.getAliasListId()))
+            for(Alias alias : aliasModel().getAliases())
             {
-                channelCounts.merge(channel.getAliasListId(), 1, Integer::sum);
+                if(aliasCounts.containsKey(alias.getAliasListId()))
+                {
+                    aliasCounts.merge(alias.getAliasListId(), 1, Integer::sum);
+                }
+            }
+            for(Channel channel : mConfigurationManager.getChannelModel().getChannels())
+            {
+                if(channel != null && channelCounts.containsKey(channel.getAliasListId()))
+                {
+                    channelCounts.merge(channel.getAliasListId(), 1, Integer::sum);
+                }
             }
         }
         ScanListConfiguration scanListConfiguration = scanListModel().configuration();
@@ -2078,35 +2098,30 @@ public final class AliasAdministrationService
         {
             Set<Long> changedAliasIds = new HashSet<>(aliases);
             savedAliases.stream().map(Alias::getId).forEach(changedAliasIds::add);
-            Set<Long> clearedChannelAliasListIds = publicationMode.clearsChannelAssignments() && aliasList != null ?
-                Set.of(aliasList.getId()) : Set.of();
             return new ConfigurationManager.AliasConfigurationPublication(changedAliasIds,
                 publicationMode.definitionsChanged(), publicationMode.scanListsChanged(),
-                publicationMode.scanListsFirst(), clearedChannelAliasListIds);
+                publicationMode.scanListsFirst());
         }
     }
 
     private enum PublicationMode
     {
-        ALIASES(false, false, false, false),
-        ALIAS_LISTS(true, false, false, false),
-        SCAN_LISTS_THEN_ALIASES(false, true, true, false),
-        SCAN_LISTS_THEN_ALIAS_LISTS(true, true, true, false),
-        ALIASES_THEN_SCAN_LISTS(false, true, false, false),
-        ALIAS_LIST_DELETE(true, true, false, true);
+        ALIASES(false, false, false),
+        ALIAS_LISTS(true, false, false),
+        SCAN_LISTS_THEN_ALIASES(false, true, true),
+        SCAN_LISTS_THEN_ALIAS_LISTS(true, true, true),
+        ALIASES_THEN_SCAN_LISTS(false, true, false),
+        ALIAS_LIST_DELETE(true, true, false);
 
         private final boolean mDefinitionsChanged;
         private final boolean mScanListsChanged;
         private final boolean mScanListsFirst;
-        private final boolean mClearsChannelAssignments;
 
-        PublicationMode(boolean definitionsChanged, boolean scanListsChanged, boolean scanListsFirst,
-                        boolean clearsChannelAssignments)
+        PublicationMode(boolean definitionsChanged, boolean scanListsChanged, boolean scanListsFirst)
         {
             mDefinitionsChanged = definitionsChanged;
             mScanListsChanged = scanListsChanged;
             mScanListsFirst = scanListsFirst;
-            mClearsChannelAssignments = clearsChannelAssignments;
         }
 
         private boolean definitionsChanged()
@@ -2122,11 +2137,6 @@ public final class AliasAdministrationService
         private boolean scanListsFirst()
         {
             return mScanListsFirst;
-        }
-
-        private boolean clearsChannelAssignments()
-        {
-            return mClearsChannelAssignments;
         }
 
     }

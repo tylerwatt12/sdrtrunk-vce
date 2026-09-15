@@ -74,9 +74,12 @@ class TunerDiagnosticServiceTest
         assertEquals("Airspy R2 · A1B2C3D4", first.label());
         assertEquals("Airspy R2", first.name());
         assertEquals("A1B2C3D4", first.serial());
+        assertEquals("AIRSPY_R820T", first.tunerType());
         assertFalse(first.targetId().contains("SECRET"));
         assertEquals(851_000_000L, first.centerFrequencyHz());
         assertEquals(10_000_000L, first.sampleRateHz());
+        assertEquals(9_000_000L, first.usableBandwidthHz());
+        assertEquals(5_000, first.centerExclusionHalfBandwidthHz());
         assertEquals(4, first.activeChannelCount());
         assertEquals(0, controller.addCount.get());
         assertEquals(0, processors.createCount.get());
@@ -689,7 +692,8 @@ class TunerDiagnosticServiceTest
                                                                   String name, String serial,
                                                                   TunerController controller, int channelCount)
     {
-        return new TunerDiagnosticService.AvailableTarget(identity, tunerClass, name, serial, controller,
+        return new TunerDiagnosticService.AvailableTarget(identity, tunerClass, TunerType.AIRSPY_R820T,
+            name, serial, controller,
             () -> channelCount, TunerDiagnosticService.ReceiverQueueControl.UNSUPPORTED);
     }
 
@@ -863,6 +867,18 @@ class TunerDiagnosticServiceTest
         public double getSampleRate()
         {
             return mSampleRate;
+        }
+
+        @Override
+        public int getUsableBandwidth()
+        {
+            return (int)(mSampleRate * 0.9);
+        }
+
+        @Override
+        public int getMiddleUnusableHalfBandwidth()
+        {
+            return 5_000;
         }
 
         @Override

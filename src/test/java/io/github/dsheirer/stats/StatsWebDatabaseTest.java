@@ -24,6 +24,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.io.StringReader;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -34,6 +35,9 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -455,6 +459,17 @@ class StatsWebDatabaseTest
         assertEquals("Shared Unit", trunkedSource.get("alias_name"));
         assertEquals("Conventional Unit", conventionalSource.get("alias_name"));
 
+        Map<String,Object> identities = mDatabase.identityDirectory(request("/?range=24h&limit=500"));
+        assertEquals("24h", identities.get("range"));
+        assertFalse((Boolean)identities.get("candidate_limit_reached"));
+        assertEquals(4, number(identities.get("total_count")));
+        assertEquals("Shared Dispatch", rowWith(rows(identities), "radio_system_key",
+            "dmr:tier3:small:42").get("alias_name"));
+        assertEquals("Conventional Unit", rows(identities).stream()
+            .filter(row -> DMR_CHANNEL.equals(row.get("configuration_id")))
+            .filter(row -> number(row.get("identity_kind_code")) == 2)
+            .findFirst().orElseThrow().get("alias_name"));
+
         Map<String,Object> activity = mDatabase.dashboardActivityRadios(
             request("/?range=1h&action=UNKNOWN&limit=20"));
         Map<String,Object> trunkedActivity = rowWith(rows(activity),
@@ -824,6 +839,44 @@ class StatsWebDatabaseTest
         assertTrue(csv.contains("DMR Dispatch Repeater"));
         assertTrue(csv.indexOf("County Fire Dispatch") < csv.indexOf("DMR Dispatch Repeater"));
         assertFalse(csv.contains("North Control"));
+    }
+
+    @Test
+    void boundedAliasActivityCsvRetainsLiveRelationshipMetrics() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel SET alias_list_id = 71
+                WHERE configuration_id = '%s'
+                """.formatted(P25_CHANNEL_B));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_group_summary (
+                    radio_system_id, radio_identity_id, group_identity_id, group_kind_code,
+                    first_seen_ms, last_seen_ms, join_count, logical_call_count
+                ) VALUES (71, 7102, 7101, 1, 1000, 4000, 2, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation (
+                    radio_system_id, radio_identity_id, talkgroup_identity_id, channel_id,
+                    radio_observed_local_id, talkgroup_observed_local_id, confirmed_at_ms)
+                VALUES (71, 7102, 7101, 71, 202, 101, 4000)
+                """);
+        }
+
+        StatsCsvExport export = mDatabase.csvExport("aliases", request("/?list=71&sort=name&direction=asc"));
+        String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
+
+        try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+            .parse(new StringReader(csv)))
+        {
+            CSVRecord dispatch = parser.getRecords().stream()
+                .filter(row -> "Dispatch".equals(row.get("name"))).findFirst().orElseThrow();
+            assertEquals("1", dispatch.get("relationships"));
+            assertEquals("1", dispatch.get("join_relationships"));
+            assertEquals("1", dispatch.get("current_affiliations"));
+        }
     }
 
     @Test

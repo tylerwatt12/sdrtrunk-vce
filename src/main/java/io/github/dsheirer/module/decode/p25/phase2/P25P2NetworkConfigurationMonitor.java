@@ -174,14 +174,7 @@ public class P25P2NetworkConfigurationMonitor
             case PHASE1_79_SECONDARY_CONTROL_CHANNEL_BROADCAST_IMPLICIT:
                 if(mac instanceof SecondaryControlChannelBroadcastImplicit sccba)
                 {
-                    List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-
-                    for(IChannelDescriptor channel: sccba.getChannels())
-                    {
-                        addSecondaryControlChannel(channels, channel);
-                    }
-
-                    return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
+                    return secondaryControlObservation(sccba.getRfss(), sccba.getSite(), sccba.getChannels());
                 }
                 break;
             case PHASE1_7A_RFSS_STATUS_BROADCAST_IMPLICIT:
@@ -228,14 +221,7 @@ public class P25P2NetworkConfigurationMonitor
             case PHASE1_E9_SECONDARY_CONTROL_CHANNEL_BROADCAST_EXPLICIT:
                 if(mac instanceof SecondaryControlChannelBroadcastExplicit sccbe)
                 {
-                    List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
-
-                    for(IChannelDescriptor channel: sccbe.getChannels())
-                    {
-                        addSecondaryControlChannel(channels, channel);
-                    }
-
-                    return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
+                    return secondaryControlObservation(sccbe.getRfss(), sccbe.getSite(), sccbe.getChannels());
                 }
                 break;
             case PHASE1_F3_IDENTIFIER_UPDATE_TDMA_EXTENDED:
@@ -597,6 +583,20 @@ public class P25P2NetworkConfigurationMonitor
             mSecondaryControlChannels.put(channel.toString(), channel);
             addChannelSnapshot(channels, "secondary_control", channel);
         }
+    }
+
+    private P25NetworkConfigurationSnapshot secondaryControlObservation(Identifier<?> rfss, Identifier<?> site,
+                                                                         List<IChannelDescriptor> advertised)
+    {
+        if(advertised == null || advertised.isEmpty() ||
+            !mNetworkConfigurationStabilizer.matchesStableSite(rfss, site))
+        {
+            return null;
+        }
+
+        List<P25NetworkConfigurationSnapshot.Channel> channels = new ArrayList<>();
+        advertised.forEach(channel -> addSecondaryControlChannel(channels, channel));
+        return observation(null, null, channels, Collections.emptyList(), Collections.emptyList());
     }
 
     private P25NetworkConfigurationSnapshot processFrequencyBand(IFrequencyBand frequencyBand)

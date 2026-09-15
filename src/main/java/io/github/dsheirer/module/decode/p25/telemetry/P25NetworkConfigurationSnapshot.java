@@ -32,7 +32,8 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                               List<PatchGroup> patchGroups,
                                               List<TalkerAlias> talkerAliases,
                                               SiteStatus siteStatus,
-                                              List<ForeignSystemBand> foreignSystemBands)
+                                              List<ForeignSystemBand> foreignSystemBands,
+                                              Long activePatchesObservedAtMs)
     implements SiteMetadataSnapshot
 {
     public P25NetworkConfigurationSnapshot
@@ -43,6 +44,20 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
         patchGroups = patchGroups == null ? List.of() : List.copyOf(patchGroups);
         talkerAliases = talkerAliases == null ? List.of() : List.copyOf(talkerAliases);
         foreignSystemBands = foreignSystemBands == null ? List.of() : List.copyOf(foreignSystemBands);
+    }
+
+    /**
+     * Compatibility constructor for snapshot producers that do not declare an authoritative active-patch
+     * observation. Only the stabilizer supplies that watermark after a complete discovery interval.
+     */
+    public P25NetworkConfigurationSnapshot(String decoder, Network network, CurrentSite currentSite,
+                                           List<Channel> channels, List<NeighborSite> neighborSites,
+                                           List<FrequencyBand> frequencyBands, List<PatchGroup> patchGroups,
+                                           List<TalkerAlias> talkerAliases, SiteStatus siteStatus,
+                                           List<ForeignSystemBand> foreignSystemBands)
+    {
+        this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases,
+            siteStatus, foreignSystemBands, null);
     }
 
     @Override
@@ -60,7 +75,7 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                            List<TalkerAlias> talkerAliases, SiteStatus siteStatus)
     {
         this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases,
-            siteStatus, List.of());
+            siteStatus, List.of(), null);
     }
 
     /**
@@ -72,7 +87,7 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                                            List<TalkerAlias> talkerAliases)
     {
         this(decoder, network, currentSite, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, null,
-            List.of());
+            List.of(), null);
     }
 
     /**
@@ -86,6 +101,11 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
             (foreignSystemBands != null && !foreignSystemBands.isEmpty()) || siteStatus != null;
     }
 
+    private static Long positiveFrequency(Long frequency)
+    {
+        return frequency != null && frequency > 0 ? frequency : null;
+    }
+
     public record Network(Integer wacn, Integer system, Integer nac, Integer lra)
     {
     }
@@ -96,11 +116,34 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     }
 
     public record Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma,
-                          Integer timeslots, String callsign)
+                          Integer timeslots, String callsign, Long observedAtMs)
     {
+        public Channel
+        {
+            downlink = positiveFrequency(downlink);
+            uplink = positiveFrequency(uplink);
+        }
+
+        public Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots,
+                       String callsign)
+        {
+            this(role, descriptor, downlink, uplink, tdma, timeslots, callsign, null);
+        }
+
         public Channel(String role, String descriptor, Long downlink, Long uplink, Boolean tdma, Integer timeslots)
         {
-            this(role, descriptor, downlink, uplink, tdma, timeslots, null);
+            this(role, descriptor, downlink, uplink, tdma, timeslots, null, null);
+        }
+
+        public Channel withObservedAt(long timestamp)
+        {
+            return new Channel(role, descriptor, downlink, uplink, tdma, timeslots, callsign, timestamp);
+        }
+
+        public Channel withoutObservedAt()
+        {
+            return observedAtMs == null ? this :
+                new Channel(role, descriptor, downlink, uplink, tdma, timeslots, callsign, null);
         }
     }
 
@@ -147,13 +190,51 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
     }
 
     public record NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
-                               String channel, Long downlink, Long uplink, String status)
+                               String channel, Long downlink, Long uplink, String status, Long observedAtMs)
     {
+        public NeighborSite
+        {
+            downlink = positiveFrequency(downlink);
+            uplink = positiveFrequency(uplink);
+        }
+
+        public NeighborSite(Integer system, Integer nac, Integer rfss, Integer site, Integer lra,
+                            String channel, Long downlink, Long uplink, String status)
+        {
+            this(system, nac, rfss, site, lra, channel, downlink, uplink, status, null);
+        }
+
+        public NeighborSite withObservedAt(long timestamp)
+        {
+            return new NeighborSite(system, nac, rfss, site, lra, channel, downlink, uplink, status, timestamp);
+        }
+
+        public NeighborSite withoutObservedAt()
+        {
+            return observedAtMs == null ? this :
+                new NeighborSite(system, nac, rfss, site, lra, channel, downlink, uplink, status, null);
+        }
     }
 
     public record FrequencyBand(Integer band, Boolean tdma, Long base, Integer bandwidth, Long spacing,
-                                Long transmitOffset, Integer timeslots)
+                                Long transmitOffset, Integer timeslots, Long observedAtMs)
     {
+        public FrequencyBand(Integer band, Boolean tdma, Long base, Integer bandwidth, Long spacing,
+                             Long transmitOffset, Integer timeslots)
+        {
+            this(band, tdma, base, bandwidth, spacing, transmitOffset, timeslots, null);
+        }
+
+        public FrequencyBand withObservedAt(long timestamp)
+        {
+            return new FrequencyBand(band, tdma, base, bandwidth, spacing, transmitOffset, timeslots, timestamp);
+        }
+
+        public FrequencyBand withoutObservedAt()
+        {
+            return observedAtMs == null ? this :
+                new FrequencyBand(band, tdma, base, bandwidth, spacing, transmitOffset, timeslots, null);
+        }
     }
 
     /**
@@ -161,8 +242,24 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
      * from which access mode, bandwidth, timeslots, and voice rate can be derived without duplicating those values.
      */
     public record ForeignSystemBand(Integer wacn, Integer system, Integer band, Integer channelType,
-                                    Long base, Long spacing, Long transmitOffset)
+                                    Long base, Long spacing, Long transmitOffset, Long observedAtMs)
     {
+        public ForeignSystemBand(Integer wacn, Integer system, Integer band, Integer channelType,
+                                 Long base, Long spacing, Long transmitOffset)
+        {
+            this(wacn, system, band, channelType, base, spacing, transmitOffset, null);
+        }
+
+        public ForeignSystemBand withObservedAt(long timestamp)
+        {
+            return new ForeignSystemBand(wacn, system, band, channelType, base, spacing, transmitOffset, timestamp);
+        }
+
+        public ForeignSystemBand withoutObservedAt()
+        {
+            return observedAtMs == null ? this :
+                new ForeignSystemBand(wacn, system, band, channelType, base, spacing, transmitOffset, null);
+        }
     }
 
     /** Site-local patch telemetry. These numbers are observations, not canonical cross-system identities. */
@@ -176,7 +273,21 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
         }
     }
 
-    public record TalkerAlias(Integer radio, String alias)
+    public record TalkerAlias(Integer radio, String alias, Long observedAtMs)
     {
+        public TalkerAlias(Integer radio, String alias)
+        {
+            this(radio, alias, null);
+        }
+
+        public TalkerAlias withObservedAt(long timestamp)
+        {
+            return new TalkerAlias(radio, alias, timestamp);
+        }
+
+        public TalkerAlias withoutObservedAt()
+        {
+            return observedAtMs == null ? this : new TalkerAlias(radio, alias, null);
+        }
     }
 }

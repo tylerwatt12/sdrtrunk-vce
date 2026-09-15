@@ -50,4 +50,16 @@ public record StatsWebNavigationState(boolean running, int port, boolean https, 
 
         return baseUri().resolve("?view=aliases&list=" + aliasListId + "&alias=" + aliasId);
     }
+
+    /** Loopback address for the web-first Channel manager. */
+    public URI channelEditorUri()
+    {
+        return baseUri().resolve("?view=channel-setup");
+    }
+
+    /** Loopback address for editing one configured Channel. */
+    public URI channelEditorUri(String configurationId)
+    {
+        return baseUri().resolve("?view=channel-setup&channel=" + java.util.UUID.fromString(configurationId));
+    }
 }

@@ -42,6 +42,10 @@ import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -70,6 +74,7 @@ public final class AliasAdminHttpController
     private static final Logger mLog = LoggerFactory.getLogger(AliasAdminHttpController.class);
     /** Accommodates 10,000 unique 64-bit Alias IDs plus worst-case escaped bounded edit fields. */
     private static final int MAXIMUM_JSON_BODY_BYTES = 512 * 1024;
+    private static final int MAXIMUM_ALIAS_TRANSFER_BODY_BYTES = 256 * 1024 * 1024;
     private static final int MAXIMUM_TEXT_CHARACTERS = 256;
     private static final int MAXIMUM_DESCRIPTION_CHARACTERS = 4096;
     private static final int MAXIMUM_TONES = 64;
@@ -86,6 +91,7 @@ public final class AliasAdminHttpController
     private final AliasAdministrationService mService;
     private final Runnable mAliasChanged;
     private final AliasListDeletion mAliasListDeletion;
+    private final AliasListExporter mAliasListExporter;
     private final java.util.concurrent.Semaphore mTransferAdmission = new java.util.concurrent.Semaphore(1);
 
     public AliasAdminHttpController(AliasAdministrationService service)
@@ -109,15 +115,42 @@ public final class AliasAdminHttpController
             {
                 return service.deleteAliasList(aliasListId, revision, confirmed);
             }
-        });
+        }, defaultAliasListExporter(service));
+    }
+
+    public AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged,
+                                    AliasListExporter aliasListExporter)
+    {
+        this(service, aliasChanged, new AliasListDeletion()
+        {
+            @Override
+            public AliasAdministrationService.DeleteImpact impact(long aliasListId)
+            {
+                return service.aliasListDeleteImpact(aliasListId);
+            }
+
+            @Override
+            public AliasAdministrationService.MutationResult delete(long aliasListId, long revision,
+                                                                     boolean confirmed)
+            {
+                return service.deleteAliasList(aliasListId, revision, confirmed);
+            }
+        }, aliasListExporter);
     }
 
     AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged,
                              AliasListDeletion aliasListDeletion)
     {
+        this(service, aliasChanged, aliasListDeletion, defaultAliasListExporter(service));
+    }
+
+    AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged,
+                             AliasListDeletion aliasListDeletion, AliasListExporter aliasListExporter)
+    {
         mService = Objects.requireNonNull(service, "Alias administration service cannot be null");
         mAliasChanged = Objects.requireNonNull(aliasChanged, "Alias change callback cannot be null");
         mAliasListDeletion = Objects.requireNonNull(aliasListDeletion, "Alias-list deletion cannot be null");
+        mAliasListExporter = Objects.requireNonNull(aliasListExporter, "Alias-list exporter cannot be null");
     }
 
     /** Handles all alias-administration contexts. */
@@ -215,23 +248,24 @@ public final class AliasAdminHttpController
         }
         if(ALIAS_LISTS_PATH.equals(path))
         {
-            requireNoQuery(exchange);
-
             switch(exchange.getRequestMethod())
             {
                 case "GET" -> {
                     requireNoBody(exchange);
-                    AliasAdministrationService.Catalog catalog = mService.catalog();
+                    Map<String,String> query = queryParameters(exchange, Set.of("include_counts"));
+                    boolean includeCounts = optionalBoolean(query, "include_counts", true);
+                    AliasAdministrationService.Catalog catalog = mService.catalog(includeCounts);
                     sendData(exchange, 200, Map.of("revision", catalog.revision(), "aliasLists",
                         catalog.aliasLists().stream()
                             .map(definition -> aliasListCatalogView(definition,
                                 catalog.unmatchedAliasListMemberships().getOrDefault(definition.getId(), Set.of()),
-                                catalog.aliasCounts().getOrDefault(definition.getId(), 0),
-                                catalog.assignedChannelCounts().getOrDefault(definition.getId(), 0)))
+                                catalog.aliasCounts().get(definition.getId()),
+                                catalog.assignedChannelCounts().get(definition.getId())))
                             .toList(), "scanLists", catalog.scanLists().stream()
                             .map(AliasAdminHttpController::scanListView).toList()));
                 }
                 case "POST" -> {
+                    requireNoQuery(exchange);
                     if(mService.catalog().aliasLists().size() >= MAXIMUM_ADMIN_COLLECTION_ITEMS)
                     {
                         throw error(409, "collection_limit_reached",
@@ -306,29 +340,87 @@ public final class AliasAdminHttpController
 
     private void handleTransfer(HttpExchange exchange, long listId) throws Exception
     {
-        requireNoQuery(exchange);
+        String exportToken = null;
+
+        if("GET".equals(exchange.getRequestMethod()))
+        {
+            exportToken = optionalAliasExportToken(exchange);
+
+            if(exportToken != null)
+            {
+                // The surrounding ADMIN_ALIASES guard has already authorized this route.
+                WebRequestSecurity.allowSameOriginDownloadFrame(exchange);
+            }
+        }
+        else
+        {
+            requireNoQuery(exchange);
+        }
+
         if(!mTransferAdmission.tryAcquire())
             throw error(429, "configuration_busy", "Another alias transfer is running; try again");
         try
         {
-            AliasImportService importer = new AliasImportService(mService);
             if("GET".equals(exchange.getRequestMethod()))
             {
                 requireNoBody(exchange);
-                byte[] bytes = importer.export(listId).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "text/csv; charset=utf-8");
-                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"vce-alias-list-" + listId + ".csv\"");
-                exchange.sendResponseHeaders(200, bytes.length);
-                try(var output = exchange.getResponseBody()) { output.write(bytes); }
+                AliasListExport export;
+
+                try
+                {
+                    export = mAliasListExporter.prepare(listId);
+                }
+                catch(AliasAdministrationService.NotFoundException exception)
+                {
+                    throw exception;
+                }
+                catch(Exception exception)
+                {
+                    mLog.warn("Unable to prepare Alias CSV export", exception);
+                    throw error(503, "export_failed", "Alias CSV export could not be prepared");
+                }
+
+                try
+                {
+                    exchange.getResponseHeaders().set("Content-Type", "text/csv; charset=utf-8");
+                    exchange.getResponseHeaders().set("Content-Disposition",
+                        "attachment; filename=\"" + export.fileName() + "\"");
+                    exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                    exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+                    exchange.getResponseHeaders().set("X-Export-Row-Count", Long.toString(export.rowCount()));
+
+                    if(exportToken != null)
+                    {
+                        WebRequestSecurity.markAliasExportReady(exchange, exportToken);
+                    }
+
+                    exchange.sendResponseHeaders(200, export.byteCount());
+
+                    try(OutputStream output = exchange.getResponseBody())
+                    {
+                        Files.copy(export.path(), output);
+                    }
+                    catch(IOException exception)
+                    {
+                        mLog.warn("Alias CSV download was interrupted after validation", exception);
+                    }
+                }
+                finally
+                {
+                    export.close();
+                }
+
                 return;
             }
+
             requireMethod(exchange, "POST");
+            AliasImportService importer = new AliasImportService(mService);
             TransferRequest request = readJson(exchange, TransferRequest.class,
-                AliasTransferCsv.MAX_BYTES * 6 + 64 * 1024);
+                MAXIMUM_ALIAS_TRANSFER_BODY_BYTES);
             AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
             AliasImportService.Mode mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
             if(request.csv() == null || request.csv().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > AliasTransferCsv.MAX_BYTES)
-                throw invalid("CSV must be at most 8 MiB");
+                throw invalid("CSV must be at most " + (AliasTransferCsv.MAX_BYTES / (1024 * 1024)) + " MiB");
             var options = mService.options(listId);
             var inputs = AliasTransferCsv.read(request.csv(), format, options.aliasList());
             var plan = importer.preview(listId, mode, inputs, request.defaults());
@@ -364,6 +456,28 @@ public final class AliasAdminHttpController
             else throw invalid("action must be preview or apply");
         }
         finally { mTransferAdmission.release(); }
+    }
+
+    private static AliasListExporter defaultAliasListExporter(AliasAdministrationService service)
+    {
+        return aliasListId ->
+        {
+            Path temporary = Files.createTempFile("sdrtrunk-alias-export-compatibility-", ".csv");
+
+            try
+            {
+                long rowCount = service.transferSnapshot(aliasListId).aliases().size();
+                String csv = new AliasImportService(service).export(aliasListId);
+                Files.writeString(temporary, csv, StandardCharsets.UTF_8);
+                return new AliasListExport(temporary, "vce-alias-list-" + aliasListId + ".csv",
+                    rowCount, Files.size(temporary), () -> Files.deleteIfExists(temporary));
+            }
+            catch(Exception exception)
+            {
+                Files.deleteIfExists(temporary);
+                throw exception;
+            }
+        };
     }
 
     private record TransferRequest(String action, String format, String mode, String csv,
@@ -555,7 +669,10 @@ public final class AliasAdminHttpController
     {
         requireMethod(exchange, "GET");
         requireNoBody(exchange);
-        AliasAdministrationService.Options options = mService.options(requiredIdQuery(exchange, "alias_list_id"));
+        Map<String,String> query = queryParameters(exchange, Set.of("alias_list_id", "include_group_names"));
+        long aliasListId = requiredPositiveQuery(query, "alias_list_id");
+        boolean includeGroupNames = optionalBoolean(query, "include_group_names", true);
+        AliasAdministrationService.Options options = mService.options(aliasListId, includeGroupNames);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("revision", options.revision());
         response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds()));
@@ -827,12 +944,21 @@ public final class AliasAdminHttpController
     }
 
     private static Map<String,Object> aliasListCatalogView(AliasListDefinition definition,
-                                                            Set<Long> unmatchedScanListIds, int aliasCount,
-                                                            int assignedChannelCount)
+                                                            Set<Long> unmatchedScanListIds, Integer aliasCount,
+                                                            Integer assignedChannelCount)
     {
         Map<String,Object> response = aliasListView(definition, unmatchedScanListIds);
-        response.put("aliasCount", aliasCount);
-        response.put("assignedChannelCount", assignedChannelCount);
+
+        if(aliasCount != null)
+        {
+            response.put("aliasCount", aliasCount);
+        }
+
+        if(assignedChannelCount != null)
+        {
+            response.put("assignedChannelCount", assignedChannelCount);
+        }
+
         return response;
     }
 
@@ -1180,22 +1306,117 @@ public final class AliasAdminHttpController
         response.put(field + "Truncated", returned < ordered.size());
     }
 
-    private static long requiredIdQuery(HttpExchange exchange, String name) throws RequestException
+    private static Map<String,String> queryParameters(HttpExchange exchange, Set<String> allowed)
+        throws RequestException
     {
-        String query = exchange.getRequestURI().getRawQuery();
-        String prefix = name + "=";
-        if(query == null || query.length() > 128 || !query.startsWith(prefix) || query.indexOf('&') >= 0)
+        String raw = exchange.getRequestURI().getRawQuery();
+
+        if(raw == null)
+        {
+            return Map.of();
+        }
+
+        if(raw.isEmpty() || raw.length() > 512)
+        {
+            throw invalid("query parameters are invalid");
+        }
+
+        Map<String,String> parameters = new LinkedHashMap<>();
+
+        for(String entry: raw.split("&", -1))
+        {
+            int separator = entry.indexOf('=');
+
+            if(separator < 1 || separator != entry.lastIndexOf('='))
+            {
+                throw invalid("query parameters are invalid");
+            }
+
+            try
+            {
+                String name = ApiRequestDecoder.decodeComponent(entry.substring(0, separator), true);
+                String value = ApiRequestDecoder.decodeComponent(entry.substring(separator + 1), true);
+
+                if(!allowed.contains(name) || parameters.putIfAbsent(name, value) != null)
+                {
+                    throw invalid("query parameters are invalid");
+                }
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw invalid("query parameters contain invalid percent encoding");
+            }
+        }
+
+        return Map.copyOf(parameters);
+    }
+
+    private static long requiredPositiveQuery(Map<String,String> parameters, String name) throws RequestException
+    {
+        String value = parameters.get(name);
+
+        if(value == null)
         {
             throw invalid(name + " is required");
         }
+
+        return positiveDecimal(value, name);
+    }
+
+    private static boolean optionalBoolean(Map<String,String> parameters, String name, boolean defaultValue)
+        throws RequestException
+    {
+        String value = parameters.get(name);
+
+        if(value == null)
+        {
+            return defaultValue;
+        }
+        else if("true".equals(value))
+        {
+            return true;
+        }
+        else if("false".equals(value))
+        {
+            return false;
+        }
+
+        throw invalid(name + " must be true or false");
+    }
+
+    private static String optionalAliasExportToken(HttpExchange exchange) throws RequestException
+    {
+        String query = exchange.getRequestURI().getRawQuery();
+
+        if(query == null)
+        {
+            return null;
+        }
+
+        String prefix = "export_token=";
+
+        if(query.length() > prefix.length() + 32 || !query.startsWith(prefix) || query.indexOf('&') >= 0)
+        {
+            throw invalid("Only one export_token query parameter is supported");
+        }
+
+        String token;
+
         try
         {
-            return positiveDecimal(ApiRequestDecoder.decodeComponent(query.substring(prefix.length()), true), name);
+            token = ApiRequestDecoder.decodeComponent(query.substring(prefix.length()), true);
         }
         catch(IllegalArgumentException exception)
         {
-            throw invalid(name + " contains invalid percent encoding");
+            throw invalid("export_token contains invalid percent encoding");
         }
+
+        if(!WebRequestSecurity.isValidAliasExportToken(token))
+        {
+            throw invalid("export_token is invalid");
+        }
+
+        return token;
     }
 
     private static long requiredItemId(String path, String collection) throws RequestException
@@ -1536,5 +1757,28 @@ public final class AliasAdminHttpController
         AliasAdministrationService.DeleteImpact impact(long aliasListId);
 
         AliasAdministrationService.MutationResult delete(long aliasListId, long revision, boolean confirmed);
+    }
+
+    @FunctionalInterface
+    public interface AliasListExporter
+    {
+        AliasListExport prepare(long aliasListId) throws Exception;
+    }
+
+    public record AliasListExport(Path path, String fileName, long rowCount, long byteCount,
+                                  AutoCloseable cleanup) implements AutoCloseable
+    {
+        public AliasListExport
+        {
+            Objects.requireNonNull(path, "Alias export path cannot be null");
+            Objects.requireNonNull(fileName, "Alias export file name cannot be null");
+            Objects.requireNonNull(cleanup, "Alias export cleanup cannot be null");
+        }
+
+        @Override
+        public void close() throws Exception
+        {
+            cleanup.close();
+        }
     }
 }

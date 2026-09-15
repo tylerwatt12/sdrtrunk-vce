@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebInteractionUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
     private static final Path WEB_SERVER = Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
@@ -60,7 +59,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         int topicsStart = source.indexOf("const LIVE_MULTIPLEX_TOPICS");
         String topics = source.substring(topicsStart, source.indexOf("});", topicsStart));
 
@@ -183,7 +182,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
         assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
-        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'system'"));
+        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'activity'"));
         assertTrue(loadStatus.contains("refreshAdminSystemStatus();"));
     }
 
@@ -270,16 +269,21 @@ class StatsWebInteractionUiContractTest
     void keepsSharedMetricsAndFittingTablesInsideTheirContainers() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));"));
         assertTrue(css.contains(".metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
         assertTrue(css.contains(".resizable-table th:last-child .column-resizer {\n  right: 0;"));
+        assertTrue(css.contains(".table-column-autofit-measurement {"));
         assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
         assertTrue(css.contains(".table-wrap {"));
         assertTrue(css.contains("overflow-x: auto;"));
         assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths)")
             .contains("element.style.minWidth = `${Math.round(total)}px`"));
+        assertTrue(function(source, "function addColumnResizers(element, columns, columnElements, headers, tableType,")
+            .contains("addEventListener('dblclick'"));
+        assertTrue(function(source, "function measureTableColumnContentWidth(element, header, index)")
+            .contains("measurement.getBoundingClientRect().width"));
     }
 
     @Test
@@ -291,7 +295,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"123\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"133\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -308,7 +312,7 @@ class StatsWebInteractionUiContractTest
     @Test
     void keepsSharedTabsScrollableWithoutVisibleScrollbars() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(css.contains(".tabs {"));
         assertTrue(css.contains("overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;"));
@@ -320,21 +324,14 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String systems = function(source, "async function renderRadioSystems()");
-        String presenter = function(source, "function radioSystemsDirectoryContent(data)");
-        assertTrue(presenter.contains("row.system_name || radioSystemLabel(row)"));
-        assertTrue(presenter.contains("heading.append(radioSystemLink(row.entity_ref, label))"));
-        assertTrue(presenter.contains("channelNameSummary(row)"));
-        assertTrue(systems.contains("radioSystemsDirectory.load(apiPage"));
-        assertTrue(presenter.contains("tableRows: rows"));
-        assertTrue(presenter.contains("`directory-${row.directory_type}-row`"));
-        assertTrue(presenter.contains("truncatedParentCount"));
-        assertTrue(presenter.contains("previewLimit"));
-        assertFalse(systems.contains("systemApiPath("));
-        assertFalse(source.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
-        assertFalse(presenter.contains("directory-secondary"));
-        assertFalse(presenter.contains("row.site_names && row.site_names"));
-        assertFalse(presenter.contains("isP25(row) ? 'P25 System'"));
-        assertFalse(readText(APP_CSS).contains(".directory-secondary"));
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        assertTrue(systems.contains("renderModernChannelCatalog(renderContext, false)"));
+        assertTrue(catalog.contains("'Browse every configured trunked and conventional channel"));
+        assertTrue(catalog.contains("value: 'trunked'"));
+        assertTrue(catalog.contains("value: 'conventional'"));
+        assertTrue(catalog.contains("value: 'running'"));
+        assertTrue(catalog.contains("value: 'stopped'"));
+        assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));
     }
 
     @Test
@@ -362,7 +359,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
-        assertTrue(readText(APP_CSS).contains(".entity-info-standalone > .section"));
+        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".entity-info-standalone > .section"));
         assertFalse(source.contains("function talkgroupEvidence"));
         assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
@@ -423,7 +420,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
         assertFalse(source.contains("groupIdentityLink(row, row.patch_group)"));
         assertFalse(source.contains("target_kind_code"));
-        assertFalse(source.contains("identity_kind_code"));
+        assertFalse(activity.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
         String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
         assertTrue(channelGroups.contains("id: 'group-identity-kind'"));
@@ -473,7 +470,7 @@ class StatsWebInteractionUiContractTest
         String content = function(source,
             "function pagedTableContent(page, columns, tableType, options = {})");
         String system = function(source, "async function renderRadioSystem()");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(pager.contains("const totalCount = page.total_count"));
         assertTrue(pager.contains("of ${number(totalCount)}"));
@@ -515,7 +512,7 @@ class StatsWebInteractionUiContractTest
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
         assertTrue(function(source, "async function renderChannelNeighbors(channel, renderContext)")
             .contains("exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id })"));
-        assertTrue(function(source, "async function renderChannels()")
+        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext, editable)")
             .contains("exportCsvLink('channels')"));
         assertTrue(function(source, "async function renderChannelGroupIdentities(configurationId)")
             .contains("exportCsvLink('channel-group-identities', { configuration_id: configurationId })"));
@@ -526,14 +523,14 @@ class StatsWebInteractionUiContractTest
         assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
             .contains("exportCsvLink("));
-        assertTrue(readText(APP_CSS).contains(".export-csv-action"));
+        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".export-csv-action"));
     }
 
     @Test
     void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind, reference)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
@@ -614,7 +611,7 @@ class StatsWebInteractionUiContractTest
     void wrapsAdjacentBadgesWithTwoDimensionalSpacing() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(function(source, "function neighborStatus(value)").contains("badgeGroup("));
         assertTrue(css.contains(".badge-group"));
         assertTrue(css.contains("flex-wrap: wrap"));
@@ -627,10 +624,10 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String html = readText(INDEX_HTML);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=100"));
+        assertTrue(html.contains("/assets/app.css?v=108"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -653,7 +650,7 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
         String application = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
         String applyPreferences = function(source, "  applyPreferences(preferences)");
         String writePreferences = function(source, "  writePreferences()");
@@ -725,7 +722,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
         String replayLast = function(source, "  async replayLastCall()");
@@ -801,7 +798,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String startCurrent = function(source, "  startCurrent()");
         String progress = function(source, "  renderProgress()");
 
@@ -877,7 +874,7 @@ class StatsWebInteractionUiContractTest
     {
         String html = readText(INDEX_HTML);
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String scanner = function(source, "function renderScanner()");
         String scannerCall = function(source, "function renderScannerCall(host, state, channelMetadata)");
         String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
@@ -1015,7 +1012,7 @@ class StatsWebInteractionUiContractTest
     void batchesLiveOnlyEventAndMessageCaptureBeforeFilteringAndRendering() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String catalog = function(source, "function liveDetailFilterCatalog(value)");
         String model = function(source, "function liveDetailFilterModel(options = {})");
         String filters = function(source, "function liveDetailFilterController(options)");
@@ -1112,7 +1109,7 @@ class StatsWebInteractionUiContractTest
     void liveRowsLinkToAliasAndReceiverEditorsAndDismissOnlyStoppedChannels() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String existingAlias = function(source, "function liveExistingAliasHref(reference)");
         String draftAlias = function(source, "function liveAliasDraftHref(row, kind)");
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
@@ -1164,7 +1161,7 @@ class StatsWebInteractionUiContractTest
     void splitsLiveDetailsAndScopesBoundedDecoderEventsToTheCurrentSelection() throws Exception
     {
         String source = source();
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String selection = function(source, "function liveDetailSelection(tableValue, row, bindingRow = row)");
         String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
@@ -1345,7 +1342,7 @@ class StatsWebInteractionUiContractTest
         String visibleValuesFor = function(tuner, "function visibleValuesFor(values, metadata)");
         String live = function(source, "async function renderLive()");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         String tunerPage = function(source, "async function renderTunerSpectrum()");
         String html = readText(INDEX_HTML);

@@ -25,6 +25,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
@@ -46,6 +47,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -74,10 +76,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private RadioReference mRadioReference;
     private final ConfigurationRepository mConfigurationRepository;
     private final AliasAdministrationService mAliasAdministrationService;
+    private final ChannelAdministrationService mChannelAdministrationService;
     private final ScanListModel mScanListModel;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
+    private final AtomicLong mChannelConfigurationRevision = new AtomicLong();
     private final Object mHeadlessWebConfigurationLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
@@ -114,6 +118,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelModel = new ChannelModel();
         mChannelProcessingManager = new ChannelProcessingManager(eventLogManager, mTunerManager, mAliasModel,
             mUserPreferences);
+        mChannelAdministrationService = new ChannelAdministrationService(this);
 
         //Register the channel processing manager to receive global channel stop processing requests so that it can
         //respond to tuner shutdown (ie error) events
@@ -186,12 +191,25 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mChannelModel;
     }
 
+    /** Adds a saved channel after assigning or validating its required compatible Alias List. */
+    public void addChannel(Channel channel)
+    {
+        mAliasModel.requireAliasListAssignment(channel);
+        mChannelModel.addChannel(channel);
+    }
+
     /**
      * Channel processing manager
      */
     public ChannelProcessingManager getChannelProcessingManager()
     {
         return mChannelProcessingManager;
+    }
+
+    /** Web-first channel configuration and lifecycle command boundary. */
+    public ChannelAdministrationService getChannelAdministrationService()
+    {
+        return mChannelAdministrationService;
     }
 
     /**
@@ -273,6 +291,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public long getAliasConfigurationRevision()
     {
         return mAliasConfigurationRevision.get();
+    }
+
+    /** Monotonic version for optimistic channel-administration updates. */
+    public long getChannelConfigurationRevision()
+    {
+        return mChannelConfigurationRevision.get();
     }
 
     /**
@@ -406,6 +430,116 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mConfigurationRepository.nextScanListIds(candidateIds, count);
     }
 
+    /** Commits one detached channel configuration and publishes only the explicitly changed channel identities. */
+    public synchronized ChannelConfigurationSnapshot commitAndPublishChannelConfiguration(
+        ChannelConfigurationSnapshot proposed, Set<String> changedConfigurationIds, boolean autoStartOnly)
+    {
+        if(mExternalConfigurationOperation)
+        {
+            throw new ConfigurationPublicationException(
+                "Configuration saves are suspended until SDRTrunk restarts");
+        }
+        Objects.requireNonNull(proposed, "Proposed channel configuration cannot be null");
+        Set<String> changed = Set.copyOf(Objects.requireNonNull(changedConfigurationIds,
+            "Changed channel IDs cannot be null"));
+        if(!autoStartOnly && changed.stream().anyMatch(configurationId ->
+            !mChannelProcessingManager.getProcessingChainsByConfiguration(configurationId, null).isEmpty()))
+        {
+            throw new IllegalStateException("Stop running channels before changing their configuration");
+        }
+
+        ChannelConfigurationSnapshot committed;
+        try
+        {
+            //Preserve any pending desktop broadcast edit before the channel-only transaction reads its references.
+            saveNow();
+            if(hasDirtyConfiguration())
+            {
+                throw new IllegalStateException("Unable to save pending channel and broadcast configuration");
+            }
+            committed = mConfigurationRepository.commitChannelConfiguration(proposed);
+        }
+        catch(Exception exception)
+        {
+            throw new ConfigurationCommitException("Unable to commit channel configuration", exception);
+        }
+
+        try
+        {
+            publishCommittedChannelConfiguration(committed, changed, autoStartOnly);
+            return committed;
+        }
+        catch(RuntimeException | Error publicationFailure)
+        {
+            try
+            {
+                ChannelConfigurationSnapshot reloaded = mConfigurationRepository.loadChannelConfiguration();
+                publishCommittedChannelConfiguration(reloaded, changed, autoStartOnly);
+                mLog.error("Channel configuration committed, but initial publication failed; reloaded committed state",
+                    publicationFailure);
+                return reloaded;
+            }
+            catch(Exception recoveryFailure)
+            {
+                publicationFailure.addSuppressed(recoveryFailure);
+                mExternalConfigurationOperation = true;
+                throw new ConfigurationPublicationException(
+                    "Channel configuration committed but could not be published; restart SDRTrunk",
+                    publicationFailure);
+            }
+        }
+    }
+
+    private void publishCommittedChannelConfiguration(ChannelConfigurationSnapshot committed,
+                                                      Set<String> changedConfigurationIds, boolean autoStartOnly)
+    {
+        Map<String,Channel> current = new java.util.LinkedHashMap<>();
+        mChannelModel.getChannels().forEach(channel -> current.put(channel.getConfigurationId(), channel));
+        Map<String,Channel> saved = new java.util.LinkedHashMap<>();
+        committed.channels().forEach(channel -> saved.put(channel.getConfigurationId(), channel));
+
+        mConfigurationLoading = true;
+        try
+        {
+            for(String configurationId: changedConfigurationIds)
+            {
+                Channel live = current.get(configurationId);
+                Channel replacement = saved.get(configurationId);
+                if(live == null && replacement != null)
+                {
+                    mChannelModel.addChannel(replacement);
+                }
+                else if(live != null && replacement == null)
+                {
+                    mChannelModel.removeChannel(live);
+                }
+                else if(live != null)
+                {
+                    if(!mChannelProcessingManager.getProcessingChainsByConfiguration(configurationId, null).isEmpty())
+                    {
+                        if(!autoStartOnly)
+                        {
+                            throw new IllegalStateException(
+                                "A channel started before its committed configuration could be published");
+                        }
+                        //Reordering autostart never requires a receiver restart and must retain the map key.
+                        live.setAutoStart(replacement.getAutoStart());
+                        live.setAutoStartOrder(replacement.getAutoStartOrder());
+                    }
+                    else
+                    {
+                        mChannelModel.replaceChannel(live, replacement);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mConfigurationLoading = false;
+        }
+        mChannelConfigurationRevision.incrementAndGet();
+    }
+
     /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */
     public synchronized AliasConfigurationSnapshot createDetachedAliasConfigurationSnapshot()
     {
@@ -436,8 +570,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 throw new IllegalStateException(
                     "Unable to save channel and broadcast configuration before committing Alias configuration");
             }
-            return mConfigurationRepository.commitAliasConfiguration(proposed,
-                publication.clearedChannelAliasListIds());
+            return mConfigurationRepository.commitAliasConfiguration(proposed);
         }
         catch(Exception exception)
         {
@@ -474,8 +607,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 mAliasModel.getAliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 reloaded.aliases().stream().map(Alias::getId).forEach(allAliasIds::add);
                 publishCommittedAliasConfiguration(reloaded,
-                    new AliasConfigurationPublication(allAliasIds, true, true, true,
-                        requested.clearedChannelAliasListIds()));
+                    new AliasConfigurationPublication(allAliasIds, true, true, true));
                 mLog.error("Alias configuration committed, but initial publication failed; reloaded committed state",
                     publicationFailure);
                 return reloaded;
@@ -511,17 +643,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mScanListModel.replaceConfiguration(committed.scanLists());
         }
 
-        if(!publication.clearedChannelAliasListIds().isEmpty())
-        {
-            for(Channel channel: mChannelModel.getChannels())
-            {
-                if(publication.clearedChannelAliasListIds().contains(channel.getAliasListId()))
-                {
-                    channel.setAliasListDefinition(null);
-                }
-            }
-        }
-
         mAliasConfigurationRevision.incrementAndGet();
     }
 
@@ -538,14 +659,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     public record AliasConfigurationPublication(Set<Long> changedAliasIds, boolean definitionsChanged,
-                                                boolean scanListsChanged, boolean scanListsFirst,
-                                                Set<Long> clearedChannelAliasListIds)
+                                                boolean scanListsChanged, boolean scanListsFirst)
     {
         public AliasConfigurationPublication
         {
             changedAliasIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
-            clearedChannelAliasListIds = clearedChannelAliasListIds != null ?
-                Set.copyOf(clearedChannelAliasListIds) : Set.of();
         }
     }
 
@@ -666,6 +784,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 case NOTIFICATION_CONFIGURATION_CHANGE:
                 case NOTIFICATION_DELETE:
                     mAliasConfigurationRevision.incrementAndGet();
+                    mChannelConfigurationRevision.incrementAndGet();
                     scheduleConfigurationSave();
                     break;
             }

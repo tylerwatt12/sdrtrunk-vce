@@ -1527,6 +1527,31 @@ class ApplicationMigrationServiceTest
                 statement.setString(1, name);
                 statement.executeUpdate();
             }
+
+            boolean activitySummaryPresent;
+            try(ResultSet rows = listStatement.executeQuery("""
+                SELECT 1 FROM sqlite_schema
+                WHERE type='table' AND name='alias_activity_summary'
+                """))
+            {
+                activitySummaryPresent = rows.next();
+            }
+            if(activitySummaryPresent)
+            {
+                try(var statement = connection.prepareStatement("""
+                    INSERT INTO alias_activity_summary(
+                        alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+                    )
+                    SELECT alias.id, alias.alias_list_id, 1, 'not_collected', 1
+                    FROM alias
+                    JOIN alias_list ON alias_list.id=alias.alias_list_id
+                    WHERE alias.name=? AND alias_list.name='Test' COLLATE NOCASE
+                    """))
+                {
+                    statement.setString(1, name);
+                    statement.executeUpdate();
+                }
+            }
         }
     }
 
@@ -1558,7 +1583,7 @@ class ApplicationMigrationServiceTest
                     radioresolve_id, auto_start, decoder_type, address_domain_code, primary_frequency_hz, config_json
                 ) VALUES (
                     ?, 'TRUNKED', 1, 'Preserved System', 'Preserved Site', 'Preserved Channel',
-                    (SELECT id FROM alias_list WHERE name='Test' COLLATE NOCASE),
+                    (SELECT id FROM alias_list WHERE family='P25' ORDER BY id LIMIT 1),
                     '00000000-0000-4000-8000-000000007001', 0, 'P25_PHASE1', 0, 451000000, ?
                 )
                 """))

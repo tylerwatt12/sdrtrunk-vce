@@ -39,6 +39,7 @@ public final class WebSessionHttpController
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
     public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
     private static final String DESKTOP_ALIAS_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/aliases";
+    private static final String DESKTOP_CHANNEL_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/channels";
     private static final String DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH =
         DESKTOP_HANDOFF_PATH + "/p25-bandplan-overrides";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
@@ -308,6 +309,18 @@ public final class WebSessionHttpController
         return DESKTOP_ALIAS_HANDOFF_PATH;
     }
 
+    /** Fixed desktop handoff path for the Channel manager. */
+    public static String desktopChannelHandoffPath()
+    {
+        return DESKTOP_CHANNEL_HANDOFF_PATH;
+    }
+
+    /** Fixed desktop handoff path for one configured Channel. */
+    public static String desktopChannelHandoffPath(String configurationId)
+    {
+        return DESKTOP_CHANNEL_HANDOFF_PATH + "/" + requireCanonicalConfigurationId(configurationId);
+    }
+
     /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
     public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String configurationId)
     {
@@ -329,6 +342,26 @@ public final class WebSessionHttpController
             return "/?view=aliases";
         }
 
+
+        if(DESKTOP_CHANNEL_HANDOFF_PATH.equals(rawPath))
+        {
+            return "/?view=channel-setup";
+        }
+
+        String channelPrefix = DESKTOP_CHANNEL_HANDOFF_PATH + "/";
+        if(rawPath != null && rawPath.startsWith(channelPrefix))
+        {
+            try
+            {
+                return "/?view=channel-setup&channel=" +
+                    requireCanonicalConfigurationId(rawPath.substring(channelPrefix.length()));
+            }
+            catch(IllegalArgumentException exception)
+            {
+                return null;
+            }
+        }
+
         String p25Prefix = DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + "/";
         if(rawPath != null && rawPath.startsWith(p25Prefix))
         {
@@ -346,7 +379,7 @@ public final class WebSessionHttpController
                     Integer.parseInt(segments[3], 16));
                 String configurationId = requireCanonicalConfigurationId(segments[4]);
                 return String.format(Locale.ROOT,
-                    "/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
+                    "/?view=admin&tab=protocol-p25&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
                     identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId);
             }
             catch(IllegalArgumentException exception)
@@ -490,7 +523,6 @@ public final class WebSessionHttpController
             response.put("username", account.username());
             response.put("primary", account.primaryAdmin());
             response.put("csrfToken", session.csrfToken());
-            response.put("expiresAtEpochMillis", session.expiresAtEpochMillis());
         }
         return response;
     }

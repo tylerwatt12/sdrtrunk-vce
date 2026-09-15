@@ -1334,7 +1334,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     {
                         if(mPatchGroupManager.removePatchGroup(regroup.getPatchGroup()))
                         {
-                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup());
+                            mNetworkConfigurationStabilizer.removePatchGroup(regroup.getPatchGroup(),
+                                message.getTimestamp());
                             broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + regroup.getPatchGroup());
                         }
                     }
@@ -1352,7 +1353,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 if(mac instanceof MotorolaGroupRegroupDeleteCommand mgrdc &&
                         mPatchGroupManager.removePatchGroup(mgrdc.getPatchGroup()))
                 {
-                    mNetworkConfigurationStabilizer.removePatchGroup(mgrdc.getPatchGroup());
+                    mNetworkConfigurationStabilizer.removePatchGroup(mgrdc.getPatchGroup(), message.getTimestamp());
                     broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "DEACTIVATE " + mgrdc.getPatchGroup());
                 }
                 break;

@@ -101,6 +101,16 @@ class ConfigurationSnapshotValidatorTest
     }
 
     @Test
+    void startupValidationRejectsAChannelWithoutAnAliasList()
+    {
+        Channel channel = new Channel("Control");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+
+        assertThrows(RuntimeException.class, () -> ConfigurationSnapshotValidator.validateForWrite(
+            snapshot(List.of(), List.of(channel), List.of())));
+    }
+
+    @Test
     void startupValidationRejectsNoncanonicalAliasListName()
     {
         AliasListDefinition definition =

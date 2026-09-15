@@ -163,7 +163,6 @@ class LegacyXmlConfigurationImporterTest
         assertInstanceOf(RadioResolveConfiguration.class, state.broadcastConfigurations().get(0));
         RadioResolveConfiguration stream = (RadioResolveConfiguration)state.broadcastConfigurations().get(0);
         assertEquals("test-api-key", stream.getApiKey());
-        assertEquals("TEST-NODE", stream.getNodeName());
 
         assertInstanceOf(DecodeConfigP25Conventional.class, state.channels().get(0).getDecodeConfiguration());
         assertEquals(DecoderType.P25_CONVENTIONAL, state.channels().get(0).getDecodeConfiguration().getDecoderType());

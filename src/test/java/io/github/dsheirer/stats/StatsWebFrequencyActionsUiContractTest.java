@@ -15,31 +15,22 @@ import org.junit.jupiter.api.Test;
 class StatsWebFrequencyActionsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
-    void administrationOwnsLookupSettingsWhileConfigurationKeepsThePlaceholder() throws Exception
+    void manageOwnsRadioReferenceLookupSettings() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String configuration = block(source, "async function renderConfiguration()");
-        String administration = block(source, "async function renderAdmin()");
-        String receiverSettings = block(source, "async function renderReceiverSettings()");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String html = Files.readString(INDEX_HTML);
 
         assertTrue(configuration.contains("id: 'radioreference', label: 'RadioReference'"));
-        assertTrue(configuration.contains("comingSoonPanel('RadioReference'"));
         assertFalse(configuration.contains("focused migration"));
-        assertTrue(configuration.contains("comingSoonPanel('RadioReference')"));
-        assertFalse(configuration.contains("renderAdminRadioReferenceSettings"));
-        assertTrue(administration.contains("id: 'receiver-settings', label: 'Receiver Settings'"));
-        assertTrue(administration.contains("await renderReceiverSettings()"));
-        assertTrue(receiverSettings.contains("const renderContext = captureRenderContext()"));
-        assertTrue(receiverSettings.contains("await renderAdminReceiverBehaviorSettings()"));
-        assertTrue(receiverSettings.contains("if (!renderIsCurrent(renderContext)) return"));
-        assertTrue(receiverSettings.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(configuration.contains("await renderAdminRadioReferenceSettings()"));
+        assertFalse(configuration.contains("comingSoonPanel('RadioReference')"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
+        assertTrue(settings.contains("Disconnect RadioReference"));
         assertTrue(html.contains("data-nav-tab=\"radioreference\" " +
             "href=\"/?view=configuration&amp;tab=radioreference\""));
     }
@@ -139,7 +130,7 @@ class StatsWebFrequencyActionsUiContractTest
     @Test
     void stylesResponsiveRadioReferenceResultsAndDisabledFutureActions() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".admin-settings-form"));
         assertTrue(css.contains(".admin-settings-form-stack"));
         assertTrue(css.contains("height: 36px;"));

@@ -39,7 +39,7 @@ public final class Format15TestDatabase
                 connection.setAutoCommit(true);
             }
 
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.requireCurrent(connection);
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             if(detected.version() != 15 ||
                 !DatabaseFormatCatalog.requireVersion(15).fingerprint().equals(fingerprint))

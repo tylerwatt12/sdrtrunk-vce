@@ -14,6 +14,7 @@ package io.github.dsheirer.gui.configuration.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -79,6 +80,30 @@ class ChannelConfigurationEditorTest
         Channel channel = channel(DecoderType.P25_PHASE1);
         assertFalse(model.assignDefaultAliasList(channel));
         assertNull(channel.getAliasListName());
+    }
+
+    @Test
+    void requiredAssignmentFallsBackToAnExistingCompatibleList()
+    {
+        AliasListDefinition custom = new AliasListDefinition("County P25", AliasListFamily.P25);
+        custom.setId(9);
+        AliasModel model = new AliasModel();
+        model.replaceCommittedConfiguration(List.of(custom), List.of());
+        Channel channel = channel(DecoderType.P25_PHASE1);
+
+        model.requireAliasListAssignment(channel);
+
+        assertEquals(9, channel.getAliasListId());
+        assertEquals("County P25", channel.getAliasListName());
+    }
+
+    @Test
+    void requiredAssignmentRejectsAChannelWhenNoCompatibleListExists()
+    {
+        AliasModel model = new AliasModel();
+        Channel channel = channel(DecoderType.DMR);
+
+        assertThrows(IllegalStateException.class, () -> model.requireAliasListAssignment(channel));
     }
 
     private static void assertDefault(AliasModel model, DecoderType decoderType, String expected)

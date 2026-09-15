@@ -1,14 +1,20 @@
-# Package and publish the already-tested main branch.
+# Package and publish the already-tested main branch after explicit approval.
 name: Nightly Release
+run-name: Publish approved Nightly from ${{ github.ref_name }}
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      confirm_publication:
+        description: I approve publishing the current main branch as the new Nightly
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: nightly-${{ github.ref }}
-  # Publishing replaces release assets before moving the nightly tag. Let an in-flight publication finish so a
-  # newer push cannot cancel it between those operations; the newer run waits and publishes its own complete set.
+  # Publishing adds uniquely named ZIPs and replaces current-build metadata before moving the nightly tag. Let an
+  # in-flight publication finish so a newer push cannot interleave those operations.
   cancel-in-progress: false
 
 permissions:
@@ -17,6 +23,7 @@ permissions:
 jobs:
   package-and-publish:
     name: Package and publish nightly
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_publication }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -85,6 +92,10 @@ jobs:
           prerelease: true
           body: |
             Rolling pre-release build from current `main`.
+
+            Current build: `${{ env.UPDATE_BUILD }}`
+
+            Choose the platform ZIP ending in `-${{ env.UPDATE_BUILD }}.zip`. Older builds remain available below.
 
             Nightly builds contain the newest completed features and fixes and may change frequently. Back up the
             complete portable data folder before upgrading.

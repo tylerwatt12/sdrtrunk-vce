@@ -69,6 +69,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
@@ -390,6 +392,118 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void expiresQuietDmrTrafficWithoutAnotherEvent() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(100);
+
+        try
+        {
+            Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+            DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+
+            run(model, () -> model.trunkedTrafficEvent(parent, null, traffic, 1,
+                new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
+
+            assertTrue(awaitTrafficState(model, 139_968_750L, 1, State.IDLE, 2, TimeUnit.SECONDS),
+                "quiet DMR traffic did not expire without a subsequent event");
+        }
+        finally
+        {
+            model.close();
+        }
+    }
+
+    @Test
+    void refreshedDmrGrantUsesLatestExpirationDeadline() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(1_000);
+
+        try
+        {
+            Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+            DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+
+            run(model, () -> model.trunkedTrafficEvent(parent, null, traffic, 1,
+                new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
+            Thread.sleep(600L);
+            run(model, () -> model.trunkedTrafficEvent(parent, null, traffic, 1,
+                new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
+            Thread.sleep(600L);
+
+            assertTrue(hasTrafficState(model, 139_968_750L, 1, State.CALL),
+                "the superseded deadline expired the refreshed DMR grant");
+            assertTrue(awaitTrafficState(model, 139_968_750L, 1, State.IDLE, 2, TimeUnit.SECONDS),
+                "the refreshed DMR grant did not expire at its latest deadline");
+        }
+        finally
+        {
+            model.close();
+        }
+    }
+
+    @Test
+    void expiresMultipleDmrTrafficRowsInOneSweep() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(100);
+
+        try
+        {
+            Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+            DMRAbsoluteChannel timeslotOne = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+            DMRAbsoluteChannel timeslotTwo = new DMRAbsoluteChannel(838, 2, 139_968_750L, 0);
+
+            run(model, () -> {
+                model.trunkedTrafficEvent(parent, null, timeslotOne, 1, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, 139_781_250L);
+                model.trunkedTrafficEvent(parent, null, timeslotTwo, 2, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, 139_781_250L);
+            });
+
+            assertTrue(awaitCondition(() -> trafficRows(model).size() == 2 &&
+                trafficRows(model).stream().allMatch(row -> State.IDLE.name().equals(row.status())),
+                2, TimeUnit.SECONDS), "all due DMR traffic rows were not expired");
+        }
+        finally
+        {
+            model.close();
+        }
+    }
+
+    @Test
+    void expiresDmrTrafficAfterTrafficChannelRelease() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(500);
+
+        try
+        {
+            Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+            Channel trafficChannel = new Channel("T-2.2", ChannelType.TRAFFIC);
+            trafficChannel.setSystem("Bus");
+            trafficChannel.setSite("Site 5");
+            trafficChannel.setDecodeConfiguration(new DecodeConfigDMR());
+            SourceConfigTuner trafficSource = new SourceConfigTuner();
+            trafficSource.setFrequency(139_968_750L);
+            trafficChannel.setSourceConfiguration(trafficSource);
+            DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+
+            run(model, () -> model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1,
+                new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
+            run(model, () -> model.channelStopped(trafficChannel));
+
+            ChannelActivityRow row = model.getTables().get(1).getRows().stream()
+                .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC)
+                .findFirst().orElseThrow();
+            assertSame(parent, row.getChannel());
+            assertTrue(awaitTrafficState(model, 139_968_750L, 1, State.IDLE, 2, TimeUnit.SECONDS),
+                "released DMR traffic did not expire while the site was quiet");
+        }
+        finally
+        {
+            model.close();
+        }
+    }
+
+    @Test
     void usesCompactFallbackWhenEncryptedCallHasNoAlgorithmDetails() throws Exception
     {
         ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
@@ -668,6 +782,57 @@ class ChannelActivityModelTest
         assertEquals("42", trafficRows.getFirst().getLcn());
         assertNull(trafficRows.getFirst().getTimeslot());
         assertEquals(State.DATA, trafficRows.getFirst().getState());
+    }
+
+    @Test
+    void expiresQuietNxdnTrafficWithoutAnotherEvent() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(100);
+
+        try
+        {
+            Channel parent = trunkedChannel("North", "County", "Simulcast", new DecodeConfigNXDN(), 451_012_500L);
+            NXDNChannelLookup traffic = new NXDNChannelLookup(42);
+            traffic.receive(null, Map.of(42, new ChannelFrequency(42, 452_012_500L, 0)));
+
+            run(model, () -> model.trunkedTrafficEvent(parent, null, traffic, 0,
+                new IdentifierCollection(), DecodeEventType.DATA_CALL, 451_012_500L));
+
+            assertTrue(awaitTrafficState(model, 452_012_500L, null, State.IDLE, 2, TimeUnit.SECONDS),
+                "quiet NXDN traffic did not expire without a subsequent event");
+        }
+        finally
+        {
+            model.close();
+        }
+    }
+
+    @Test
+    void trafficDeadlineDoesNotIdleSharedFdmaControlRow() throws Exception
+    {
+        ChannelActivityModel model = trafficAgeOutModel(100);
+
+        try
+        {
+            Channel parent = trunkedChannel("North", "County", "Simulcast", new DecodeConfigNXDN(), 451_012_500L);
+            NXDNChannelLookup traffic = new NXDNChannelLookup(42);
+            traffic.receive(null, Map.of(42, new ChannelFrequency(42, 452_012_500L, 0)));
+
+            run(model, () -> {
+                model.trunkedTrafficEvent(parent, null, traffic, 0, new IdentifierCollection(),
+                    DecodeEventType.DATA_CALL, 451_012_500L);
+                model.trunkedCurrentControl(parent, 452_012_500L);
+            });
+            Thread.sleep(500L);
+
+            assertTrue(model.getSnapshotSet().tables().stream().flatMap(table -> table.rows().stream())
+                .anyMatch(row -> row.frequencyHz() == 452_012_500L && State.CONTROL.name().equals(row.status())),
+                "an expired traffic deadline idled a frequency that had become the current control channel");
+        }
+        finally
+        {
+            model.close();
+        }
     }
 
     @Test
@@ -1013,6 +1178,53 @@ class ChannelActivityModelTest
     {
         SwingUtilities.invokeAndWait(runnable);
         assertTrue(model.awaitIdle(5, TimeUnit.SECONDS), "channel activity worker did not become idle");
+    }
+
+    private static ChannelActivityModel trafficAgeOutModel(int ageOutMilliseconds)
+    {
+        return new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}))
+        {
+            @Override
+            public int getTrafficGrantAgeOutMilliseconds()
+            {
+                return ageOutMilliseconds;
+            }
+        };
+    }
+
+    private static boolean awaitTrafficState(ChannelActivityModel model, long frequency, Integer timeslot, State state,
+                                             long timeout, TimeUnit timeUnit)
+    {
+        return awaitCondition(() -> hasTrafficState(model, frequency, timeslot, state), timeout, timeUnit);
+    }
+
+    private static boolean hasTrafficState(ChannelActivityModel model, long frequency, Integer timeslot, State state)
+    {
+        return trafficRows(model).stream().anyMatch(row -> row.frequencyHz() == frequency &&
+            java.util.Objects.equals(timeslot, row.timeslot()) && state.name().equals(row.status()));
+    }
+
+    private static List<ChannelActivitySnapshot.Row> trafficRows(ChannelActivityModel model)
+    {
+        return model.getSnapshotSet().tables().stream().flatMap(table -> table.rows().stream())
+            .filter(row -> ChannelActivityRow.Role.TRAFFIC.name().equals(row.role())).toList();
+    }
+
+    private static boolean awaitCondition(BooleanSupplier condition, long timeout, TimeUnit timeUnit)
+    {
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+
+        while(System.nanoTime() < deadline)
+        {
+            if(condition.getAsBoolean())
+            {
+                return true;
+            }
+
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
+        }
+
+        return condition.getAsBoolean();
     }
 
     private static AliasListDefinition p25AliasList(String name, long id)

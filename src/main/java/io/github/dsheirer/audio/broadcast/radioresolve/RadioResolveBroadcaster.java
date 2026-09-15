@@ -6,17 +6,17 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- * ****************************************************************************
+ * *****************************************************************************
  */
-
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import com.google.common.eventbus.AllowConcurrentEvents;
+import com.google.common.eventbus.Subscribe;
 import com.google.common.net.HttpHeaders;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasList;
+import com.google.gson.JsonParser;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.AbstractAudioBroadcaster;
 import io.github.dsheirer.audio.broadcast.AudioRecording;
@@ -24,21 +24,17 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.identifier.Form;
-import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierClass;
-import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
-import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
-import io.github.dsheirer.identifier.encryption.EncryptionKey;
-import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
-import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
-import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
@@ -50,17 +46,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.LockSupport;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManager;
@@ -68,59 +71,158 @@ import javax.net.ssl.X509TrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * RadioResolve completed-call and site-metadata publisher.
- */
+/** RadioResolve v3 completed-call and canonical metadata publisher. */
 public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResolveConfiguration>
     implements SiteMetadataListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(RadioResolveBroadcaster.class);
-    public static final String UPLOAD_PATH = "/api/node/upload-call";
-    public static final String RF_STATE_PATH = "/api/node/rf-state";
+    public static final String UPLOAD_PATH = "/api/node/v3/upload-calls";
+    public static final String METADATA_PATH = "/api/node/v3/metadata";
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-vce";
+    /** Process-wide JVM override for the number of calls included in one upload request. */
+    public static final String CALLS_PER_UPLOAD_PROPERTY = "sdrtrunk.radioresolve.callsPerUpload";
+    static final long METADATA_HOLD_MILLISECONDS = TimeUnit.MINUTES.toMillis(2);
+    /** Mirrors RadioResolve's default Live admission window for upload priority; the server remains authoritative. */
+    static final long LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS = TimeUnit.MINUTES.toMillis(3);
+    static final int MAXIMUM_CALLS_PER_UPLOAD = 32;
+    static final long MAXIMUM_CALL_AUDIO_BYTES = 25L * 1024L * 1024L;
+    static final long MAXIMUM_UPLOAD_BYTES = 32L * 1024L * 1024L;
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
     private static final Duration CALL_UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
-    private static final long MISSING_RADIORESOLVE_ID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
-    private static final long[] RETRY_BACKOFF_MS = {5000, 15000, 30000, 60000, 120000};
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final long METADATA_MAXIMUM_PAST_OBSERVATION_MILLISECONDS = TimeUnit.HOURS.toMillis(26);
+    private static final long METADATA_MAXIMUM_FUTURE_OBSERVATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(5);
+    /** A recent proof survives a short control-channel fade, but never crosses a processing incarnation. */
+    static final long VERIFIED_SITE_RETENTION_MILLISECONDS = TimeUnit.MINUTES.toMillis(5);
+    private static final int MAXIMUM_VERIFIED_SITE_ENTRIES = 512;
+    private static final int METADATA_HANDOFF_SLOTS = 128;
+    static final int P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY = 4_096;
+    private static final int MAXIMUM_P25_FREQUENCY_EVIDENCE_DRAIN_PER_RUN = 1_024;
+    private static final long[] RETRY_BACKOFF_MS = {5_000L, 15_000L, 30_000L, 60_000L, 120_000L};
+    private static final AtomicLong CALL_WORKER_SEQUENCE = new AtomicLong();
+    private static final AtomicLong METADATA_WORKER_SEQUENCE = new AtomicLong();
 
-    private final Object mQueueLock = new Object();
-    private final Deque<PendingUpload> mAudioRecordingQueue = new ArrayDeque<>();
-    private final Map<String,MetadataState> mMetadataStateByRadioResolveId = new HashMap<>();
-    private final AtomicInteger mInFlightUploads = new AtomicInteger();
-    private ScheduledFuture<?> mAudioRecordingProcessorFuture;
-    private HttpClient mHttpClient;
-    private AliasModel mAliasModel;
+    private final RadioResolveSpool mSpool;
+    private final RadioResolveClockSynchronizer mClockSynchronizer;
+    private final int mCallsPerUpload;
+    private final Runnable mAfterP25FrequencyEvidenceIngressSnapshotForTest;
+    private final String mEvidenceSessionId = UUID.randomUUID().toString();
+    private final Object mConnectionLock = new Object();
+    private final Object mVerifiedSiteLock = new Object();
+    private final Object mP25FrequencyEvidenceRegistrationLock = new Object();
+    private final Map<ReceiverGeneration,VerifiedSite> mVerifiedSites = new HashMap<>();
+    private final Map<String,MetadataState> mMetadataStates = new HashMap<>();
+    private final RadioResolveP25FrequencyEvidenceTracker mP25FrequencyEvidenceTracker =
+        new RadioResolveP25FrequencyEvidenceTracker();
+    private final AtomicBoolean mUploadInFlight = new AtomicBoolean();
+    /** Fixed latest-value slots keyed by receiver configuration; collisions coalesce instead of blocking decode. */
+    private final AtomicReferenceArray<SiteMetadataEvent> mPendingSiteMetadata =
+        new AtomicReferenceArray<>(METADATA_HANDOFF_SLOTS);
+    /** Grant producers get a preallocated, fixed-attempt handoff and never run projection or tracker work. */
+    private volatile BoundedMpscReferenceQueue<Object> mP25FrequencyEvidenceIngress =
+        new BoundedMpscReferenceQueue<>(P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY);
+    private final AtomicLong mCoalescedSiteMetadataCount = new AtomicLong();
+    private final AtomicLong mDroppedP25FrequencyEvidenceCount = new AtomicLong();
+    private final Object mSpoolOpenLock = new Object();
+    private final ScheduledExecutorService mCallWorker;
+    private final Thread mMetadataWorker;
+    private volatile boolean mMetadataWorkerShutdown;
+    private boolean mP25FrequencyEvidenceRegistered;
+    private volatile boolean mP25FrequencyEvidenceEnabled;
+    /** Metadata-worker-owned identity fence for its non-thread-safe evidence tracker. */
+    private BoundedMpscReferenceQueue<Object> mWorkerP25FrequencyEvidenceIngress;
+    private int mNextMetadataHandoffSlot;
+    private volatile boolean mSpoolOpen;
+    private ScheduledFuture<?> mProcessorFuture;
+    private final HttpClient mHttpClient;
     private volatile boolean mRunning;
     private volatile boolean mServerReachable;
-    private long mLastConnectionAttempt;
-    private long mConnectionAttemptInterval = 5000;
-    private long mLastMissingRadioResolveIdWarningTimestamp;
-    private int mMissingRadioResolveIdSkipCount;
+    private long mLastConnectionAttemptNanos;
+    private long mConnectionAttemptInterval = 5_000L;
 
-    public RadioResolveBroadcaster(RadioResolveConfiguration config, InputAudioFormat inputAudioFormat,
+    /** Compatibility constructor used by focused tests and older factory callers. */
+    public RadioResolveBroadcaster(RadioResolveConfiguration configuration, InputAudioFormat inputAudioFormat,
                                    MP3Setting mp3Setting, AliasModel aliasModel)
     {
-        super(config);
-        mAliasModel = aliasModel;
-        mHttpClient = createHttpClient(config);
+        this(configuration, inputAudioFormat, mp3Setting, aliasModel,
+            Path.of(System.getProperty("java.io.tmpdir"), "sdrtrunk-radioresolve-v3",
+                configuration != null ? configuration.getConfigurationId() : UUID.randomUUID().toString()));
+    }
+
+    /** Constructs a publisher with an explicit durable spool directory. */
+    public RadioResolveBroadcaster(RadioResolveConfiguration configuration, InputAudioFormat inputAudioFormat,
+                                   MP3Setting mp3Setting, AliasModel aliasModel, Path spoolDirectory)
+    {
+        this(configuration, inputAudioFormat, mp3Setting, aliasModel, spoolDirectory,
+            new RadioResolveClockSynchronizer());
+    }
+
+    /** Package-visible clock injection keeps the network timing gate deterministic in focused tests. */
+    RadioResolveBroadcaster(RadioResolveConfiguration configuration, InputAudioFormat inputAudioFormat,
+                            MP3Setting mp3Setting, AliasModel aliasModel, Path spoolDirectory,
+                            RadioResolveClockSynchronizer clockSynchronizer)
+    {
+        this(configuration, inputAudioFormat, mp3Setting, aliasModel, spoolDirectory, clockSynchronizer, null);
+    }
+
+    /** Test hook permits a deterministic lifecycle race after a producer snapshots the current bounded ingress. */
+    RadioResolveBroadcaster(RadioResolveConfiguration configuration, InputAudioFormat inputAudioFormat,
+                            MP3Setting mp3Setting, AliasModel aliasModel, Path spoolDirectory,
+                            RadioResolveClockSynchronizer clockSynchronizer,
+                            Runnable afterP25FrequencyEvidenceIngressSnapshotForTest)
+    {
+        super(configuration);
+        mHttpClient = createHttpClient(configuration);
+        mSpool = new RadioResolveSpool(spoolDirectory);
+        mClockSynchronizer = clockSynchronizer != null ? clockSynchronizer : new RadioResolveClockSynchronizer();
+        mAfterP25FrequencyEvidenceIngressSnapshotForTest = afterP25FrequencyEvidenceIngressSnapshotForTest;
+        mCallsPerUpload = resolveCallsPerUpload(System.getProperty(CALLS_PER_UPLOAD_PROPERTY));
+        mCallWorker = Executors.newSingleThreadScheduledExecutor(new ObserverThreadFactory(
+            "radioresolve-v3-calls-" + CALL_WORKER_SEQUENCE.incrementAndGet()));
+        mMetadataWorker = new Thread(this::runMetadataWorker,
+            "radioresolve-v3-metadata-" + METADATA_WORKER_SEQUENCE.incrementAndGet());
+        mMetadataWorker.setDaemon(true);
+        mMetadataWorker.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+        mMetadataWorker.start();
     }
 
     @Override
     public void start()
     {
         mRunning = true;
-        setBroadcastState(BroadcastState.CONNECTING);
-        mServerReachable = testConnection(getBroadcastConfiguration());
-        setBroadcastState(mServerReachable ? BroadcastState.CONNECTED : BroadcastState.ERROR);
-        mLastConnectionAttempt = System.currentTimeMillis();
 
-        if(mAudioRecordingProcessorFuture == null)
+        try
         {
-            mAudioRecordingProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(new AudioRecordingProcessor(),
-                0, 500, TimeUnit.MILLISECONDS);
+            ensureSpoolOpen();
+        }
+        catch(IOException exception)
+        {
+            mRunning = false;
+            setBroadcastState(BroadcastState.ERROR);
+            mLog.error("Unable to open the durable RadioResolve spool: {}", safeMessage(exception));
+            return;
+        }
+
+        mP25FrequencyEvidenceIngress =
+            new BoundedMpscReferenceQueue<>(P25_FREQUENCY_EVIDENCE_HANDOFF_CAPACITY);
+        mP25FrequencyEvidenceEnabled = getBroadcastConfiguration().isSiteMetadataEnabled();
+
+        if(mP25FrequencyEvidenceEnabled)
+        {
+            registerP25FrequencyEvidence();
+        }
+
+        LockSupport.unpark(mMetadataWorker);
+
+        setBroadcastState(BroadcastState.CONNECTING);
+
+        if(mProcessorFuture == null)
+        {
+            //Connection probes can block for their bounded network timeout. Keep them off the application-wide
+            //scheduler, which also owns tuner and receiver timing work.
+            mProcessorFuture = mCallWorker.scheduleWithFixedDelay(new RecordingProcessor(), 0L, 500L,
+                TimeUnit.MILLISECONDS);
         }
     }
 
@@ -128,89 +230,208 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public void stop()
     {
         mRunning = false;
+        mP25FrequencyEvidenceEnabled = false;
+        unregisterP25FrequencyEvidence();
+        clearPendingSiteMetadata();
+        LockSupport.unpark(mMetadataWorker);
 
-        if(mAudioRecordingProcessorFuture != null)
+        if(mProcessorFuture != null)
         {
-            mAudioRecordingProcessorFuture.cancel(true);
-            mAudioRecordingProcessorFuture = null;
+            mProcessorFuture.cancel(false);
+            mProcessorFuture = null;
         }
 
-        dispose();
         setBroadcastState(BroadcastState.DISCONNECTED);
     }
 
+    /** The spool owns queued files across stops, provider recreation, and application restarts. */
     @Override
     public void dispose()
     {
-        PendingUpload pendingUpload;
+        mRunning = false;
+        mP25FrequencyEvidenceEnabled = false;
+        unregisterP25FrequencyEvidence();
 
-        synchronized(mQueueLock)
+        if(mProcessorFuture != null)
         {
-            pendingUpload = mAudioRecordingQueue.poll();
+            mProcessorFuture.cancel(false);
+            mProcessorFuture = null;
         }
 
-        while(pendingUpload != null)
-        {
-            pendingUpload.getAudioRecording().removePendingReplay();
-
-            synchronized(mQueueLock)
-            {
-                pendingUpload = mAudioRecordingQueue.poll();
-            }
-        }
+        mCallWorker.shutdownNow();
+        mMetadataWorkerShutdown = true;
+        clearPendingSiteMetadata();
+        mMetadataWorker.interrupt();
+        LockSupport.unpark(mMetadataWorker);
     }
 
     @Override
     public int getAudioQueueSize()
     {
-        synchronized(mQueueLock)
+        try
         {
-            return mAudioRecordingQueue.size();
+            ensureSpoolOpen();
+            return mSpool.size();
+        }
+        catch(IOException exception)
+        {
+            return 0;
         }
     }
 
     @Override
-    public void receive(AudioRecording audioRecording)
+    public void receive(AudioRecording recording)
     {
-        if(audioRecording == null)
+        if(recording == null)
         {
             return;
         }
 
-        if(!getBroadcastConfiguration().isCallUploadEnabled())
+        try
         {
-            audioRecording.removePendingReplay();
-            return;
-        }
+            if(!getBroadcastConfiguration().isCallUploadEnabled())
+            {
+                return;
+            }
 
-        synchronized(mQueueLock)
+            String submissionId = UUID.randomUUID().toString();
+            RadioResolveCallEnvelope.BuildResult build = RadioResolveCallEnvelope.create(recording, submissionId);
+
+            if(!build.accepted())
+            {
+                incrementAgedOffAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                mLog.info("RadioResolve v3 dropped a completed call: {}", build.rejectionReason());
+                return;
+            }
+
+            ensureSpoolOpen();
+            RadioResolveCallEnvelope.HoldContext holdContext =
+                build.holdContext().withEvidenceSession(mEvidenceSessionId);
+            RadioResolveCallEnvelope envelope = applyVerifiedPlacements(build.envelope(), holdContext);
+            RadioResolveSpool.EnqueueResult enqueueResult = mSpool.enqueue(recording.getPath(), envelope,
+                holdContext, System.currentTimeMillis());
+
+            if(enqueueResult.evictedEntries() > 0)
+            {
+                for(int index = 0; index < enqueueResult.evictedEntries(); index++)
+                {
+                    incrementAgedOffAudioCount();
+                }
+
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                mLog.warn("RadioResolve v3 evicted {} oldest queued call(s) to stay within the 2 GiB spool limit",
+                    enqueueResult.evictedEntries());
+            }
+
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+        }
+        catch(RadioResolveSpool.ExpiredCallException exception)
         {
-            mAudioRecordingQueue.offer(new PendingUpload(audioRecording));
+            incrementAgedOffAudioCount();
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+            mLog.info("RadioResolve v3 dropped a completed call outside the 24-hour spool window");
         }
-
-        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+        catch(Exception exception)
+        {
+            incrementErrorAudioCount();
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+            mLog.error("Unable to place a completed call in the durable RadioResolve spool: {}",
+                safeMessage(exception));
+        }
+        finally
+        {
+            recording.removePendingReplay();
+        }
     }
 
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful() ||
-            !event.matchesCurrentChannel())
+        if(event == null || !mRunning || mMetadataWorkerShutdown)
         {
             return;
         }
 
-        String radioResolveId = event.receiverContext().radioResolveId();
+        int slot = metadataHandoffSlot(event);
 
-        if(radioResolveId == null || radioResolveId.isBlank())
+        if(mPendingSiteMetadata.getAndSet(slot, event) != null)
+        {
+            mCoalescedSiteMetadataCount.incrementAndGet();
+        }
+
+        LockSupport.unpark(mMetadataWorker);
+    }
+
+    /**
+     * Performs only a fixed-attempt queue offer on the decoder's posting thread.  Concurrent dispatch avoids the
+     * implicit EventBus subscriber monitor, so another producer or a blocked metadata worker cannot delay decode.
+     */
+    @Subscribe
+    @AllowConcurrentEvents
+    public void receiveP25GrantObservation(P25GrantObservationEvent event)
+    {
+        offerP25FrequencyEvidence(event);
+    }
+
+    /** See {@link #receiveP25GrantObservation(P25GrantObservationEvent)}. */
+    @Subscribe
+    @AllowConcurrentEvents
+    public void receiveP25TrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
+    {
+        offerP25FrequencyEvidence(event);
+    }
+
+    private void offerP25FrequencyEvidence(Object event)
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+
+        if(mAfterP25FrequencyEvidenceIngressSnapshotForTest != null)
+        {
+            mAfterP25FrequencyEvidenceIngressSnapshotForTest.run();
+        }
+
+        if(event == null || !mRunning || !mP25FrequencyEvidenceEnabled || mMetadataWorkerShutdown)
         {
             return;
         }
 
-        P25NetworkConfigurationSnapshot snapshot = event.snapshot();
-        String hash = hash(snapshot);
-        long now = System.currentTimeMillis();
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(radioResolveId, snapshot);
+        if(!ingress.offer(event))
+        {
+            mDroppedP25FrequencyEvidenceCount.incrementAndGet();
+        }
+
+        LockSupport.unpark(mMetadataWorker);
+    }
+
+    /**
+     * Performs all snapshot validation, projection, hashing, registry locking, and network work away from the
+     * decoder callback. Package visibility permits a focused saturation test to substitute a blocked consumer.
+     */
+    void processSiteMetadata(SiteMetadataEvent event)
+    {
+        BoundedMpscReferenceQueue<Object> evidenceIngress = mP25FrequencyEvidenceIngress;
+        prepareP25FrequencyEvidenceIngress();
+
+        if(event == null || !event.isUseful() || !event.matchesCurrentChannel() || event.receiverContext() == null)
+        {
+            return;
+        }
+
+        if(!hasVerifiedSiteProof(event))
+        {
+            return;
+        }
+
+        rememberVerifiedSite(event);
+
+        if(!getBroadcastConfiguration().isSiteMetadataEnabled())
+        {
+            return;
+        }
+
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(event.snapshot());
+
         if(!readiness.ready())
         {
             return;
@@ -221,46 +442,891 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
-        synchronized(mMetadataStateByRadioResolveId)
+        RadioResolveClockSynchronizer.ClockProof clockProof = mClockSynchronizer.currentProof();
+
+        if(clockProof == null)
         {
-            MetadataState state = mMetadataStateByRadioResolveId.computeIfAbsent(radioResolveId,
-                ignored -> new MetadataState());
-            boolean changed = !hash.equals(state.mLastSuccessfulHash);
-            boolean heartbeatDue = now - state.mLastSuccessfulEpochMilliseconds >=
-                METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS;
-
-            if(!changed && !heartbeatDue)
-            {
-                return;
-            }
-
-            if(now - state.mLastAttemptEpochMilliseconds < METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS)
-            {
-                return;
-            }
-
-            state.mLastAttemptEpochMilliseconds = now;
+            return;
         }
 
-        ThreadPool.CACHED.execute(() -> sendSiteMetadata(event, hash, now));
+        long now = System.currentTimeMillis();
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence =
+            mP25FrequencyEvidenceTracker.select(event, now);
+        String identityKey = metadataIdentityKey(event.snapshot());
+        String hash = hash(event.snapshot(), frequencyEvidence);
+
+        synchronized(mMetadataStates)
+        {
+            if(!isCurrentP25EvidenceIngress(evidenceIngress))
+            {
+                return;
+            }
+
+            MetadataState state = mMetadataStates.computeIfAbsent(identityKey, ignored -> new MetadataState());
+            boolean changed = !hash.equals(state.lastSuccessfulHash);
+            boolean heartbeatDue = now - state.lastSuccessfulAtMs >= METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS;
+
+            if((!changed && !heartbeatDue) ||
+                now - state.lastAttemptAtMs < METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS)
+            {
+                return;
+            }
+
+            state.lastAttemptAtMs = now;
+        }
+
+        long observedAt = event.observedAtEpochMilliseconds();
+
+        if(observedAt <= 0L)
+        {
+            return;
+        }
+
+        if(!isCurrentP25EvidenceIngress(evidenceIngress))
+        {
+            return;
+        }
+
+        sendSiteMetadata(event, identityKey, hash, observedAt, clockProof, frequencyEvidence);
     }
 
-    private void sendSiteMetadata(SiteMetadataEvent event, String hash, long observedAt)
+    void rememberVerifiedSite(SiteMetadataEvent event)
+    {
+        if(!hasVerifiedSiteProof(event))
+        {
+            return;
+        }
+
+        P25SiteIdentity identity = P25SiteIdentity.from(event.snapshot());
+
+        String configurationId = event.receiverContext().configurationId();
+        long incarnation = event.receiverContext().processingIncarnation();
+        long tuningGeneration = event.receiverContext().siteEvidenceTuningGeneration();
+
+        if(configurationId == null || incarnation <= 0L || tuningGeneration <= 0L)
+        {
+            return;
+        }
+
+        Integer nac = event.snapshot().currentSite() != null ? event.snapshot().currentSite().nac() : null;
+        long observedAt = event.observedAtEpochMilliseconds();
+
+        if(observedAt <= 0L)
+        {
+            return;
+        }
+
+        synchronized(mVerifiedSiteLock)
+        {
+            pruneVerifiedSites(System.currentTimeMillis());
+            mVerifiedSites.put(new ReceiverGeneration(configurationId, incarnation, tuningGeneration),
+                new VerifiedSite(new RadioResolveCallEnvelope.Placement("p25", identity.wacn(), identity.system(),
+                    identity.rfss(), identity.site(), nac), observedAt, event.channel(), event.receiverContext()));
+
+            while(mVerifiedSites.size() > MAXIMUM_VERIFIED_SITE_ENTRIES)
+            {
+                Iterator<ReceiverGeneration> iterator = mVerifiedSites.keySet().iterator();
+                if(iterator.hasNext())
+                {
+                    iterator.next();
+                    iterator.remove();
+                }
+            }
+        }
+    }
+
+    RadioResolveCallEnvelope applyVerifiedPlacements(RadioResolveCallEnvelope envelope,
+                                                      RadioResolveCallEnvelope.HoldContext context)
+    {
+        if(envelope == null || context == null)
+        {
+            return envelope;
+        }
+
+        RadioResolveCallEnvelope.Placement selected = verifiedPlacement(context.selected());
+        List<RadioResolveCallEnvelope.IndexedPlacement> physicalLegs = new ArrayList<>();
+
+        for(RadioResolveCallEnvelope.PlacementLookup lookup : context.physicalLegs())
+        {
+            RadioResolveCallEnvelope.Placement placement = verifiedPlacement(lookup);
+
+            if(placement != null && lookup.physicalLegIndex() >= 0)
+            {
+                physicalLegs.add(new RadioResolveCallEnvelope.IndexedPlacement(lookup.physicalLegIndex(),
+                    placement));
+            }
+        }
+
+        if(selected == null && physicalLegs.isEmpty())
+        {
+            return envelope;
+        }
+
+        return envelope.withVerifiedPlacements(selected, physicalLegs);
+    }
+
+    private RadioResolveCallEnvelope.Placement verifiedPlacement(RadioResolveCallEnvelope.PlacementLookup lookup)
+    {
+        if(lookup == null || !lookup.isUsable() || !mEvidenceSessionId.equals(lookup.evidenceSessionId()))
+        {
+            return null;
+        }
+
+        synchronized(mVerifiedSiteLock)
+        {
+            pruneVerifiedSites(System.currentTimeMillis());
+            ReceiverGeneration generation = new ReceiverGeneration(lookup.channelConfigurationId(),
+                lookup.processingIncarnation(), lookup.tuningGeneration());
+            VerifiedSite site = mVerifiedSites.get(generation);
+
+            if(site != null && !site.matchesCurrentChannel())
+            {
+                mVerifiedSites.remove(generation);
+                return null;
+            }
+
+            return site != null ? site.placement() : null;
+        }
+    }
+
+    String evidenceSessionId()
+    {
+        return mEvidenceSessionId;
+    }
+
+    long coalescedSiteMetadataCount()
+    {
+        return mCoalescedSiteMetadataCount.get();
+    }
+
+    long droppedP25FrequencyEvidenceCount()
+    {
+        return mDroppedP25FrequencyEvidenceCount.get();
+    }
+
+    int pendingP25FrequencyEvidenceCount()
+    {
+        return mP25FrequencyEvidenceIngress.size();
+    }
+
+    private void registerP25FrequencyEvidence()
+    {
+        synchronized(mP25FrequencyEvidenceRegistrationLock)
+        {
+            if(!mP25FrequencyEvidenceRegistered && mRunning && !mMetadataWorkerShutdown)
+            {
+                MyEventBus.getGlobalEventBus().register(this);
+                mP25FrequencyEvidenceRegistered = true;
+            }
+        }
+    }
+
+    private void unregisterP25FrequencyEvidence()
+    {
+        synchronized(mP25FrequencyEvidenceRegistrationLock)
+        {
+            if(mP25FrequencyEvidenceRegistered)
+            {
+                MyEventBus.getGlobalEventBus().unregister(this);
+                mP25FrequencyEvidenceRegistered = false;
+            }
+        }
+    }
+
+    private void runMetadataWorker()
+    {
+        while(!mMetadataWorkerShutdown)
+        {
+            prepareP25FrequencyEvidenceIngress();
+            boolean processedEvidence = false;
+
+            for(int drained = 0; drained < MAXIMUM_P25_FREQUENCY_EVIDENCE_DRAIN_PER_RUN; drained++)
+            {
+                if(!processNextP25FrequencyEvidence())
+                {
+                    break;
+                }
+
+                processedEvidence = true;
+            }
+
+            SiteMetadataEvent event = pollPendingSiteMetadata();
+
+            if(event == null && !processedEvidence)
+            {
+                LockSupport.parkNanos(this, TimeUnit.SECONDS.toNanos(1));
+            }
+            else if(mRunning && event != null)
+            {
+                try
+                {
+                    processSiteMetadata(event);
+                }
+                catch(Throwable throwable)
+                {
+                    if(throwable instanceof Error error)
+                    {
+                        throw error;
+                    }
+
+                    mLog.warn("RadioResolve v3 metadata worker discarded an invalid snapshot: {}",
+                        safeMessage(throwable));
+                }
+            }
+        }
+    }
+
+    private boolean processNextP25FrequencyEvidence()
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+        Object event = ingress.poll();
+
+        if(event == null)
+        {
+            return false;
+        }
+
+        prepareP25FrequencyEvidenceIngress();
+
+        if(isCurrentP25EvidenceIngress(ingress))
+        {
+            try
+            {
+                processP25FrequencyEvidence(event);
+            }
+            catch(Throwable throwable)
+            {
+                if(throwable instanceof Error error)
+                {
+                    throw error;
+                }
+
+                mLog.warn("RadioResolve v3 metadata worker discarded invalid P25 frequency evidence: {}",
+                    safeMessage(throwable));
+            }
+        }
+
+        return true;
+    }
+
+    private void prepareP25FrequencyEvidenceIngress()
+    {
+        BoundedMpscReferenceQueue<Object> ingress = mP25FrequencyEvidenceIngress;
+
+        if(mWorkerP25FrequencyEvidenceIngress != ingress)
+        {
+            mP25FrequencyEvidenceTracker.clear();
+            mWorkerP25FrequencyEvidenceIngress = ingress;
+        }
+    }
+
+    private boolean isCurrentP25EvidenceIngress(BoundedMpscReferenceQueue<Object> ingress)
+    {
+        return mRunning && mP25FrequencyEvidenceEnabled && !mMetadataWorkerShutdown &&
+            ingress == mP25FrequencyEvidenceIngress;
+    }
+
+    /** All confirmation, formatting, map access, and pruning remain confined to the metadata worker. */
+    void processP25FrequencyEvidence(Object event)
+    {
+        if(event instanceof P25GrantObservationEvent grant)
+        {
+            mP25FrequencyEvidenceTracker.observe(grant);
+        }
+        else if(event instanceof P25TrafficChannelConfirmationEvent confirmation)
+        {
+            mP25FrequencyEvidenceTracker.confirm(confirmation);
+        }
+    }
+
+    private SiteMetadataEvent pollPendingSiteMetadata()
+    {
+        for(int attempt = 0; attempt < METADATA_HANDOFF_SLOTS; attempt++)
+        {
+            int slot = mNextMetadataHandoffSlot++ & (METADATA_HANDOFF_SLOTS - 1);
+            SiteMetadataEvent event = mPendingSiteMetadata.getAndSet(slot, null);
+
+            if(event != null)
+            {
+                return event;
+            }
+        }
+
+        return null;
+    }
+
+    private void clearPendingSiteMetadata()
+    {
+        for(int slot = 0; slot < METADATA_HANDOFF_SLOTS; slot++)
+        {
+            mPendingSiteMetadata.set(slot, null);
+        }
+    }
+
+    private static int metadataHandoffSlot(SiteMetadataEvent event)
+    {
+        if(event != null && event.receiverContext() != null &&
+            event.receiverContext().configurationId() != null)
+        {
+            return event.receiverContext().configurationId().hashCode() & (METADATA_HANDOFF_SLOTS - 1);
+        }
+
+        return 0;
+    }
+
+    private void processQueue()
     {
         try
         {
-            if(!getBroadcastConfiguration().isSiteMetadataEnabled())
+            ensureSpoolOpen();
+            int expired = mSpool.pruneIfDue(System.currentTimeMillis());
+
+            if(expired > 0)
+            {
+                for(int index = 0; index < expired; index++)
+                {
+                    incrementAgedOffAudioCount();
+                }
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+            }
+
+            //This runs even with an empty queue, keeping a current server-clock proof ready for the next completed
+            //call and for metadata-only configurations.
+            boolean connectionAndClockReady = connected();
+
+            if(mUploadInFlight.get())
             {
                 return;
             }
 
-            JsonObject payload = createSiteMetadataPayload(event, hash, getBroadcastConfiguration(), observedAt);
+            List<RadioResolveSpool.Entry> entries = nextUploadBatch(System.currentTimeMillis());
+
+            if(entries.isEmpty())
+            {
+                return;
+            }
+
+            if(!connectionAndClockReady)
+            {
+                return;
+            }
+
+            List<RadioResolveSpool.Entry> preparedEntries = prepareUploadEntries(entries);
+
+            if(preparedEntries.isEmpty())
+            {
+                return;
+            }
+
+            PreparedUpload preparedUpload = createBoundedUploadRequest(preparedEntries);
+
+            if(preparedUpload == null || !mUploadInFlight.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            List<RadioResolveSpool.Entry> uploadEntries = preparedUpload.entries();
+
+            if(!mSpool.protectAll(uploadEntries))
+            {
+                mUploadInFlight.set(false);
+                return;
+            }
+
+            try
+            {
+                mHttpClient.sendAsync(preparedUpload.request(), HttpResponse.BodyHandlers.ofString())
+                    .whenComplete((response, throwable) -> handleUploadResponse(uploadEntries, response, throwable));
+            }
+            catch(Exception exception)
+            {
+                handleUploadResponse(uploadEntries, null, exception);
+            }
+        }
+        catch(Exception exception)
+        {
+            incrementErrorAudioCount();
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+            mLog.warn("RadioResolve spool processing failed: {}", safeMessage(exception));
+        }
+    }
+
+    /** Freezes the same current clock proof into each byte-stable manifest before the batch is claimed. */
+    List<RadioResolveSpool.Entry> prepareUploadEntries(List<RadioResolveSpool.Entry> entries) throws IOException
+    {
+        RadioResolveClockSynchronizer.ClockProof clockProof = mClockSynchronizer.currentProof();
+
+        if(clockProof == null || entries == null || entries.isEmpty())
+        {
+            return List.of();
+        }
+
+        return mSpool.applyServerClockOffsetAll(entries, clockProof.offsetMilliseconds());
+    }
+
+    /** Builds the largest oldest-first prefix whose exact multipart Content-Length fits the server contract. */
+    PreparedUpload createBoundedUploadRequest(List<RadioResolveSpool.Entry> entries) throws IOException
+    {
+        List<RadioResolveSpool.Entry> prefix = new ArrayList<>(entries);
+
+        while(!prefix.isEmpty())
+        {
+            try
+            {
+                List<RadioResolveSpool.Entry> immutablePrefix = List.copyOf(prefix);
+                return new PreparedUpload(immutablePrefix,
+                    createUploadRequest(getBroadcastConfiguration(), immutablePrefix));
+            }
+            catch(CallAudioTooLargeException exception)
+            {
+                RadioResolveSpool.Entry oversized = exception.entry();
+                prefix.removeIf(entry -> entry.manifest().envelope().submissionId().equals(
+                    oversized.manifest().envelope().submissionId()));
+                discardOversizedCall(oversized, "its audio exceeds 25 MiB");
+            }
+            catch(UploadBatchTooLargeException exception)
+            {
+                if(prefix.size() > 1)
+                {
+                    prefix.removeLast();
+                    continue;
+                }
+
+                RadioResolveSpool.Entry oversized = prefix.getFirst();
+                discardOversizedCall(oversized, "its multipart upload exceeds 32 MiB");
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private void discardOversizedCall(RadioResolveSpool.Entry entry, String reason) throws IOException
+    {
+        mSpool.remove(entry);
+        incrementErrorAudioCount();
+        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+        mLog.error("RadioResolve v3 discarded call {} because {}",
+            entry.manifest().envelope().submissionId(), reason);
+    }
+
+    /**
+     * Prioritizes the oldest call that can still enter Live, then resumes the durable backlog. Within the fresh lane,
+     * a held or retry-delayed call remains an ordering barrier so later speech cannot play first.
+     */
+    List<RadioResolveSpool.Entry> nextUploadBatch(long now) throws IOException
+    {
+        return nextUploadBatch(now, mCallsPerUpload, MAXIMUM_UPLOAD_BYTES);
+    }
+
+    List<RadioResolveSpool.Entry> nextUploadBatch(long now, int maximumEntries, long maximumBytes)
+        throws IOException
+    {
+        for(RadioResolveSpool.Entry candidate : mSpool.heldEntries())
+        {
+            RadioResolveCallEnvelope envelope = candidate.manifest().envelope();
+
+            if(envelope.isReady())
+            {
+                continue;
+            }
+
+            RadioResolveCallEnvelope updated = applyVerifiedPlacements(envelope,
+                candidate.manifest().holdContext());
+
+            if(updated != envelope && updated.isReady())
+            {
+                mSpool.updateEnvelope(candidate, updated);
+            }
+            else if(now >= candidate.manifest().metadataDeadlineMs())
+            {
+                mSpool.remove(candidate);
+                incrementAgedOffAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+                mLog.info("RadioResolve v3 dropped call {} after waiting two minutes for verified site identity",
+                    envelope.submissionId());
+            }
+        }
+
+        return mSpool.uploadBatch(now, LIVE_UPLOAD_PRIORITY_WINDOW_MILLISECONDS, maximumEntries, maximumBytes);
+    }
+
+    private void handleUploadResponse(List<RadioResolveSpool.Entry> entries, HttpResponse<String> response,
+                                      Throwable throwable)
+    {
+        try
+        {
+            if(throwable != null)
+            {
+                retry(entries, "temporary batch upload failure");
+                return;
+            }
+
+            int status = response.statusCode();
+
+            if(status >= 200 && status < 300)
+            {
+                recordConnectionSuccess();
+                applyBatchUploadResponse(entries, status, response.body());
+            }
+            else if(status == 401 || status == 403)
+            {
+                setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.error("RadioResolve v3 upload rejected: invalid API key or access denied");
+            }
+            else
+            {
+                //Only a matched per-call result can discard durable data. A whole-request error has an uncertain
+                //per-call outcome, including when a proxy replaces the server response.
+                setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+                retry(entries, "unexpected batch HTTP " + status);
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            incrementErrorAudioCount();
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+            mLog.warn("Unable to update the durable RadioResolve spool: {}", safeMessage(exception));
+        }
+        finally
+        {
+            try
+            {
+                int evicted = mSpool.unprotectAll(entries);
+
+                if(evicted > 0)
+                {
+                    for(int index = 0; index < evicted; index++)
+                    {
+                        incrementAgedOffAudioCount();
+                    }
+
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                    mLog.warn("RadioResolve v3 evicted {} oldest queued call(s) after an active upload released " +
+                        "the spool capacity", evicted);
+                }
+            }
+            catch(IOException exception)
+            {
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to release RadioResolve spool upload ownership: {}", safeMessage(exception));
+            }
+
+            mUploadInFlight.set(false);
+            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
+            enqueueImmediateQueuePass();
+        }
+    }
+
+    /** Continues draining a backlog without waiting for the fixed-delay maintenance pass. */
+    private void enqueueImmediateQueuePass()
+    {
+        if(!mRunning || mCallWorker.isShutdown())
+        {
+            return;
+        }
+
+        try
+        {
+            //The same single-thread worker owns periodic and response-triggered passes, preserving serialized queue
+            //selection while the in-flight flag continues to enforce one HTTP request at a time.
+            mCallWorker.execute(new RecordingProcessor());
+        }
+        catch(RejectedExecutionException exception)
+        {
+            if(mRunning)
+            {
+                mLog.warn("Unable to schedule the next RadioResolve queue pass: {}", safeMessage(exception));
+            }
+        }
+    }
+
+    /** Applies only exact index/submission acknowledgements; every missing or uncertain item remains durable. */
+    void applyBatchUploadResponse(List<RadioResolveSpool.Entry> entries, int status, String responseBody)
+    {
+        List<String> submissionIds = entries.stream()
+            .map(entry -> entry.manifest().envelope().submissionId()).toList();
+        BatchResponse batchResponse = classifyBatchResponse(submissionIds, status, responseBody);
+
+        if(!batchResponse.valid())
+        {
+            setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
+        }
+
+        int retryCount = 0;
+        List<AcknowledgedUpload> acknowledged = new ArrayList<>();
+
+        for(int index = 0; index < entries.size(); index++)
+        {
+            RadioResolveSpool.Entry entry = entries.get(index);
+            BatchUploadDecision decision = batchResponse.decisions().get(index);
+
+            try
+            {
+                if(decision.disposition() != UploadDisposition.RETRY)
+                {
+                    acknowledged.add(new AcknowledgedUpload(entry, decision));
+                }
+                else
+                {
+                    retry(entry);
+                    retryCount++;
+                }
+            }
+            catch(IOException exception)
+            {
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to update RadioResolve spool entry {}: {}", decision.submissionId(),
+                    safeMessage(exception));
+            }
+        }
+
+        if(!acknowledged.isEmpty())
+        {
+            try
+            {
+                mSpool.removeAll(acknowledged.stream().map(AcknowledgedUpload::entry).toList());
+            }
+            catch(IOException exception)
+            {
+                //Every acknowledged submission remains safe to replay with the same immutable UUID if a file-system
+                //crash or deletion failure lets a durable file reappear; the server will return the same outcome.
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to remove one or more acknowledged RadioResolve spool entries: {}",
+                    safeMessage(exception));
+            }
+
+            for(AcknowledgedUpload upload : acknowledged)
+            {
+                BatchUploadDecision decision = upload.decision();
+
+                if(decision.disposition() == UploadDisposition.ACCEPTED)
+                {
+                    incrementStreamedAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
+                }
+                else
+                {
+                    incrementErrorAudioCount();
+                    broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+
+                    if(decision.httpStatus() == 410 || decision.httpStatus() == 422)
+                    {
+                        incrementAgedOffAudioCount();
+                        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                    }
+
+                    mLog.error("RadioResolve v3 permanently rejected call {} with HTTP {}",
+                        decision.submissionId(), decision.httpStatus());
+                }
+            }
+        }
+
+        if(retryCount > 0)
+        {
+            mLog.info("RadioResolve v3 retained {} of {} batched call(s) for retry", retryCount, entries.size());
+        }
+    }
+
+    private void retry(List<RadioResolveSpool.Entry> entries, String reason)
+    {
+        int retried = 0;
+
+        for(RadioResolveSpool.Entry entry : entries)
+        {
+            try
+            {
+                retry(entry);
+                retried++;
+            }
+            catch(IOException exception)
+            {
+                incrementErrorAudioCount();
+                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+                mLog.warn("Unable to retain RadioResolve call {} for retry: {}",
+                    entry.manifest().envelope().submissionId(), safeMessage(exception));
+            }
+        }
+
+        if(retried > 0)
+        {
+            mLog.info("RadioResolve v3 will retry {} batched call(s) [{}]", retried, reason);
+        }
+    }
+
+    private void retry(RadioResolveSpool.Entry entry) throws IOException
+    {
+        int attempts = entry.manifest().attemptCount();
+        long delay = RETRY_BACKOFF_MS[Math.min(attempts, RETRY_BACKOFF_MS.length - 1)];
+        mSpool.retry(entry, System.currentTimeMillis() + delay);
+        incrementErrorAudioCount();
+        broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
+    }
+
+    static BatchResponse classifyBatchResponse(List<String> submissionIds, int status, String responseBody)
+    {
+        List<BatchUploadDecision> retry = submissionIds.stream()
+            .map(submissionId -> new BatchUploadDecision(submissionId, status, UploadDisposition.RETRY)).toList();
+
+        if(status < 200 || status >= 300 || responseBody == null || responseBody.isBlank())
+        {
+            return new BatchResponse(retry, false);
+        }
+
+        try
+        {
+            JsonElement parsed = JsonParser.parseString(responseBody);
+
+            if(!parsed.isJsonObject())
+            {
+                return new BatchResponse(retry, false);
+            }
+
+            JsonObject root = parsed.getAsJsonObject();
+            JsonObject data = root.has("data") && root.get("data").isJsonObject() ?
+                root.getAsJsonObject("data") : null;
+            JsonArray results = data != null && data.has("results") && data.get("results").isJsonArray() ?
+                data.getAsJsonArray("results") : null;
+
+            if(results == null)
+            {
+                return new BatchResponse(retry, false);
+            }
+
+            List<BatchUploadDecision> decisions = new ArrayList<>(submissionIds.size());
+
+            for(int index = 0; index < submissionIds.size(); index++)
+            {
+                String submissionId = submissionIds.get(index);
+                JsonElement resultElement = index < results.size() ? results.get(index) : null;
+                JsonObject result = resultElement != null && resultElement.isJsonObject() ?
+                    resultElement.getAsJsonObject() : null;
+                Integer resultIndex = exactResultInteger(result, "index");
+                Integer resultStatus = result != null ? exactResultInteger(result, "http_status") : null;
+                String resultSubmissionId = result != null && result.has("submission_id") &&
+                    result.get("submission_id").isJsonPrimitive() ?
+                    result.get("submission_id").getAsString() : null;
+
+                if(resultIndex == null || resultIndex != index || resultStatus == null ||
+                    !submissionId.equalsIgnoreCase(resultSubmissionId))
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, status, UploadDisposition.RETRY));
+                }
+                else if(resultStatus >= 200 && resultStatus < 300)
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus,
+                        UploadDisposition.ACCEPTED));
+                }
+                else if(isPermanentCallRejectionStatus(resultStatus))
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus,
+                        UploadDisposition.TERMINAL_REJECTION));
+                }
+                else
+                {
+                    decisions.add(new BatchUploadDecision(submissionId, resultStatus, UploadDisposition.RETRY));
+                }
+            }
+
+            return new BatchResponse(List.copyOf(decisions), true);
+        }
+        catch(RuntimeException exception)
+        {
+            return new BatchResponse(retry, false);
+        }
+    }
+
+    private static Integer exactResultInteger(JsonObject result, String name)
+    {
+        if(result == null || !result.has(name) || !result.get(name).isJsonPrimitive() ||
+            !result.getAsJsonPrimitive(name).isNumber())
+        {
+            return null;
+        }
+
+        String value = result.get(name).getAsString();
+
+        if(!value.matches("0|[1-9][0-9]*"))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Integer.valueOf(value);
+        }
+        catch(NumberFormatException exception)
+        {
+            return null;
+        }
+    }
+
+    static boolean isPermanentCallRejectionStatus(int status)
+    {
+        return status == 400 || status == 409 || status == 410 || status == 413 || status == 415 ||
+            status == 422;
+    }
+
+    enum UploadDisposition
+    {
+        ACCEPTED,
+        TERMINAL_REJECTION,
+        RETRY
+    }
+
+    record BatchUploadDecision(String submissionId, int httpStatus, UploadDisposition disposition)
+    {
+    }
+
+    record BatchResponse(List<BatchUploadDecision> decisions, boolean valid)
+    {
+    }
+
+    record PreparedUpload(List<RadioResolveSpool.Entry> entries, HttpRequest request)
+    {
+    }
+
+    private static class UploadBatchTooLargeException extends IOException
+    {
+    }
+
+    private static class CallAudioTooLargeException extends IOException
+    {
+        private final RadioResolveSpool.Entry mEntry;
+
+        private CallAudioTooLargeException(RadioResolveSpool.Entry entry)
+        {
+            mEntry = entry;
+        }
+
+        private RadioResolveSpool.Entry entry()
+        {
+            return mEntry;
+        }
+    }
+
+    private void sendSiteMetadata(SiteMetadataEvent event, String identityKey, String hash, long observedAt,
+                                  RadioResolveClockSynchronizer.ClockProof clockProof,
+                                  List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+        try
+        {
+            JsonObject payload = createSiteMetadataPayload(event, observedAt, clockProof.offsetMilliseconds(),
+                frequencyEvidence);
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(createUri(getBroadcastConfiguration().getHost(), RF_STATE_PATH))
+                .uri(createUri(getBroadcastConfiguration().getHost(), METADATA_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + getBroadcastConfiguration().getApiKey())
                 .header(HttpHeaders.CONTENT_TYPE, "application/json")
-                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
+                .header(HttpHeaders.USER_AGENT, AGENT_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
                 .build();
 
@@ -268,320 +1334,78 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
             if(response.statusCode() >= 200 && response.statusCode() < 300)
             {
-                markMetadataSent(event.receiverContext().radioResolveId(), hash, observedAt);
-                setBroadcastState(BroadcastState.CONNECTED);
+                synchronized(mMetadataStates)
+                {
+                    MetadataState state = mMetadataStates.computeIfAbsent(identityKey,
+                        ignored -> new MetadataState());
+                    state.lastSuccessfulHash = hash;
+                    state.lastSuccessfulAtMs = System.currentTimeMillis();
+                }
+                recordConnectionSuccess();
             }
             else if(response.statusCode() == 401 || response.statusCode() == 403)
             {
                 setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
-                mLog.warn("RadioResolve site metadata rejected: invalid API key or access denied");
+                mLog.warn("RadioResolve v3 metadata rejected: invalid API key or access denied");
             }
             else
             {
                 setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-                mLog.warn("RadioResolve site metadata rejected: HTTP {}", response.statusCode());
+                mLog.warn("RadioResolve v3 metadata rejected: HTTP {}", response.statusCode());
             }
         }
-        catch(Exception e)
+        catch(Exception exception)
         {
             setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-            mLog.warn("RadioResolve site metadata failed: {}", safeMessage(e));
+            mLog.warn("RadioResolve v3 metadata upload failed: {}", safeMessage(exception));
         }
     }
 
-    private void markMetadataSent(String radioResolveId, String hash, long observedAt)
+    static HttpRequest createUploadRequest(RadioResolveConfiguration configuration,
+                                           List<RadioResolveSpool.Entry> entries) throws IOException
     {
-        synchronized(mMetadataStateByRadioResolveId)
+        if(entries == null || entries.isEmpty() || entries.size() > MAXIMUM_CALLS_PER_UPLOAD)
         {
-            MetadataState state = mMetadataStateByRadioResolveId.computeIfAbsent(radioResolveId,
-                ignored -> new MetadataState());
-            state.mLastSuccessfulHash = hash;
-            state.mLastSuccessfulEpochMilliseconds = observedAt;
-        }
-    }
-
-    private boolean connected()
-    {
-        if(getBroadcastState() == BroadcastState.INVALID_CREDENTIALS)
-        {
-            return false;
+            throw new IOException("RadioResolve upload batch must contain between one and " +
+                MAXIMUM_CALLS_PER_UPLOAD + " calls");
         }
 
-        if(getBroadcastState() != BroadcastState.CONNECTED &&
-            (System.currentTimeMillis() - mLastConnectionAttempt > mConnectionAttemptInterval))
+        JsonObject batch = new JsonObject();
+        batch.addProperty("schema_version", 3);
+        JsonArray items = new JsonArray();
+        RadioResolveBuilder body = new RadioResolveBuilder();
+
+        for(int index = 0; index < entries.size(); index++)
         {
-            setBroadcastState(BroadcastState.CONNECTING);
-            mServerReachable = testConnection(getBroadcastConfiguration());
-            setBroadcastState(mServerReachable ? BroadcastState.CONNECTED : BroadcastState.ERROR);
-            mLastConnectionAttempt = System.currentTimeMillis();
-        }
+            RadioResolveSpool.Entry entry = entries.get(index);
+            Path audioPath = entry != null ? entry.audioPath() : null;
 
-        return mServerReachable;
-    }
-
-    private boolean isValid(AudioRecording audioRecording)
-    {
-        return audioRecording != null && System.currentTimeMillis() - audioRecording.getStartTime() <=
-            getBroadcastConfiguration().getMaximumRecordingAge();
-    }
-
-    private void processRecordingQueue()
-    {
-        ageOffInvalidRecordings();
-        int maximumConcurrentUploads = getBroadcastConfiguration().getConcurrentUploads();
-
-        while(connected() && mInFlightUploads.get() < maximumConcurrentUploads)
-        {
-            PendingUpload pendingUpload = getNextReadyUpload();
-
-            if(pendingUpload == null)
+            if(audioPath == null || !Files.isRegularFile(audioPath))
             {
-                return;
+                throw new FileNotFoundException(String.valueOf(audioPath));
             }
 
-            AudioRecording audioRecording = pendingUpload.getAudioRecording();
-            String radioResolveId = getConfigurationIdentifier(audioRecording, Form.RADIORESOLVE_ID);
-
-            if(radioResolveId == null || radioResolveId.isBlank())
+            if(Files.size(audioPath) > MAXIMUM_CALL_AUDIO_BYTES)
             {
-                warnMissingRadioResolveIdSkipped(audioRecording);
-                audioRecording.removePendingReplay();
-                incrementAgedOffAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-                continue;
+                throw new CallAudioTooLargeException(entry);
             }
 
-            if(!isValid(audioRecording) || audioRecording.getRecordingLength() <= 0)
-            {
-                audioRecording.removePendingReplay();
-                continue;
-            }
-
-            try
-            {
-                HttpRequest request = createUploadRequest(getBroadcastConfiguration(), audioRecording, mAliasModel);
-                mInFlightUploads.incrementAndGet();
-                mHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                    .whenComplete((response, throwable) -> {
-                        try
-                        {
-                            handleUploadResponse(pendingUpload, response, throwable);
-                        }
-                        finally
-                        {
-                            mInFlightUploads.decrementAndGet();
-                        }
-                    });
-            }
-            catch(FileNotFoundException fnfe)
-            {
-                mLog.error("RadioResolve upload file not found [{}]", audioRecording.getPath());
-                incrementErrorAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                audioRecording.removePendingReplay();
-            }
-            catch(Exception e)
-            {
-                incrementErrorAudioCount();
-                broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-                retryOrRemove(pendingUpload, safeMessage(e));
-            }
-        }
-    }
-
-    private void warnMissingRadioResolveIdSkipped(AudioRecording audioRecording)
-    {
-        mMissingRadioResolveIdSkipCount++;
-        long now = System.currentTimeMillis();
-
-        if(now - mLastMissingRadioResolveIdWarningTimestamp >=
-            MISSING_RADIORESOLVE_ID_WARNING_INTERVAL_MILLISECONDS)
-        {
-            mLog.warn("RadioResolve skipped {} call upload(s) missing a RadioResolve ID. " +
-                    "Last recording identifiers: {}", mMissingRadioResolveIdSkipCount,
-                describeIdentifiers(audioRecording));
-            mMissingRadioResolveIdSkipCount = 0;
-            mLastMissingRadioResolveIdWarningTimestamp = now;
-        }
-    }
-
-    private String describeIdentifiers(AudioRecording audioRecording)
-    {
-        if(audioRecording == null || !audioRecording.hasIdentifierCollection())
-        {
-            return "none";
+            String audioPart = "audio-" + index;
+            JsonObject item = new JsonObject();
+            item.addProperty("audio_part", audioPart);
+            item.add("call", RadioResolveJson.GSON.toJsonTree(entry.manifest().envelope()));
+            items.add(item);
+            String filename = audioPath.getFileName() != null ? audioPath.getFileName().toString() : "call.mp3";
+            body.addFile(audioPart, audioPath, filename);
         }
 
-        return audioRecording.getIdentifierCollection().getIdentifiers().toString();
-    }
+        batch.add("items", items);
+        body.addJsonPart("batch", batch.toString());
+        HttpRequest.BodyPublisher publisher = body.build();
 
-    private void handleUploadResponse(PendingUpload pendingUpload, HttpResponse<String> response, Throwable throwable)
-    {
-        if(throwable != null)
+        if(publisher.contentLength() < 0L || publisher.contentLength() > MAXIMUM_UPLOAD_BYTES)
         {
-            incrementErrorAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-            retryOrRemove(pendingUpload, "temporary upload failure");
-            return;
-        }
-
-        int statusCode = response.statusCode();
-
-        if(statusCode >= 200 && statusCode < 300)
-        {
-            setBroadcastState(BroadcastState.CONNECTED);
-            incrementStreamedAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_STREAMED_COUNT_CHANGE));
-            pendingUpload.getAudioRecording().removePendingReplay();
-        }
-        else if(statusCode == 401 || statusCode == 403)
-        {
-            setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
-            incrementErrorAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-            pendingUpload.getAudioRecording().removePendingReplay();
-            mLog.error("RadioResolve upload rejected: invalid API key or access denied");
-        }
-        else if(isRetryableStatus(statusCode))
-        {
-            setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-            incrementErrorAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-            retryOrRemove(pendingUpload, "HTTP " + statusCode);
-        }
-        else
-        {
-            setBroadcastState(BroadcastState.TEMPORARY_BROADCAST_ERROR);
-            incrementErrorAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_ERROR_COUNT_CHANGE));
-            pendingUpload.getAudioRecording().removePendingReplay();
-            mLog.error("RadioResolve upload failed: HTTP {}", statusCode);
-        }
-    }
-
-    private boolean isRetryableStatus(int statusCode)
-    {
-        return statusCode == 408 || statusCode == 429 || statusCode == 500 || statusCode == 502 ||
-            statusCode == 503 || statusCode == 504;
-    }
-
-    private PendingUpload getNextReadyUpload()
-    {
-        PendingUpload pendingUpload = null;
-        long now = System.currentTimeMillis();
-
-        synchronized(mQueueLock)
-        {
-            int size = mAudioRecordingQueue.size();
-
-            for(int x = 0; x < size; x++)
-            {
-                PendingUpload candidate = mAudioRecordingQueue.poll();
-
-                if(candidate == null)
-                {
-                    break;
-                }
-
-                if(pendingUpload == null && candidate.getNextAttemptTime() <= now)
-                {
-                    pendingUpload = candidate;
-                }
-                else
-                {
-                    mAudioRecordingQueue.offer(candidate);
-                }
-            }
-        }
-
-        if(pendingUpload != null)
-        {
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-        }
-
-        return pendingUpload;
-    }
-
-    private void retryOrRemove(PendingUpload pendingUpload, String reason)
-    {
-        if(mRunning && isValid(pendingUpload.getAudioRecording()))
-        {
-            pendingUpload.retry();
-
-            synchronized(mQueueLock)
-            {
-                mAudioRecordingQueue.offer(pendingUpload);
-            }
-
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-        }
-        else
-        {
-            pendingUpload.getAudioRecording().removePendingReplay();
-            incrementAgedOffAudioCount();
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-            mLog.info("RadioResolve upload aged off [{}]", reason);
-        }
-    }
-
-    private void ageOffInvalidRecordings()
-    {
-        boolean changed = false;
-
-        synchronized(mQueueLock)
-        {
-            int size = mAudioRecordingQueue.size();
-
-            for(int x = 0; x < size; x++)
-            {
-                PendingUpload pendingUpload = mAudioRecordingQueue.poll();
-
-                if(pendingUpload == null)
-                {
-                    break;
-                }
-
-                if(isValid(pendingUpload.getAudioRecording()))
-                {
-                    mAudioRecordingQueue.offer(pendingUpload);
-                }
-                else
-                {
-                    pendingUpload.getAudioRecording().removePendingReplay();
-                    incrementAgedOffAudioCount();
-                    changed = true;
-                }
-            }
-        }
-
-        if(changed)
-        {
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
-            broadcast(new BroadcastEvent(this, BroadcastEvent.Event.BROADCASTER_QUEUE_CHANGE));
-        }
-    }
-
-    static HttpRequest createUploadRequest(RadioResolveConfiguration configuration, AudioRecording audioRecording,
-                                           AliasModel aliasModel) throws IOException
-    {
-        Path path = audioRecording.getPath();
-
-        if(!Files.exists(path))
-        {
-            throw new FileNotFoundException(path.toString());
-        }
-
-        String filename = path.getFileName() != null ? path.getFileName().toString() : path.toString();
-        JsonObject payload = createCallPayload(configuration, audioRecording, aliasModel);
-        RadioResolveBuilder bodyBuilder = new RadioResolveBuilder();
-        bodyBuilder.addFile(path, filename);
-
-        for(String key: payload.keySet())
-        {
-            if(!payload.get(key).isJsonNull())
-            {
-                bodyBuilder.addPart(key, payload.get(key).getAsString());
-            }
+            throw new UploadBatchTooLargeException();
         }
 
         return HttpRequest.newBuilder()
@@ -589,383 +1413,464 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             .version(HttpClient.Version.HTTP_1_1)
             .timeout(CALL_UPLOAD_TIMEOUT)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
-            .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-            .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
-            .POST(bodyBuilder.build())
+            .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + body.getBoundary())
+            .header(HttpHeaders.USER_AGENT, AGENT_VERSION)
+            .POST(publisher)
             .build();
     }
 
-    static JsonObject createCallPayload(RadioResolveConfiguration configuration, AudioRecording audioRecording,
-                                        AliasModel aliasModel)
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt)
     {
-        Path path = audioRecording.getPath();
-        String filename = path.getFileName() != null ? path.getFileName().toString() : path.toString();
+        return createSiteMetadataPayload(event, observedAt, 0L);
+    }
+
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
+                                                long serverClockOffsetMilliseconds)
+    {
+        return createSiteMetadataPayload(event, observedAt, serverClockOffsetMilliseconds, List.of());
+    }
+
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+        return createSiteMetadataPayload(event, observedAt, 0L, frequencyEvidence);
+    }
+
+    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, long observedAt,
+                                                long serverClockOffsetMilliseconds,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+        P25NetworkConfigurationSnapshot snapshot = event.snapshot();
         JsonObject root = new JsonObject();
-        root.addProperty("call_time_ms", audioRecording.getStartTime());
-        root.addProperty("duration_sec", formatSeconds(audioRecording.getRecordingLength()));
-        root.addProperty("target_id", getTo(audioRecording, aliasModel));
-        root.addProperty("target_type", getTargetType(audioRecording));
-        root.addProperty("source_id", getFrom(audioRecording));
-        root.addProperty("frequency_mhz", formatFrequencyMHz(getFrequency(audioRecording)));
-        root.addProperty("system_label", getConfigurationIdentifier(audioRecording, Form.SYSTEM));
-        root.addProperty("site_label", getConfigurationIdentifier(audioRecording, Form.SITE));
-        root.addProperty("radres_guid", getConfigurationIdentifier(audioRecording, Form.RADIORESOLVE_ID));
-        root.addProperty("p25_nac", getP25NetworkIdentifier(audioRecording, Form.NETWORK_ACCESS_CODE, 3));
-        root.addProperty("logical_channel", getDecoderIdentifier(audioRecording, Form.CHANNEL_NAME));
-        root.addProperty("audio_protocol", getConfigurationIdentifier(audioRecording, Form.DECODER_TYPE));
-        root.addProperty("talkgroup_label", getTalkgroupLabel(audioRecording, aliasModel));
-        root.addProperty("talkgroup_group", getTalkgroupGroup(audioRecording, aliasModel));
-        root.addProperty("talker_alias", getTalkerAlias(audioRecording));
-        addEncryption(root, audioRecording);
-        root.addProperty("node_name", getNodeName(configuration));
-        root.addProperty("node_timezone", getNodeTimezone(configuration));
+        root.addProperty("schema_version", 3);
         root.addProperty("agent_version", AGENT_VERSION);
-        root.addProperty("original_filename", filename);
+        root.addProperty("observed_at_ms", adjustedObservationTime(observedAt, serverClockOffsetMilliseconds));
+        root.addProperty("observed_control_frequency_hz", event.sourceFrequency());
+        JsonObject modes = new JsonObject();
+
+        if(snapshot.network() != null)
+        {
+            P25NetworkConfigurationSnapshot.Network network = snapshot.network();
+            root.add("system", RadioResolveJson.GSON.toJsonTree(new MetadataSystem("p25", network.wacn(),
+                network.system(), network.nac(), network.lra())));
+            modes.addProperty("system", "merge");
+        }
+
+        if(snapshot.currentSite() != null)
+        {
+            P25NetworkConfigurationSnapshot.CurrentSite site = snapshot.currentSite();
+            root.add("site", RadioResolveJson.GSON.toJsonTree(new MetadataSite(site.system(), site.nac(),
+                site.rfss(), site.site(), site.lra(), site.activeRfssNetworkConnection())));
+            modes.addProperty("site", "merge");
+        }
+
+        addMergeObservation(root, modes, "channels", metadataChannels(snapshot.channels(), frequencyEvidence,
+            observedAt, serverClockOffsetMilliseconds));
+        Integer servingSystem = snapshot.network() != null ? snapshot.network().system() : null;
+        addMergeObservation(root, modes, "neighbors", snapshot.neighborSites().stream()
+            .map(neighbor -> metadataNeighbor(neighbor, servingSystem, observedAt,
+                serverClockOffsetMilliseconds))
+            .filter(java.util.Objects::nonNull).toList());
+        addMergeObservation(root, modes, "bandplans", snapshot.frequencyBands().stream()
+            .map(band -> metadataBandplan(band, observedAt, serverClockOffsetMilliseconds))
+            .filter(java.util.Objects::nonNull).toList());
+        addMergeObservation(root, modes, "foreign_bandplans", snapshot.foreignSystemBands().stream()
+            .map(band -> metadataForeignBandplan(band, observedAt, serverClockOffsetMilliseconds))
+            .filter(java.util.Objects::nonNull).toList());
+
+        if(isTrustedMergeObservation(snapshot.activePatchesObservedAtMs(), observedAt))
+        {
+            root.add("active_patches", RadioResolveJson.GSON.toJsonTree(snapshot.patchGroups()));
+            root.addProperty("active_patches_observed_at_ms", adjustedObservationTime(
+                snapshot.activePatchesObservedAtMs(), serverClockOffsetMilliseconds));
+            modes.addProperty("active_patches", "complete_site_scope");
+        }
+
+        addMergeObservation(root, modes, "talker_aliases", snapshot.talkerAliases().stream()
+            .map(alias -> metadataTalkerAlias(alias, observedAt, serverClockOffsetMilliseconds))
+            .filter(java.util.Objects::nonNull).toList());
+
+        if(snapshot.siteStatus() != null)
+        {
+            root.add("site_status", RadioResolveJson.GSON.toJsonTree(snapshot.siteStatus().withoutVolatileTiming()));
+            modes.addProperty("site_status", "merge");
+        }
+
+        root.add("observation_modes", modes);
+
         return root;
     }
 
-    static JsonObject createSiteMetadataPayload(SiteMetadataEvent event, String hash,
-                                                RadioResolveConfiguration configuration, long observedAt)
+    /**
+     * Preserves the stable snapshot order and then appends grant-derived logical channels in deterministic order.
+     * The native channel descriptor is the canonical wire identity: two descriptors sharing one physical carrier
+     * remain separate observations, while repeated evidence for one descriptor contributes its strongest access mode.
+     */
+    private static List<MetadataChannel> metadataChannels(List<P25NetworkConfigurationSnapshot.Channel> channels,
+        List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence, long rootObservedAt,
+        long serverClockOffsetMilliseconds)
     {
-        JsonObject root = new JsonObject();
-        root.addProperty("schemaVersion", 1);
-        root.addProperty("agentVersion", AGENT_VERSION);
-        root.addProperty("observedAtEpochMilliseconds", observedAt);
-        root.addProperty("nodeName", getNodeName(configuration));
-        root.addProperty("timezone", getNodeTimezone(configuration));
-        root.addProperty("radresGuid", event.receiverContext().radioResolveId());
-        root.addProperty("decoder", event.snapshot().decoder());
-        root.addProperty("summaryHash", hash);
+        Map<String,MetadataChannel> byDescriptor = new LinkedHashMap<>();
 
-        JsonObject channelObject = new JsonObject();
-        channelObject.addProperty("name", event.receiverContext().channelName());
-        channelObject.addProperty("aliasList", event.receiverContext().aliasListName());
-        root.add("channel", channelObject);
-        root.add("network", GSON.toJsonTree(event.snapshot().network()));
-        root.add("currentSite", GSON.toJsonTree(event.snapshot().currentSite()));
-        root.add("channels", GSON.toJsonTree(event.snapshot().channels()));
-        root.add("neighborSites", GSON.toJsonTree(event.snapshot().neighborSites()));
-        root.add("frequencyBands", GSON.toJsonTree(event.snapshot().frequencyBands()));
-        root.add("patchGroups", GSON.toJsonTree(event.snapshot().patchGroups()));
-        return root;
+        List<P25NetworkConfigurationSnapshot.Channel> snapshotChannels = channels != null ? channels : List.of();
+
+        for(P25NetworkConfigurationSnapshot.Channel channel: snapshotChannels)
+        {
+            mergeMetadataChannel(byDescriptor,
+                metadataChannel(channel, rootObservedAt, serverClockOffsetMilliseconds));
+        }
+
+        if(frequencyEvidence != null && !frequencyEvidence.isEmpty())
+        {
+            frequencyEvidence.stream()
+                .map(evidence -> metadataChannel(evidence, rootObservedAt, serverClockOffsetMilliseconds))
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparing(MetadataChannel::channelDescriptor)
+                    .thenComparing(MetadataChannel::downlinkFrequencyHz)
+                    .thenComparing(MetadataChannel::role)
+                    .thenComparing(MetadataChannel::observedAtMs))
+                .forEach(channel -> mergeMetadataChannel(byDescriptor, channel));
+        }
+
+        return List.copyOf(byDescriptor.values());
     }
 
-    private static void addEncryption(JsonObject root, AudioRecording audioRecording)
+    private static void mergeMetadataChannel(Map<String,MetadataChannel> byDescriptor, MetadataChannel incoming)
     {
-        boolean encrypted = false;
-        Integer algorithm = null;
-        Integer key = null;
-
-        if(audioRecording.hasIdentifierCollection() &&
-            audioRecording.getIdentifierCollection().getEncryptionIdentifier() instanceof EncryptionKeyIdentifier eki)
+        if(incoming != null)
         {
-            EncryptionKey encryptionKey = eki.getValue();
-            encrypted = eki.isEncrypted();
-
-            if(encryptionKey != null)
-            {
-                algorithm = encryptionKey.getAlgorithm();
-                key = encryptionKey.getKey();
-            }
-        }
-
-        root.addProperty("encrypted", encrypted);
-
-        if(algorithm != null)
-        {
-            root.addProperty("encryption_alg_id", algorithm);
-        }
-
-        if(key != null)
-        {
-            root.addProperty("encryption_key_id", key);
+            byDescriptor.merge(incoming.channelDescriptor(), incoming, MetadataChannel::merge);
         }
     }
 
-    private static String getFrom(AudioRecording audioRecording)
+    private static void addMergeObservation(JsonObject root, JsonObject modes, String name, List<?> observations)
     {
-        if(audioRecording.hasIdentifierCollection())
+        if(observations != null && !observations.isEmpty())
         {
-            for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-            {
-                if(identifier instanceof RadioIdentifier radioIdentifier)
-                {
-                    return radioIdentifier.getValue().toString();
-                }
-            }
+            root.add(name, RadioResolveJson.GSON.toJsonTree(observations));
+            modes.addProperty(name, "merge");
         }
-
-        return "0";
     }
 
-    private static String getTo(AudioRecording audioRecording, AliasModel aliasModel)
+    private static boolean isTrustedMergeObservation(Long itemObservedAt, long rootObservedAt)
     {
-        if(!audioRecording.hasIdentifierCollection())
-        {
-            return "0";
-        }
-
-        Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-        if(identifier != null)
-        {
-            AliasList aliasList = aliasModel != null ? aliasModel.getAliasList(audioRecording.getIdentifierCollection()) : null;
-
-            if(aliasList != null)
-            {
-                List<Alias> aliases = aliasList.getAliases(identifier);
-                Optional<Alias> streamAs = aliases.stream()
-                    .filter(alias -> alias.getStreamTalkgroupAlias() != null)
-                    .findFirst();
-
-                if(streamAs.isPresent())
-                {
-                    return String.valueOf(streamAs.get().getStreamTalkgroupAlias().getValue());
-                }
-            }
-
-            if(identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
-            {
-                return patchGroupIdentifier.getValue().getPatchGroup().getValue().toString();
-            }
-            else if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
-            {
-                return talkgroupIdentifier.getValue().toString();
-            }
-            else if(identifier instanceof RadioIdentifier radioIdentifier)
-            {
-                return radioIdentifier.getValue().toString();
-            }
-        }
-
-        return "0";
+        return itemObservedAt != null && itemObservedAt > 0L &&
+            itemObservedAt >= rootObservedAt - METADATA_MAXIMUM_PAST_OBSERVATION_MILLISECONDS &&
+            itemObservedAt <= rootObservedAt + METADATA_MAXIMUM_FUTURE_OBSERVATION_MILLISECONDS;
     }
 
-    private static String getTargetType(AudioRecording audioRecording)
+    private static MetadataChannel metadataChannel(P25NetworkConfigurationSnapshot.Channel channel,
+                                                    long rootObservedAt, long serverClockOffsetMilliseconds)
     {
-        if(audioRecording.hasIdentifierCollection())
-        {
-            Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-            if(identifier instanceof PatchGroupIdentifier)
-            {
-                return "patch_group";
-            }
-            else if(identifier instanceof TalkgroupIdentifier)
-            {
-                return "talkgroup";
-            }
-            else if(identifier instanceof RadioIdentifier)
-            {
-                return "radio";
-            }
-        }
-
-        return null;
-    }
-
-    private static String getTalkerAlias(AudioRecording audioRecording)
-    {
-        if(audioRecording.hasIdentifierCollection())
-        {
-            for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
-            {
-                if(identifier instanceof TalkerAliasIdentifier talkerID && talkerID.isValid())
-                {
-                    return talkerID.getValue();
-                }
-            }
-        }
-
-        return "";
-    }
-
-    private static String getTalkgroupLabel(AudioRecording audioRecording, AliasModel aliasModel)
-    {
-        Alias alias = getFirstTargetAlias(audioRecording, aliasModel);
-        return alias != null ? alias.toString() : "";
-    }
-
-    private static String getTalkgroupGroup(AudioRecording audioRecording, AliasModel aliasModel)
-    {
-        Alias alias = getFirstTargetAlias(audioRecording, aliasModel);
-        return alias != null ? alias.getGroup() : "";
-    }
-
-    private static Alias getFirstTargetAlias(AudioRecording audioRecording, AliasModel aliasModel)
-    {
-        if(aliasModel == null || !audioRecording.hasIdentifierCollection())
+        if(channel == null || !isTrustedMergeObservation(channel.observedAtMs(), rootObservedAt) ||
+            channel.role() == null || !channel.role().matches("[a-z][a-z0-9_]{0,23}") ||
+            channel.descriptor() == null || channel.descriptor().isBlank() || channel.descriptor().length() > 64 ||
+            channel.downlink() == null || channel.downlink() <= 0L)
         {
             return null;
         }
 
-        AliasList aliasList = aliasModel.getAliasList(audioRecording.getIdentifierCollection());
-        Identifier identifier = audioRecording.getIdentifierCollection().getToIdentifier();
-
-        if(aliasList != null && identifier != null)
-        {
-            List<Alias> aliases = aliasList.getAliases(identifier);
-
-            if(!aliases.isEmpty())
-            {
-                return aliases.get(0);
-            }
-        }
-
-        return null;
+        return new MetadataChannel(channel.role(), channel.descriptor(), channel.downlink(),
+            positive(channel.uplink()), channel.tdma(), validTimeslots(channel.timeslots()),
+            boundedText(channel.callsign(), 32), adjustedObservationTime(channel.observedAtMs(),
+                serverClockOffsetMilliseconds));
     }
 
-    private static Long getFrequency(AudioRecording audioRecording)
+    private static MetadataChannel metadataChannel(RadioResolveP25FrequencyEvidenceTracker.Evidence evidence,
+                                                    long rootObservedAt, long serverClockOffsetMilliseconds)
     {
-        if(audioRecording.hasIdentifierCollection())
-        {
-            Identifier identifier = audioRecording.getIdentifierCollection().getIdentifier(IdentifierClass.CONFIGURATION,
-                Form.CHANNEL_FREQUENCY, Role.ANY);
-
-            if(identifier instanceof ConfigurationLongIdentifier configurationLongIdentifier)
-            {
-                return configurationLongIdentifier.getValue();
-            }
-        }
-
-        return null;
+        return evidence != null ? metadataChannel(new P25NetworkConfigurationSnapshot.Channel("traffic",
+            evidence.channelDescriptor(), evidence.frequencyHertz(), null, true, 2, null, evidence.observedAtMs()),
+            rootObservedAt, serverClockOffsetMilliseconds) : null;
     }
 
-    private static String getConfigurationIdentifier(AudioRecording audioRecording, Form form)
+    private static MetadataNeighbor metadataNeighbor(P25NetworkConfigurationSnapshot.NeighborSite neighbor,
+                                                      Integer servingSystem, long rootObservedAt,
+                                                      long serverClockOffsetMilliseconds)
     {
-        if(audioRecording.hasIdentifierCollection())
-        {
-            Identifier identifier = audioRecording.getIdentifierCollection()
-                .getIdentifier(IdentifierClass.CONFIGURATION, form, Role.ANY);
+        Integer system = neighbor != null && neighbor.system() != null ? neighbor.system() : servingSystem;
 
-            if(identifier != null && identifier.getValue() != null)
-            {
-                return identifier.getValue().toString();
-            }
+        if(neighbor == null || !isTrustedMergeObservation(neighbor.observedAtMs(), rootObservedAt) ||
+            !inRange(system, 0, 0xFFF) || !inRange(neighbor.rfss(), 0, 0xFF) ||
+            !inRange(neighbor.site(), 0, 0xFF))
+        {
+            return null;
         }
 
-        return null;
+        return new MetadataNeighbor(system, neighbor.nac(), neighbor.rfss(), neighbor.site(), neighbor.lra(),
+            boundedText(neighbor.channel(), 64), positive(neighbor.downlink()), positive(neighbor.uplink()),
+            boundedText(neighbor.status(), 64), adjustedObservationTime(neighbor.observedAtMs(),
+                serverClockOffsetMilliseconds));
     }
 
-    private static String getDecoderIdentifier(AudioRecording audioRecording, Form form)
+    private static MetadataBandplan metadataBandplan(P25NetworkConfigurationSnapshot.FrequencyBand band,
+                                                      long rootObservedAt,
+                                                      long serverClockOffsetMilliseconds)
     {
-        if(audioRecording.hasIdentifierCollection())
+        if(band == null || !isTrustedMergeObservation(band.observedAtMs(), rootObservedAt) ||
+            !inRange(band.band(), 0, 0xFFFF) || band.base() == null || band.base() <= 0L ||
+            band.spacing() == null || band.spacing() <= 0L || !inRange(band.timeslots(), 1, 8))
         {
-            for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(IdentifierClass.DECODER,
-                form))
+            return null;
+        }
+
+        return new MetadataBandplan(band.band(), band.tdma(), band.base(), positive(band.bandwidth()), band.spacing(),
+            band.transmitOffset(), band.timeslots(), adjustedObservationTime(band.observedAtMs(),
+                serverClockOffsetMilliseconds));
+    }
+
+    private static MetadataForeignBandplan metadataForeignBandplan(
+        P25NetworkConfigurationSnapshot.ForeignSystemBand band, long rootObservedAt,
+        long serverClockOffsetMilliseconds)
+    {
+        if(band == null || !isTrustedMergeObservation(band.observedAtMs(), rootObservedAt) ||
+            !inRange(band.wacn(), 0, 0xFFFFF) || !inRange(band.system(), 0, 0xFFF) ||
+            !inRange(band.band(), 0, 0xFFFF) || band.base() == null || band.base() <= 0L ||
+            band.spacing() == null || band.spacing() <= 0L)
+        {
+            return null;
+        }
+
+        Integer channelType = inRange(band.channelType(), 0, 0xFF) ? band.channelType() : null;
+        return new MetadataForeignBandplan(band.wacn(), band.system(), band.band(), channelType, band.base(),
+            band.spacing(), band.transmitOffset(), adjustedObservationTime(band.observedAtMs(),
+                serverClockOffsetMilliseconds));
+    }
+
+    private static MetadataTalkerAlias metadataTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias alias,
+                                                            long rootObservedAt,
+                                                            long serverClockOffsetMilliseconds)
+    {
+        String value = alias != null ? boundedText(alias.alias(), 255) : null;
+
+        if(alias == null || !isTrustedMergeObservation(alias.observedAtMs(), rootObservedAt) ||
+            !inRange(alias.radio(), 1, 0xFFFFFF) || value == null)
+        {
+            return null;
+        }
+
+        return new MetadataTalkerAlias(alias.radio(), value, adjustedObservationTime(alias.observedAtMs(),
+            serverClockOffsetMilliseconds));
+    }
+
+    private static long adjustedObservationTime(long observedAt, long serverClockOffsetMilliseconds)
+    {
+        long adjusted = Math.addExact(observedAt, serverClockOffsetMilliseconds);
+
+        if(adjusted <= 0L)
+        {
+            throw new IllegalArgumentException("RadioResolve metadata clock normalization produced an invalid time");
+        }
+
+        return adjusted;
+    }
+
+    private static Long positive(Long value)
+    {
+        return value != null && value > 0L ? value : null;
+    }
+
+    private static Integer positive(Integer value)
+    {
+        return value != null && value > 0 ? value : null;
+    }
+
+    private static Integer validTimeslots(Integer value)
+    {
+        return inRange(value, 1, 8) ? value : null;
+    }
+
+    private static <T> T firstNonNull(T first, T second)
+    {
+        return first != null ? first : second;
+    }
+
+    private static Boolean strongestBoolean(Boolean first, Boolean second)
+    {
+        if(Boolean.TRUE.equals(first) || Boolean.TRUE.equals(second))
+        {
+            return true;
+        }
+
+        return first != null || second != null ? false : null;
+    }
+
+    private static Integer maximum(Integer first, Integer second)
+    {
+        return first == null ? second : second == null ? first : Math.max(first, second);
+    }
+
+    private static Long maximum(Long first, Long second)
+    {
+        return first == null ? second : second == null ? first : Math.max(first, second);
+    }
+
+    private static boolean inRange(Integer value, int minimum, int maximum)
+    {
+        return value != null && value >= minimum && value <= maximum;
+    }
+
+    private static String boundedText(String value, int maximumLength)
+    {
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        String normalized = value.trim();
+        if(normalized.length() <= maximumLength)
+        {
+            return normalized;
+        }
+
+        int end = maximumLength;
+        if(end > 0 && Character.isHighSurrogate(normalized.charAt(end - 1)))
+        {
+            end--;
+        }
+        return normalized.substring(0, end);
+    }
+
+    boolean connected()
+    {
+        if(getBroadcastState() == BroadcastState.INVALID_CREDENTIALS)
+        {
+            return false;
+        }
+
+        synchronized(mConnectionLock)
+        {
+            long now = System.nanoTime();
+            boolean attemptDue = mLastConnectionAttemptNanos == 0L || now < mLastConnectionAttemptNanos ||
+                now - mLastConnectionAttemptNanos >= TimeUnit.MILLISECONDS.toNanos(mConnectionAttemptInterval);
+
+            if((!mServerReachable || mClockSynchronizer.needsRefresh()) && attemptDue)
             {
-                if(identifier.getValue() != null)
+                refreshConnectionAndClockLocked();
+            }
+
+            return mServerReachable && mClockSynchronizer.currentProof() != null;
+        }
+    }
+
+    /** A successful authenticated v3 request restores reachability; clock proof remains independently bounded. */
+    void recordConnectionSuccess()
+    {
+        mServerReachable = true;
+        setBroadcastState(BroadcastState.CONNECTED);
+    }
+
+    /**
+     * Requires an internally consistent native site identity observed on the exact advertised control frequency.
+     * This is evaluated only by the asynchronous metadata worker, never by the decoder callback.
+     */
+    static boolean hasVerifiedSiteProof(SiteMetadataEvent event)
+    {
+        return event != null && event.receiverContext() != null && P25SiteIdentity.from(event.snapshot()) != null &&
+            event.isSourceAdvertisedControlChannel();
+    }
+
+    private void ensureSpoolOpen() throws IOException
+    {
+        if(!mSpoolOpen)
+        {
+            synchronized(mSpoolOpenLock)
+            {
+                if(!mSpoolOpen)
                 {
-                    return identifier.getValue().toString();
+                    RadioResolveSpool.RecoveryReport recovery = mSpool.open();
+                    mSpoolOpen = true;
+
+                    if(recovery.hasCleanup())
+                    {
+                        for(int index = 0; index < recovery.discardedCallEntries(); index++)
+                        {
+                            incrementAgedOffAudioCount();
+                        }
+
+                        if(recovery.discardedCallEntries() > 0)
+                        {
+                            broadcast(new BroadcastEvent(this,
+                                BroadcastEvent.Event.BROADCASTER_AGED_OFF_COUNT_CHANGE));
+                        }
+
+                        mLog.warn("RadioResolve v3 spool recovery removed {} corrupt entries, {} orphan audio " +
+                                "files, {} incomplete temporary files, {} expired entries, and {} entries over " +
+                                "capacity", recovery.corruptEntries(), recovery.orphanFiles(),
+                            recovery.temporaryFiles(), recovery.expiredEntries(), recovery.capacityEvictions());
+                    }
                 }
             }
         }
-
-        return null;
     }
 
-    private static String getP25NetworkIdentifier(AudioRecording audioRecording, Form form, int width)
+    private void pruneVerifiedSites(long now)
     {
-        if(audioRecording.hasIdentifierCollection())
-        {
-            for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(form))
-            {
-                if(identifier.getValue() instanceof Integer integer)
-                {
-                    return String.format(Locale.US, "%0" + width + "X", integer);
-                }
-                else if(identifier.getValue() != null)
-                {
-                    return identifier.getValue().toString();
-                }
-            }
-        }
-
-        return null;
+        mVerifiedSites.entrySet().removeIf(entry ->
+            now - entry.getValue().observedAtMs() > VERIFIED_SITE_RETENTION_MILLISECONDS);
     }
 
-    private static String formatSeconds(long milliseconds)
+    private static String metadataIdentityKey(P25NetworkConfigurationSnapshot snapshot)
     {
-        return String.format(Locale.US, "%.3f", milliseconds / 1000.0d);
+        P25SiteIdentity identity = P25SiteIdentity.from(snapshot);
+        return identity != null ? identity.wacn() + ":" + identity.system() + ":" + identity.rfss() + ":" +
+            identity.site() : "unknown";
     }
 
-    private static String formatFrequencyMHz(Long frequency)
-    {
-        if(frequency != null && frequency > 0)
-        {
-            return String.format(Locale.US, "%.5f", frequency / 1E6d);
-        }
-
-        return null;
-    }
-
-    private static String getNodeName(RadioResolveConfiguration configuration)
-    {
-        String nodeName = configuration.getNodeName();
-        return nodeName != null && !nodeName.isBlank() ? nodeName : RadioResolveConfiguration.getDefaultNodeName();
-    }
-
-    private static String getNodeTimezone(RadioResolveConfiguration configuration)
-    {
-        String timezone = configuration.getNodeTimezone();
-        return timezone != null && !timezone.isBlank() ? timezone : RadioResolveConfiguration.getDefaultNodeTimezone();
-    }
-
-    private static String hash(P25NetworkConfigurationSnapshot snapshot)
+    static String hash(P25NetworkConfigurationSnapshot snapshot,
+                       List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
     {
         try
         {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            P25NetworkConfigurationSnapshot summary = new P25NetworkConfigurationSnapshot(snapshot.decoder(),
+            P25NetworkConfigurationSnapshot stable = new P25NetworkConfigurationSnapshot(snapshot.decoder(),
                 snapshot.network(), snapshot.currentSite(), snapshot.channels(), snapshot.neighborSites(),
-                snapshot.frequencyBands(), snapshot.patchGroups(), List.of(), null, snapshot.foreignSystemBands());
-            byte[] hash = digest.digest(GSON.toJson(summary).getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-
-            for(byte b: hash)
+                snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.talkerAliases(),
+                snapshot.siteStatus() != null ? snapshot.siteStatus().withoutVolatileTiming() : null,
+                snapshot.foreignSystemBands(), snapshot.activePatchesObservedAtMs());
+            MetadataHashInput input = new MetadataHashInput(stable,
+                frequencyEvidence != null ? List.copyOf(frequencyEvidence) : List.of());
+            byte[] value = digest.digest(RadioResolveJson.GSON.toJson(input).getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(value.length * 2);
+            for(byte item : value)
             {
-                sb.append(String.format("%02x", b));
+                hex.append(String.format("%02x", item));
             }
-
-            return sb.toString();
+            return hex.toString();
         }
-        catch(Exception e)
+        catch(Exception exception)
         {
-            throw new IllegalStateException("Could not hash RadioResolve site metadata", e);
+            throw new IllegalStateException("Could not hash RadioResolve v3 metadata", exception);
         }
     }
 
     private static URI createUri(String host, String path)
     {
         String normalized = host != null ? host.trim() : "";
-
         while(normalized.endsWith("/"))
         {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
-
         return URI.create(normalized + path);
     }
 
     public static HttpClient createHttpClient(RadioResolveConfiguration configuration)
     {
-        HttpClient.Builder builder = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(20));
+        HttpClient.Builder builder = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(Duration.ofSeconds(20));
 
         if(configuration != null && configuration.isIgnoreCertificateErrors())
         {
             try
             {
                 builder.sslContext(createTrustAllSSLContext());
-                SSLParameters sslParameters = new SSLParameters();
-                sslParameters.setEndpointIdentificationAlgorithm("");
-                builder.sslParameters(sslParameters);
+                SSLParameters parameters = new SSLParameters();
+                parameters.setEndpointIdentificationAlgorithm("");
+                builder.sslParameters(parameters);
             }
-            catch(Exception e)
+            catch(Exception exception)
             {
-                mLog.error("Unable to configure RadioResolve certificate error bypass [{}]", safeMessage(e));
+                mLog.error("Unable to configure RadioResolve certificate error bypass [{}]", safeMessage(exception));
             }
         }
 
@@ -974,125 +1879,209 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
 
     private static SSLContext createTrustAllSSLContext() throws Exception
     {
-        TrustManager[] trustManagers = new TrustManager[] {
-            new X509TrustManager()
+        TrustManager[] trustManagers = new TrustManager[]{new X509TrustManager()
+        {
+            @Override public java.security.cert.X509Certificate[] getAcceptedIssuers()
             {
-                @Override
-                public java.security.cert.X509Certificate[] getAcceptedIssuers()
-                {
-                    return new java.security.cert.X509Certificate[0];
-                }
-
-                @Override
-                public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType)
-                {
-                }
-
-                @Override
-                public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType)
-                {
-                }
+                return new java.security.cert.X509Certificate[0];
             }
-        };
 
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, trustManagers, new java.security.SecureRandom());
-        return sslContext;
+            @Override public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType)
+            {
+            }
+
+            @Override public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType)
+            {
+            }
+        }};
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(null, trustManagers, new java.security.SecureRandom());
+        return context;
+    }
+
+    private void refreshConnectionAndClockLocked()
+    {
+        setBroadcastState(BroadcastState.CONNECTING);
+        mServerReachable = testConnection(getBroadcastConfiguration());
+        mLastConnectionAttemptNanos = System.nanoTime();
+
+        if(getBroadcastState() != BroadcastState.INVALID_CREDENTIALS)
+        {
+            setBroadcastState(mServerReachable ? BroadcastState.CONNECTED : BroadcastState.ERROR);
+        }
     }
 
     private boolean testConnection(RadioResolveConfiguration configuration)
     {
-        if(configuration.getApiKey() == null || configuration.getApiKey().isBlank())
+        if(configuration == null || configuration.getApiKey() == null || configuration.getApiKey().isBlank())
         {
             return false;
         }
 
         try
         {
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(createUri(configuration.getHost(), TEST_PATH))
+            HttpRequest request = HttpRequest.newBuilder().uri(createUri(configuration.getHost(), TEST_PATH))
                 .timeout(Duration.ofSeconds(10))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
-                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
-                .GET()
-                .build();
+                .header(HttpHeaders.USER_AGENT, AGENT_VERSION).GET().build();
+            RadioResolveClockSynchronizer.RequestTiming timing = mClockSynchronizer.beginRequest();
             HttpResponse<String> response = mHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if(response.statusCode() == 401 || response.statusCode() == 403)
             {
+                mClockSynchronizer.clear();
                 setBroadcastState(BroadcastState.INVALID_CREDENTIALS);
                 return false;
             }
 
-            return response.statusCode() >= 200 && response.statusCode() < 500;
+            Long serverEpochMilliseconds = response.statusCode() >= 200 && response.statusCode() < 300 ?
+                serverEpochMilliseconds(response.body()) : null;
+            return serverEpochMilliseconds != null &&
+                mClockSynchronizer.completeRequest(timing, serverEpochMilliseconds);
         }
-        catch(Exception e)
+        catch(Exception exception)
         {
-            mLog.warn("RadioResolve connection test failed: {}", safeMessage(e));
+            Throwable cause = exception instanceof CompletionException && exception.getCause() != null ?
+                exception.getCause() : exception;
+            mLog.warn("RadioResolve connection failed: {}", safeMessage(cause));
             return false;
+        }
+    }
+
+    static Long serverEpochMilliseconds(String responseBody)
+    {
+        try
+        {
+            JsonObject root = JsonParser.parseString(responseBody).getAsJsonObject();
+            if(!root.has("serverEpochMilliseconds") || root.get("serverEpochMilliseconds").isJsonNull())
+            {
+                return null;
+            }
+
+            long value = root.get("serverEpochMilliseconds").getAsLong();
+            return value > 0L ? value : null;
+        }
+        catch(RuntimeException exception)
+        {
+            return null;
+        }
+    }
+
+    /** Parses the process-wide upload-count override, defaulting safely and clamping to the server contract. */
+    static int resolveCallsPerUpload(String configuredValue)
+    {
+        if(configuredValue == null || configuredValue.isBlank())
+        {
+            return MAXIMUM_CALLS_PER_UPLOAD;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(configuredValue.trim());
+            return Math.max(1, Math.min(MAXIMUM_CALLS_PER_UPLOAD, parsed));
+        }
+        catch(NumberFormatException exception)
+        {
+            return MAXIMUM_CALLS_PER_UPLOAD;
         }
     }
 
     private static String safeMessage(Throwable throwable)
     {
-        if(throwable instanceof CompletionException && throwable.getCause() != null)
+        if(throwable == null)
         {
-            throwable = throwable.getCause();
+            return "unknown error";
         }
 
         String message = throwable.getMessage();
-        return message != null ? message : throwable.getClass().getSimpleName();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
     }
 
-    public class AudioRecordingProcessor implements Runnable
+    private class RecordingProcessor implements Runnable
     {
         @Override
         public void run()
         {
-            try
+            if(mRunning)
             {
-                processRecordingQueue();
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error processing RadioResolve upload queue", e);
+                processQueue();
             }
         }
+    }
+
+    private record ReceiverGeneration(String configurationId, long processingIncarnation, long tuningGeneration)
+    {
+    }
+
+    private record AcknowledgedUpload(RadioResolveSpool.Entry entry, BatchUploadDecision decision)
+    {
+    }
+
+    private record VerifiedSite(RadioResolveCallEnvelope.Placement placement, long observedAtMs, Channel channel,
+                                SiteReceiverContext receiverContext)
+    {
+        private boolean matchesCurrentChannel()
+        {
+            //Production observations always carry the live channel. A null channel is retained only for detached
+            //focused tests that call rememberVerifiedSite directly instead of entering through processSiteMetadata.
+            return channel == null || receiverContext != null &&
+                receiverContext.matchesCurrentSiteEvidenceGeneration(channel);
+        }
+    }
+
+    private record MetadataSystem(String protocol, Integer wacn, Integer systemId, Integer nac, Integer lra)
+    {
+    }
+
+    private record MetadataSite(Integer systemId, Integer nac, Integer rfssId, Integer siteId, Integer lra,
+                                Boolean activeRfssNetworkConnection)
+    {
+    }
+
+    private record MetadataHashInput(P25NetworkConfigurationSnapshot snapshot,
+                                     List<RadioResolveP25FrequencyEvidenceTracker.Evidence> frequencyEvidence)
+    {
+    }
+
+    private record MetadataChannel(String role, String channelDescriptor, Long downlinkFrequencyHz,
+                                   Long uplinkFrequencyHz, Boolean tdma, Integer timeslots, String callsign,
+                                   Long observedAtMs)
+    {
+        private MetadataChannel merge(MetadataChannel other)
+        {
+            return new MetadataChannel(role, channelDescriptor, firstNonNull(downlinkFrequencyHz,
+                other.downlinkFrequencyHz), firstNonNull(uplinkFrequencyHz, other.uplinkFrequencyHz),
+                strongestBoolean(tdma, other.tdma), maximum(timeslots, other.timeslots),
+                firstNonNull(callsign, other.callsign), maximum(observedAtMs, other.observedAtMs));
+        }
+    }
+
+    private record MetadataNeighbor(Integer systemId, Integer nac, Integer rfssId, Integer siteId, Integer lra,
+                                    String channelDescriptor, Long downlinkFrequencyHz, Long uplinkFrequencyHz,
+                                    String status, Long observedAtMs)
+    {
+    }
+
+    private record MetadataBandplan(Integer bandId, Boolean tdma, Long baseFrequencyHz, Integer bandwidthHz,
+                                    Long channelSpacingHz, Long transmitOffsetHz, Integer timeslots,
+                                    Long observedAtMs)
+    {
+    }
+
+    private record MetadataForeignBandplan(Integer wacn, Integer systemId, Integer bandId, Integer channelType,
+                                           Long baseFrequencyHz, Long channelSpacingHz, Long transmitOffsetHz,
+                                           Long observedAtMs)
+    {
+    }
+
+    private record MetadataTalkerAlias(Integer localRadioId, String talkerAlias, Long observedAtMs)
+    {
     }
 
     private static class MetadataState
     {
-        private String mLastSuccessfulHash;
-        private long mLastSuccessfulEpochMilliseconds;
-        private long mLastAttemptEpochMilliseconds;
-    }
-
-    private static class PendingUpload
-    {
-        private final AudioRecording mAudioRecording;
-        private int mAttemptCount;
-        private long mNextAttemptTime;
-
-        PendingUpload(AudioRecording audioRecording)
-        {
-            mAudioRecording = audioRecording;
-        }
-
-        AudioRecording getAudioRecording()
-        {
-            return mAudioRecording;
-        }
-
-        long getNextAttemptTime()
-        {
-            return mNextAttemptTime;
-        }
-
-        void retry()
-        {
-            long delay = RETRY_BACKOFF_MS[Math.min(mAttemptCount, RETRY_BACKOFF_MS.length - 1)];
-            mAttemptCount++;
-            mNextAttemptTime = System.currentTimeMillis() + delay;
-        }
+        private String lastSuccessfulHash;
+        private long lastSuccessfulAtMs;
+        private long lastAttemptAtMs;
     }
 }

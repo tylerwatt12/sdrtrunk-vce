@@ -41,8 +41,8 @@ public final class AliasImportService
     public Plan preview(long listId, Mode mode, List<Input> inputs, Defaults defaults)
     {
         Objects.requireNonNull(mode, "Import mode is required");
-        if(inputs == null || inputs.isEmpty() || inputs.size() > AliasTransferCsv.MAX_ROWS)
-            throw new IllegalArgumentException("Import must contain 1–10,000 aliases");
+        if(inputs == null || inputs.isEmpty())
+            throw new IllegalArgumentException("Import must contain at least one alias");
         TransferSnapshot snapshot = service.transferSnapshot(listId);
         Options options = snapshot.options();
         Set<String> sourceLists = inputs.stream().filter(Objects::nonNull).map(Input::sourceAliasList)
@@ -53,7 +53,8 @@ public final class AliasImportService
         Map<List<String>,List<AliasEntry>> existing = new HashMap<>();
         snapshot.aliases().forEach(entry -> existing.computeIfAbsent(AliasTransferCsv.identity(entry.alias()),
             ignored -> new ArrayList<>()).add(entry));
-        Set<List<String>> seen = new HashSet<>();
+        existing.values().forEach(entries -> entries.sort(Comparator.comparingLong(entry -> entry.alias().getId())));
+        Set<Long> matchedExisting = new HashSet<>();
         Set<Long> retained = new HashSet<>();
         List<AliasEntry> saves = new ArrayList<>();
         List<Long> deletions = new ArrayList<>();
@@ -68,11 +69,8 @@ public final class AliasImportService
                 if(source == null || !AliasMatchRegistry.isOperational(options.aliasList(), source.getMatchIdentifier()))
                     throw new IllegalArgumentException("Matcher is invalid or incompatible with this list");
                 List<String> identity = AliasTransferCsv.identity(source);
-                if(!seen.add(identity)) throw new IllegalArgumentException("Duplicate matcher in import");
                 List<AliasEntry> matches = existing.getOrDefault(identity, List.of());
-                if(matches.size() > 1) throw new IllegalArgumentException("Multiple existing aliases have this matcher");
-                AliasEntry old = matches.isEmpty() ? null : matches.getFirst();
-                if(old != null) retained.add(old.alias().getId());
+                AliasEntry old = preferredExistingMatch(matches, matchedExisting, input, options);
                 if(old == null && AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(options.aliasList(), source.getMatchIdentifier()))
                     throw new IllegalArgumentException("Full talkgroup ranges belong in Alias List Defaults");
                 Alias alias = old != null && input.radioReference() ?
@@ -124,6 +122,11 @@ public final class AliasImportService
                     .map(entry -> new Change(entry.getKey(), before.getOrDefault(entry.getKey(), ""), entry.getValue())).toList();
                 String result = old == null ? "added" : changes.isEmpty() ? "unchanged" : "updated";
                 rows.add(new Row(index, result, alias.getName(), changes, null));
+                if(old != null)
+                {
+                    matchedExisting.add(old.alias().getId());
+                    retained.add(old.alias().getId());
+                }
                 if(!result.equals("unchanged")) saves.add(new AliasEntry(options.revision(), alias, scans));
             }
             catch(IllegalArgumentException exception)
@@ -152,6 +155,38 @@ public final class AliasImportService
             Collections.unmodifiableMap(counts), List.copyOf(rows)), saves, deletions);
     }
 
+    /**
+     * Repeated matchers are valid configuration rows. Prefer an unmatched row whose complete VCE configuration is
+     * already identical, then consume remaining existing rows by stable database ID. Extra occurrences become new
+     * aliases. RadioReference rows intentionally use occurrence order because that format omits local configuration.
+     */
+    private static AliasEntry preferredExistingMatch(List<AliasEntry> matches, Set<Long> matched,
+                                                       Input input, Options options)
+    {
+        if(matches.isEmpty())
+        {
+            return null;
+        }
+
+        if(!input.radioReference() && input.scanLists() != null && input.streams() != null)
+        {
+            Map<String,String> requested = AliasTransferCsv.fields(input.alias(), options.aliasList().getName(),
+                input.scanLists(), input.streams());
+
+            for(AliasEntry candidate: matches)
+            {
+                if(!matched.contains(candidate.alias().getId()) &&
+                    requested.equals(fields(candidate.alias(), candidate.scanListIds(), options)))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return matches.stream().filter(candidate -> !matched.contains(candidate.alias().getId()))
+            .findFirst().orElse(null);
+    }
+
     public MutationResult apply(Plan plan)
     {
         if(plan.preview.counts().get("error") > 0) throw new IllegalArgumentException("Resolve import errors before applying");
@@ -167,13 +202,9 @@ public final class AliasImportService
     public String export(long listId)
     {
         TransferSnapshot snapshot = service.transferSnapshot(listId);
-        Set<List<String>> identities = new HashSet<>();
         List<Map<String,String>> rows = new ArrayList<>();
         for(AliasEntry entry: snapshot.aliases())
         {
-            if(!identities.add(AliasTransferCsv.identity(entry.alias())))
-                throw new IllegalArgumentException(
-                    "Transfer export requires one alias per exact matcher; resolve duplicate matchers first");
             rows.add(fields(entry.alias(), entry.scanListIds(), snapshot.options()));
         }
         return AliasTransferCsv.write(rows);

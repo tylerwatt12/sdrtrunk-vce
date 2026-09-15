@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebDashboardUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void separatesCallActivityFromReceiverHealth() throws Exception
@@ -28,9 +27,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
         assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
-        assertTrue(dashboard.contains("{ id: 'health', label: 'Health'"));
+        assertTrue(dashboard.contains("{ id: 'health', label: 'Signal quality'"));
         assertTrue(dashboard.contains("{ id: 'activity', label: 'Activity'"));
-        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Health'") <
+        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Signal quality'") <
             dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
             dashboard.indexOf("{ id: 'activity', label: 'Activity'"));
@@ -298,7 +297,7 @@ class StatsWebDashboardUiContractTest
     @Test
     void stacksDashboardSplitsBeforeTabletTablesOverflow() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".dashboard-identity-split"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains("@media (max-width: 1500px)"));

@@ -18,7 +18,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebReceiverHealthUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -28,7 +27,7 @@ class StatsWebReceiverHealthUiContractTest
         String html = readText(INDEX_HTML);
         String viewAllowed = block(source, "function viewAllowed(view)");
         String routeAllowed = block(source, "function routeDefinitionAllowed(definition)");
-        String renderAdmin = block(source, "async function renderAdmin()");
+        String adminGroups = block(source, "function adminSettingsGroups()");
         String desktopEnabled = block(source, "desktopEnabled()");
 
         assertTrue(source.contains("RECEIVER_HEALTH: 'receiver-health'"));
@@ -37,7 +36,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(routeAllowed.contains("ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(html.contains("id=\"receiver-health-indicator\""));
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
-        assertTrue(renderAdmin.contains("id: 'health', label: 'Health', capability: " +
+        assertTrue(adminGroups.contains("id: 'health', label: 'Current status', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
         assertTrue(desktopEnabled.contains("return this.authorized()"));
     }
@@ -56,8 +55,8 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(refresh.contains("page: false, signal: controller.signal, timeoutMs: 10_000"));
         assertTrue(refresh.contains("this.snapshot = normalizeReceiverHealthSnapshot(response)"));
         assertTrue(refresh.contains("RECEIVER_HEALTH_STALE_MILLISECONDS"));
-        assertTrue(refresh.contains("Receiver health hasn’t updated recently."));
-        assertTrue(refresh.contains("Receiver health is temporarily unavailable. Try Refresh now."));
+        assertTrue(refresh.contains("Receiver status has not updated recently."));
+        assertTrue(refresh.contains("Receiver status is unavailable right now. Select Check again to try again."));
         assertFalse(refresh.contains("error?.message"));
         assertTrue(refresh.contains("this.stale = true"));
         assertFalse(refresh.contains("this.snapshot = null"));
@@ -84,17 +83,17 @@ class StatsWebReceiverHealthUiContractTest
         String resourceOverview = block(source, "function receiverHealthHostResourceOverview(snapshot)");
         String measurement = block(source, "function receiverHealthMeasurementRow(row)");
 
-        assertTrue(page.contains("'Active alerts and diagnostics'"));
-        assertTrue(page.contains("'Active incidents'"));
+        assertTrue(page.contains("'Issues needing attention'"));
+        assertTrue(page.contains("'Current issues'"));
         assertFalse(page.contains("'Service-impact alerts'"));
         assertFalse(page.contains("summary.diagnostic_count"));
         assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
-        assertTrue(page.contains("'Measurements'"));
-        assertTrue(page.contains("Showing the most recent receiver health information available."));
-        assertTrue(page.contains("'Update delayed'"));
+        assertTrue(page.contains("'Detailed measurements'"));
+        assertTrue(page.contains("Live status is delayed. Showing the last update received."));
+        assertTrue(page.contains("'Status out of date'"));
         assertFalse(page.contains("'Stale'"));
         assertTrue(page.indexOf("receiverHealthHostResourceOverview(snapshot)") <
-            page.lastIndexOf("receiverHealthSection('current', 'Current status'"));
+            page.lastIndexOf("receiverHealthSection('current', 'Summary'"));
         assertTrue(incident.contains("incident.occurrence_id"));
         assertTrue(incident.contains("incident.code"));
         assertTrue(incident.contains("incident.severity"));
@@ -119,9 +118,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(resolvedSort.contains("sort === 'type'"));
         assertTrue(resolvedSort.contains("left.title || left.code"));
         assertTrue(resolvedSort.contains("resolved_at_ms"));
-        assertTrue(resolvedSection.contains("'Newest resolved'"));
-        assertTrue(resolvedSection.contains("'Alert type (A–Z)'"));
-        assertTrue(resolvedSection.contains("'Sort resolved alerts'"));
+        assertTrue(resolvedSection.contains("'Most recently cleared'"));
+        assertTrue(resolvedSection.contains("'Issue type (A–Z)'"));
+        assertTrue(resolvedSection.contains("'Sort cleared issues'"));
         assertFalse(page.toLowerCase().contains("dismiss"));
         assertTrue(resourceScale.contains("RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS"));
         assertTrue(resourceScale.contains("unit === '%' ? 100"));
@@ -132,7 +131,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(resourceBar.contains("progress.setAttribute('aria-valuetext'"));
         assertTrue(resourceOverview.contains("measurement.id"));
         assertTrue(resourceOverview.contains("group.rows.map(receiverHealthResourceBar)"));
-        assertTrue(resourceOverview.contains("receiverHealthSection('host-overview', 'Host resource overview'"));
+        assertTrue(resourceOverview.contains("receiverHealthSection('host-overview', 'Computer resources'"));
         assertTrue(measurement.contains("row.scope"));
         assertTrue(measurement.contains("row.label"));
         assertTrue(measurement.contains("row.value"));
@@ -171,9 +170,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(section.contains("openHealthSections.has(key)"));
         assertTrue(section.contains("openHealthSections.add(key)"));
         assertTrue(section.contains("openHealthSections.delete(key)"));
-        assertTrue(page.contains("receiverHealthSection('current', 'Current status'"));
-        assertTrue(page.contains("receiverHealthSection('active', 'Active alerts and diagnostics'"));
-        assertTrue(page.contains("receiverHealthSection('measurements', 'Measurements'"));
+        assertTrue(page.contains("receiverHealthSection('current', 'Summary'"));
+        assertTrue(page.contains("receiverHealthSection('active', 'Issues needing attention'"));
+        assertTrue(page.contains("receiverHealthSection('measurements', 'Detailed measurements'"));
         assertTrue(page.contains("snapshot.measurements.map(receiverHealthMeasurementGroup)"));
         assertTrue(measurement.contains("`measurement:${receiverHealthText(group.id, `${title}:${index}`)}`"));
         assertTrue(measurement.contains("receiverHealthSection(key, title, body)"));
@@ -181,12 +180,12 @@ class StatsWebReceiverHealthUiContractTest
             resolvedPage.indexOf("sorted.slice"));
         assertTrue(resolvedPage.contains("RECEIVER_HEALTH_RESOLVED_PAGE_SIZE"));
         assertTrue(resolvedPage.contains("Math.max(0, pageCount - 1)"));
-        assertTrue(resolvedPager.contains("'Recently resolved pagination'"));
+        assertTrue(resolvedPager.contains("'Recently cleared issues'"));
         assertTrue(resolvedPager.contains("'Previous'"));
         assertTrue(resolvedPager.contains("'Next'"));
         assertTrue(resolvedPager.contains("previous.disabled = page.page <= 0"));
         assertTrue(resolvedPager.contains("next.disabled = !page.has_more"));
-        assertTrue(resolvedSection.contains("receiverHealthSection('resolved', 'Recently resolved'"));
+        assertTrue(resolvedSection.contains("receiverHealthSection('resolved', 'Recently cleared'"));
         assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = page.page"));
         assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = 0"));
         assertTrue(prune.contains("incidents.map(receiverHealthResolvedIncidentKey)"));
@@ -205,7 +204,7 @@ class StatsWebReceiverHealthUiContractTest
     @Test
     void providesLightAndDarkPresentationContracts() throws Exception
     {
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-healthy"));
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-warning"));

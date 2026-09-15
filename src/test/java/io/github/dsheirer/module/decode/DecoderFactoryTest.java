@@ -22,6 +22,7 @@ import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -97,6 +98,21 @@ class DecoderFactoryTest
 
         assertNotSame(original, copy);
         assertEquals(Modulation.CQPSK, copy.getModulation());
+    }
+
+    @Test
+    void copiesP25LearnedControlFrequencyOwnership()
+    {
+        DecodeConfigP25Phase1 phase1 = new DecodeConfigP25Phase1();
+        DecodeConfigP25Phase2 phase2 = new DecodeConfigP25Phase2();
+        phase1.setLearnedControlFrequencies(List.of(770_206_250L));
+        phase2.setLearnedControlFrequencies(List.of(851_012_500L));
+
+        DecodeConfigP25Phase1 phase1Copy = (DecodeConfigP25Phase1)DecoderFactory.copy(phase1);
+        DecodeConfigP25Phase2 phase2Copy = (DecodeConfigP25Phase2)DecoderFactory.copy(phase2);
+
+        assertEquals(phase1.getLearnedControlFrequencies(), phase1Copy.getLearnedControlFrequencies());
+        assertEquals(phase2.getLearnedControlFrequencies(), phase2Copy.getLearnedControlFrequencies());
     }
 
     @Test

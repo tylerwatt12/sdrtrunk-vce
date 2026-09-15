@@ -79,7 +79,7 @@ class ScanListDatabaseStoreTest
         ScanListConfiguration factoryScanLists = snapshotStore.loadAliasConfiguration().scanLists();
         AliasConfigurationSnapshot initial = aliasState(definition, alias, new ScanListConfiguration(
             factoryScanLists.scanLists(), Map.of(), Map.of()));
-        AliasConfigurationSnapshot committedInitial = snapshotStore.commitAliasConfiguration(initial, List.of());
+        AliasConfigurationSnapshot committedInitial = snapshotStore.commitAliasConfiguration(initial);
         definition = committedInitial.definitions().getFirst();
         alias = committedInitial.aliases().getFirst();
 
@@ -88,7 +88,7 @@ class ScanListDatabaseStoreTest
         ScanList southwest = new ScanList(0, 1, "SouthWest", "Southwest calls", true, false);
         AliasConfigurationSnapshot definitionsOnly = aliasState(definition, alias, new ScanListConfiguration(
             List.of(seeded.defaultScanList(), southwest), Map.of(), Map.of()));
-        AliasConfigurationSnapshot committedDefinitions = snapshotStore.commitAliasConfiguration(definitionsOnly, List.of());
+        AliasConfigurationSnapshot committedDefinitions = snapshotStore.commitAliasConfiguration(definitionsOnly);
         southwest = committedDefinitions.scanLists().scanList("SouthWest");
         assertNotEquals(ScanList.UNASSIGNED_ID, southwest.getId());
 
@@ -97,7 +97,7 @@ class ScanListDatabaseStoreTest
             Map.of(alias.getId(), Set.of(seeded.defaultScanList().getId(), southwest.getId())),
             Map.of(definition.getId(), Set.of(southwest.getId())));
         AliasConfigurationSnapshot configured = aliasState(definition, alias, memberships);
-        snapshotStore.commitAliasConfiguration(configured, List.of());
+        snapshotStore.commitAliasConfiguration(configured);
 
         ScanListConfiguration loaded = store.loadConfiguration();
         assertEquals(Set.of(seeded.defaultScanList().getId(), southwest.getId()),
@@ -107,7 +107,7 @@ class ScanListDatabaseStoreTest
 
         //An Alias-only edit carries forward the current scan-list snapshot and retains the normalized joins.
         alias.setDescription("Unrelated Alias edit");
-        snapshotStore.commitAliasConfiguration(aliasState(definition, alias, loaded), List.of());
+        snapshotStore.commitAliasConfiguration(aliasState(definition, alias, loaded));
         ScanListConfiguration afterAliasEdit = store.loadConfiguration();
         assertEquals(loaded.aliasMemberships(), afterAliasEdit.aliasMemberships());
         assertEquals(loaded.unmatchedAliasListMemberships(), afterAliasEdit.unmatchedAliasListMemberships());
@@ -125,7 +125,7 @@ class ScanListDatabaseStoreTest
                 Map.of(999L, Set.of(seeded.scanLists().defaultScanList().getId())), Map.of()));
 
         assertThrows(java.sql.SQLException.class,
-            () -> store.commitAliasConfiguration(state, List.of()));
+            () -> store.commitAliasConfiguration(state));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -147,7 +147,7 @@ class ScanListDatabaseStoreTest
                 Map.of(999L, Set.of(seeded.scanLists().defaultScanList().getId()))));
 
         assertThrows(java.sql.SQLException.class,
-            () -> store.commitAliasConfiguration(state, List.of()));
+            () -> store.commitAliasConfiguration(state));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();

@@ -79,23 +79,17 @@ class ReceiverHealthServiceTest
     }
 
     @Test
-    void publishesTheLocalIncidentSnapshotFromTheObserverSample() throws Exception
+    void removesTheLegacyLocalIncidentSnapshotAndTemporaryFile() throws Exception
     {
-        AtomicLong clock = new AtomicLong(1_000);
-        Path target = mTemporaryDirectory.resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
+        Path target = mTemporaryDirectory.resolve(ReceiverHealthService.LEGACY_SNAPSHOT_FILE_NAME);
+        Path staged = target.resolveSibling("." + target.getFileName() + ".tmp");
+        Files.writeString(target, "legacy");
+        Files.writeString(staged, "legacy temporary");
 
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get,
-            new ReceiverHealthSnapshotWriter(target)))
-        {
-            service.sampleNow();
-            assertTrue(Files.isRegularFile(target));
-            String first = Files.readString(target);
-            assertFalse(first.contains("\"measurements\""));
+        ReceiverHealthService.removeLegacySnapshotFiles(target);
 
-            clock.set(2_000);
-            service.sampleNow();
-            assertEquals(first, Files.readString(target));
-        }
+        assertFalse(Files.exists(target));
+        assertFalse(Files.exists(staged));
     }
 
     @Test
@@ -161,11 +155,11 @@ class ReceiverHealthServiceTest
 
             Map<String,Object> incident = rows(service.snapshot().get("active")).stream()
                 .filter(row -> "web-audio-drop".equals(row.get("code"))).findFirst().orElseThrow();
-            assertEquals("Web call audio was lost", incident.get("title"));
+            assertEquals("Browser audio was not available for a call", incident.get("title"));
             assertEquals(5L, incident.get("count"));
             assertEquals("5 new dropped or failed browser calls", incident.get("observed"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("saturated"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("encoding failed"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("queue was full"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("could not be encoded"));
         }
     }
 

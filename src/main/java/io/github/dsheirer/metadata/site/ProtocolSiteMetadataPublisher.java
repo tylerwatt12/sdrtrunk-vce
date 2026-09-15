@@ -26,47 +26,47 @@ public class ProtocolSiteMetadataPublisher
     private final Channel mChannel;
     private final Supplier<? extends SiteMetadataSnapshot> mSnapshotSupplier;
     private final BooleanSupplier mHasInterModuleEventBus;
-    private final Consumer<ProtocolSiteMetadataEvent> mEventPublisher;
+    private final Consumer<ProtocolSiteMetadataSnapshotRequest> mRequestPublisher;
     private final SiteMetadataPublicationRateLimiter mRateLimiter;
     private final LongSupplier mSourceFrequencySupplier;
 
     public ProtocolSiteMetadataPublisher(Channel channel,
                                          Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
                                          BooleanSupplier hasInterModuleEventBus,
-                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher)
+                                         Consumer<ProtocolSiteMetadataSnapshotRequest> requestPublisher)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher,
             new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), () -> 0);
     }
 
     public ProtocolSiteMetadataPublisher(Channel channel,
                                          Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
                                          BooleanSupplier hasInterModuleEventBus,
-                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         Consumer<ProtocolSiteMetadataSnapshotRequest> requestPublisher,
                                          LongSupplier sourceFrequencySupplier)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher,
             new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), sourceFrequencySupplier);
     }
 
     public ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
                                          BooleanSupplier hasInterModuleEventBus,
-                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         Consumer<ProtocolSiteMetadataSnapshotRequest> requestPublisher,
                                          SiteMetadataPublicationRateLimiter rateLimiter)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher, rateLimiter, () -> 0);
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher, rateLimiter, () -> 0);
     }
 
     public ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
                                          BooleanSupplier hasInterModuleEventBus,
-                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         Consumer<ProtocolSiteMetadataSnapshotRequest> requestPublisher,
                                          SiteMetadataPublicationRateLimiter rateLimiter,
                                          LongSupplier sourceFrequencySupplier)
     {
         mChannel = channel;
         mSnapshotSupplier = snapshotSupplier;
         mHasInterModuleEventBus = hasInterModuleEventBus;
-        mEventPublisher = eventPublisher;
+        mRequestPublisher = requestPublisher;
         mRateLimiter = rateLimiter;
         mSourceFrequencySupplier = sourceFrequencySupplier != null ? sourceFrequencySupplier : () -> 0;
     }
@@ -82,21 +82,14 @@ public class ProtocolSiteMetadataPublisher
             return;
         }
 
-        SiteMetadataSnapshot snapshot = mSnapshotSupplier != null ? mSnapshotSupplier.get() : null;
-
-        if(snapshot == null || !snapshot.isUseful())
+        if(mSnapshotSupplier != null && mRequestPublisher != null && mRateLimiter != null &&
+            mRateLimiter.tryAcquire())
         {
-            return;
-        }
-
-        if(mRateLimiter != null && mRateLimiter.tryAcquire())
-        {
-            if(mEventPublisher != null)
-            {
-                long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-                mEventPublisher.accept(new ProtocolSiteMetadataEvent(mChannel, snapshot, eventTimestamp,
-                    mSourceFrequencySupplier.getAsLong()));
-            }
+            long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+            long sourceFrequency = mSourceFrequencySupplier.getAsLong();
+            SiteReceiverContext receiverContext = SiteReceiverContext.capture(mChannel, null, sourceFrequency);
+            mRequestPublisher.accept(new ProtocolSiteMetadataSnapshotRequest(mChannel, receiverContext,
+                mSnapshotSupplier, eventTimestamp));
         }
     }
 }

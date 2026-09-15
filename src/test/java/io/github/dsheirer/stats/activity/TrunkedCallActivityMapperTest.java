@@ -24,6 +24,7 @@ import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -63,6 +64,7 @@ class TrunkedCallActivityMapperTest
         Channel parent = dmrParent();
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(DMRRadio.createFrom(101));
+        identifiers.update(DMRSite.create(1023));
         identifiers.update(DMRTalkgroup.create(91));
         TrunkedCallStartEvent start = new TrunkedCallStartTracker(5_000).observe(parent, Protocol.DMR,
             dmrChannel(451_012_500L, 2), 2, identifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L);
@@ -77,6 +79,7 @@ class TrunkedCallActivityMapperTest
         assertEquals(2, record.timeslot());
         assertEquals("101", record.sourceRadioId());
         assertEquals("91", record.targetId());
+        assertEquals(1023, record.site());
         assertEquals(" LCN:12 CHANID:26", record.lcn());
         assertTrue(record.encrypted());
         assertTrue(record.countedCall(), "typed start still identifies a call but completion owns counters");
@@ -301,15 +304,16 @@ class TrunkedCallActivityMapperTest
         {
             statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
             ReceiverActivitySchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('%s', 'TRUNKED', 0, 'Metro', 'Downtown', 'DMR Site',
-                    '%s', 0, 'DMR', 451012500,
+                    (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1), '%s', 0, 'DMR', 451012500,
                     '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
                 """.formatted(channel.getConfigurationId(), DMR_RADIORESOLVE_ID));
         }

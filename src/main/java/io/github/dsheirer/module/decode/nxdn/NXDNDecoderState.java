@@ -96,7 +96,7 @@ public class NXDNDecoderState extends DecoderState
 {
     private static final int IDLE_DURING_CALL_MAX_COUNT = 5;
     private final Channel mChannel;
-    private final NXDNNetworkConfigurationMonitor mNetworkConfigurationMonitor = new NXDNNetworkConfigurationMonitor();
+    private final NXDNNetworkConfigurationMonitor mNetworkConfigurationMonitor;
     private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
     private final boolean mTrunkingEnabled;
@@ -121,8 +121,18 @@ public class NXDNDecoderState extends DecoderState
     NXDNDecoderState(Channel channel, NXDNTrafficChannelManager trafficChannelManager,
                      SiteMetadataPublicationRateLimiter siteMetadataRateLimiter)
     {
+        this(channel, trafficChannelManager, siteMetadataRateLimiter, new NXDNNetworkConfigurationMonitor());
+    }
+
+    /** Test seam for verifying full observer snapshot projection never runs on the decoder callback. */
+    NXDNDecoderState(Channel channel, NXDNTrafficChannelManager trafficChannelManager,
+                     SiteMetadataPublicationRateLimiter siteMetadataRateLimiter,
+                     NXDNNetworkConfigurationMonitor networkConfigurationMonitor)
+    {
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
+        mNetworkConfigurationMonitor = networkConfigurationMonitor != null ? networkConfigurationMonitor :
+            new NXDNNetworkConfigurationMonitor();
         DecodeConfigNXDN config = channel != null &&
             channel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN ? configNXDN : null;
         mIdentityDomain = config != null && config.getTransmissionMode() != null &&
@@ -942,7 +952,8 @@ public class NXDNDecoderState extends DecoderState
     {
         if(mChannel != null && mChannel.isStandardChannel())
         {
-            updateNativeRadioSystemKey(mTrafficChannelManager, mNetworkConfigurationMonitor.getSnapshot());
+            updateNativeRadioSystemKeyValue(mTrafficChannelManager,
+                mNetworkConfigurationMonitor.getTypeCRadioSystemKey());
         }
     }
 
@@ -961,6 +972,22 @@ public class NXDNDecoderState extends DecoderState
             NXDNNetworkConfigurationSnapshot.Location location = snapshot.currentLocation();
             radioSystemKey = location != null ?
                 RadioSystemKey.nxdnTypeC(location.category(), location.system()) : null;
+        }
+
+        updateNativeRadioSystemKeyValue(trafficChannelManager, radioSystemKey);
+    }
+
+    private static void updateNativeRadioSystemKeyValue(NXDNTrafficChannelManager trafficChannelManager,
+                                                         String radioSystemKey)
+    {
+        if(trafficChannelManager == null)
+        {
+            return;
+        }
+
+        if(trafficChannelManager.getConfiguredIdentityDomain() != TrunkedIdentityDomain.NXDN_TYPE_C)
+        {
+            radioSystemKey = null;
         }
 
         //Incomplete Type-C evidence, Type-D, and a changed-RAN snapshot with no variant are all unresolved for native

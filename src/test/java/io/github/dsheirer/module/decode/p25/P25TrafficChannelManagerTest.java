@@ -60,6 +60,10 @@ class P25TrafficChannelManagerTest
     void copiesLateLearnedSiteIdentityToTrafficChannel() throws Exception
     {
         Channel parent = new Channel("Control");
+        Method activate = Channel.class.getDeclaredMethod("activateProcessingIncarnation", long.class);
+        activate.setAccessible(true);
+        activate.invoke(parent, 17L);
+        parent.advanceSiteEvidenceTuningGeneration();
         P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
         P25SiteIdentity learnedIdentity = new P25SiteIdentity(0xBEE00, 0x348, 2, 19);
         parent.setP25SiteIdentity(learnedIdentity);
@@ -70,6 +74,9 @@ class P25TrafficChannelManagerTest
         sync.invoke(manager, traffic);
 
         assertEquals(learnedIdentity, traffic.getP25SiteIdentity());
+        assertEquals(17L, traffic.getSiteEvidenceProcessingIncarnation());
+        assertEquals(2L, traffic.getSiteEvidenceTuningGeneration(),
+            "an allocation must capture the parent control tuning epoch before its call source is created");
     }
 
     @Test
@@ -139,6 +146,8 @@ class P25TrafficChannelManagerTest
         manager.changeControlFrequency(851_012_500L, 852_012_500L, parentChannel);
 
         assertTrue(frequencyBands(manager).isEmpty());
+        assertEquals(1L, parentChannel.getSiteEvidenceTuningGeneration(),
+            "placement authority advances before facts from the new control source can escape");
     }
 
     @Test

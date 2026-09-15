@@ -25,6 +25,7 @@ class StatsWebJavaScriptBehaviorTest
 {
     private static final Path SCRIPT_ROOT = Path.of("src", "test", "js", "stats-web");
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path APP_STYLESHEET = Path.of("stats-web", "assets", "app.css");
     private static final Path CORE_MODULES = Path.of("stats-web", "assets", "core");
     private static final Path PAGE_LIFECYCLE = CORE_MODULES.resolve("page-lifecycle.js");
     private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
@@ -34,11 +35,13 @@ class StatsWebJavaScriptBehaviorTest
     private static final List<Contract> CONTRACTS = List.of(
         contract("admin system status", "admin-system-status.test.js", APP_JAVASCRIPT),
         contract("Alias editor", "alias-editor.test.js", APP_JAVASCRIPT),
+        contract("channel editor composition", "channel-editor.test.js", APP_JAVASCRIPT),
         contract("frontend foundation", "frontend-foundation.test.js", CORE_MODULES),
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
         contract("channel patches", "channel-patches.test.js", APP_JAVASCRIPT),
+        contract("CSS architecture", "css-architecture.test.js", APP_STYLESHEET),
         contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),
         contract("page lifecycle", "page-lifecycle.test.js", PAGE_LIFECYCLE),
         contract("radio identity presentation", "radio-identity-presentation.test.js", APP_JAVASCRIPT),

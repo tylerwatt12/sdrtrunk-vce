@@ -320,6 +320,7 @@ class LogicalCallStatisticsSchemaTest
             statement.execute("PRAGMA foreign_keys=ON");
         }
         SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
@@ -337,9 +338,9 @@ class LogicalCallStatisticsSchemaTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
+                alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'TRUNKED', 0, 'P25', 'Site', 'Control',
-                '%s', 0, '%s', 851012500, '{}')
+                (SELECT id FROM alias_list WHERE family='P25' LIMIT 1), '%s', 0, '%s', 851012500, '{}')
             """.formatted(configurationId, configurationId, decoderType));
     }
 
@@ -382,9 +383,9 @@ class LogicalCallStatisticsSchemaTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                auto_start, decoder_type, primary_frequency_hz, config_json)
+                alias_list_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'CONVENTIONAL', 0, 'P25', '', 'Conventional',
-                0, 'P25_CONVENTIONAL', 851012500, '{}')
+                (SELECT id FROM alias_list WHERE family='P25' LIMIT 1), 0, 'P25_CONVENTIONAL', 851012500, '{}')
             """.formatted(configurationId));
     }
 

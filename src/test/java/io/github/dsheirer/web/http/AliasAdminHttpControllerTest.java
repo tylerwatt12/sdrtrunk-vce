@@ -12,6 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
@@ -27,6 +31,10 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -38,8 +46,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -47,9 +57,111 @@ import org.junit.jupiter.api.io.TempDir;
 class AliasAdminHttpControllerTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String EXPORT_TOKEN = "0123456789abcdef0123456789abcdef";
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void transferPreparationFailureReturnsAnExportError() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("failed-export-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
+        AliasAdminHttpController controller = new AliasAdminHttpController(service, () -> {}, aliasId ->
+        {
+            throw new IOException("injected preparation failure");
+        });
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
+        server.start();
+
+        try(HttpClient client = HttpClient.newHttpClient())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpResponse<String> invalidToken = send(client, request(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId +
+                    "/transfer?export_token=not-a-browser-nonce").GET());
+            assertEquals(400, invalidToken.statusCode());
+            assertEquals("DENY", invalidToken.headers().firstValue("X-Frame-Options").orElseThrow());
+
+            HttpResponse<String> response = send(client, request(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId +
+                    "/transfer?export_token=" + EXPORT_TOKEN).GET());
+            assertEquals(503, response.statusCode());
+            JsonNode error = root(response).get("error");
+            assertEquals("export_failed", error.get("code").textValue());
+            assertEquals("Alias CSV export could not be prepared", error.get("message").textValue());
+            assertEquals("SAMEORIGIN", response.headers().firstValue("X-Frame-Options").orElseThrow());
+            assertTrue(response.headers().firstValue("Content-Security-Policy").orElseThrow()
+                .contains("frame-ancestors 'self'"));
+            assertFalse(response.headers().firstValue("Set-Cookie").isPresent(),
+                "A failed preparation must not announce that the download started");
+        }
+        finally
+        {
+            server.stop(0);
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void interruptedTransferDeclaresTheCompleteLengthAndRemovesItsPreparedSpool() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("disconnect-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        long listId = service.createAliasList("Transfer", AliasListFamily.P25).aliasListId();
+        Path spool = mTemporaryFolder.resolve("complete-export.csv");
+        byte[] complete = ("\uFEFF" + String.join(",", io.github.dsheirer.alias.AliasTransferCsv.HEADERS) +
+            "\r\n2,Transfer,Dispatch,,,0,,TALKGROUP,APCO25,1,,,,,false,[],[],\r\n")
+            .getBytes(StandardCharsets.UTF_8);
+        Files.write(spool, complete);
+        AtomicBoolean cleaned = new AtomicBoolean();
+        AliasAdminHttpController controller = new AliasAdminHttpController(service, () -> {}, aliasId ->
+            new AliasAdminHttpController.AliasListExport(spool, "complete.csv", 1, complete.length, () ->
+            {
+                cleaned.set(true);
+                Files.deleteIfExists(spool);
+            }));
+        DisconnectingExchange exchange = new DisconnectingExchange(
+            AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId +
+                "/transfer?export_token=" + EXPORT_TOKEN, 32);
+
+        try
+        {
+            controller.handle(exchange);
+            assertEquals(200, exchange.getResponseCode());
+            assertEquals(complete.length, exchange.responseLength(),
+                "Content-Length must describe the validated complete file, not bytes sent before disconnect");
+            assertTrue(exchange.bytesAccepted() < complete.length);
+            assertTrue(cleaned.get());
+            assertFalse(Files.exists(spool));
+            assertEquals("SAMEORIGIN", exchange.getResponseHeaders().getFirst("X-Frame-Options"));
+            assertTrue(exchange.getResponseHeaders().getFirst("Content-Security-Policy")
+                .contains("frame-ancestors 'self'"));
+            String readyCookie = exchange.getResponseHeaders().getFirst("Set-Cookie");
+            assertTrue(readyCookie.contains(WebRequestSecurity.ALIAS_EXPORT_READY_COOKIE_PREFIX + EXPORT_TOKEN + "=1"));
+            assertTrue(readyCookie.contains("Max-Age=30"));
+            assertTrue(readyCookie.contains("SameSite=Strict"));
+            assertFalse(readyCookie.contains("HttpOnly"), "The page must be able to read the ready marker");
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
 
     @Test
     void transferRequiresMatchingPreviewAndExplicitReplaceConfirmation() throws Exception
@@ -230,6 +342,9 @@ class AliasAdminHttpControllerTest
             assertEquals(400, send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId +
                     "&alias_list_id=" + aliasListId).GET()).statusCode());
+            assertEquals(400, send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId +
+                    "&include_group_names=FALSE").GET()).statusCode());
             HttpResponse<String> rejectedCamelQuery = send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?aliasListId=" + aliasListId).GET());
             assertEquals(400, rejectedCamelQuery.statusCode());
@@ -339,6 +454,21 @@ class AliasAdminHttpControllerTest
             JsonNode countedList = aliasList(countedCatalog, aliasListId);
             assertEquals(3, countedList.get("alias_count").intValue());
             assertEquals(0, countedList.get("assigned_channel_count").intValue());
+            JsonNode leanCatalog = json(send(client, request(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "?include_counts=false").GET()));
+            JsonNode leanList = aliasList(leanCatalog, aliasListId);
+            assertFalse(leanList.has("alias_count"));
+            assertFalse(leanList.has("assigned_channel_count"));
+            JsonNode defaultGroupOptions = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId).GET()));
+            assertTrue(java.util.stream.StreamSupport.stream(defaultGroupOptions.get("group_names").spliterator(),
+                false).anyMatch(group -> "Operations".equals(group.textValue())));
+            JsonNode leanGroupOptions = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId +
+                    "&include_group_names=false").GET()));
+            assertTrue(leanGroupOptions.get("group_names").isEmpty());
+            assertEquals(400, send(client, request(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "?include_counts=FALSE").GET()).statusCode());
 
             assertEquals(400, send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
@@ -802,6 +932,159 @@ class AliasAdminHttpControllerTest
     private static JsonNode root(HttpResponse<String> response) throws Exception
     {
         return OBJECT_MAPPER.readTree(response.body());
+    }
+
+    private static final class DisconnectingExchange extends HttpExchange
+    {
+        private final Headers mRequestHeaders = new Headers();
+        private final Headers mResponseHeaders = new Headers();
+        private final Map<String,Object> mAttributes = new HashMap<>();
+        private final URI mUri;
+        private final int mDisconnectAfter;
+        private int mBytesAccepted;
+        private int mResponseCode = -1;
+        private long mResponseLength = -1;
+
+        private DisconnectingExchange(String path, int disconnectAfter)
+        {
+            mUri = URI.create(path);
+            mDisconnectAfter = disconnectAfter;
+        }
+
+        private int bytesAccepted()
+        {
+            return mBytesAccepted;
+        }
+
+        private long responseLength()
+        {
+            return mResponseLength;
+        }
+
+        @Override
+        public Headers getRequestHeaders()
+        {
+            return mRequestHeaders;
+        }
+
+        @Override
+        public Headers getResponseHeaders()
+        {
+            return mResponseHeaders;
+        }
+
+        @Override
+        public URI getRequestURI()
+        {
+            return mUri;
+        }
+
+        @Override
+        public String getRequestMethod()
+        {
+            return "GET";
+        }
+
+        @Override
+        public HttpContext getHttpContext()
+        {
+            return null;
+        }
+
+        @Override
+        public void close()
+        {
+        }
+
+        @Override
+        public InputStream getRequestBody()
+        {
+            return new ByteArrayInputStream(new byte[0]);
+        }
+
+        @Override
+        public OutputStream getResponseBody()
+        {
+            return new OutputStream()
+            {
+                @Override
+                public void write(int value) throws IOException
+                {
+                    if(mBytesAccepted >= mDisconnectAfter)
+                    {
+                        throw new IOException("simulated browser disconnect");
+                    }
+
+                    mBytesAccepted++;
+                }
+
+                @Override
+                public void write(byte[] values, int offset, int length) throws IOException
+                {
+                    int accepted = Math.min(length, Math.max(0, mDisconnectAfter - mBytesAccepted));
+                    mBytesAccepted += accepted;
+
+                    if(accepted < length)
+                    {
+                        throw new IOException("simulated browser disconnect");
+                    }
+                }
+            };
+        }
+
+        @Override
+        public void sendResponseHeaders(int responseCode, long responseLength)
+        {
+            mResponseCode = responseCode;
+            mResponseLength = responseLength;
+        }
+
+        @Override
+        public InetSocketAddress getRemoteAddress()
+        {
+            return new InetSocketAddress(InetAddress.getLoopbackAddress(), 12345);
+        }
+
+        @Override
+        public int getResponseCode()
+        {
+            return mResponseCode;
+        }
+
+        @Override
+        public InetSocketAddress getLocalAddress()
+        {
+            return new InetSocketAddress(InetAddress.getLoopbackAddress(), 8080);
+        }
+
+        @Override
+        public String getProtocol()
+        {
+            return "HTTP/1.1";
+        }
+
+        @Override
+        public Object getAttribute(String name)
+        {
+            return mAttributes.get(name);
+        }
+
+        @Override
+        public void setAttribute(String name, Object value)
+        {
+            mAttributes.put(name, value);
+        }
+
+        @Override
+        public void setStreams(InputStream input, OutputStream output)
+        {
+        }
+
+        @Override
+        public HttpPrincipal getPrincipal()
+        {
+            return null;
+        }
     }
 
     private static final class TestUserPreferences extends UserPreferences

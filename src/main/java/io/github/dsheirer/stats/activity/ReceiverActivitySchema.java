@@ -12,6 +12,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.identifier.Form;
@@ -22,6 +23,7 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -61,6 +63,8 @@ public class ReceiverActivitySchema
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int NULL_TIMESLOT = -1;
+    private static final int MAXIMUM_OBSERVED_SITE = 4095;
+    private static final int FORMAT_17_MAXIMUM_OBSERVED_SITE = 255;
 
     private static final int RECEIVER_TRUNKED_SITE = 1;
     private static final int RECEIVER_CONVENTIONAL_P25 = 2;
@@ -121,10 +125,21 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
+        create(connection, MAXIMUM_OBSERVED_SITE);
+    }
+
+    /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
+    public static void createFormat17(Connection connection) throws SQLException
+    {
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE);
+    }
+
+    private static void create(Connection connection, int maximumObservedSite) throws SQLException
+    {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(receiverChannelSql());
-            statement.executeUpdate(receiverActivityEventSql());
+            statement.executeUpdate(receiverActivityEventSql(maximumObservedSite));
             statement.executeUpdate(createActivityEventIdentityMemberSql());
             createTrunkedCallTables(statement);
             RadioSystemSchema.create(statement);
@@ -229,6 +244,62 @@ public class ReceiverActivitySchema
         }
     }
 
+    /** Upserts one receiver-health occurrence and keeps the complete diagnostic history count-bounded. */
+    static void recordReceiverHealthIncident(Connection connection, ReceiverHealthIncidentRecord incident)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_health_incident (
+                process_started_at_ms, occurrence_id, code, severity, title, scope, opened_at_ms,
+                last_seen_at_ms, resolved_at_ms, count, observed, likely_cause, impact, check_next
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(process_started_at_ms, occurrence_id) DO UPDATE SET
+                code=excluded.code,
+                severity=excluded.severity,
+                title=excluded.title,
+                scope=excluded.scope,
+                opened_at_ms=excluded.opened_at_ms,
+                last_seen_at_ms=excluded.last_seen_at_ms,
+                resolved_at_ms=excluded.resolved_at_ms,
+                count=excluded.count,
+                observed=excluded.observed,
+                likely_cause=excluded.likely_cause,
+                impact=excluded.impact,
+                check_next=excluded.check_next
+            """))
+        {
+            statement.setLong(1, incident.processStartedAtMs());
+            statement.setLong(2, incident.occurrenceId());
+            statement.setString(3, incident.code());
+            statement.setString(4, incident.severity());
+            statement.setString(5, incident.title());
+            statement.setString(6, incident.scope());
+            statement.setLong(7, incident.openedAtMs());
+            statement.setLong(8, incident.lastSeenAtMs());
+            statement.setLong(9, incident.resolvedAtMs());
+            statement.setLong(10, incident.count());
+            statement.setString(11, incident.observed());
+            statement.setString(12, incident.likelyCause());
+            statement.setString(13, incident.impact());
+            statement.setString(14, incident.checkNext());
+            statement.executeUpdate();
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM receiver_health_incident
+            WHERE id NOT IN (
+                SELECT id
+                FROM receiver_health_incident
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            """))
+        {
+            statement.setInt(1, SdrTrunkDatabaseSchema.MAXIMUM_RECEIVER_HEALTH_INCIDENTS);
+            statement.executeUpdate();
+        }
+    }
+
     static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
                                boolean detailedEventHistoryEnabled) throws SQLException
     {
@@ -295,6 +366,8 @@ public class ReceiverActivitySchema
             upsertCallIdentityBuckets(connection, activity, channelId);
         }
 
+        AliasActivityProjection.recordActivity(connection, activity);
+
         return activityId;
     }
 
@@ -333,6 +406,11 @@ public class ReceiverActivitySchema
     }
 
     private static String receiverActivityEventSql()
+    {
+        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE);
+    }
+
+    private static String receiverActivityEventSql(int maximumObservedSite)
     {
         return """
             CREATE TABLE IF NOT EXISTS receiver_activity_event (
@@ -381,7 +459,7 @@ public class ReceiverActivitySchema
                 observed_rfss INTEGER CHECK(observed_rfss IS NULL OR
                     (typeof(observed_rfss) = 'integer' AND observed_rfss BETWEEN 0 AND 255)),
                 observed_site INTEGER CHECK(observed_site IS NULL OR
-                    (typeof(observed_site) = 'integer' AND observed_site BETWEEN 0 AND 255)),
+                    (typeof(observed_site) = 'integer' AND observed_site BETWEEN 0 AND %d)),
                 UNIQUE(id, radio_system_id),
                 CHECK((lcn_band IS NULL) = (lcn_number IS NULL)),
                 CHECK(target_observed_local_id IS NOT NULL OR target_kind_code IS NULL),
@@ -395,7 +473,26 @@ public class ReceiverActivitySchema
                     REFERENCES radio_system_identity_summary(
                         id, radio_system_id, identity_kind_code) ON DELETE CASCADE
             )
-            """.formatted(ACTION_CODES, EVENT_TYPE_CODES);
+            """.formatted(ACTION_CODES, EVENT_TYPE_CODES, maximumObservedSite);
+    }
+
+    /** Creates the replacement event table used only by the adjacent format-17-to-18 migration. */
+    public static void createFormat18ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE)
+                .replace("receiver_activity_event (", "receiver_activity_event_format18 ("));
+        }
+    }
+
+    /** Restores current activity indexes and the resolved view after a staged event-table rebuild. */
+    public static void createCurrentIndexesAndViews(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            createIndexesAndViews(statement);
+        }
     }
 
     static boolean applyConventionalCallOutput(Connection connection,
@@ -480,6 +577,7 @@ public class ReceiverActivitySchema
 
             upsertConventionalCallOutputIdentityBuckets(connection, conventionalOutput, channel.channelId(),
                 protocol, recorded, streamed);
+            AliasActivityProjection.recordConventionalCallOutput(connection, conventionalOutput);
             return true;
         }
 
@@ -549,6 +647,8 @@ public class ReceiverActivitySchema
             }
         }
 
+        AliasActivityProjection.recordResolvedLogicalCall(connection, call);
+
         return true;
     }
 
@@ -580,6 +680,7 @@ public class ReceiverActivitySchema
         upsertLogicalCallBucket(connection, radioSystem.radioSystemId(), bucket, 0, 0, recorded, streamed);
         upsertLogicalCallIdentities(connection, radioSystem, channel.channelId(), bucket, call, 0, 0, recorded,
             streamed, false, null);
+        AliasActivityProjection.recordLogicalCallOutput(connection, output);
         return true;
     }
 
@@ -863,6 +964,7 @@ public class ReceiverActivitySchema
         if(applied && radioSystem != null)
         {
             enrichDetailedTrunkedCall(connection, channel.channelId(), radioSystem, attribution);
+            AliasActivityProjection.recordTrunkedAttribution(connection, attribution);
         }
         return true;
     }
@@ -1073,6 +1175,7 @@ public class ReceiverActivitySchema
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
         DmrActivitySchema.recordCompletedCall(connection, channelId, call);
+        AliasActivityProjection.recordDmrConventionalCall(connection, call);
         return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, channelId, null) : null;
     }
 
@@ -1121,6 +1224,7 @@ public class ReceiverActivitySchema
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
         upsertConventionalSummary(connection, activity, channelId);
         upsertCallIdentityBuckets(connection, activity, channelId);
+        AliasActivityProjection.recordNxdnConventionalCall(connection, call);
         return detailedEventHistoryEnabled ? insertReceiverActivityEvent(connection, activity, channelId, null) : null;
     }
 
@@ -1700,6 +1804,7 @@ public class ReceiverActivitySchema
         deleted += deleteAll(connection, "trunked_control_channel_quality");
         deleted += deleteAll(connection, "receiver_channel");
         deleted += deleteAll(connection, "statistics_status");
+        deleted += AliasActivitySummaryMaintenance.resetAll(connection);
         SdrTrunkDatabaseStartup.setMetadata(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,

@@ -107,6 +107,6 @@ public class SecondaryControlChannelBroadcastExplicit extends SecondaryControlCh
     @Override
     public List<IChannelDescriptor> getChannels()
     {
-        return Collections.singletonList(getChannel());
+        return getInt(SYSTEM_SERVICE_CLASS) != 0 ? Collections.singletonList(getChannel()) : Collections.emptyList();
     }
 }

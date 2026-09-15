@@ -374,7 +374,7 @@ public class FrequencyEditor extends VBox
                 if(channel != null)
                 {
                     getCreateButton().setDisable(true);
-                    mConfigurationManager.getChannelModel().addChannel(channel);
+                    mConfigurationManager.addChannel(channel);
 
                     if(getShowCreatedChannelCheckBox().selectedProperty().get())
                     {

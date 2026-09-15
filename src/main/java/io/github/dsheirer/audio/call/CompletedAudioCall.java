@@ -11,6 +11,12 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
 import java.util.List;
 
 /**
@@ -110,7 +116,8 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.voiceCallQuality(),
             sampleCount(audioBuffers), false, false, true, snapshot.callEncryptionEvidence(),
             identifiers != null ? identifiers.getFromIdentifier() : null,
-            identifiers != null ? identifiers.getToIdentifier() : null));
+            identifiers != null ? identifiers.getToIdentifier() : null, List.of(), frequency(identifiers),
+            snapshot.timeslot() > 0 ? snapshot.timeslot() : null));
     }
 
     private static long sampleCount(List<float[]> audioBuffers)
@@ -129,5 +136,13 @@ public record CompletedAudioCall(LogicalCallId logicalCallId, AudioCallSnapshot 
         }
 
         return sampleCount;
+    }
+
+    private static Long frequency(IdentifierCollection identifiers)
+    {
+        Identifier<?> identifier = identifiers != null ? identifiers.getIdentifier(IdentifierClass.CONFIGURATION,
+            Form.CHANNEL_FREQUENCY, Role.ANY) : null;
+        return identifier instanceof ConfigurationLongIdentifier value && value.getValue() > 0L ?
+            value.getValue() : null;
     }
 }

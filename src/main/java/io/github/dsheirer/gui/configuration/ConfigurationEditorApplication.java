@@ -66,7 +66,7 @@ public class ConfigurationEditorApplication extends Application
     {
         if(mConfigurationEditor == null)
         {
-            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences);
+            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mUserPreferences);
         }
 
         return mConfigurationEditor;

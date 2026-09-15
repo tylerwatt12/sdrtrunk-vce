@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebPresentationUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
@@ -25,8 +24,8 @@ class StatsWebPresentationUiContractTest
         String receiver = function(source, "async function renderAdminReceiverBehaviorSettings()");
         String live = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
 
-        assertTrue(receiver.contains("section('Receiver behavior', body)"));
-        assertTrue(receiver.contains("'Traffic grant timing'"));
+        assertTrue(receiver.contains("settingsCard('Live traffic-row idle delay'"));
+        assertTrue(receiver.contains("'This receiver-wide presentation timing affects every viewer.'"));
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
         assertFalse(receiver.contains("retain_idle_call_details"));
         assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));
@@ -52,7 +51,7 @@ class StatsWebPresentationUiContractTest
         String channelFrequencies = function(source,
             "async function renderTrunkedChannelFrequencies(channel, renderContext)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
-        String channels = function(source, "async function renderChannels()");
+        String channels = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
         String liveMessages = function(source, "function liveMessagesPane()");
         String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
@@ -76,7 +75,8 @@ class StatsWebPresentationUiContractTest
             channelGroups.indexOf("host.replaceChildren(node('div', 'loading'"));
         assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
-        assertTrue(channels.contains("layoutMenuHost: directory.titleActions"));
+        assertTrue(channels.contains("tableClass: 'channel-catalog-table'"));
+        assertTrue(channels.contains("controller: tableController"));
         assertTrue(liveMessages.contains("layoutMenuHost: toolbar"));
         assertTrue(liveEvents.contains("layoutMenuHost: eventToolbar"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
@@ -104,7 +104,7 @@ class StatsWebPresentationUiContractTest
     void keepsDiscoverColumnsAtomicAndDateInputsInsideTheirFilters() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
@@ -135,7 +135,7 @@ class StatsWebPresentationUiContractTest
     void usesReusableMetricCardsAndIndependentObservedDetailColumns() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String css = readText(APP_CSS);
+        String css = StatsWebStylesheetTestSupport.readAll();
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));

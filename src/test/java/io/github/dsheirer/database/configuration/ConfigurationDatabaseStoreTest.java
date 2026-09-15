@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -81,7 +82,6 @@ class ConfigurationDatabaseStoreTest
         stream.setName("RadioResolve");
         stream.setHost("https://example.invalid/upload");
         stream.setApiKey("test-api-key");
-        stream.setNodeName("TEST-NODE");
         stream.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
         stream.setEnabled(true);
 
@@ -90,6 +90,18 @@ class ConfigurationDatabaseStoreTest
         state.setBroadcastConfigurations(List.of(stream));
 
         replace(database, state);
+
+        //Retired RadioResolve node fields can remain in an older database until its next configuration save.
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate("""
+                UPDATE configuration_broadcast_stream
+                SET config_json=json_set(config_json,
+                    '$.nodeName', 'TEST-NODE',
+                    '$.nodeTimezone', 'America/New_York')
+                """));
+        }
 
         ChannelAndBroadcastConfiguration loaded = store.load();
         assertEquals(1, loaded.channels().size());
@@ -120,9 +132,13 @@ class ConfigurationDatabaseStoreTest
         assertEquals("RadioResolve", loadedRadioResolve.getName());
         assertEquals("https://example.invalid/upload", loadedRadioResolve.getHost());
         assertEquals("test-api-key", loadedRadioResolve.getApiKey());
-        assertEquals("TEST-NODE", loadedRadioResolve.getNodeName());
         assertEquals(RadioResolveConfiguration.Mode.CALLS_ONLY, loadedRadioResolve.getMode());
         assertTrue(loadedRadioResolve.isEnabled());
+
+        TestConfiguration resaved = new TestConfiguration();
+        resaved.setChannels(loaded.channels());
+        resaved.setBroadcastConfigurations(loaded.broadcastConfigurations());
+        replace(database, resaved);
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
@@ -154,7 +170,9 @@ class ConfigurationDatabaseStoreTest
                        json_extract(config_json, '$.mode') AS mode,
                        json_type(config_json, '$.configurationId') AS configuration_id_json,
                        json_type(config_json, '$.callUploadEnabled') AS call_upload_enabled,
-                       json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled
+                       json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled,
+                       json_type(config_json, '$.nodeName') AS retired_node_name,
+                       json_type(config_json, '$.nodeTimezone') AS retired_node_timezone
                 FROM configuration_broadcast_stream
                 """))
             {
@@ -168,6 +186,8 @@ class ConfigurationDatabaseStoreTest
                 assertNull(resultSet.getString("configuration_id_json"));
                 assertNull(resultSet.getString("call_upload_enabled"));
                 assertNull(resultSet.getString("site_metadata_enabled"));
+                assertNull(resultSet.getString("retired_node_name"));
+                assertNull(resultSet.getString("retired_node_timezone"));
             }
         }
     }
@@ -221,7 +241,7 @@ class ConfigurationDatabaseStoreTest
                     id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (77, '11111111-1111-4111-8111-111111111111', 'TRUNKED', 9, 'Legacy System',
-                    'Legacy Site', 'Retired MPT', NULL,
+                    'Legacy Site', 'Retired MPT', (SELECT id FROM alias_list ORDER BY id LIMIT 1),
                     '22222222-2222-4222-8222-222222222222', 1, 4, 'MPT1327', 451000000,
                     '{"type":"retired-channel","payload":"must be dropped without decoding"}')
                 """);
@@ -230,7 +250,8 @@ class ConfigurationDatabaseStoreTest
                     id, configuration_id, channel_kind, sort_order, system_name, site_name, name, alias_list_id,
                     radioresolve_id, auto_start, auto_start_order, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (78, '33333333-3333-4333-8333-333333333333', 'CONVENTIONAL', 10, 'Legacy System',
-                    'Audio Input', 'Retired Sound Card', NULL, NULL, 1, 5, 'DMR', NULL,
+                    'Audio Input', 'Retired Sound Card', (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1),
+                    NULL, 1, 5, 'DMR', NULL,
                     '{"type":"retired-sound-card","payload":"must be dropped without decoding"}')
                 """))
         {
@@ -610,6 +631,25 @@ class ConfigurationDatabaseStoreTest
     {
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
+            for(Channel channel: state.mChannels)
+            {
+                if(channel.getAliasListId() <= 0 && channel.getDecodeConfiguration() != null)
+                {
+                    AliasListFamily family = AliasListFamily.from(
+                        channel.getDecodeConfiguration().getDecoderType());
+                    try(PreparedStatement aliasList = connection.prepareStatement(
+                        "SELECT id, name FROM alias_list WHERE family=? ORDER BY id LIMIT 1"))
+                    {
+                        aliasList.setString(1, family.name());
+                        try(ResultSet row = aliasList.executeQuery())
+                        {
+                            assertTrue(row.next());
+                            channel.setAliasListId(row.getLong("id"));
+                            channel.setAliasListName(row.getString("name"));
+                        }
+                    }
+                }
+            }
             connection.setAutoCommit(false);
             new ConfigurationDatabaseStore(database).replace(connection,
                 new ChannelAndBroadcastConfiguration(state.mChannels, state.mBroadcastConfigurations));

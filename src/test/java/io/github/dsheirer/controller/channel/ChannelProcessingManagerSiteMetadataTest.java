@@ -16,11 +16,14 @@ import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.telemetry.P25SiteMetadataPublisher;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -33,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +49,96 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
 {
+    @Test
+    public void p25PublisherDefersSnapshotSupplierToObserverWorker() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        Channel channel = new Channel("P25 control", Channel.ChannelType.STANDARD);
+        AtomicReference<Thread> producerThread = new AtomicReference<>();
+        AtomicReference<Thread> supplierThread = new AtomicReference<>();
+        CountDownLatch supplierEntered = new CountDownLatch(1);
+        CountDownLatch releaseSupplier = new CountDownLatch(1);
+        CountDownLatch received = new CountDownLatch(1);
+        ExecutorService producer = Executors.newSingleThreadExecutor();
+        manager.addSiteMetadataListener(event -> received.countDown());
+        P25SiteMetadataPublisher publisher = new P25SiteMetadataPublisher(channel, () -> {
+            supplierThread.set(Thread.currentThread());
+            supplierEntered.countDown();
+
+            try
+            {
+                releaseSupplier.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return p25Snapshot();
+        }, () -> true, manager::process, () -> 851_012_500L);
+
+        try
+        {
+            Future<?> submitted = producer.submit(() -> {
+                producerThread.set(Thread.currentThread());
+                publisher.publish(1_000L);
+            });
+            submitted.get(1, TimeUnit.SECONDS);
+            assertTrue(supplierEntered.await(2, TimeUnit.SECONDS));
+            assertNotEquals(producerThread.get(), supplierThread.get());
+            releaseSupplier.countDown();
+            assertTrue(received.await(2, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            releaseSupplier.countDown();
+            producer.shutdownNow();
+            manager.close();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void genericPublisherDefersSnapshotSupplierToObserverWorker() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        Channel channel = new Channel("DMR control", Channel.ChannelType.STANDARD);
+        AtomicReference<Thread> producerThread = new AtomicReference<>();
+        AtomicReference<Thread> supplierThread = new AtomicReference<>();
+        CountDownLatch supplierRan = new CountDownLatch(1);
+        CountDownLatch received = new CountDownLatch(1);
+        ExecutorService producer = Executors.newSingleThreadExecutor();
+        manager.addProtocolSiteMetadataListener(event -> {
+            if(event.snapshot().protocol() == Protocol.DMR)
+            {
+                received.countDown();
+            }
+        });
+        ProtocolSiteMetadataPublisher publisher = new ProtocolSiteMetadataPublisher(channel, () -> {
+            supplierThread.set(Thread.currentThread());
+            supplierRan.countDown();
+            return dmrSnapshot();
+        }, () -> true, manager::process, () -> 452_012_500L);
+
+        try
+        {
+            Future<?> submitted = producer.submit(() -> {
+                producerThread.set(Thread.currentThread());
+                publisher.publish(2_000L);
+            });
+            submitted.get(1, TimeUnit.SECONDS);
+            assertTrue(supplierRan.await(2, TimeUnit.SECONDS));
+            assertNotEquals(producerThread.get(), supplierThread.get());
+            assertTrue(received.await(2, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            producer.shutdownNow();
+            manager.close();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+        }
+    }
+
     @Test
     public void configurationReloadDoesNotCloseActivityModel() throws Exception
     {
@@ -189,6 +283,32 @@ public class ChannelProcessingManagerSiteMetadataTest
     }
 
     @Test
+    public void tuningGenerationRejectsDelayedSiteObservationAfterSameChainRetunes()
+    {
+        Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId("123e4567-e89b-12d3-a456-426614174000");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(851_012_500L);
+        channel.setSourceConfiguration(source);
+        channel.activateProcessingIncarnation(61);
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(1, 2, 3, 4), null, List.of(), List.of(),
+            List.of(), List.of(), List.of());
+        SiteMetadataEvent beforeRetune = new SiteMetadataEvent(channel, snapshot, 1_000L, 851_012_500L);
+
+        assertEquals(1L, beforeRetune.receiverContext().siteEvidenceTuningGeneration());
+        assertTrue(beforeRetune.matchesCurrentChannel());
+        channel.advanceSiteEvidenceTuningGeneration();
+
+        assertFalse(beforeRetune.matchesCurrentChannel(),
+            "a delayed snapshot must not label calls from the next frequency epoch");
+        SiteMetadataEvent afterRetune = new SiteMetadataEvent(channel, snapshot, 1_001L, 852_012_500L);
+        assertEquals(2L, afterRetune.receiverContext().siteEvidenceTuningGeneration());
+        assertTrue(afterRetune.matchesCurrentChannel());
+    }
+
+    @Test
     public void qualityMonitorCapturesTheIncarnationWhenItStarts()
     {
         Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
@@ -216,6 +336,19 @@ public class ChannelProcessingManagerSiteMetadataTest
         return new ControlChannelQualitySnapshot(channel, channel.getPersistedConfigurationId(), 851_012_500L,
             observedAt, active, -20.0, -21.0, -25.0, -18.0, 95.0, 100, 2, 1, 0, 0,
             observedAt - 1);
+    }
+
+    private static P25NetworkConfigurationSnapshot p25Snapshot()
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(1, 2, 3, 4), null, List.of(), List.of(),
+            List.of(), List.of(), List.of());
+    }
+
+    private static DMRNetworkConfigurationSnapshot dmrSnapshot()
+    {
+        return new DMRNetworkConfigurationSnapshot("DMR", "TIER_III", 1, 2,
+            "Tier III Trunking", "TINY", null, "Control", 1, 1, List.of(), List.of());
     }
 
     @Test
@@ -268,6 +401,129 @@ public class ChannelProcessingManagerSiteMetadataTest
         {
             releaseListener.countDown();
             manager.close();
+        }
+    }
+
+    @Test
+    public void saturatedDeferredSnapshotsDropWithoutRunningSupplierOnProducer() throws Exception
+    {
+        int capacity = 8;
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences(),
+            500, capacity);
+        Channel channel = new Channel("P25 control", Channel.ChannelType.STANDARD);
+        CountDownLatch supplierEntered = new CountDownLatch(1);
+        CountDownLatch releaseSupplier = new CountDownLatch(1);
+        AtomicInteger supplierCalls = new AtomicInteger();
+        AtomicLong monotonicClock = new AtomicLong();
+        SiteMetadataPublicationRateLimiter limiter = new SiteMetadataPublicationRateLimiter(1,
+            monotonicClock::get);
+        P25SiteMetadataPublisher publisher = new P25SiteMetadataPublisher(channel, () -> {
+            supplierCalls.incrementAndGet();
+            supplierEntered.countDown();
+
+            try
+            {
+                releaseSupplier.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return p25Snapshot();
+        }, () -> true, manager::process, limiter, () -> 851_012_500L);
+
+        try
+        {
+            publisher.publish(1_000L);
+            assertTrue(supplierEntered.await(2, TimeUnit.SECONDS));
+
+            assertTimeout(Duration.ofSeconds(1), () -> {
+                for(int index = 0; index < 1_000; index++)
+                {
+                    monotonicClock.addAndGet(TimeUnit.MILLISECONDS.toNanos(2));
+                    publisher.publish(1_001L + index);
+                }
+            });
+
+            assertEquals(capacity, manager.getSiteMetadataIngressCapacity());
+            assertTrue(manager.getSiteMetadataIngressSize() <= capacity);
+            assertTrue(manager.getDroppedSiteMetadataCount() > 0);
+            assertEquals(1, supplierCalls.get(),
+                "rejected requests must never fall back to supplier execution on the decoder callback");
+
+            manager.close();
+            monotonicClock.addAndGet(TimeUnit.MILLISECONDS.toNanos(2));
+            publisher.publish(3_000L);
+            assertFalse(manager.awaitSiteMetadataDrain(20, TimeUnit.MILLISECONDS));
+            releaseSupplier.countDown();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+            assertTrue(supplierCalls.get() <= capacity + 1);
+        }
+        finally
+        {
+            releaseSupplier.countDown();
+            manager.close();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void staleGenericSnapshotRequestIsDiscardedBeforeSupplierRunsDuringShutdown() throws Exception
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences(),
+            500, 4);
+        CountDownLatch blockingSupplierEntered = new CountDownLatch(1);
+        CountDownLatch releaseBlockingSupplier = new CountDownLatch(1);
+        Channel blockingChannel = new Channel("blocking", Channel.ChannelType.STANDARD);
+        P25SiteMetadataPublisher blocking = new P25SiteMetadataPublisher(blockingChannel, () -> {
+            blockingSupplierEntered.countDown();
+
+            try
+            {
+                releaseBlockingSupplier.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return p25Snapshot();
+        }, () -> true, manager::process);
+
+        Channel genericChannel = new Channel("DMR control", Channel.ChannelType.STANDARD);
+        genericChannel.activateProcessingIncarnation(77L);
+        AtomicInteger genericSupplierCalls = new AtomicInteger();
+        ProtocolSiteMetadataPublisher generic = new ProtocolSiteMetadataPublisher(genericChannel, () -> {
+            genericSupplierCalls.incrementAndGet();
+            return dmrSnapshot();
+        }, () -> true, manager::process);
+
+        try
+        {
+            blocking.publish(1_000L);
+            assertTrue(blockingSupplierEntered.await(2, TimeUnit.SECONDS));
+            generic.publish(1_001L);
+            genericChannel.advanceSiteEvidenceTuningGeneration();
+            manager.close();
+            assertFalse(manager.awaitSiteMetadataDrain(20, TimeUnit.MILLISECONDS));
+            releaseBlockingSupplier.countDown();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
+            assertEquals(0, genericSupplierCalls.get(),
+                "a queued request from a replaced tuning generation must be rejected before snapshot projection");
+
+            ProtocolSiteMetadataPublisher afterClose = new ProtocolSiteMetadataPublisher(genericChannel, () -> {
+                genericSupplierCalls.incrementAndGet();
+                return dmrSnapshot();
+            }, () -> true, manager::process);
+            afterClose.publish(1_002L);
+            assertEquals(0, genericSupplierCalls.get(), "closed managers reject new deferred work");
+        }
+        finally
+        {
+            releaseBlockingSupplier.countDown();
+            manager.close();
+            assertTrue(manager.awaitSiteMetadataDrain(2, TimeUnit.SECONDS));
         }
     }
 

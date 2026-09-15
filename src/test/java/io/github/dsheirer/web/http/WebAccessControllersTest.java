@@ -177,6 +177,16 @@ class WebAccessControllersTest
             assertTrue(admin.setCookie().contains("SameSite=Strict"));
             assertFalse(admin.setCookie().contains("Secure"));
             assertTrue(admin.body().at("/capabilities/admin-aliases").booleanValue());
+            JsonNode authenticatedSession = data(send(client, request(origin, "/api/v1/auth/session")
+                .header("Cookie", admin.cookieHeader()).GET()));
+            assertTrue(authenticatedSession.get("configured").booleanValue());
+            assertTrue(authenticatedSession.get("authenticated").booleanValue());
+            assertEquals("admin", authenticatedSession.get("tier").textValue());
+            assertEquals("admin", authenticatedSession.get("username").textValue());
+            assertTrue(authenticatedSession.get("primary").booleanValue());
+            assertEquals(admin.csrfToken(), authenticatedSession.get("csrf_token").textValue());
+            assertTrue(authenticatedSession.at("/capabilities/admin-users").booleanValue());
+            assertFalse(authenticatedSession.has("expires_at_epoch_millis"));
 
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
@@ -341,6 +351,10 @@ class WebAccessControllersTest
                 () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
             P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
             String configurationId = "abcdefab-cdef-abcd-efab-cdefabcdefab";
+            assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/channels/" + configurationId,
+                WebSessionHttpController.desktopChannelHandoffPath(configurationId));
+            assertThrows(IllegalArgumentException.class,
+                () -> WebSessionHttpController.desktopChannelHandoffPath(configurationId.toUpperCase()));
             assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId,
                 WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, configurationId));
@@ -395,12 +409,20 @@ class WebAccessControllersTest
                 exactHandoff.headers().firstValue("Location").orElseThrow());
 
             assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            HttpResponse<String> channelHandoff = send(client,
+                request(origin, WebSessionHttpController.desktopChannelHandoffPath(configurationId))
+                    .header("Cookie", cookie).GET());
+            assertEquals(303, channelHandoff.statusCode());
+            assertEquals("/?view=channel-setup&channel=" + configurationId,
+                channelHandoff.headers().firstValue("Location").orElseThrow());
+
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
             HttpResponse<String> p25Handoff = send(client,
                 request(origin, WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
                     configurationId))
                     .header("Cookie", cookie).GET());
             assertEquals(303, p25Handoff.statusCode());
-            assertEquals("/?view=admin&tab=p25-bandplans&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
+            assertEquals("/?view=admin&tab=protocol-p25&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
                     configurationId,
                 p25Handoff.headers().firstValue("Location").orElseThrow());
 

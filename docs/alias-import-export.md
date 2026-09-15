@@ -1,9 +1,9 @@
 # Alias list CSV import and export
 
 In the web Alias Editor, select a list and choose **Import aliases…** or **Export aliases…**. Administrator access is
-required. These focused dialogs transfer alias configuration. They do not import activity, counters, credentials,
+required; exporting the current filtered results also requires CSV export access. These focused dialogs transfer alias configuration. They do not import activity, counters, credentials,
 channels, or Alias List Defaults. The existing table **Download table report** action remains a reporting export;
-choose **Export aliases…**, then **Download alias list CSV**, for a file that can be imported again.
+choose **Export aliases…**, then **Download CSV**, for a file that can be imported again.
 
 ## Import modes and review
 
@@ -15,12 +15,14 @@ Empty imports are rejected.
 
 Drop or choose a UTF-8 CSV. The dialog detects VCE exports and RadioReference talkgroup files from their headers; an
 unrecognized header displays the explicit file-type choice. Choose the import behavior, then select **Review import**.
-Files are limited to 8 MiB and 10,000 aliases. Review shows filterable Added, Updated, Unchanged, Removed, and Errors
+Files are limited to 128 MiB; there is no 10,000-alias row limit. Review shows filterable Added, Updated, Unchanged, Removed, and Errors
 counts. Expand a row to see configuration values or current/proposed field differences. Results are paged in groups
 of 100. Replace requires checking the confirmation naming the destination list only when the review contains removals.
 
-Duplicate matchers in a file, multiple existing aliases with the same matcher, incompatible or invalid matchers,
-and unresolved assignments prevent applying the entire import. Fix the file and preview again. Syntax errors
+Incompatible or invalid matchers and unresolved assignments prevent applying the entire import. Repeated exact
+matchers are preserved: the importer pairs identical configurations first, then pairs remaining occurrences to
+existing aliases in stable database-ID order, and adds any excess occurrences. Fix other file errors and preview
+again. Syntax errors
 identify the first invalid CSV record; configuration errors appear in review. Range overlaps are distinct from
 duplicate identities and remain subject to the Alias Editor's existing overlap diagnostics.
 
@@ -30,8 +32,12 @@ unchanged counts. Reimporting an unchanged file does not create duplicates.
 
 ## VCE configuration CSV, version 2
 
-Choose **Export aliases…** for the selected list. Lists with duplicate exact matchers must be resolved before they can
-produce a transferable export. The importer requires this exact header, including order and capitalization:
+Choose **Export aliases…** for the selected list, then choose either every alias in that list or every result matching
+the current Alias table search and filters. A filtered export includes the complete server-side result, not just the
+visible page. Every selected alias is written in ascending durable database-ID order, independent of the table's
+current presentation sort, including aliases that share an exact matcher. That stable order preserves the same
+last/highest-ID exact-alias match after an empty-list round trip. The importer requires this exact header, including
+order and capitalization:
 
 ```csv
 format_version,alias_list,name,description,group,color,icon,matcher_type,protocol,value,minimum,maximum,text,tones,record_enabled,scan_lists,streaming_destinations,stream_as_talkgroup
@@ -71,11 +77,16 @@ double an initial literal apostrophe. Quoted commas, line breaks, and Unicode te
 For new aliases, the VCE row is authoritative: its appearance, recording choice, scan-list memberships, streaming
 destinations, stream-as value, and matcher are used directly. The modal does not ask for redundant assignment
 choices. This makes an export/import round trip preserve all current per-alias configuration. Database IDs and
-derived `streamable`/overlap state are intentionally not exported.
+derived `streamable`/overlap state are intentionally not exported. Within the documented 128 MiB import safety
+limit, an export/import round trip preserves all current per-alias configuration. Activity counters and timestamps are
+omitted: matching aliases keep their existing activity, while newly imported aliases begin with no observed activity.
 
-The transferable export requires each alias in the list to have a unique exact matcher. If a list contains duplicate
-matchers, resolve those overlaps before exporting it. The ordinary Alias table CSV remains available for reporting,
-but it is not an import file.
+Large exports are read from the database and encoded in bounded batches. The server validates the complete CSV in a
+temporary spool before sending download headers, then the browser performs a native download without buffering the
+file in page JavaScript. A pre-download failure is shown in the export dialog. Once transfer begins, the declared file
+length lets the browser reject an interrupted response instead of presenting a partial CSV as complete.
+
+The ordinary Alias table CSV remains available for reporting, but it is not an import file.
 
 ## RadioReference talkgroup CSV
 

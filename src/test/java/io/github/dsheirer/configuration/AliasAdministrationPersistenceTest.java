@@ -34,6 +34,7 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
@@ -248,7 +249,9 @@ class AliasAdministrationPersistenceTest
                 {
                     if(change.wasAdded())
                     {
-                        manager.getChannelModel().addChannel(new Channel("Publication Channel"));
+                        Channel channel = new Channel("Publication Channel");
+                        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+                        manager.addChannel(channel);
                     }
                 }
             });
@@ -635,7 +638,9 @@ class AliasAdministrationPersistenceTest
         {
             if(mAddChannelDuringNextCommit.compareAndSet(true, false))
             {
-                getChannelModel().addChannel(new Channel("Late Channel"));
+                Channel channel = new Channel("Late Channel");
+                channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+                addChannel(channel);
             }
             return super.commitAliasConfiguration(proposed, publication);
         }

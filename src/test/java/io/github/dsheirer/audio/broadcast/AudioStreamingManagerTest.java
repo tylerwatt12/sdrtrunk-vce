@@ -104,7 +104,9 @@ public class AudioStreamingManagerTest
         CountDownLatch latch = new CountDownLatch(expectedRecordingsCount);
         CountDownLatch metricLatch = new CountDownLatch(1);
         AtomicInteger streamedMetrics = new AtomicInteger();
+        AtomicReference<AudioRecording> deliveredRecording = new AtomicReference<>();
         Listener<AudioRecording> listener = audioRecording -> {
+            deliveredRecording.set(audioRecording);
             latch.countDown();
         };
 
@@ -135,6 +137,10 @@ public class AudioStreamingManagerTest
         assertTrue(success, "Stream patch group audio as PATCHED GROUP failed to produce [" +
                 latch.getCount() + "/" + expectedRecordingsCount + "] streaming recordings");
         assertEquals(1, streamedMetrics.get());
+        assertTrue(deliveredRecording.get().getCompletedCallMetadata().isAvailable());
+        assertEquals(1, deliveredRecording.get().getCompletedCallMetadata().callLegSummaries().size());
+        assertEquals(getCompletedAudioCall().snapshot().voiceCallQuality(),
+            deliveredRecording.get().getCompletedCallMetadata().snapshot().voiceCallQuality());
     }
 
     @Test

@@ -13,7 +13,8 @@ package io.github.dsheirer.module.decode.p25.telemetry;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
-import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshotRequest;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -28,47 +29,47 @@ public class P25SiteMetadataPublisher
     private final Channel mChannel;
     private final Supplier<P25NetworkConfigurationSnapshot> mSnapshotSupplier;
     private final BooleanSupplier mHasInterModuleEventBus;
-    private final Consumer<SiteMetadataEvent> mEventPublisher;
+    private final Consumer<SiteMetadataSnapshotRequest> mRequestPublisher;
     private final SiteMetadataPublicationRateLimiter mRateLimiter;
     private final LongSupplier mSourceFrequencySupplier;
 
     public P25SiteMetadataPublisher(Channel channel,
                                     Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
                                     BooleanSupplier hasInterModuleEventBus,
-                                    Consumer<SiteMetadataEvent> eventPublisher)
+                                    Consumer<SiteMetadataSnapshotRequest> requestPublisher)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher,
             new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), () -> 0);
     }
 
     public P25SiteMetadataPublisher(Channel channel,
                                     Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
                                     BooleanSupplier hasInterModuleEventBus,
-                                    Consumer<SiteMetadataEvent> eventPublisher,
+                                    Consumer<SiteMetadataSnapshotRequest> requestPublisher,
                                     LongSupplier sourceFrequencySupplier)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher,
             new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS), sourceFrequencySupplier);
     }
 
     public P25SiteMetadataPublisher(Channel channel, Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
                                     BooleanSupplier hasInterModuleEventBus,
-                                    Consumer<SiteMetadataEvent> eventPublisher,
+                                    Consumer<SiteMetadataSnapshotRequest> requestPublisher,
                                     SiteMetadataPublicationRateLimiter rateLimiter)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher, rateLimiter, () -> 0);
+        this(channel, snapshotSupplier, hasInterModuleEventBus, requestPublisher, rateLimiter, () -> 0);
     }
 
     public P25SiteMetadataPublisher(Channel channel, Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
                                     BooleanSupplier hasInterModuleEventBus,
-                                    Consumer<SiteMetadataEvent> eventPublisher,
+                                    Consumer<SiteMetadataSnapshotRequest> requestPublisher,
                                     SiteMetadataPublicationRateLimiter rateLimiter,
                                     LongSupplier sourceFrequencySupplier)
     {
         mChannel = channel;
         mSnapshotSupplier = snapshotSupplier;
         mHasInterModuleEventBus = hasInterModuleEventBus;
-        mEventPublisher = eventPublisher;
+        mRequestPublisher = requestPublisher;
         mRateLimiter = rateLimiter;
         mSourceFrequencySupplier = sourceFrequencySupplier != null ? sourceFrequencySupplier : () -> 0;
     }
@@ -85,16 +86,14 @@ public class P25SiteMetadataPublisher
             return;
         }
 
-        P25NetworkConfigurationSnapshot snapshot = mSnapshotSupplier != null ? mSnapshotSupplier.get() : null;
-
-        if(snapshot != null && snapshot.isUseful() && mRateLimiter != null && mRateLimiter.tryAcquire())
+        if(mSnapshotSupplier != null && mRequestPublisher != null && mRateLimiter != null &&
+            mRateLimiter.tryAcquire())
         {
-            if(mEventPublisher != null)
-            {
-                long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-                mEventPublisher.accept(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp,
-                    mSourceFrequencySupplier.getAsLong()));
-            }
+            long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+            long sourceFrequency = mSourceFrequencySupplier.getAsLong();
+            SiteReceiverContext receiverContext = SiteReceiverContext.capture(mChannel, null, sourceFrequency);
+            mRequestPublisher.accept(new SiteMetadataSnapshotRequest(mChannel, receiverContext, mSnapshotSupplier,
+                eventTimestamp));
         }
     }
 }

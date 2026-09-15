@@ -36,6 +36,7 @@ import java.util.Objects;
  * snapshot prevents a later channel edit, reload, or frequency change from relabeling an earlier observation.</p>
  */
 public record SiteReceiverContext(String configurationId, int runtimeChannelId, long processingIncarnation,
+                                  long siteEvidenceTuningGeneration,
                                   Channel.ChannelType channelType,
                                   DecoderType decoderType, Protocol protocol, ReceiverMode receiverMode,
                                   TrunkedIdentityDomain identityDomain,
@@ -108,7 +109,7 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
 
         String radioResolveId = channel.hasRadioResolveId() ? channel.getRadioResolveId() : null;
         return new SiteReceiverContext(ChannelConfigurationKey.configured(channel), channel.getChannelID(),
-            channel.getProcessingIncarnation(), channel.getChannelType(),
+            channel.getProcessingIncarnation(), channel.getSiteEvidenceTuningGeneration(), channel.getChannelType(),
             decoderType, capturedProtocol, receiverMode(decodeConfiguration), identityDomain(decodeConfiguration),
             sourceType,
             configuredPrimaryFrequency, preferredFrequency, positive(sourceFrequency), radioResolveId,
@@ -119,7 +120,8 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
     /** Minimal context for a detached quality-registry snapshot that has no live channel token. */
     public static SiteReceiverContext detached(String configurationId, long sourceFrequency)
     {
-        return new SiteReceiverContext(ChannelConfigurationKey.canonical(configurationId), -1, 0, null, null, null,
+        return new SiteReceiverContext(ChannelConfigurationKey.canonical(configurationId), -1, 0, 0, null, null,
+            null,
             ReceiverMode.UNKNOWN, TrunkedIdentityDomain.STANDARD, null, null, null, positive(sourceFrequency),
             null, null, null, null, 0, null);
     }
@@ -127,7 +129,8 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
     /** Returns the same frozen receiver facts with an exact producer-observed frequency. */
     public SiteReceiverContext withSourceFrequency(long frequency)
     {
-        return new SiteReceiverContext(configurationId, runtimeChannelId, processingIncarnation, channelType,
+        return new SiteReceiverContext(configurationId, runtimeChannelId, processingIncarnation,
+            siteEvidenceTuningGeneration, channelType,
             decoderType, protocol,
             receiverMode, identityDomain, sourceType, configuredPrimaryFrequency, preferredFrequency,
             positive(frequency), radioResolveId, channelName, systemName, siteName, aliasListId, aliasListName);
@@ -138,7 +141,8 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
     {
         String canonical = ChannelConfigurationKey.canonical(explicitConfigurationId);
         return new SiteReceiverContext(canonical != null ? canonical : configurationId, runtimeChannelId,
-            processingIncarnation, channelType, decoderType, protocol, receiverMode, identityDomain, sourceType,
+            processingIncarnation, siteEvidenceTuningGeneration, channelType, decoderType, protocol, receiverMode,
+            identityDomain, sourceType,
             configuredPrimaryFrequency, preferredFrequency, sourceFrequency, radioResolveId, channelName,
             systemName, siteName, aliasListId, aliasListName);
     }
@@ -180,18 +184,34 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
      */
     public boolean matchesCurrentChannel(Channel channel)
     {
+        return matchesCurrentChannel(channel, true);
+    }
+
+    /**
+     * Verifies that this exact site-evidence generation has not been replaced. A terminal call may arrive after its
+     * processing mapping has closed, so inactivity alone does not invalidate already verified proof; a changed
+     * processing incarnation, tuning generation, or source configuration does.
+     */
+    public boolean matchesCurrentSiteEvidenceGeneration(Channel channel)
+    {
+        return matchesCurrentChannel(channel, false);
+    }
+
+    private boolean matchesCurrentChannel(Channel channel, boolean requireActive)
+    {
         if(channel == null || channel.getChannelID() != runtimeChannelId || channel.getChannelType() != channelType)
         {
             return false;
         }
 
-        if(!channel.matchesProcessingIncarnation(processingIncarnation, true))
+        if(!channel.matchesProcessingIncarnation(processingIncarnation, requireActive))
         {
             return false;
         }
 
         SiteReceiverContext current = capture(channel, protocol, 0);
         return current != null && Objects.equals(configurationId, current.configurationId) &&
+            siteEvidenceTuningGeneration == current.siteEvidenceTuningGeneration &&
             decoderType == current.decoderType && receiverMode == current.receiverMode &&
             identityDomain == current.identityDomain &&
             sourceType == current.sourceType &&
@@ -232,6 +252,7 @@ public record SiteReceiverContext(String configurationId, int runtimeChannelId, 
     {
         return other != null && runtimeChannelId == other.runtimeChannelId &&
             processingIncarnation == other.processingIncarnation &&
+            siteEvidenceTuningGeneration == other.siteEvidenceTuningGeneration &&
             Objects.equals(configurationId, other.configurationId) && channelType == other.channelType &&
             decoderType == other.decoderType && protocol == other.protocol && receiverMode == other.receiverMode &&
             identityDomain == other.identityDomain && sourceType == other.sourceType &&

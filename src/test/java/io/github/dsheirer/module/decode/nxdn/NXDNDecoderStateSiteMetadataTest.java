@@ -14,6 +14,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.ProtocolSiteMetadataSnapshotRequest;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
@@ -114,6 +115,31 @@ class NXDNDecoderStateSiteMetadataTest
     }
 
     @Test
+    void decoderCallbackUsesPublishedIdentityWithoutProjectingObserverSnapshot()
+    {
+        Channel channel = new Channel("Type-C", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN();
+        configuration.setChannelMode(NXDNChannelMode.TRUNKED);
+        channel.setDecodeConfiguration(configuration);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(channel);
+        NXDNNetworkConfigurationMonitor monitor = new NXDNNetworkConfigurationMonitor(() -> {
+            throw new AssertionError("full snapshot projection must run only on the observer worker");
+        });
+        NXDNDecoderState decoderState = new NXDNDecoderState(channel, manager,
+            new SiteMetadataPublicationRateLimiter(0), monitor);
+        decoderState.setInterModuleEventBus(new EventBus());
+        CorrectedBinaryMessage siteBits = new CorrectedBinaryMessage(176);
+        siteBits.load(10, 10, 341);
+        siteBits.load(20, 12, 837);
+
+        decoderState.receive(new SiteInformation(siteBits, 1_000,
+            NXDNMessageType.CONTROL_OUT_24_BC_SITE_INFORMATION, 12,
+            LICH.RCCH_OUTBOUND_SINGLE_CAC_NORMAL));
+
+        assertEquals("nxdn-c:global:341", manager.getNativeRadioSystemKey());
+    }
+
+    @Test
     void conventionalModeDoesNotPromoteRuntimeMessagesToSiteMetadata()
     {
         Channel channel = new Channel("conventional", Channel.ChannelType.STANDARD);
@@ -133,7 +159,7 @@ class NXDNDecoderStateSiteMetadataTest
             NXDNMessageType.TYPE_D_SCCH_OUT_INFO_4_SITE_ID, 0,
             LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
 
-        assertNull(collector.event);
+        assertNull(collector.resolve());
     }
 
     @Test
@@ -154,9 +180,10 @@ class NXDNDecoderStateSiteMetadataTest
             NXDNMessageType.TYPE_D_SCCH_OUT_INFO_4_SITE_ID, 0,
             LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
 
-        assertNotNull(collector.event);
+        ProtocolSiteMetadataEvent event = collector.resolve();
+        assertNotNull(event);
         NXDNNetworkConfigurationSnapshot siteSnapshot =
-            (NXDNNetworkConfigurationSnapshot)collector.event.snapshot();
+            (NXDNNetworkConfigurationSnapshot)event.snapshot();
         assertEquals(7, siteSnapshot.typeDSite());
 
         CorrectedBinaryMessage repeaterBits = new CorrectedBinaryMessage(32);
@@ -168,7 +195,7 @@ class NXDNDecoderStateSiteMetadataTest
             LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
 
         NXDNNetworkConfigurationSnapshot repeaterSnapshot =
-            (NXDNNetworkConfigurationSnapshot)collector.event.snapshot();
+            (NXDNNetworkConfigurationSnapshot)collector.resolve().snapshot();
         assertEquals(9, repeaterSnapshot.currentRepeater());
         assertEquals(java.util.List.of(14), repeaterSnapshot.observedRepeaters());
 
@@ -178,7 +205,7 @@ class NXDNDecoderStateSiteMetadataTest
             LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
 
         NXDNNetworkConfigurationSnapshot freeSnapshot =
-            (NXDNNetworkConfigurationSnapshot)collector.event.snapshot();
+            (NXDNNetworkConfigurationSnapshot)collector.resolve().snapshot();
         assertNull(freeSnapshot.currentRepeater());
         assertEquals("FREE", freeSnapshot.repeaterStatus());
         assertEquals(java.util.List.of(9, 14), freeSnapshot.observedRepeaters());
@@ -186,12 +213,17 @@ class NXDNDecoderStateSiteMetadataTest
 
     private static class EventCollector
     {
-        private ProtocolSiteMetadataEvent event;
+        private ProtocolSiteMetadataSnapshotRequest request;
 
         @Subscribe
-        public void receive(ProtocolSiteMetadataEvent metadataEvent)
+        public void receive(ProtocolSiteMetadataSnapshotRequest snapshotRequest)
         {
-            event = metadataEvent;
+            request = snapshotRequest;
+        }
+
+        private ProtocolSiteMetadataEvent resolve()
+        {
+            return request != null ? request.resolve() : null;
         }
     }
 

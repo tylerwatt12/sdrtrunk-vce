@@ -15,14 +15,10 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
-import java.net.InetAddress;
-import java.time.ZoneId;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -33,16 +29,9 @@ import javafx.beans.property.StringProperty;
 public class RadioResolveConfiguration extends BroadcastConfiguration
 {
     public static final String PRODUCTION_ENDPOINT = "https://calls.radioresolve.com";
-    public static final int DEFAULT_CONCURRENT_UPLOADS = 4;
-    public static final int MIN_CONCURRENT_UPLOADS = 1;
-    public static final int MAX_CONCURRENT_UPLOADS = 16;
-
     private StringProperty mApiKey = new SimpleStringProperty();
-    private StringProperty mNodeName = new SimpleStringProperty(getDefaultNodeName());
-    private StringProperty mNodeTimezone = new SimpleStringProperty(getDefaultNodeTimezone());
     private BooleanProperty mIgnoreCertificateErrors = new SimpleBooleanProperty(false);
     private ObjectProperty<Mode> mMode = new SimpleObjectProperty<>(Mode.CALLS_AND_METADATA);
-    private IntegerProperty mConcurrentUploads = new SimpleIntegerProperty(DEFAULT_CONCURRENT_UPLOADS);
 
     /**
      * RadioResolve call and site-metadata publishing mode.
@@ -96,16 +85,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return mApiKey;
     }
 
-    public StringProperty nodeNameProperty()
-    {
-        return mNodeName;
-    }
-
-    public StringProperty nodeTimezoneProperty()
-    {
-        return mNodeTimezone;
-    }
-
     public BooleanProperty ignoreCertificateErrorsProperty()
     {
         return mIgnoreCertificateErrors;
@@ -114,11 +93,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
     public ObjectProperty<Mode> modeProperty()
     {
         return mMode;
-    }
-
-    public IntegerProperty concurrentUploadsProperty()
-    {
-        return mConcurrentUploads;
     }
 
     @Override
@@ -135,26 +109,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
     public void setApiKey(String apiKey)
     {
         mApiKey.set(apiKey);
-    }
-
-    public String getNodeName()
-    {
-        return mNodeName.get();
-    }
-
-    public void setNodeName(String nodeName)
-    {
-        mNodeName.set(nodeName);
-    }
-
-    public String getNodeTimezone()
-    {
-        return mNodeTimezone.get();
-    }
-
-    public void setNodeTimezone(String nodeTimezone)
-    {
-        mNodeTimezone.set(nodeTimezone);
     }
 
     public boolean getIgnoreCertificateErrors()
@@ -196,16 +150,6 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return mode == Mode.CALLS_AND_METADATA || mode == Mode.METADATA_ONLY;
     }
 
-    public int getConcurrentUploads()
-    {
-        return clampConcurrentUploads(mConcurrentUploads.get());
-    }
-
-    public void setConcurrentUploads(int concurrentUploads)
-    {
-        mConcurrentUploads.set(clampConcurrentUploads(concurrentUploads));
-    }
-
     @Override
     public BroadcastServerType getBroadcastServerType()
     {
@@ -219,31 +163,11 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         copy.setName(getName());
         copy.setHost(getHost());
         copy.setApiKey(getApiKey());
-        copy.setNodeName(getNodeName());
-        copy.setNodeTimezone(getNodeTimezone());
         copy.setIgnoreCertificateErrors(getIgnoreCertificateErrors());
         copy.setMode(getMode());
-        copy.setConcurrentUploads(getConcurrentUploads());
         copy.setMaximumRecordingAge(getMaximumRecordingAge());
         copy.setEnabled(isEnabled());
         return copy;
-    }
-
-    public static String getDefaultNodeName()
-    {
-        try
-        {
-            return InetAddress.getLocalHost().getHostName();
-        }
-        catch(Exception _)
-        {
-            return "sdrtrunk";
-        }
-    }
-
-    public static String getDefaultNodeTimezone()
-    {
-        return ZoneId.systemDefault().getId();
     }
 
     private static String normalizeHost(String host)
@@ -268,8 +192,4 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         return trimmed;
     }
 
-    private static int clampConcurrentUploads(int concurrentUploads)
-    {
-        return Math.min(MAX_CONCURRENT_UPLOADS, Math.max(MIN_CONCURRENT_UPLOADS, concurrentUploads));
-    }
 }

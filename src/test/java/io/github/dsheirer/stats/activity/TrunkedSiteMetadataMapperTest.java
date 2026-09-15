@@ -363,14 +363,16 @@ class TrunkedSiteMetadataMapperTest
         {
             statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
             ReceiverActivitySchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES ('%s', 'TRUNKED', 0, 'Metro Radio', 'Downtown', 'Control',
+                    (SELECT id FROM alias_list WHERE family='DMR' LIMIT 1),
                     '00000000-0000-0000-0000-000000000123', 0, 'DMR', 451000000,
                     '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
                 """.formatted(channel.getConfigurationId()));

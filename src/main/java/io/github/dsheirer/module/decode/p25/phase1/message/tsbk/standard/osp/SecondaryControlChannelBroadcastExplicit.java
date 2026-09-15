@@ -133,8 +133,6 @@ public class SecondaryControlChannelBroadcastExplicit extends OSPMessage impleme
     @Override
     public List<IChannelDescriptor> getChannels()
     {
-        List<IChannelDescriptor> channels = new ArrayList<>();
-        channels.add(getChannel());
-        return channels;
+        return getMessage().getInt(SYSTEM_SERVICE_CLASS) != 0 ? List.of(getChannel()) : List.of();
     }
 }

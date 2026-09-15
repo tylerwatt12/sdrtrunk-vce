@@ -116,18 +116,243 @@ public class AliasDatabaseStore
         List<AliasListDefinition> safeDefinitions = definitions != null ? new ArrayList<>(definitions) :
             new ArrayList<>();
         validateSnapshot(safeAliases, safeDefinitions);
-        clearSnapshot(connection);
+        Map<Long,MatcherSignature> previousMatchers = loadAliasMatcherSignatures(connection);
+        clearAliasesAndRoutes(connection);
+        deleteMissingDefinitions(connection, safeDefinitions);
         saveDefinitions(connection, safeDefinitions);
         attachDefinitions(safeAliases, safeDefinitions);
         saveAliases(connection, safeAliases);
+        synchronizeAliasActivitySummaries(connection, previousMatchers);
     }
 
-    private void clearSnapshot(Connection connection) throws SQLException
+    private void clearAliasesAndRoutes(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM alias");
-            statement.executeUpdate("DELETE FROM alias_list");
+            statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_stream");
+        }
+    }
+
+    /**
+     * Captures only matcher identity before the snapshot-style alias rewrite.  The format-20 summary foreign key is
+     * deferred, so rows with the same durable alias ID survive the delete/reinsert transaction.  Presentation,
+     * routing, and import-field changes preserve counters; changing the identity that an alias matches resets it.
+     */
+    private static Map<Long,MatcherSignature> loadAliasMatcherSignatures(Connection connection) throws SQLException
+    {
+        Map<Long,MatcherSignature> signatures = new HashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT id, matcher_type, protocol, value, min_value, max_value, text_value, numeric_value, tone_sequence
+            FROM alias
+            ORDER BY id
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                signatures.put(resultSet.getLong("id"), matcherSignature(resultSet));
+            }
+        }
+        return signatures;
+    }
+
+    private static void synchronizeAliasActivitySummaries(Connection connection,
+                                                            Map<Long,MatcherSignature> previousMatchers)
+        throws SQLException
+    {
+        try(PreparedStatement delete = connection.prepareStatement("""
+            DELETE FROM alias_activity_summary
+            WHERE NOT EXISTS (SELECT 1 FROM alias WHERE alias.id = alias_activity_summary.alias_id)
+            """))
+        {
+            delete.executeUpdate();
+        }
+
+        List<SummarySeed> seeds = new ArrayList<>();
+        List<SummarySeed> resets = new ArrayList<>();
+        List<SummarySeed> metadataChanges = new ArrayList<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT alias.id, alias.alias_list_id, alias.matcher_type, alias.protocol, alias.value,
+                alias.min_value, alias.max_value, alias.text_value, alias.numeric_value, alias.tone_sequence,
+                summary.alias_id AS summary_alias_id, summary.alias_list_id AS summary_alias_list_id,
+                summary.protocol_code AS summary_protocol_code
+            FROM alias
+            LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+            ORDER BY alias.id
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                long aliasId = resultSet.getLong("id");
+                long aliasListId = resultSet.getLong("alias_list_id");
+                MatcherSignature current = matcherSignature(resultSet);
+                int protocolCode = current.activityProtocolCode();
+                SummarySeed seed = new SummarySeed(aliasId, aliasListId, protocolCode);
+                Long summaryAliasId = nullableLong(resultSet, "summary_alias_id");
+
+                if(summaryAliasId == null)
+                {
+                    seeds.add(seed);
+                }
+                else if(previousMatchers.containsKey(aliasId) &&
+                    !current.equals(previousMatchers.get(aliasId)))
+                {
+                    resets.add(seed);
+                }
+                else
+                {
+                    long storedAliasListId = resultSet.getLong("summary_alias_list_id");
+                    int storedProtocolCode = resultSet.getInt("summary_protocol_code");
+                    if(storedAliasListId != aliasListId || storedProtocolCode != protocolCode)
+                    {
+                        metadataChanges.add(seed);
+                    }
+                }
+            }
+        }
+
+        long updatedAt = Math.max(1L, System.currentTimeMillis());
+        try(PreparedStatement insert = connection.prepareStatement("""
+            INSERT INTO alias_activity_summary(
+                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?)
+            """))
+        {
+            for(SummarySeed seed: seeds)
+            {
+                bindSummaryIdentity(insert, seed, updatedAt);
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+
+        try(PreparedStatement reset = connection.prepareStatement("""
+            UPDATE alias_activity_summary
+            SET alias_list_id = ?, protocol_code = ?, metrics_state = ?,
+                logical_call_count = NULL, recorded_logical_call_count = NULL,
+                stream_submitted_logical_call_count = NULL, encrypted_logical_call_count = NULL,
+                grant_observation_count = NULL, join_observation_count = NULL,
+                emergency_observation_count = NULL, register_observation_count = NULL,
+                logout_observation_count = NULL, denial_observation_count = NULL,
+                data_observation_count = NULL, other_signaling_observation_count = NULL,
+                signaling_observation_count = NULL,
+                first_evidence_ms = NULL, last_evidence_ms = NULL, updated_at_ms = ?
+            WHERE alias_id = ?
+            """))
+        {
+            for(SummarySeed seed: resets)
+            {
+                reset.setLong(1, seed.aliasListId());
+                reset.setInt(2, seed.protocolCode());
+                reset.setString(3, seed.initialState());
+                reset.setLong(4, updatedAt);
+                reset.setLong(5, seed.aliasId());
+                reset.addBatch();
+            }
+            reset.executeBatch();
+        }
+
+        try(PreparedStatement update = connection.prepareStatement("""
+            UPDATE alias_activity_summary
+            SET alias_list_id = ?, protocol_code = ?, updated_at_ms = ?
+            WHERE alias_id = ?
+            """))
+        {
+            for(SummarySeed seed: metadataChanges)
+            {
+                update.setLong(1, seed.aliasListId());
+                update.setInt(2, seed.protocolCode());
+                update.setLong(3, updatedAt);
+                update.setLong(4, seed.aliasId());
+                update.addBatch();
+            }
+            update.executeBatch();
+        }
+    }
+
+    private static void bindSummaryIdentity(PreparedStatement statement, SummarySeed seed, long updatedAt)
+        throws SQLException
+    {
+        statement.setLong(1, seed.aliasId());
+        statement.setLong(2, seed.aliasListId());
+        statement.setInt(3, seed.protocolCode());
+        statement.setString(4, seed.initialState());
+        statement.setLong(5, updatedAt);
+    }
+
+    private static MatcherSignature matcherSignature(ResultSet resultSet) throws SQLException
+    {
+        return new MatcherSignature(resultSet.getString("matcher_type"),
+            protocolFamilyCode(resultSet.getString("protocol")), getInteger(resultSet, "value"),
+            getInteger(resultSet, "min_value"), getInteger(resultSet, "max_value"),
+            resultSet.getString("text_value"), getInteger(resultSet, "numeric_value"),
+            resultSet.getString("tone_sequence"));
+    }
+
+    private static int protocolFamilyCode(String protocol)
+    {
+        return switch(protocol != null ? protocol : "")
+        {
+            case "APCO25", "APCO25_PHASE2" -> 1;
+            case "DMR" -> 3;
+            case "NXDN" -> 4;
+            default -> 0;
+        };
+    }
+
+    private static Long nullableLong(ResultSet resultSet, String column) throws SQLException
+    {
+        long value = resultSet.getLong(column);
+        return resultSet.wasNull() ? null : value;
+    }
+
+    private record MatcherSignature(String matcherType, int protocolCode, Integer value, Integer minimum,
+                                    Integer maximum, String textValue, Integer numericValue, String toneSequence)
+    {
+        private int activityProtocolCode()
+        {
+            return protocolCode > 0 && ("TALKGROUP".equals(matcherType) ||
+                "TALKGROUP_RANGE".equals(matcherType) || "RADIO_ID".equals(matcherType) ||
+                "RADIO_ID_RANGE".equals(matcherType)) ? protocolCode : 0;
+        }
+    }
+
+    private record SummarySeed(long aliasId, long aliasListId, int protocolCode)
+    {
+        private String initialState()
+        {
+            return protocolCode > 0 ? "not_collected" : "unsupported";
+        }
+    }
+
+    private void deleteMissingDefinitions(Connection connection, List<AliasListDefinition> definitions)
+        throws SQLException
+    {
+        Set<Long> retainedIds = definitions.stream()
+            .map(AliasListDefinition::getId)
+            .filter(id -> id > AliasListDefinition.UNASSIGNED_ID)
+            .collect(java.util.stream.Collectors.toSet());
+        List<Long> removedIds = new ArrayList<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT id FROM alias_list"))
+        {
+            while(rows.next())
+            {
+                long id = rows.getLong(1);
+                if(!retainedIds.contains(id))
+                {
+                    removedIds.add(id);
+                }
+            }
+        }
+        try(PreparedStatement statement = connection.prepareStatement("DELETE FROM alias_list WHERE id=?"))
+        {
+            for(long id: removedIds)
+            {
+                statement.setLong(1, id);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 
@@ -404,6 +629,10 @@ public class AliasDatabaseStore
                     INSERT INTO alias_list (
                         id, name, family, unmatched_talkgroup_record_enabled
                     ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name=excluded.name,
+                        family=excluded.family,
+                        unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled
                     """))
                 {
                     statement.setLong(1, definition.getId());

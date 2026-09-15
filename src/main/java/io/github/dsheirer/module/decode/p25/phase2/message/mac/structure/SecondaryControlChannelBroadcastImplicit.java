@@ -99,7 +99,9 @@ public class SecondaryControlChannelBroadcastImplicit extends SecondaryControlCh
 
     private boolean hasChannelB()
     {
-        return getInt(CHANNEL_NUMBER_1) != getInt(CHANNEL_NUMBER_2) && getInt(SYSTEM_SERVICE_CLASS_2) != 0;
+        return getInt(SYSTEM_SERVICE_CLASS_2) != 0 &&
+            (getInt(SYSTEM_SERVICE_CLASS_1) == 0 || getInt(FREQUENCY_BAND_1) != getInt(FREQUENCY_BAND_2) ||
+                getInt(CHANNEL_NUMBER_1) != getInt(CHANNEL_NUMBER_2));
     }
 
     public IChannelDescriptor getChannel2()
@@ -139,7 +141,11 @@ public class SecondaryControlChannelBroadcastImplicit extends SecondaryControlCh
     public List<IChannelDescriptor> getChannels()
     {
         List<IChannelDescriptor> channels = new ArrayList<>();
-        channels.add(getChannel1());
+
+        if(getInt(SYSTEM_SERVICE_CLASS_1) != 0)
+        {
+            channels.add(getChannel1());
+        }
 
         if(hasChannelB())
         {

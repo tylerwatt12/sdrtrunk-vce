@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -100,6 +101,71 @@ class ReceiverActivityWriterTest
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection,
                 "SELECT COUNT(*) FROM receiver_activity_event WHERE frequency_hz IS NULL"));
+        }
+    }
+
+    @Test
+    void constraintRejectedRecordDoesNotStopWriterOrDiscardValidNeighbors() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("constraint-isolation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 3,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_000_210L));
+        writer.enqueue(activityWithEncryptionAlgorithm(1_700_000_000_211L, -1));
+        writer.enqueue(activity(ReceiverActivityRecords.Action.DENIAL, 1_700_000_000_212L));
+
+        awaitWritten(writer, 2);
+        assertEquals(2, writer.getWrittenRecords());
+        assertEquals(1, writer.getDroppedRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        assertTrue(writer.getStatus().lastError().contains("ActivityEvent"));
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(2, scalar(connection,
+                "SELECT grant_count + denial_count FROM trunked_signaling_activity_bucket"));
+            assertEquals(1, scalar(connection,
+                "SELECT value FROM statistics_status WHERE key='records_dropped'"));
+        }
+    }
+
+    @Test
+    void zeroP25SiteUplinkIsStoredAsNullWithoutStoppingTheWriter() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("unknown-site-uplink.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1,
+            TimeUnit.SECONDS.toMillis(10));
+        long timestamp = 1_700_000_000_300L;
+        P25NetworkConfigurationSnapshot.Channel channel = new P25NetworkConfigurationSnapshot.Channel(
+            "primary_control", "1-2053", 876_675_000L, 0L, false, 1);
+        ReceiverActivityRecords.SiteSnapshot site = new ReceiverActivityRecords.SiteSnapshot(timestamp,
+            CONFIGURATION_ID, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "a".repeat(64), "APCO25",
+            0xBEE00, 0x3A9, 0x293, 2, 1, null, null, false, null, 876_675_000L, 876_675_000L,
+            876_675_000L, List.of(channel), List.of(), List.of(), List.of(), List.of());
+
+        writer.start();
+        writer.enqueue(site);
+
+        awaitWritten(writer, 1);
+        assertEquals(1, writer.getWrittenRecords());
+        assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+        assertNull(writer.getStatus().lastError());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_site_channel_summary"));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_channel_summary WHERE uplink_hz IS NULL"));
+            assertEquals(1, scalar(connection,
+                "SELECT COUNT(*) FROM p25_site_channel WHERE uplink_hz IS NULL"));
+            assertEquals(876_675_000L, scalar(connection,
+                "SELECT downlink_hz FROM p25_site_channel_summary"));
         }
     }
 
@@ -319,6 +385,50 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void globalResetClearsAliasActivityCountersAndReseedsConfiguredAliases() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("reset-alias-activity.sqlite"));
+        insertObservedAliasSummary(database);
+
+        ReceiverActivityMaintenance.Result result = ReceiverActivityMaintenance.run(database, 30,
+            ReceiverActivityMaintenance.Operation.RESET_STATS);
+
+        assertEquals(ReceiverActivityMaintenance.Operation.RESET_STATS, result.operation());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM alias_activity_summary"));
+            assertEquals(1, scalar(connection, """
+                SELECT COUNT(*) FROM alias_activity_summary
+                WHERE protocol_code=1 AND metrics_state='not_collected'
+                  AND logical_call_count IS NULL
+                  AND signaling_observation_count IS NULL
+                  AND first_evidence_ms IS NULL AND last_evidence_ms IS NULL
+                """));
+        }
+    }
+
+    @Test
+    void channelClearLeavesDurableAliasActivityCountersAlone() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("clear-channel-alias-activity.sqlite"));
+        insertConfiguredChannel(database);
+        insertObservedAliasSummary(database);
+
+        ReceiverActivityMaintenance.Result result =
+            ReceiverActivityMaintenance.clearChannelStats(database, CONFIGURATION_ID);
+
+        assertEquals(ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS, result.operation());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(7, scalar(connection,
+                "SELECT logical_call_count FROM alias_activity_summary WHERE metrics_state='observed'"));
+            assertEquals(9, scalar(connection,
+                "SELECT signaling_observation_count FROM alias_activity_summary WHERE metrics_state='observed'"));
+        }
+    }
+
+    @Test
     void lockedWriteRetriesDuringGracefulClose() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("locked-close.sqlite"));
@@ -332,8 +442,16 @@ class ReceiverActivityWriterTest
         try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = blocker.createStatement())
         {
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value)
+                SELECT id,'Projected target','TALKGROUP','APCO25',56138
+                FROM alias_list WHERE family='P25' LIMIT 1
+                """);
             statement.execute("BEGIN IMMEDIATE");
+            long enqueueStarted = System.nanoTime();
             writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_006_000L));
+            assertTrue(System.nanoTime() - enqueueStarted < TimeUnit.MILLISECONDS.toNanos(100),
+                "database-backed Alias Activity projection must remain on the statistics writer");
             awaitQueueEmpty(writer);
             Thread closeThread = new Thread(() ->
             {
@@ -358,6 +476,13 @@ class ReceiverActivityWriterTest
         assertEquals(1, writer.getWrittenRecords());
         assertEquals(ReceiverActivityStatus.State.STOPPED, writer.getStatus().state());
         assertTrue(writer.isWorkerTerminated());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1, scalar(connection, """
+                SELECT grant_observation_count FROM alias_activity_summary
+                WHERE alias_id=(SELECT id FROM alias WHERE name='Projected target')
+                """));
+        }
     }
 
     @Test
@@ -434,6 +559,17 @@ class ReceiverActivityWriterTest
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }
 
+    private static ReceiverActivityRecords.ActivityEvent activityWithEncryptionAlgorithm(long timestamp,
+                                                                                           int algorithm)
+    {
+        return new ReceiverActivityRecords.ActivityEvent(timestamp, CONFIGURATION_ID,
+            ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
+            true, algorithm, 1, 0xBEE00, 0x3A9, 0x293, 2, 1, null, false, null, null,
+            TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
+            ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
+    }
+
     private static void awaitWritten(ReceiverActivityWriter writer, long count) throws Exception
     {
         awaitWritten(writer, count, 5);
@@ -478,12 +614,36 @@ class ReceiverActivityWriterTest
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                    radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
+                    alias_list_id, radioresolve_id, auto_start, decoder_type, primary_frequency_hz, config_json
                 ) VALUES (
                     '%s', 'TRUNKED', 0, 'Capture system', 'Capture site', 'Control',
+                    (SELECT id FROM alias_list WHERE family='P25' LIMIT 1),
                     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 0, 'P25_PHASE1', 854187500, '{}'
                 )
                 """.formatted(CONFIGURATION_ID));
+        }
+    }
+
+    private static void insertObservedAliasSummary(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
+                SELECT id, 'Observed Alias', 'TALKGROUP', 'APCO25', 56138
+                FROM alias_list WHERE family='P25' LIMIT 1
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_activity_summary(
+                    alias_id, alias_list_id, protocol_code, metrics_state,
+                    logical_call_count, signaling_observation_count,
+                    first_evidence_ms, last_evidence_ms, updated_at_ms
+                )
+                SELECT id, alias_list_id, 1, 'observed', 7, 9, 1000, 2000, 2000
+                FROM alias WHERE name='Observed Alias'
+                """);
         }
     }
 
@@ -494,6 +654,7 @@ class ReceiverActivityWriterTest
         {
             statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
             ReceiverActivitySchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);

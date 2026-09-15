@@ -13,12 +13,7 @@ package io.github.dsheirer.gui.configuration.streaming;
 
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
-import io.github.dsheirer.gui.control.IntegerTextField;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import javafx.collections.FXCollections;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
@@ -37,10 +32,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
     private GridPane mEditorPane;
     private TextField mHostTextField;
     private PasswordField mApiKeyTextField;
-    private TextField mNodeNameTextField;
-    private ComboBox<String> mNodeTimezoneComboBox;
-    private IntegerTextField mMaxAgeTextField;
-    private IntegerTextField mConcurrentUploadsTextField;
     private ComboBox<RadioResolveConfiguration.Mode> mModeComboBox;
     private CheckBox mIgnoreCertificateErrorsCheckBox;
 
@@ -56,10 +47,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
 
         getHostTextField().setDisable(item == null);
         getApiKeyTextField().setDisable(item == null);
-        getNodeNameTextField().setDisable(item == null);
-        getNodeTimezoneComboBox().setDisable(item == null);
-        getMaxAgeTextField().setDisable(item == null);
-        getConcurrentUploadsTextField().setDisable(item == null);
         getModeComboBox().setDisable(item == null);
         getIgnoreCertificateErrorsCheckBox().setDisable(item == null);
 
@@ -67,10 +54,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         {
             getHostTextField().setText(item.getHost());
             getApiKeyTextField().setText(item.getApiKey());
-            getNodeNameTextField().setText(item.getNodeName());
-            getNodeTimezoneComboBox().getSelectionModel().select(getValidTimezone(item.getNodeTimezone()));
-            getMaxAgeTextField().set((int)(item.getMaximumRecordingAge() / 1000));
-            getConcurrentUploadsTextField().set(item.getConcurrentUploads());
             getModeComboBox().getSelectionModel().select(item.getMode());
             getIgnoreCertificateErrorsCheckBox().setSelected(item.getIgnoreCertificateErrors());
         }
@@ -78,10 +61,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         {
             getHostTextField().setText(null);
             getApiKeyTextField().setText(null);
-            getNodeNameTextField().setText(null);
-            getNodeTimezoneComboBox().getSelectionModel().clearSelection();
-            getMaxAgeTextField().set(0);
-            getConcurrentUploadsTextField().set(RadioResolveConfiguration.DEFAULT_CONCURRENT_UPLOADS);
             getModeComboBox().getSelectionModel().select(RadioResolveConfiguration.Mode.CALLS_AND_METADATA);
             getIgnoreCertificateErrorsCheckBox().setSelected(false);
         }
@@ -102,13 +81,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         {
             getItem().setHost(getHostTextField().getText());
             getItem().setApiKey(getApiKeyTextField().getText());
-            getItem().setNodeName(getNodeNameTextField().getText());
-            getItem().setNodeTimezone(getValidTimezone(getNodeTimezoneComboBox().getSelectionModel().getSelectedItem()));
-            Integer maxAge = getMaxAgeTextField().get();
-            getItem().setMaximumRecordingAge((maxAge != null ? maxAge : 0) * 1000L);
-            Integer concurrentUploads = getConcurrentUploadsTextField().get();
-            getItem().setConcurrentUploads(concurrentUploads != null && concurrentUploads > 0 ?
-                concurrentUploads : RadioResolveConfiguration.DEFAULT_CONCURRENT_UPLOADS);
             getItem().setMode(getModeComboBox().getSelectionModel().getSelectedItem());
             getItem().setIgnoreCertificateErrors(getIgnoreCertificateErrorsCheckBox().isSelected());
         }
@@ -160,21 +132,10 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
             GridPane.setConstraints(getApiKeyTextField(), 1, row);
             mEditorPane.getChildren().add(getApiKeyTextField());
 
-            addLabel("Node Name", ++row);
-            GridPane.setConstraints(getNodeNameTextField(), 1, row);
-            mEditorPane.getChildren().add(getNodeNameTextField());
-
-            addLabel("Node Timezone", ++row);
-            GridPane.setConstraints(getNodeTimezoneComboBox(), 1, row);
-            mEditorPane.getChildren().add(getNodeTimezoneComboBox());
-
-            addLabel("Max Recording Age (seconds)", ++row);
-            GridPane.setConstraints(getMaxAgeTextField(), 1, row);
-            mEditorPane.getChildren().add(getMaxAgeTextField());
-
-            addLabel("Concurrent Uploads", ++row);
-            GridPane.setConstraints(getConcurrentUploadsTextField(), 1, row);
-            mEditorPane.getChildren().add(getConcurrentUploadsTextField());
+            addLabel("Delivery", ++row);
+            Label delivery = new Label("FIFO; durable 24-hour / 2 GiB spool");
+            GridPane.setConstraints(delivery, 1, row, 3, 1);
+            mEditorPane.getChildren().add(delivery);
 
             addLabel("Ignore Certificate Errors", ++row);
             GridPane.setConstraints(getIgnoreCertificateErrorsCheckBox(), 1, row);
@@ -214,80 +175,6 @@ public class RadioResolveEditor extends AbstractBroadcastEditor<RadioResolveConf
         }
 
         return mApiKeyTextField;
-    }
-
-    private TextField getNodeNameTextField()
-    {
-        if(mNodeNameTextField == null)
-        {
-            mNodeNameTextField = new TextField();
-            mNodeNameTextField.setDisable(true);
-            mNodeNameTextField.textProperty().addListener(mEditorModificationListener);
-        }
-
-        return mNodeNameTextField;
-    }
-
-    private ComboBox<String> getNodeTimezoneComboBox()
-    {
-        if(mNodeTimezoneComboBox == null)
-        {
-            mNodeTimezoneComboBox = new ComboBox<>(FXCollections.observableArrayList(getTimezoneIds()));
-            mNodeTimezoneComboBox.setDisable(true);
-            mNodeTimezoneComboBox.setMaxWidth(Double.MAX_VALUE);
-            mNodeTimezoneComboBox.getSelectionModel().select(getValidTimezone(null));
-            mNodeTimezoneComboBox.valueProperty().addListener(mEditorModificationListener);
-        }
-
-        return mNodeTimezoneComboBox;
-    }
-
-    private List<String> getTimezoneIds()
-    {
-        List<String> timezoneIds = new ArrayList<>(ZoneId.getAvailableZoneIds());
-        Collections.sort(timezoneIds);
-        return timezoneIds;
-    }
-
-    private String getValidTimezone(String timezone)
-    {
-        if(timezone != null && ZoneId.getAvailableZoneIds().contains(timezone))
-        {
-            return timezone;
-        }
-
-        String defaultTimezone = RadioResolveConfiguration.getDefaultNodeTimezone();
-
-        if(ZoneId.getAvailableZoneIds().contains(defaultTimezone))
-        {
-            return defaultTimezone;
-        }
-
-        return "UTC";
-    }
-
-    private IntegerTextField getMaxAgeTextField()
-    {
-        if(mMaxAgeTextField == null)
-        {
-            mMaxAgeTextField = new IntegerTextField();
-            mMaxAgeTextField.setDisable(true);
-            mMaxAgeTextField.textProperty().addListener(mEditorModificationListener);
-        }
-
-        return mMaxAgeTextField;
-    }
-
-    private IntegerTextField getConcurrentUploadsTextField()
-    {
-        if(mConcurrentUploadsTextField == null)
-        {
-            mConcurrentUploadsTextField = new IntegerTextField();
-            mConcurrentUploadsTextField.setDisable(true);
-            mConcurrentUploadsTextField.textProperty().addListener(mEditorModificationListener);
-        }
-
-        return mConcurrentUploadsTextField;
     }
 
     private ComboBox<RadioResolveConfiguration.Mode> getModeComboBox()

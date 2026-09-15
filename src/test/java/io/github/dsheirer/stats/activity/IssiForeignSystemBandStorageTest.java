@@ -100,6 +100,7 @@ class IssiForeignSystemBandStorageTest
             statement.execute("PRAGMA foreign_keys=ON");
         }
         SdrTrunkDatabaseSchema.create(connection);
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
@@ -111,9 +112,9 @@ class IssiForeignSystemBandStorageTest
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,
-                auto_start, decoder_type, primary_frequency_hz, config_json)
+                alias_list_id, auto_start, decoder_type, primary_frequency_hz, config_json)
             VALUES ('%s', 'TRUNKED', 0, 'Test system', 'Test site', 'Control',
-                0, 'P25_PHASE1', 851012500, '{}')
+                (SELECT id FROM alias_list WHERE family='P25' LIMIT 1), 0, 'P25_PHASE1', 851012500, '{}')
             """.formatted(CONFIGURATION_ID));
         execute(connection, """
             INSERT INTO receiver_channel(id, configuration_id, first_seen_ms, last_seen_ms)

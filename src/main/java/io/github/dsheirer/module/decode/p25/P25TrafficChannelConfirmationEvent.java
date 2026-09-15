@@ -18,16 +18,28 @@ import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
  * Immutable independent evidence that a traffic decoder received payload on a granted frequency/timeslot.
  */
 public record P25TrafficChannelConfirmationEvent(String configurationId, long frequencyHertz, int timeslot,
-                                                 long timestamp)
+                                                 long timestamp, long processingIncarnation,
+                                                 long siteEvidenceTuningGeneration)
 {
     public P25TrafficChannelConfirmationEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
+        processingIncarnation = Math.max(0L, processingIncarnation);
+        siteEvidenceTuningGeneration = Math.max(0L, siteEvidenceTuningGeneration);
     }
 
-    /** Captures the saved channel identity before this confirmation crosses the statistics queue. */
+    /** Compatibility constructor for callers that do not capture a receiver generation. */
+    public P25TrafficChannelConfirmationEvent(String configurationId, long frequencyHertz, int timeslot,
+                                              long timestamp)
+    {
+        this(configurationId, frequencyHertz, timeslot, timestamp, 0L, 0L);
+    }
+
+    /** Captures the saved channel identity and receiver generation before asynchronous observers see it. */
     public P25TrafficChannelConfirmationEvent(Channel channel, long frequencyHertz, int timeslot, long timestamp)
     {
-        this(ChannelConfigurationKey.configured(channel), frequencyHertz, timeslot, timestamp);
+        this(ChannelConfigurationKey.configured(channel), frequencyHertz, timeslot, timestamp,
+            channel != null ? channel.getSiteEvidenceProcessingIncarnation() : 0L,
+            channel != null ? channel.getSiteEvidenceTuningGeneration() : 0L);
     }
 }

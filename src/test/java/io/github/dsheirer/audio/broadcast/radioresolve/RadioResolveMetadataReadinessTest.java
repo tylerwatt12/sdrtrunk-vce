@@ -20,22 +20,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class RadioResolveMetadataReadinessTest
 {
-    private static final String RADIORESOLVE_ID = "11111111-2222-4333-8444-555555555555";
-
     @Test
-    public void missingRadioResolveIdIsExplainedByName()
+    public void missingLegacyRadioResolveIdDoesNotBlockNativeP25Facts()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(null,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             snapshot(completeNetwork(), completeSite(), List.of(primaryControl()), List.of(frequencyBand())));
 
-        assertFalse(readiness.ready());
-        assertTrue(readiness.message().contains("RadioResolve ID"));
+        assertTrue(readiness.ready());
+        assertFalse(readiness.message().contains("RadioResolve ID"));
     }
 
     @Test
     public void partialSnapshotIsNotUploadReady()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(RADIORESOLVE_ID,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
                 List.of(), List.of(), List.of()));
 
@@ -47,7 +45,7 @@ public class RadioResolveMetadataReadinessTest
     @Test
     public void completeIdentityWithoutBandPlanIsNotUploadReady()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(RADIORESOLVE_ID,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             snapshot(completeNetwork(), completeSite(), List.of(primaryControl()), List.of()));
 
         assertFalse(readiness.ready());
@@ -57,7 +55,7 @@ public class RadioResolveMetadataReadinessTest
     @Test
     public void completeIdentityAndBandPlanWithoutResolvedControlIsNotUploadReady()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(RADIORESOLVE_ID,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             snapshot(completeNetwork(), completeSite(),
                 List.of(new P25NetworkConfigurationSnapshot.Channel("primary_control", "0-493", 0L, 0L, false, 1)),
                 List.of(frequencyBand())));
@@ -69,7 +67,7 @@ public class RadioResolveMetadataReadinessTest
     @Test
     public void completeProfileIsUploadReady()
     {
-        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(RADIORESOLVE_ID,
+        RadioResolveMetadataReadiness readiness = RadioResolveMetadataReadiness.evaluate(
             snapshot(completeNetwork(), completeSite(), List.of(primaryControl()), List.of(frequencyBand())));
 
         assertTrue(readiness.ready());

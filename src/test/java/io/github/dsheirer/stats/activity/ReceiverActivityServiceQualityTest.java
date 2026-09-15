@@ -121,6 +121,29 @@ class ReceiverActivityServiceQualityTest
     }
 
     @Test
+    void qualityMonitorContextSurvivesControlRetuneButSiteMatchingRemainsStrict()
+    {
+        Channel channel = channel(new DecodeConfigP25Phase1());
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        source.setFrequencies(List.of(851_012_500L, 852_012_500L));
+        channel.setSourceConfiguration(source);
+        channel.setSiteEvidenceTuningGeneration(1L);
+        ControlChannelQualitySnapshot beforeRetune = quality(channel);
+        SiteReceiverContext siteContext = SiteReceiverContext.capture(channel, Protocol.APCO25,
+            851_012_500L);
+
+        channel.advanceSiteEvidenceTuningGeneration();
+        ControlChannelQualitySnapshot afterRetune = new ControlChannelQualitySnapshot(channel,
+            beforeRetune.receiverContext(), 852_012_500L, 2_000L, true, -22.0, -23.0, -27.0, -19.0, 94.0,
+            95, 3, 2, 0, 0, 1_999L);
+
+        assertTrue(afterRetune.matchesCurrentChannel(),
+            "quality monitor remains valid when the same processing chain changes control frequency");
+        assertFalse(siteContext.matchesCurrentChannel(channel),
+            "site identity evidence from the previous tuning generation remains stale");
+    }
+
+    @Test
     void qualityRejectsReusedOrReconfiguredReceiverFacts()
     {
         Channel original = channel(dmr(DMRChannelMode.TRUNKED));

@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshotRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -33,21 +34,22 @@ class P25SiteMetadataPublisherTest
         AtomicLong clock = new AtomicLong(1_000);
         AtomicReference<P25NetworkConfigurationSnapshot> snapshot =
             new AtomicReference<>(snapshot(1_000L, true));
-        List<SiteMetadataEvent> events = new ArrayList<>();
+        List<SiteMetadataSnapshotRequest> requests = new ArrayList<>();
         P25SiteMetadataPublisher publisher = new P25SiteMetadataPublisher(channel, snapshot::get, () -> true,
-            events::add, limiter(clock), () -> 851_012_500L);
+            requests::add, limiter(clock), () -> 851_012_500L);
 
         publisher.publish(1_000L);
         snapshot.set(snapshot(2_000L, false));
         clock.set(2_000);
         publisher.publish(2_000L);
-        assertEquals(1, events.size());
+        assertEquals(1, requests.size());
 
         clock.set(6_000);
         publisher.publish(6_000L);
-        assertEquals(2, events.size());
-        assertFalse(events.get(1).snapshot().siteStatus().voiceService());
-        assertEquals(851_012_500L, events.get(1).sourceFrequency());
+        assertEquals(2, requests.size());
+        SiteMetadataEvent event = requests.get(1).resolve();
+        assertFalse(event.snapshot().siteStatus().voiceService());
+        assertEquals(851_012_500L, event.sourceFrequency());
     }
 
     @Test
@@ -56,20 +58,20 @@ class P25SiteMetadataPublisherTest
         Channel channel = new Channel("control", Channel.ChannelType.STANDARD);
         AtomicLong clock = new AtomicLong(1_000);
         SiteMetadataPublicationRateLimiter limiter = limiter(clock);
-        List<SiteMetadataEvent> events = new ArrayList<>();
+        List<SiteMetadataSnapshotRequest> requests = new ArrayList<>();
         P25SiteMetadataPublisher first = new P25SiteMetadataPublisher(channel,
-            () -> snapshot(1_000L, true), () -> true, events::add, limiter);
+            () -> snapshot(1_000L, true), () -> true, requests::add, limiter);
         P25SiteMetadataPublisher second = new P25SiteMetadataPublisher(channel,
-            () -> snapshot(1_001L, false), () -> true, events::add, limiter);
+            () -> snapshot(1_001L, false), () -> true, requests::add, limiter);
 
         first.publish(1_000L);
         second.publish(1_001L);
-        assertEquals(1, events.size());
+        assertEquals(1, requests.size());
 
         clock.set(6_000);
         second.publish(6_000L);
-        assertEquals(2, events.size());
-        assertFalse(events.get(1).snapshot().siteStatus().voiceService());
+        assertEquals(2, requests.size());
+        assertFalse(requests.get(1).resolve().snapshot().siteStatus().voiceService());
     }
 
     private static SiteMetadataPublicationRateLimiter limiter(AtomicLong clockMilliseconds)

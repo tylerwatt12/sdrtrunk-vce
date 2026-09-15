@@ -137,7 +137,7 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(source.contains("['Configured Decoder Mode', p25DecoderMode(channel.p25_decoder_mode)]"));
         assertFalse(source.contains("Auto Starting Preference"));
         assertTrue(function(source, "function p25DecoderMode(value)")
-            .contains("CQPSK: 'Simulcast (LSM / CQPSK)'"));
+            .contains("CQPSK: 'Simulcast (CQPSK)'"));
         assertFalse(source.contains("['MFID'"));
         assertFalse(source.contains("Last Active identifies"));
         assertFalse(source.contains("counters begin"));
@@ -222,7 +222,7 @@ class StatsWebTrunkedChannelUiContractTest
         String channel = function(source(), "async function renderTrunkedChannel(channel, configurationId, renderContext)");
 
         assertTrue(channel.contains("data.band_source === 'P25_OVERRIDE'"));
-        assertTrue(channel.contains("overrideActive ? 'P25 Override' : 'OTA Bandplan'"));
+        assertTrue(channel.contains("overrideActive ? 'P25 override' : 'OTA band plan'"));
         assertTrue(channel.contains("if (!overrideActive) homeBandColumns.push("));
         assertTrue(channel.contains("label: 'Observations'"));
         assertFalse(channel.contains("label: 'Obs'"));
