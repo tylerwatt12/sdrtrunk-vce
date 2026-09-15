@@ -73,7 +73,7 @@ final class StatsWebStylesheetTestSupport
             throw new IOException("Missing stylesheet: " + normalized);
         }
 
-        String stylesheetSource = Files.readString(normalized);
+        String stylesheetSource = normalizeLineEndings(Files.readString(normalized));
         Matcher matcher = IMPORT_PATTERN.matcher(stylesheetSource);
         Path moduleRoot = STYLE_MODULES.toAbsolutePath().normalize();
         while(matcher.find())
@@ -101,5 +101,10 @@ final class StatsWebStylesheetTestSupport
             combined.append('\n');
         }
         combined.append(stylesheetSource);
+    }
+
+    private static String normalizeLineEndings(String source)
+    {
+        return source.replace("\r\n", "\n").replace('\r', '\n');
     }
 }

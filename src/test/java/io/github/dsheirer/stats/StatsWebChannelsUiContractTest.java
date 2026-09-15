@@ -152,7 +152,7 @@ class StatsWebChannelsUiContractTest
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
-        return Files.readString(APP_JAVASCRIPT);
+        return Files.readString(APP_JAVASCRIPT).replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private static String function(String source, String signature)

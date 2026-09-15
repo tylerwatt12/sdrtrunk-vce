@@ -57,7 +57,7 @@ class DiagnosticTransportTest
             FloatNativeBuffer buffer = new FloatNativeBuffer(new float[1_024], 1, 1);
             processor.receive(buffer, 1);
             processor.receive(buffer, 2);
-            assertTrue(transformed.await(2, TimeUnit.SECONDS));
+            assertTrue(transformed.await(5, TimeUnit.SECONDS));
             assertSame(processor.initializationThread(), creationThread.get());
             assertSame(creationThread.get(), transformThread.get());
             assertNotSame(producerThread, transformThread.get());

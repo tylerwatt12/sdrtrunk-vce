@@ -9,7 +9,7 @@ function readStylesheetSource(entryStylesheet, visited = new Set(), visiting = n
   if (visited.has(resolved)) return '';
   if (visiting.has(resolved)) throw new Error(`Circular stylesheet import: ${resolved}`);
   visiting.add(resolved);
-  const source = fs.readFileSync(resolved, 'utf8');
+  const source = fs.readFileSync(resolved, 'utf8').replace(/\r\n?/g, '\n');
   const imports = [...source.matchAll(
     /@import\s+(?:url\(\s*)?["']([^"']+\.css(?:[?#][^"']*)?)["']\s*\)?[^;]*;/gi,
   )];

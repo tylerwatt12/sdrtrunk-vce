@@ -22,9 +22,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
     @Test
     void separatesRadioBrowsingFromChannelManagement() throws Exception
     {
-        String app = Files.readString(APP);
-        String routes = Files.readString(ROUTES);
-        String index = Files.readString(INDEX);
+        String app = readText(APP);
+        String routes = readText(ROUTES);
+        String index = readText(INDEX);
 
         assertTrue(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
         assertTrue(routes.contains("id: 'identities', label: 'Identities'"));
@@ -44,7 +44,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
     @Test
     void exposesReadOnlyIdentitiesAndNestedReceiverSettings() throws Exception
     {
-        String app = Files.readString(APP);
+        String app = readText(APP);
         String css = StatsWebStylesheetTestSupport.readAll();
 
         assertTrue(app.contains("apiPage('/api/v1/identities'"));
@@ -62,5 +62,10 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(css.contains(".admin-settings-shell {"));
         assertTrue(css.contains(".admin-settings-nested-branch"));
         assertTrue(css.contains(".identity-directory-table-wrap {"));
+    }
+
+    private static String readText(Path path) throws Exception
+    {
+        return Files.readString(path).replace("\r\n", "\n").replace('\r', '\n');
     }
 }
