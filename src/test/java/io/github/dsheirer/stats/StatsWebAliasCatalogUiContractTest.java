@@ -96,7 +96,7 @@ class StatsWebAliasCatalogUiContractTest
         String renderer = function(source, "async function renderAliases()");
         assertTrue(renderer.contains("view === 'activity' ? { timeoutMs: 35_000 } : {}"));
         assertTrue(renderer.contains("loading alias-activity-loading', 'Preparing alias activity…'"));
-        String activityAwait = "const [page, options] = await Promise.all";
+        String activityAwait = "let [page, initialOptions] = await Promise.all";
         assertTrue(renderer.indexOf("main.append(activityLoading)") < renderer.indexOf(activityAwait),
             "The in-panel activity status must be visible while the snapshot request is pending");
         assertTrue(renderer.indexOf("activityLoading?.remove()") > renderer.indexOf(activityAwait),
@@ -108,7 +108,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(columns.contains("view === 'custom'"));
         assertFalse(source.contains("function aliasColumnChooser("));
         assertTrue(source.contains("defaultHiddenColumns: view === 'custom' ? definitions"));
-        assertTrue(source.contains("exportCsvLink('aliases', exportContext, 'Download table report')"));
+        assertTrue(source.contains("exportCsvLink('aliases', exportContext, 'Download table report', { loading: true })"));
         assertTrue(base.contains("id: 'description'"));
         for(String field: new String[]{"logical_call_count", "signaling_observation_count", "last_evidence_ms"})
         {
@@ -440,7 +440,8 @@ class StatsWebAliasCatalogUiContractTest
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
         String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
         String checkbox = function(source, "function aliasCheckOption(labelText, control)");
-        String observed = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
+        String observed = function(source,
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String prefill = function(source, "function observedGroupIdentityPrefill(row, selectedList)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String key = function(source, "function observedGroupIdentityKey(row)");

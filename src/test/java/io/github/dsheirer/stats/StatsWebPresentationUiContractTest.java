@@ -43,7 +43,8 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
-        String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
+        String discover = function(source,
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String scanList = function(source,
             "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
         String aliases = function(source, "async function renderAliases()");
@@ -105,7 +106,8 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String css = StatsWebStylesheetTestSupport.readAll();
-        String discover = function(source, "function renderObservedGroupIdentities(main, page, selectedList)");
+        String discover = function(source,
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");

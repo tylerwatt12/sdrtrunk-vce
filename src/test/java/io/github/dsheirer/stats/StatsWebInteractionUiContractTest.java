@@ -490,7 +490,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String href = function(source, "function exportCsvHref(dataset, context = {})");
-        String helper = function(source, "function exportCsvLink(dataset, context = {}, label = 'Export CSV')");
+        String helper = function(source, "function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {})");
         assertTrue(href.contains("`/api/v1/exports/${encodeURIComponent(String(dataset))}.csv`"));
         assertTrue(href.contains("['q', 'sort', 'direction']"));
         assertTrue(href.contains("return `${path}${parameters.size ? `?${parameters}` : ''}`"));

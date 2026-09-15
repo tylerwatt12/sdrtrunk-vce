@@ -123,6 +123,11 @@
   text-align: center;
 }
 
+.channel-admin-catalog td.channel-startup-order,
+.channel-admin-catalog th.channel-startup-order {
+  text-align: center;
+}
+
 .channel-select-cell {
   width: 42px;
   text-align: center;

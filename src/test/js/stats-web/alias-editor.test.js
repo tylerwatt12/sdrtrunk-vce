@@ -48,7 +48,8 @@ const context = {
         bytes.forEach((_, index) => { bytes[index] = index; });
         return bytes;
       }
-    }
+    },
+    history: { replaceState: () => {} }
   },
   aliasMatcherOption: (value) => ({
     label: String(value || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
@@ -60,6 +61,7 @@ vm.runInContext(`
   const ALIAS_BULK_SELECTION_LIMIT = 10_000;
   const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
   const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
+  const ALIAS_CREATE_ROUTE_KEYS = [];
   let route = new URLSearchParams('');
   let aliasEditorSelection = new Set();
   let aliasEditorSelectionScope = null;
@@ -79,6 +81,7 @@ vm.runInContext(`
   ${functionSource('function aliasTransferExportToken()')}
   ${functionSource('function aliasTransferExportDownloadHref(listId, scope, token)')}
   ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
+  ${functionSource("function exportCsvFileName(response, fallback = 'export.csv')")}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(revision, operation, aliasListId = null)')}
   ${functionSource('function aliasMatcherSummary(matcher)')}
@@ -104,6 +107,7 @@ vm.runInContext(`
   globalThis.transferExportToken = aliasTransferExportToken;
   globalThis.transferExportDownloadHref = aliasTransferExportDownloadHref;
   globalThis.transferExportIsReady = aliasTransferExportIsReady;
+  globalThis.exportFileName = exportCsvFileName;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
   globalThis.matcherSummary = aliasMatcherSummary;
@@ -179,6 +183,10 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure
   'Configuration views must retain their alphabetical default.');
 const aliasRenderer = functionSource('async function renderAliases()');
 const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(listResponse, options = null)');
+const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
+const aliasExportLink = functionSource("function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {})");
+const aliasDetailLink = functionSource('function aliasDetailLink(row)');
+const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {})');
 assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
   'Explicit routed sorting must take precedence over the view default.');
 assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
@@ -194,6 +202,70 @@ assert.match(aliasFilterToolbar, /selectFilter\('Evidence', 'evidence'/,
 assert.match(aliasFilterToolbar, /covered_no_evidence/);
 assert.match(aliasFilterToolbar, /not_collected/);
 assert.match(aliasFilterToolbar, /unsupported/);
+assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('q'/,
+  'Alias Editor filter searches must use the shared input control styling.');
+assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('group'/,
+  'Alias Editor group filters must use the shared input control styling.');
+assert.match(aliasFilterToolbar, /aliasEditorFilterInput\('', aliasLocalDateTimeValue/g,
+  'Alias Editor date filters must use the shared input control styling.');
+assert.match(aliasFilterToolbar, /ui-button ui-button-primary/,
+  'Alias Editor filter actions must use the shared primary button styling.');
+assert.match(aliasDiscoverToolbar, /aliasEditorFilterInput\('q'/,
+  'Alias Editor discovery searches must use the shared input control styling.');
+assert.match(aliasDiscoverToolbar, /ui-button ui-button-primary/,
+  'Alias Editor discovery actions must use the shared primary button styling.');
+assert.match(aliasExportLink, /options\.loading/,
+  'Alias table exports must support an explicit loading state.');
+assert.match(aliasExportLink, /new AbortController\(\)/,
+  'Report downloads must have a cancellable request lifecycle.');
+assert.match(aliasExportLink, /await fetch\(target/,
+  'Report downloads must wait for the export response instead of handing off immediately to the browser.');
+assert.match(aliasExportLink, /await response\.blob\(\)/,
+  'Report downloads must wait until the complete response body is received.');
+assert.match(aliasExportLink, /URL\.createObjectURL/,
+  'Completed report data must be handed to a separate browser download link.');
+assert.match(aliasExportLink, /activeController\.abort\(\)/,
+  'A second report-button click must cancel an active report request.');
+assert.doesNotMatch(aliasExportLink, /loadingTimeoutMs/,
+  'Report loading must not depend on an arbitrary timeout.');
+assert.equal(context.exportFileName({ headers: { get: () =>
+  "attachment; filename*=UTF-8''alias%20report.csv" } }, 'fallback.csv'), 'alias report.csv');
+assert.equal(context.exportFileName({ headers: { get: () =>
+  'attachment; filename="alias/report.csv"' } }, 'fallback.csv'), 'alias_report.csv');
+assert.match(aliasDetailLink, /openAliasEditorFromRow\(row\)/,
+  'Alias table links must open the editor in place.');
+assert.match(aliasRenderer, /aliasEditorPageController = renderObservedGroupIdentities/,
+  'Observed-group creation must retain an in-place Alias Editor controller.');
+assert.match(aliasRenderer, /const pageController = \{/,
+  'Alias list and scan-list views must expose refresh controllers.');
+assert.match(aliasMutationFinisher, /if \(!refreshed\) await render\(\)/,
+  'Alias mutations should rerender only when an in-place refresh is not safe.');
+assert.match(aliasMutationFinisher, /if \(aliasEditorContext\?\.scanListScope\) delete mutationRouteChanges\.list/,
+  'Scan-list mutations must not leave a stale alias-list route behind.');
+assert.match(aliasMutationFinisher, /resetAliasEditorSelection\(\);\s+if \(localRefresh\)/s,
+  'Alias mutations must clear selection before an in-place refresh redraws the toolbar.');
+
+vm.runInContext(`
+  function closeReadOnlyModal() { return true; }
+  function currentHref() { return '/?view=aliases'; }
+  async function render() {}
+  let mutationRefreshSelection = null;
+  ${aliasMutationFinisher}
+  globalThis.runMutationRefreshProbe = async () => {
+    aliasEditorContext = { selectedList: { alias_list_id: 7 }, scanListScope: null, revision: 1 };
+    aliasEditorPageController = {
+      isCurrent: () => true,
+      canRefreshMutation: () => true,
+      refresh: async () => {
+        mutationRefreshSelection = [...aliasEditorSelection];
+        return true;
+      }
+    };
+    aliasEditorSelection = new Set([11, 12]);
+    await finishAliasMutation({ setDirty: () => {} }, { revision: 2 });
+    return { refreshedSelection: mutationRefreshSelection, remainingSelection: [...aliasEditorSelection] };
+  };
+`, context);
 
 const transferDefaults = context.transferListDefaults({ unmatched_talkgroup_policy: {
   recordable: true, scan_list_ids: [2], broadcast_configuration_ids: ['stream-1']
@@ -394,7 +466,16 @@ async function verifyAsyncSelectionLifecycle() {
   assert.deepEqual(messages, [], 'A stale Select All response must not announce success or failure.');
 }
 
-verifyAsyncSelectionLifecycle().catch((error) => {
+async function verifyAdditionalAliasLifecycles() {
+  await verifyAsyncSelectionLifecycle();
+  const result = await context.runMutationRefreshProbe();
+  assert.deepEqual(Array.from(result.refreshedSelection), [],
+    'An in-place mutation refresh must see a cleared selection before it redraws the toolbar.');
+  assert.deepEqual(Array.from(result.remainingSelection), [],
+    'A completed mutation must leave the Alias Editor selection empty.');
+}
+
+verifyAdditionalAliasLifecycles().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

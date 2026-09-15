@@ -2783,6 +2783,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .async-section-content {
   min-width: 0;
   max-width: 100%;
+  padding: 20px;
 }
 
 .section-title {
@@ -2825,6 +2826,28 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .export-csv-action {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+.export-csv-action.is-loading {
+  cursor: wait;
+  opacity: .75;
+}
+
+.export-csv-action.is-loading::before {
+  content: '';
+  display: inline-block;
+  width: .85em;
+  height: .85em;
+  margin-right: 7px;
+  vertical-align: -.1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: export-csv-spin .8s linear infinite;
+}
+
+@keyframes export-csv-spin {
+  to { transform: rotate(360deg); }
 }
 
 .logging-notice {
@@ -3509,6 +3532,22 @@ body.modal-open {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.p25-override-profile-header::-webkit-details-marker {
+  display: none;
+}
+
+.p25-override-profile-header::before {
+  content: '▸';
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.p25-override-profile[open] > .p25-override-profile-header::before {
+  content: '▾';
 }
 
 .p25-override-identity {
@@ -4937,8 +4976,8 @@ th.numeric {
 :root[data-theme="dark"] .activity-series-button.active,
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
-:root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.ui-button):not(.ui-segmented-option):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab):not(.channels-tab-select):not(.channels-tab-title-button):not(.channels-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.receiver-health-section-toggle) {
+:root[data-theme="dark"] .button:not(.secondary):not(.disabled):not(.danger),
+:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.danger):not(.ui-button):not(.ui-segmented-option):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab):not(.channels-tab-select):not(.channels-tab-title-button):not(.channels-tab-close):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.receiver-health-section-toggle) {
   color: #071a18;
   border-color: #69cec2;
 }
@@ -5419,7 +5458,7 @@ th.numeric {
 }
 
 .alias-filter-group-observed .alias-filter-group-fields {
-  grid-template-columns: repeat(2, minmax(190px, 240px)) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 240px) repeat(2, minmax(240px, 1fr)) auto;
 }
 
 .alias-editor-filter-toolbar .alias-filter {
@@ -5450,6 +5489,10 @@ th.numeric {
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.alias-filter-group-observed .alias-filter-actions {
+  min-width: max-content;
 }
 
 .alias-editor-table-section {

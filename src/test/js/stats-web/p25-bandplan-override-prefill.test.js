@@ -184,6 +184,7 @@ assert.deepEqual(plain(behavior.clear(
 });
 
 const render = functionSource('renderAdminP25BandplanOverrides');
+const profileCard = functionSource('p25OverrideProfileCard');
 assert.match(render, /const createRequested = route\.has\('createP25Override'\)/);
 assert.match(render, /p25OverrideSameScope\(profile, requestedProfile\)/);
 assert.match(render, /if \(!requestedCard\)/,
@@ -197,5 +198,15 @@ assert.match(render, /no usable detected OTA bands were available for this site/
   'No detected bands must leave a clearly explained blank-row draft.');
 assert.match(render, /requestedCard\.scrollIntoView/,
   'An existing exact site card must be brought into view.');
+assert.match(render, /requestedCard\.open = true/,
+  'An explicitly requested profile must open so its prefilled fields are usable.');
+assert.match(render, /card\.open = true/,
+  'A newly added profile must open for immediate editing.');
 assert.match(render, /clearP25OverrideCreateRoute\(\)/,
   'The one-shot route must be consumed after the existing profiles load.');
+assert.match(profileCard, /node\('details', 'settings-card p25-override-profile'\)/,
+  'Saved profiles must use a collapsed disclosure container by default.');
+assert.match(profileCard, /node\('summary', 'settings-card-header p25-override-profile-header'\)/,
+  'The profile identity must remain visible as the disclosure summary.');
+assert.match(profileCard, /event\.preventDefault\(\)/,
+  'Deleting a profile must not toggle its disclosure while removing it.');

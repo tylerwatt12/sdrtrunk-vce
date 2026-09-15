@@ -280,6 +280,7 @@ let aliasEditorSelectionScope = null;
 let aliasEditorSelectionRequest = 0;
 let aliasEditorLastSelectionIndex = null;
 let aliasEditorContext = null;
+let aliasEditorPageController = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let applicationRoutes = null;
@@ -1514,7 +1515,20 @@ function exportCsvHref(dataset, context = {}) {
   return `${path}${parameters.size ? `?${parameters}` : ''}`;
 }
 
-function exportCsvLink(dataset, context = {}, label = 'Export CSV') {
+function exportCsvFileName(response, fallback = 'export.csv') {
+  const header = String(response?.headers?.get?.('Content-Disposition') || '');
+  const encoded = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+  const plain = header.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  const value = encoded || plain?.[1] || plain?.[2] || fallback;
+  let decoded = value;
+  if (encoded) {
+    try { decoded = decodeURIComponent(value); } catch (_) { /* Keep the header value when it is malformed. */ }
+  }
+  const safe = String(decoded).replace(/[\u0000-\u001f\u007f"\\/:*?<>|]+/g, '_').trim();
+  return safe || fallback;
+}
+
+function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {}) {
   if (!capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) {
     const disabled = node('span', 'button secondary disabled export-csv-action', label);
     disabled.setAttribute('aria-disabled', 'true');
@@ -1525,6 +1539,62 @@ function exportCsvLink(dataset, context = {}, label = 'Export CSV') {
   const link = anchor(label, exportCsvHref(dataset, context), 'button secondary export-csv-action');
   link.setAttribute('download', '');
   link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
+  if (options.loading) {
+    const target = link.href;
+    let activeController = null;
+    const reset = () => {
+      link.classList.remove('is-loading');
+      link.removeAttribute('aria-busy');
+      link.textContent = label;
+      link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
+      link.title = '';
+    };
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (activeController) {
+        activeController.abort();
+        return;
+      }
+      const controller = new AbortController();
+      activeController = controller;
+      link.classList.add('is-loading');
+      link.setAttribute('aria-busy', 'true');
+      link.setAttribute('aria-label', `Preparing ${dataset.replace(/-/g, ' ')} report; click to cancel`);
+      link.title = 'Click again to cancel the report download';
+      link.textContent = options.loadingLabel || 'Preparing report…';
+      void (async () => {
+        try {
+          const response = await fetch(target, {
+            cache: 'no-store', credentials: 'same-origin',
+            headers: { Accept: 'text/csv' }, signal: controller.signal
+          });
+          if (!response.ok) {
+            throw new Error(`The report could not be downloaded (HTTP ${response.status}).`);
+          }
+          const blob = await response.blob();
+          if (controller.signal.aborted) return;
+          const download = document.createElement('a');
+          const objectUrl = URL.createObjectURL(blob);
+          download.href = objectUrl;
+          download.download = exportCsvFileName(response, `${dataset}.csv`);
+          download.style.display = 'none';
+          document.body.append(download);
+          download.click();
+          download.remove();
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+        } catch (error) {
+          if (error?.name !== 'AbortError') {
+            link.title = error.message || 'The report could not be downloaded.';
+          }
+        } finally {
+          if (activeController === controller) {
+            activeController = null;
+            reset();
+          }
+        }
+      })();
+    });
+  }
   return link;
 }
 
@@ -2806,7 +2876,22 @@ function aliasDetailLink(row) {
   if (!Number.isInteger(id) || id <= 0) return label;
   const link = anchor(label, aliasEditorRowHref(row), 'alias-detail-link');
   link.dataset.aliasId = String(id);
+  if (route.get('view') === 'aliases' && aliasEditorContext?.admin && aliasEditorContext?.page) {
+    link.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      openAliasEditorFromRow(row);
+    });
+  }
   return link;
+}
+
+function openAliasEditorFromRow(row) {
+  const id = Number(row?.alias_id);
+  if (!Number.isInteger(id) || id <= 0) return;
+  route.set('alias', String(id));
+  window.history.replaceState({}, '', currentHref());
+  openAliasEditorModal('edit', id, { alias_list_id: Number(row?.alias_list_id) });
 }
 
 function aliasEditorRowHref(row) {
@@ -2990,13 +3075,10 @@ function aliasCatalogFilterToolbar(listResponse) {
   form.append(selectFilter('Matcher', 'matcher', [['', 'All matchers'], ...matcherOptions]));
   const search = node('label', 'alias-filter alias-search-filter');
   search.append(node('span', '', 'Search'));
-  const input = node('input');
-  input.type = 'search';
-  input.name = 'q';
-  input.value = route.get('q') || '';
+  const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Alias, description, group, or identifier';
   search.append(input);
-  form.append(search, node('button', '', 'Apply'));
+  form.append(search, node('button', 'ui-button ui-button-primary', 'Apply'));
   if (['list', 'family', 'type', 'matcher', 'q'].some((key) => route.get(key))) {
     form.append(anchor('Clear', href('aliases'), 'button secondary'));
   }
@@ -3286,17 +3368,14 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   };
   const search = node('label', 'alias-filter alias-search-filter');
   search.append(node('span', '', 'Search'));
-  const input = node('input');
-  input.type = 'search';
-  input.name = 'q';
-  input.value = route.get('q') || '';
+  const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Alias, description, group, or identifier';
   search.append(input);
   const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
     .filter((entry) => entry.value).sort((left, right) => left.label.localeCompare(right.label));
   const groupNames = [...new Set((options?.group_names || []).map((value) => String(value || '').trim())
     .filter(Boolean))].sort((left, right) => left.localeCompare(right));
-  const groupFilter = aliasTextInput('group', route.get('group') || '');
+  const groupFilter = aliasEditorFilterInput('group', route.get('group') || '');
   groupFilter.placeholder = 'Exact group';
   const groupList = node('datalist');
   groupList.id = 'alias-editor-group-filter-options';
@@ -3308,9 +3387,9 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   });
   const groupFilterWrapper = node('label', 'alias-filter');
   groupFilterWrapper.append(node('span', '', 'Group'), groupFilter);
-  const lastAfter = aliasTextInput('', aliasLocalDateTimeValue(route.get('lastActivityAfter')),
+  const lastAfter = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityAfter')),
     'datetime-local');
-  const lastBefore = aliasTextInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
+  const lastBefore = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
     'datetime-local');
   const filterGroup = (label, className, controls) => {
     const group = node('fieldset', `alias-filter-group ${className}`);
@@ -3352,7 +3431,7 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   const activeFilters = ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
     'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore'];
   const actions = node('div', 'alias-filter-actions');
-  actions.append(node('button', '', 'Apply'));
+  actions.append(node('button', 'ui-button ui-button-primary', 'Apply'));
   if (activeFilters.some((key) => route.get(key))) {
     actions.append(anchor('Clear', href('aliases', {
       list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure',
@@ -3541,6 +3620,12 @@ function aliasTextInput(name, value = '', type = 'text') {
   return input;
 }
 
+function aliasEditorFilterInput(name, value = '', type = 'text') {
+  const input = aliasTextInput(name, value, type);
+  input.classList.add('ui-input');
+  return input;
+}
+
 function aliasModalFooter(...controls) {
   const footer = node('footer', 'alias-modal-footer');
   footer.append(...controls.filter(Boolean));
@@ -3627,10 +3712,26 @@ async function openAliasConflictModal(aliasId, aliasName = '') {
 }
 
 async function finishAliasMutation(modal, result, routeChanges = {}) {
+  const mutationRouteChanges = { ...routeChanges };
+  if (aliasEditorContext?.scanListScope) delete mutationRouteChanges.list;
+  const currentListId = aliasListId(aliasEditorContext?.selectedList);
+  const requestedListId = mutationRouteChanges.list === undefined ? currentListId :
+    Number(mutationRouteChanges.list);
+  const localRefresh = aliasEditorPageController?.isCurrent?.() &&
+    (aliasEditorPageController.canRefreshMutation?.(mutationRouteChanges) ||
+      Number.isInteger(currentListId) && currentListId > 0 && requestedListId === currentListId);
+  let refreshed = false;
+  resetAliasEditorSelection();
+  if (localRefresh) {
+    try {
+      refreshed = await aliasEditorPageController.refresh();
+    } catch (_) {
+      refreshed = false;
+    }
+  }
   if (modal) modal.setDirty(false);
   closeReadOnlyModal(true);
-  resetAliasEditorSelection();
-  Object.entries(routeChanges).forEach(([key, value]) => {
+  Object.entries(mutationRouteChanges).forEach(([key, value]) => {
     if (value === null || value === undefined || value === '') route.delete(key);
     else route.set(key, String(value));
   });
@@ -3639,7 +3740,7 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
   route.delete('offset');
   window.history.replaceState({}, '', currentHref());
   if (result?.revision !== undefined && aliasEditorContext) aliasEditorContext.revision = result.revision;
-  await render();
+  if (!refreshed) await render();
 }
 
 function openAliasListCreateModal() {
@@ -3665,6 +3766,7 @@ function openAliasListCreateModal() {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     submit.disabled = true;
+    modal.setBusy(true);
     errorHost.replaceChildren();
     try {
       const result = await requestJson('/api/v1/admin/alias-lists', {
@@ -3675,6 +3777,7 @@ function openAliasListCreateModal() {
       await finishAliasMutation(modal, result, { list: result.alias_list_id, aliasTab: 'configure' });
     } catch (error) {
       aliasMutationError(errorHost, error);
+      modal.setBusy(false);
       submit.disabled = false;
     }
   });
@@ -3713,6 +3816,7 @@ async function openAliasListDeleteModal(selectedList) {
     cancel.addEventListener('click', modal.close);
     remove.addEventListener('click', async () => {
       remove.disabled = true;
+      modal.setBusy(true);
       try {
         const result = await requestJson(`/api/v1/admin/alias-lists/${id}`, {
           method: 'DELETE', body: { revision: Number(impact.revision), confirmed: true }
@@ -3724,6 +3828,7 @@ async function openAliasListDeleteModal(selectedList) {
   closeReadOnlyModal(true);
           openAliasListDeleteModal(selectedList);
         });
+        modal.setBusy(false);
         remove.disabled = false;
       }
     });
@@ -4028,24 +4133,28 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     });
   if (!modal) return;
   try {
-    const recordPromise = editing || cloning ? requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) :
-      Promise.resolve(null);
-    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?alias_list_id=${selectedListId}`,
+    const recordResponse = editing || cloning ?
+      await requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) : null;
+    if (activeReadOnlyModal !== modal.state) return;
+    const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
+    const sourceListId = Number(source.alias_list_id);
+    const effectiveListId = Number.isInteger(sourceListId) && sourceListId > 0 ? sourceListId : selectedListId;
+    if (!Number.isInteger(effectiveListId) || effectiveListId <= 0) {
+      throw new Error('This alias does not have a valid Alias List. Reload the list and try again.');
+    }
+    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?alias_list_id=${effectiveListId}`,
       { csrf: false });
     const analyticsPromise = editing || cloning ?
       api(`/api/v1/aliases/${encodeURIComponent(String(id))}`).catch(() => null) : Promise.resolve(null);
-    const [recordResponse, options, analytics] = await Promise.all([
-      recordPromise, initialOptionsPromise, analyticsPromise
-    ]);
+    const [options, analytics] = await Promise.all([initialOptionsPromise, analyticsPromise]);
     if (activeReadOnlyModal !== modal.state) return;
-    const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
-    if ((editing || cloning) && Number(source.alias_list_id) !== selectedListId) {
+    if ((editing || cloning) && Number(source.alias_list_id) !== effectiveListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
     const revision = Number(recordResponse?.revision ?? options?.revision ??
       aliasEditorContext?.revision ?? 0);
     const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
-      Number(source.alias_list_id || selectedListId)) || aliasEditorContext?.selectedList;
+      effectiveListId) || aliasEditorContext?.selectedList;
     const family = aliasListFamily(currentList);
     const compatibleLists = (aliasEditorContext?.lists || []).filter((row) => aliasListFamily(row) === family);
     const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
@@ -4239,6 +4348,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       if (!form.reportValidity()) return;
       errorHost.replaceChildren();
       save.disabled = true;
+      modal.setBusy(true);
       try {
         const payload = aliasEditorPayload(form, options);
         let result;
@@ -4258,6 +4368,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   closeReadOnlyModal(true);
           openAliasEditorModal(mode, id, prefill);
         });
+        modal.setBusy(false);
         save.disabled = false;
       }
     });
@@ -4292,6 +4403,7 @@ function openAliasDeleteModal(id, name, revision) {
   cancel.addEventListener('click', modal.close);
   remove.addEventListener('click', async () => {
     remove.disabled = true;
+    modal.setBusy(true);
     try {
       const result = await requestJson(`/api/v1/admin/aliases/${id}`, {
         method: 'DELETE', body: { revision }
@@ -4302,6 +4414,7 @@ function openAliasDeleteModal(id, name, revision) {
   closeReadOnlyModal(true);
         render();
       });
+      modal.setBusy(false);
       remove.disabled = false;
     }
   });
@@ -4613,6 +4726,7 @@ function openAliasBulkModal(kind) {
     try {
       const change = readChange();
       submit.disabled = true;
+      modal.setBusy(true);
       let result;
       if (kind === 'scan-lists') {
         result = await requestJson(`/api/v1/admin/scan-lists/${change.scan_list_id}/members`, {
@@ -4636,6 +4750,7 @@ function openAliasBulkModal(kind) {
         render();
       });
       submit.disabled = false;
+      modal.setBusy(false);
     }
   });
 }
@@ -4681,6 +4796,7 @@ function openScanListMemberRemoveModal(scanList) {
   remove.addEventListener('click', async () => {
     if (remove.disabled) return;
     remove.disabled = true;
+    modal.setBusy(true);
     message.textContent = 'Removing aliases…';
     try {
       const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
@@ -4696,6 +4812,7 @@ function openScanListMemberRemoveModal(scanList) {
         render();
       });
       remove.disabled = false;
+      modal.setBusy(false);
     }
   });
   remove.focus();
@@ -4752,6 +4869,7 @@ function openFullScanListMembershipModal(scanList, operation) {
       return;
     }
     submit.disabled = true;
+    modal.setBusy(true);
     message.textContent = adding ? 'Adding aliases…' : 'Removing memberships…';
     try {
       const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
@@ -4766,6 +4884,7 @@ function openFullScanListMembershipModal(scanList, operation) {
         render();
       });
       submit.disabled = false;
+      modal.setBusy(false);
     }
   });
   if (adding) aliasList.focus();
@@ -5454,6 +5573,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     event.preventDefault();
     errorHost.replaceChildren();
     save.disabled = true;
+    modal.setBusy(true);
     try {
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/unmatched-talkgroups`, {
         method: 'PUT', body: {
@@ -5472,6 +5592,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
         render();
       });
       save.disabled = false;
+      modal.setBusy(false);
     }
   });
 }
@@ -5726,13 +5847,10 @@ function observedGroupIdentityToolbar(selectedList) {
   });
   const search = node('label', 'alias-filter alias-search-filter');
   search.append(node('span', '', 'Search'));
-  const input = node('input');
-  input.type = 'search';
-  input.name = 'q';
-  input.value = route.get('q') || '';
+  const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Group, system, or channel';
   search.append(input);
-  form.append(search, node('button', '', 'Search'));
+  form.append(search, node('button', 'ui-button ui-button-primary', 'Search'));
   if (route.get('q')) {
     form.append(anchor('Clear', href('aliases', {
       list: aliasListId(selectedList), aliasTab: 'discover', sort: route.get('sort'),
@@ -5742,8 +5860,8 @@ function observedGroupIdentityToolbar(selectedList) {
   return form;
 }
 
-function renderObservedGroupIdentities(main, page, selectedList) {
-  const rows = (page.rows || []).filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
+function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary) {
+  const rows = [...(page.rows || [])].filter((row) => observedGroupIdentityMatchKind(row) !== 'exact');
   const columns = [
     { id: 'group-identity-id', label: 'Identity', fullLabel: 'Group identity', sort: 'group_identity',
       render: observedGroupIdentityValue },
@@ -5758,21 +5876,53 @@ function renderObservedGroupIdentities(main, page, selectedList) {
     { id: 'action', label: '', render: (row) => observedGroupIdentityCreateButton(row, selectedList) }
   ];
   const host = node('div', 'alias-catalog-table-host observed-group-identity-table-host');
+  const tableController = {};
+  const controller = {};
   const actions = node('div', 'section-title-actions');
   const observedTable = table(rows, columns,
     'No observed groups without an exact alias are available for this list', {
       type: 'alias-observed-group-identities', serverSort: true, sortable: false,
       defaultSort: 'last_seen', defaultDirection: 'desc',
+      controller: tableController,
       rowKey: observedGroupIdentityKey, rowClass: 'observed-group-identity-row',
       onRowClick: (row) => openObservedGroupIdentityDetail(row, selectedList), layoutMenuHost: actions
     });
   host.append(observedTable);
   const block = section('Observed Groups', host, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-group-identity-section');
+  const pagerHost = node('div');
+  pagerHost.append(pager({ ...page, rows }));
   block.append(node('p', 'metric-meaning-note alias-catalog-guide',
     'This list contains talkgroups and patch groups observed on assigned systems or channels that do not have an ' +
-    'exact alias. Existing range coverage appears beneath the identity.'), pager({ ...page, rows }));
+    'exact alias. Existing range coverage appears beneath the identity.'), pagerHost);
   main.append(block);
+  Object.assign(controller, {
+    isCurrent: () => aliasEditorPageController === controller &&
+      renderIsCurrent(renderContext) && main.isConnected,
+    canRefreshMutation: (routeChanges) => routeChanges?.list === undefined ||
+      Number(routeChanges.list) === aliasListId(selectedList),
+    refresh: async () => {
+      if (!controller.isCurrent()) return false;
+      const nextPagePromise = apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
+        pageParameters({ include_exact: false }));
+      const nextListsPromise = apiPage('/api/v1/alias-lists?limit=500');
+      const [nextPage, nextLists] = await Promise.all([nextPagePromise, nextListsPromise]);
+      if (!controller.isCurrent()) return false;
+      rows.splice(0, rows.length, ...(nextPage.rows || [])
+        .filter((row) => observedGroupIdentityMatchKind(row) !== 'exact'));
+      aliasEditorContext.page = nextPage;
+      const nextList = (nextLists.rows || []).find((row) => aliasListId(row) === aliasListId(selectedList));
+      if (nextList) {
+        Object.assign(selectedList, nextList);
+        aliasEditorContext.selectedList = selectedList;
+        updateSummary?.(selectedList);
+      }
+      tableController.replaceRows(rows);
+      pagerHost.replaceChildren(pager({ ...nextPage, rows }));
+      return true;
+    }
+  });
+  return controller;
 }
 
 async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext) {
@@ -5782,7 +5932,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
     evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const page = await apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
+  let page = await apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   const options = {
     scan_lists: scanListCatalog.scan_lists || [], scan_list_scope: true
@@ -5790,20 +5940,25 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
   aliasEditorContext.revision = Number(scanListCatalog.revision ?? 0);
-  const rows = page.rows || [];
+  const rows = [...(page.rows || [])];
   const selectionFilters = { ...filters, q: route.get('q') };
   const selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary scan-list-member-summary');
   const summaryCopy = node('div', 'alias-list-summary-copy');
+  const summaryMetrics = node('span', 'muted scan-list-member-summary-metrics');
   summaryCopy.append(...[
     node('h2', '', scanList.name), badge('Scan List', 'state-current'),
     scanList.default === true ? badge('Default', 'state-current') : null,
     scanList.published === false ? badge('Not published', 'state-stale') : null,
-    node('span', 'muted', `${number(scanList.alias_count || 0)} alias members · ` +
-      `${number(scanList.unmatched_alias_list_count || 0)} unknown-talkgroup routes`)
+    summaryMetrics
   ].filter(Boolean));
+  const updateSummary = (value) => {
+    summaryMetrics.textContent = `${number(value?.alias_count || 0)} alias members · ` +
+      `${number(value?.unmatched_alias_list_count || 0)} unknown-talkgroup routes`;
+  };
+  updateSummary(scanList);
   const summaryActions = node('div', 'alias-list-summary-actions');
   summaryActions.append(anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }),
     'button secondary'));
@@ -5820,6 +5975,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   main.append(summary, aliasEditorFilterToolbar(listResponse, options));
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  const tableController = {};
   const selectionStatus = node('div', 'alias-form-message alias-selection-status');
   selectionStatus.setAttribute('role', 'status');
   selectionStatus.setAttribute('aria-live', 'polite');
@@ -5841,6 +5997,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
     'No aliases belong to this scan list', {
       type: 'alias-scan-list-members', serverSort: true, sortable: false,
       defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id,
+      controller: tableController,
       layoutMenuHost: actions,
       onRowClick: (row, _tableRow, event) => {
         const id = Number(row.alias_id);
@@ -5861,7 +6018,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
           }
           return;
         }
-        window.location.assign(aliasEditorRowHref(row));
+        openAliasEditorFromRow(row);
       }
   });
   tableHost.append(aliasTable);
@@ -5890,7 +6047,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   ]).forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, 'Download table report'));
+  actions.append(exportCsvLink('aliases', exportContext, 'Download table report', { loading: true }));
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'scan-list-member-table-section');
   bulkBar = scanListMemberBulkBar(scanList, () => {
@@ -5899,14 +6056,45 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   });
   block.append(bulkBar, selectionStatus);
   updateSelection();
+  const pagerHost = node('div');
+  pagerHost.append(pager(page));
   block.append(node('p', 'metric-meaning-note alias-catalog-guide',
     'This view includes members from every alias list. Removing membership preserves each alias and its other ' +
-      'scan-list memberships.'), pager(page));
+      'scan-list memberships.'), pagerHost);
   main.append(block);
+
+  const pageController = {
+    isCurrent: () => aliasEditorPageController === pageController &&
+      renderIsCurrent(renderContext) && main.isConnected,
+    canRefreshMutation: (routeChanges) => routeChanges?.list === undefined,
+    refresh: async () => {
+      if (!pageController.isCurrent()) return false;
+      const nextPagePromise = apiPage('/api/v1/aliases', pageParameters({ ...filters, include_activity: false }));
+      const nextCatalogPromise = requestJson('/api/v1/admin/scan-lists', { csrf: false });
+      const [nextPage, nextCatalog] = await Promise.all([nextPagePromise, nextCatalogPromise]);
+      if (!pageController.isCurrent()) return false;
+      const nextScanList = (nextCatalog.scan_lists || []).find((row) => Number(row.id) === Number(scanList.id));
+      if (!nextScanList) return false;
+      rows.splice(0, rows.length, ...(nextPage.rows || []));
+      page = nextPage;
+      Object.assign(scanList, nextScanList);
+      aliasEditorContext.page = nextPage;
+      aliasEditorContext.revision = Number(nextCatalog.revision ?? aliasEditorContext.revision ?? 0);
+      tableController.replaceRows(rows);
+      pagerHost.replaceChildren(pager(nextPage));
+      updateSummary(scanList);
+      addAll.disabled = !(aliasEditorContext?.lists || []).length;
+      removeAll.disabled = Number(scanList.alias_count || 0) <= 0;
+      updateSelection();
+      return true;
+    }
+  };
+  aliasEditorPageController = pageController;
 }
 
 async function renderAliases() {
   const renderContext = captureRenderContext();
+  aliasEditorPageController = null;
   const requestedListId = /^[1-9][0-9]*$/.test(route.get('list') || '') ? Number(route.get('list')) : null;
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
@@ -6002,9 +6190,10 @@ async function renderAliases() {
   const optionParameters = { alias_list_id: aliasListId(selectedList) };
   if (view === 'activity') optionParameters.include_group_names = false;
   const optionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
-  const [page, options] = await Promise.all([pagePromise, optionsPromise]);
+  let [page, initialOptions] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   activityLoading?.remove();
+  let options = initialOptions;
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
@@ -6018,16 +6207,21 @@ async function renderAliases() {
     aliasEditorContext.selectedList = selectedList;
     aliasEditorContext.revision = Number(options.revision);
   }
-  const rows = page.rows || [];
+  const rows = [...(page.rows || [])];
   const selectionFilters = { ...filters, q: route.get('q') };
   const selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
   const summary = node('section', 'alias-list-summary');
   const summaryCopy = node('div', 'alias-list-summary-copy');
+  const summaryMetrics = node('span', 'muted alias-list-summary-metrics');
   summaryCopy.append(node('h2', '', selectedList.name), badge(aliasListFamilyLabel(selectedList), 'state-current'),
-    node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases · ` +
-      `${number(selectedList.assigned_channel_count || 0)} assigned channels`));
+    summaryMetrics);
+  const updateSummary = (list) => {
+    summaryMetrics.textContent = `${number(list?.alias_count || 0)} aliases · ` +
+      `${number(list?.assigned_channel_count || 0)} assigned channels`;
+  };
+  updateSummary(selectedList);
   summary.append(summaryCopy);
   const listActions = node('div', 'alias-list-summary-actions');
   const add = node('button', 'button alias-add-button', 'Add Alias');
@@ -6056,12 +6250,14 @@ async function renderAliases() {
     observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
 
   if (view === 'discover') {
-    renderObservedGroupIdentities(main, page, selectedList);
+    aliasEditorPageController = renderObservedGroupIdentities(main, page, selectedList, renderContext,
+      updateSummary);
     return;
   }
 
   const definitions = [...aliasCustomConfigurationColumns(), ...aliasActivityColumns()];
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  const tableController = {};
   const selectionStatus = node('div', 'alias-form-message alias-selection-status');
   selectionStatus.setAttribute('role', 'status');
   selectionStatus.setAttribute('aria-live', 'polite');
@@ -6084,6 +6280,7 @@ async function renderAliases() {
     const aliasTable = table(rows, columnsForView(), 'No aliases match these filters', {
       type: `alias-editor-${view}`, serverSort: true, sortable: false,
       defaultSort: defaultOrder.sort, defaultDirection: defaultOrder.direction,
+      controller: tableController,
       rowKey: (row) => row.alias_id,
       defaultHiddenColumns: view === 'custom' ? definitions
         .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_COLUMNS.includes(id)) : [],
@@ -6107,7 +6304,7 @@ async function renderAliases() {
           }
           return;
         }
-        window.location.assign(currentHref({ alias: id }));
+        openAliasEditorFromRow(row);
       }
     });
     tableHost.replaceChildren(aliasTable);
@@ -6140,7 +6337,9 @@ async function renderAliases() {
   exportFilters.forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, 'Download table report'));
+  actions.append(exportCsvLink('aliases', exportContext, 'Download table report', { loading: true }));
+  const pagerHost = node('div');
+  pagerHost.append(pager(page));
   const block = section(view === 'configure' ? 'Alias Configuration' :
     (view === 'activity' ? 'Activity' : 'Custom View'),
   tableHost, actions);
@@ -6155,8 +6354,47 @@ async function renderAliases() {
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
     'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
       'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
-      'observed.'), pager(page));
+      'observed.'), pagerHost);
   main.append(block);
+
+  const pageController = {
+    isCurrent: () => aliasEditorPageController === pageController &&
+      renderIsCurrent(renderContext) && main.isConnected,
+    canRefreshMutation: (routeChanges) => routeChanges?.list === undefined ||
+      Number(routeChanges.list) === aliasListId(selectedList),
+    refresh: async () => {
+      if (!pageController.isCurrent()) return false;
+      const nextPagePromise = apiPage('/api/v1/aliases', pageParameters({
+        ...filters, ...(view === 'configure' ? { include_activity: false } : {}),
+        sort: route.get('sort') || defaultOrder.sort,
+        direction: route.get('direction') || defaultOrder.direction
+      }));
+      const nextOptionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
+      const nextListsPromise = apiPage('/api/v1/alias-lists?limit=500');
+      const [nextPage, nextOptions, nextLists] = await Promise.all([
+        nextPagePromise, nextOptionsPromise, nextListsPromise
+      ]);
+      if (!pageController.isCurrent()) return false;
+      rows.splice(0, rows.length, ...(nextPage.rows || []));
+      page = nextPage;
+      options = nextOptions;
+      aliasEditorContext.page = nextPage;
+      aliasEditorContext.options = nextOptions;
+      aliasEditorContext.revision = Number(nextOptions?.revision ?? aliasEditorContext.revision ?? 0);
+      const nextList = (nextLists.rows || []).find((row) => aliasListId(row) === aliasListId(selectedList));
+      const nextOptionsList = nextOptions?.alias_list;
+      if (nextList || nextOptionsList) {
+        selectedList = { ...selectedList, ...nextList, ...nextOptionsList };
+        aliasEditorContext.selectedList = selectedList;
+        updateSummary(selectedList);
+      }
+      tableController.replaceRows(rows);
+      pagerHost.replaceChildren(pager(nextPage));
+      updateSelection();
+      return true;
+    }
+  };
+  aliasEditorPageController = pageController;
 
   if (route.get('createAlias') === '1') {
     const prefill = routedAliasPrefill(selectedList, options);
@@ -14130,6 +14368,7 @@ function liveChannelsSection(onSelectionChange) {
     if (currentControl) selectRow(displayed, currentControl);
     tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
   };
+  const requestedChannel = route.get('channel');
 
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
@@ -14245,7 +14484,11 @@ function liveChannelsSection(onSelectionChange) {
     close.hidden = !stopped;
     close.title = stopped ? `Close stopped channel ${label}` : '';
     close.setAttribute('aria-label', `Close stopped channel ${label}`);
-    if (!activeTableId) showTable(tables.has('conventional') ? 'conventional' : value.table_id);
+    if (requestedChannel && value.configuration_id === requestedChannel && activeTableId !== value.table_id) {
+      showTable(value.table_id);
+    } else if (!activeTableId) {
+      showTable(tables.has('conventional') ? 'conventional' : value.table_id);
+    }
     else updateVisibleRows(value);
   };
 
@@ -15728,10 +15971,14 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') }
+      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') },
+    { id: 'live', label: 'Live', render: (row) => anchor('Open', href('live', { channel: row.configuration_id }),
+      'channel-navigation-link') },
+    { id: 'channel', label: 'Channel', render: (row) => anchor('View',
+      href('channel', { configuration_id: row.configuration_id }), 'channel-navigation-link') }
   );
   if (editable) columns.push(
-    { id: 'auto-start', label: 'Startup order', className: 'numeric', render: (row) => {
+    { id: 'auto-start', label: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
       if (!editable) return node('span', 'channel-order-readonly',
         row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');
@@ -17930,12 +18177,16 @@ function p25OverrideBandRow(band = null) {
 }
 
 function p25OverrideProfileCard(profile = null) {
-  const card = node('section', 'settings-card p25-override-profile');
-  const header = node('div', 'settings-card-header p25-override-profile-header');
+  const card = node('details', 'settings-card p25-override-profile');
+  const header = node('summary', 'settings-card-header p25-override-profile-header');
   const title = node('h3', 'settings-card-title', 'New P25 override');
   const remove = node('button', 'button danger', 'Delete profile');
   remove.type = 'button';
-  remove.addEventListener('click', () => card.remove());
+  remove.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    card.remove();
+  });
   header.append(title, remove);
   const body = node('div', 'settings-card-body');
   const identity = node('div', 'p25-override-identity');
@@ -18029,7 +18280,12 @@ async function renderAdminP25BandplanOverrides() {
   const add = node('button', 'button secondary', 'Add P25 override');
   add.type = 'button';
   add.disabled = true;
-  add.addEventListener('click', () => list.append(p25OverrideProfileCard()));
+  add.addEventListener('click', () => {
+    const card = p25OverrideProfileCard();
+    card.open = true;
+    list.append(card);
+    card.querySelector('[data-p25-override-field="wacn"]')?.focus();
+  });
   const save = node('button', '', 'Save P25 band plan overrides');
   save.type = 'submit';
   save.disabled = true;
@@ -18097,6 +18353,7 @@ async function renderAdminP25BandplanOverrides() {
         } else {
           message.textContent = 'This site already has an override. Review its replacement bands before saving.';
         }
+        requestedCard.open = true;
         window.requestAnimationFrame(() => {
           requestedCard.scrollIntoView({ block: 'center' });
           requestedCard.querySelector('[data-p25-override-field="identifier"]')?.focus({ preventScroll: true });
