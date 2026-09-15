@@ -327,7 +327,7 @@ function readStylesheetGraph(entry) {
       throw new Error(`Missing stylesheet: ${resolvedFile}`);
     }
 
-    const source = fs.readFileSync(resolvedFile, 'utf8');
+    const source = fs.readFileSync(resolvedFile, 'utf8').replace(/\r\n?/g, '\n');
     const parsed = parseStylesheet(source, resolvedFile);
     const stylesheet = { file: resolvedFile, source, ...parsed };
     visiting.push(resolvedFile);
@@ -371,7 +371,7 @@ function manifestLines(source, label) {
 
 function validateEntryManifest(entry) {
   const resolved = path.resolve(entry);
-  const actual = manifestLines(fs.readFileSync(resolved, 'utf8'), resolved);
+  const actual = manifestLines(fs.readFileSync(resolved, 'utf8').replace(/\r\n?/g, '\n'), resolved);
   if(actual.length !== EXPECTED_ENTRY_MANIFEST.length
     || actual.some((line, index) => line !== EXPECTED_ENTRY_MANIFEST[index])) {
     throw new Error(
