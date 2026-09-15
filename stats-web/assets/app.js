@@ -14491,6 +14491,7 @@ async function renderRadioSystem() {
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
     const directory = createAsyncSection('Talker Alias Summary', {
+      action: exportCsvLink('radio-system-talker-aliases', radioSystem),
       loadingMessage: 'Loading talker aliases…',
       errorMessage: 'The talker alias summary could not be loaded.'
     });

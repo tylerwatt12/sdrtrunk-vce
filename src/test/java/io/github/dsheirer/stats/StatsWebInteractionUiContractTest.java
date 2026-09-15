@@ -505,8 +505,8 @@ class StatsWebInteractionUiContractTest
         String system = function(source, "async function renderRadioSystem()");
         assertTrue(system.contains("exportCsvLink('radio-system-group-identities', radioSystem)"));
         assertTrue(system.contains("exportCsvLink('radio-system-radios', { ...radioSystem, ...filters })"));
-        assertEquals(2, system.split("exportCsvLink\\(", -1).length - 1,
-            "Talker Alias Summary must not expose CSV export");
+        assertTrue(system.contains("exportCsvLink('radio-system-talker-aliases', radioSystem)"));
+        assertEquals(3, system.split("exportCsvLink\\(", -1).length - 1);
 
         assertTrue(function(source, "async function renderTrunkedChannelFrequencies(channel, renderContext)")
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
