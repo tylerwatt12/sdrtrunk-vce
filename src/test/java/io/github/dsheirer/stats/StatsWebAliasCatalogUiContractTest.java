@@ -144,6 +144,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
         assertTrue(editor.contains("method: 'PUT', body: { revision, alias: payload }"));
         assertTrue(editor.contains("method: 'POST', body: { revision, alias: payload }"));
+        assertTrue(editor.contains("options?.alias_list?.new_alias_behavior"));
+        assertFalse(editor.contains("options?.alias_list?.unmatched_talkgroup_policy"));
         assertFalse(editor.contains("requestedScanLists"));
         assertFalse(editor.contains("its scan-list membership could not be saved"));
         assertTrue(source.contains("method: 'DELETE', body: { revision }"));
@@ -476,7 +478,7 @@ class StatsWebAliasCatalogUiContractTest
         assertFalse(source.contains("function unmatchedTalkgroupPolicy"));
         assertTrue(policy.contains("selectedList?.unknown_alias_behavior"));
         assertTrue(policy.contains("selectedList?.new_alias_behavior"));
-        assertTrue(prefill.contains("selectedList?.unmatched_talkgroup_policy"));
+        assertTrue(prefill.contains("selectedList?.new_alias_behavior"));
         assertTrue(policy.contains("/defaults"));
         assertTrue(policy.contains("'Unknown Alias Behavior'"));
         assertTrue(policy.contains("'New Alias Behavior'"));

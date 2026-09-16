@@ -267,7 +267,7 @@ vm.runInContext(`
   };
 `, context);
 
-const transferDefaults = context.transferListDefaults({ unmatched_talkgroup_policy: {
+const transferDefaults = context.transferListDefaults({ new_alias_behavior: {
   recordable: true, scan_list_ids: [2], broadcast_configuration_ids: ['stream-1']
 } }, {
   scan_lists: [{ id: 1, name: 'Primary' }, { id: 2, name: 'Dispatch' }],

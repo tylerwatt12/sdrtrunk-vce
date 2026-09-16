@@ -4160,13 +4160,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
       source.matcher?.variant);
     const initialMatcher = source.matcher || aliasMatcherDefault(descriptor, options);
-    const initialType = String(initialMatcher?.type || descriptor?.type || '');
     if (!editing && !cloning && source.recordable === undefined) {
-      const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
-      const inherits = ['talkgroup', 'talkgroup_range'].includes(initialType);
-      source.recordable = inherits && Boolean(defaults.recordable);
-      source.broadcast_configuration_ids = inherits ? [...(defaults.broadcast_configuration_ids || [])] : [];
-      source.scan_list_ids = inherits ? [...(defaults.scan_list_ids || [])] : [];
+      const defaults = options?.alias_list?.new_alias_behavior || {};
+      source.recordable = Boolean(defaults.recordable);
+      source.broadcast_configuration_ids = [...(defaults.broadcast_configuration_ids || [])];
+      source.scan_list_ids = [...(defaults.scan_list_ids || [])];
     }
     const form = node('form', 'alias-editor-form');
     const basics = node('section', 'alias-editor-panel');
@@ -4281,16 +4279,15 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       label.append(checkbox, node('span', '', missing ? missingLabel : configuredStreams.get(configurationId)));
       streams.append(label);
     });
-    updateCreationRoutingDefaults = (changedDescriptor) => {
+    updateCreationRoutingDefaults = () => {
       if (editing || cloning) return;
-      const defaults = options?.alias_list?.unmatched_talkgroup_policy || {};
-      const inherits = ['talkgroup', 'talkgroup_range'].includes(String(changedDescriptor?.type || ''));
-      record.checked = inherits && Boolean(defaults.recordable);
-      const selectedScanLists = new Set(inherits ? (defaults.scan_list_ids || []).map(Number) : []);
+      const defaults = options?.alias_list?.new_alias_behavior || {};
+      record.checked = Boolean(defaults.recordable);
+      const selectedScanLists = new Set((defaults.scan_list_ids || []).map(Number));
       scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
         checkbox.checked = selectedScanLists.has(Number(checkbox.value));
       });
-      const selectedDestinations = new Set(inherits ? (defaults.broadcast_configuration_ids || []) : []);
+      const selectedDestinations = new Set(defaults.broadcast_configuration_ids || []);
       streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) => {
         checkbox.checked = selectedDestinations.has(checkbox.value);
       });
@@ -4900,8 +4897,7 @@ function unmatchedTalkgroupsSupported(selectedList) {
 }
 
 function aliasTransferListDefaults(selectedList, options = {}) {
-  const policy = selectedList?.unmatched_talkgroup_policy ||
-    options?.alias_list?.unmatched_talkgroup_policy || {};
+  const policy = selectedList?.new_alias_behavior || options?.alias_list?.new_alias_behavior || {};
   const names = (ids, choices, id) => {
     const configured = new Map((choices || []).map((choice) => [String(choice?.[id] ?? ''), choice?.name]));
     return (ids || []).map((value) => configured.get(String(value)) || `Missing (${value})`);
@@ -5727,7 +5723,7 @@ function observedGroupIdentityPrefill(row, selectedList) {
   if (!observedGroupIdentityPromotionSupported(row)) {
     throw new Error(observedGroupIdentityPromotionReason(row));
   }
-  const policy = selectedList?.unmatched_talkgroup_policy || {};
+  const policy = selectedList?.new_alias_behavior || {};
   const groupIdentityId = Number(row.group_identity_id);
   let matcher;
   if (isP25(row)) {
@@ -5778,7 +5774,7 @@ function routedAliasPrefill(selectedList, options) {
       (protocol !== 'p25' && String(descriptor.variant || '') !== variant) ||
       (descriptor.minimum !== undefined && value < Number(descriptor.minimum)) ||
       (descriptor.maximum !== undefined && value > Number(descriptor.maximum))) return null;
-  const policy = type === 'talkgroup' ? selectedList.unmatched_talkgroup_policy || {} : {};
+  const policy = selectedList.new_alias_behavior || {};
   return {
     alias_list_id: aliasListId(selectedList),
     name: String(route.get('createName') || '').trim().slice(0, 256),

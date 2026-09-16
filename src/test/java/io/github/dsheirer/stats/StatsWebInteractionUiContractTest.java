@@ -1137,7 +1137,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scannerNavigate.contains("{ channel: 'groups' }"));
         assertTrue(scannerNavigate.contains("{ channel: 'radios' }"));
         assertTrue(routedPrefill.contains("aliasMatcherDescriptor(options, type, protocol, variant)"));
-        assertTrue(routedPrefill.contains("selectedList.unmatched_talkgroup_policy"));
+        assertTrue(routedPrefill.contains("selectedList.new_alias_behavior"));
         assertTrue(conventional.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(conventional.contains("context_key"));
         assertTrue(upsert.contains("entityTarget(value.entity_ref)"));
