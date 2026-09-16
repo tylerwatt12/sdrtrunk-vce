@@ -118,7 +118,7 @@ public final class LegacyXmlConfigurationMerger
             NameReservation reservation = reserveName(sourceDefinition.getName(), aliasListNames);
             AliasListDefinition importedDefinition =
                 new AliasListDefinition(reservation.name(), sourceDefinition.getFamily(),
-                    sourceDefinition.getUnmatchedTalkgroupPolicy());
+                    sourceDefinition.getUnmatchedTalkgroupPolicy(), sourceDefinition.getNewAliasBehavior());
             mergedDefinitions.add(importedDefinition);
             importedState.getLegacyAliasListListenEnabled(sourceDefinition).ifPresent(enabled ->
                 merged.setLegacyAliasListListenEnabled(importedDefinition, enabled));

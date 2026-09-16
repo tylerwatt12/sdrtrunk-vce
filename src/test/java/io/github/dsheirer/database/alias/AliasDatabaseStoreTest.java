@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.NewAliasBehavior;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
@@ -66,6 +67,7 @@ class AliasDatabaseStoreTest
         AliasListDefinition definition = definition("Lake County", AliasListFamily.P25);
         definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(true,
             List.of(route(unknownCalls), route(archive))));
+        definition.setNewAliasBehavior(new NewAliasBehavior(false, List.of(route(radioResolve))));
         Alias alias = alias("County Fire Dispatch", definition, 1001);
         alias.setDescription("Countywide fire dispatch");
         alias.setGroup("Fire");
@@ -90,6 +92,9 @@ class AliasDatabaseStoreTest
         assertTrue(definitions.getFirst().getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("Unknown Calls", "Archive"),
             routeNames(definitions.getFirst().getUnmatchedTalkgroupPolicy()));
+        assertFalse(definitions.getFirst().getNewAliasBehavior().isRecordEnabled());
+        assertEquals(List.of("RadioResolve"), definitions.getFirst().getNewAliasBehavior()
+            .getStreamDestinations().stream().map(BroadcastChannel::getChannelName).toList());
         assertEquals(committedAlias.getId(), loaded.getId());
         assertEquals(definitions.getFirst().getId(), loaded.getAliasListId());
         assertEquals("Countywide fire dispatch", loaded.getDescription());
@@ -118,6 +123,7 @@ class AliasDatabaseStoreTest
             assertEquals(1, countRows(connection, "alias_talkgroup"));
             assertEquals(0, countRows(connection, "alias_radio"));
             assertEquals(2, countRows(connection, "alias_list_unmatched_talkgroup_stream"));
+            assertEquals(1, countRows(connection, "alias_list_new_alias_stream"));
         }
     }
 
@@ -129,7 +135,8 @@ class AliasDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
             Set<String> aliasListColumns = columns(connection, "alias_list");
-            assertEquals(Set.of("id", "name", "family", "unmatched_talkgroup_record_enabled"), aliasListColumns);
+            assertEquals(Set.of("id", "name", "family", "unmatched_talkgroup_record_enabled",
+                "new_alias_record_enabled"), aliasListColumns);
             assertFalse(aliasListColumns.contains("system_name"));
             assertFalse(aliasListColumns.contains("assignable"));
             assertFalse(aliasListColumns.contains("needs_review"));

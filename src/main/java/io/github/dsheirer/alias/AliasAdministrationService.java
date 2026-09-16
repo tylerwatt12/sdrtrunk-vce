@@ -241,7 +241,8 @@ public final class AliasAdministrationService
                 .toList();
             return new Options(revision(), copyDefinition(definition), AliasMatchRegistry.allowed(definition), icons,
                 streams, includeGroupNames ? aliasModel().getGroupNames() : List.of(), scanListConfiguration.scanLists(),
-                scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId));
+                scanListConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId),
+                scanListConfiguration.scanListIdsForNewAliases(aliasListId));
         });
     }
 
@@ -401,7 +402,7 @@ public final class AliasAdministrationService
             Map<Long,Set<Long>> aliasMemberships = mutableMemberships(current.aliasMemberships());
             applyMembershipOperation(aliasMemberships, scanListId, aliases, operation);
             scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), aliasMemberships,
-                current.unmatchedAliasListMemberships()));
+                current.unmatchedAliasListMemberships(), current.newAliasListMemberships()));
             return new ScanListMutation(scanList, aliases.size());
         });
     }
@@ -429,7 +430,7 @@ public final class AliasAdministrationService
             Map<Long,Set<Long>> aliasMemberships = mutableMemberships(current.aliasMemberships());
             int affected = applyScopedMembershipOperation(aliasMemberships, scanListId, definition, operation);
             scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), aliasMemberships,
-                current.unmatchedAliasListMemberships()));
+                current.unmatchedAliasListMemberships(), current.newAliasListMemberships()));
             return new ScanListMutation(scanList, affected);
         });
     }
@@ -464,7 +465,7 @@ public final class AliasAdministrationService
                 applyMembershipOperation(unmatchedMemberships, scanListId, unmatchedAliasLists, operation);
             }
             scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), aliasMemberships,
-                unmatchedMemberships));
+                unmatchedMemberships, current.newAliasListMemberships()));
             return new ScanListMutation(scanList, aliases.size() + unmatchedAliasLists.size());
         });
     }
@@ -500,8 +501,9 @@ public final class AliasAdministrationService
             boolean factoryDefault = isFactoryDefaultAliasList(preparedName, family);
             if(factoryDefault)
             {
-                scanListModel().replaceUnmatchedTalkgroupMemberships(definition.getId(),
-                    Set.of(scanListModel().defaultScanList().getId()));
+                Set<Long> defaultMembership = Set.of(scanListModel().defaultScanList().getId());
+                scanListModel().replaceUnmatchedTalkgroupMemberships(definition.getId(), defaultMembership);
+                scanListModel().replaceNewAliasMemberships(definition.getId(), defaultMembership);
             }
             return new MutationTarget(definition, List.of(), 1, factoryDefault ?
                 PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS : PublicationMode.ALIAS_LISTS);
@@ -530,8 +532,28 @@ public final class AliasAdministrationService
                                                    long expectedRevision)
     {
         Objects.requireNonNull(defaults, "Alias List Defaults cannot be null");
-        return updateUnmatchedTalkgroupPolicy(aliasListId, defaults.unmatchedTalkgroupPolicy(),
-            defaults.scanListIds(), expectedRevision);
+        return mutate(expectedRevision, () ->
+        {
+            AliasListDefinition definition = requireAliasList(aliasListId);
+            if(!supportsUnmatchedTalkgroups(definition.getFamily()))
+            {
+                throw new IllegalArgumentException("Alias List Defaults are available only for P25, DMR, NXDN, " +
+                    "and NBFM alias lists");
+            }
+
+            UnmatchedTalkgroupPolicy unknown = canonicalPolicy(defaults.unknownAliasBehavior());
+            NewAliasBehavior newAliases = canonicalBehavior(defaults.newAliasBehavior());
+            validatePolicyStreams(unknown, "Unknown Alias Behavior");
+            validatePolicyStreams(newAliases, "New Alias Behavior");
+            Set<Long> unknownMemberships = validatedScanListIds(defaults.unknownScanListIds());
+            Set<Long> newMemberships = validatedScanListIds(defaults.newAliasScanListIds());
+
+            definition.setUnmatchedTalkgroupPolicy(unknown);
+            definition.setNewAliasBehavior(newAliases);
+            scanListModel().replaceUnmatchedTalkgroupMemberships(aliasListId, unknownMemberships);
+            scanListModel().replaceNewAliasMemberships(aliasListId, newMemberships);
+            return new MutationTarget(definition, List.of(), 1, PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS);
+        });
     }
 
     private MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
@@ -550,7 +572,7 @@ public final class AliasAdministrationService
                     "NXDN, and NBFM alias lists");
             }
             UnmatchedTalkgroupPolicy canonicalPolicy = canonicalPolicy(policy);
-            validatePolicyStreams(canonicalPolicy, definition.getUnmatchedTalkgroupPolicy());
+            validatePolicyStreams(canonicalPolicy, "Unknown Alias Behavior");
             Set<Long> memberships = replaceScanListMemberships ? validatedScanListIds(scanListIds) : Set.of();
             definition.setUnmatchedTalkgroupPolicy(canonicalPolicy);
             if(replaceScanListMemberships)
@@ -948,25 +970,25 @@ public final class AliasAdministrationService
         }
 
         AliasListDefaults defaults = defaultsFor(resolveAliasList(alias));
-        alias.setRecordable(defaults.isRecordEnabled());
-        alias.setBroadcastChannels(defaults.streamDestinations());
+        alias.setRecordable(defaults.newAliasBehavior().isRecordEnabled());
+        alias.setBroadcastChannels(defaults.newAliasBehavior().getStreamDestinations());
     }
 
     private Set<Long> inheritedScanListIds(Alias alias)
     {
-        return inheritsAliasListDefaults(alias) ? defaultsFor(resolveAliasList(alias)).scanListIds() : Set.of();
+        return inheritsAliasListDefaults(alias) ? defaultsFor(resolveAliasList(alias)).newAliasScanListIds() : Set.of();
     }
 
     private AliasListDefaults defaultsFor(AliasListDefinition definition)
     {
         return new AliasListDefaults(definition.getUnmatchedTalkgroupPolicy(),
-            scanListModel().scanListIdsForUnmatchedTalkgroups(definition.getId()));
+            scanListModel().scanListIdsForUnmatchedTalkgroups(definition.getId()), definition.getNewAliasBehavior(),
+            scanListModel().scanListIdsForNewAliases(definition.getId()));
     }
 
     private static boolean inheritsAliasListDefaults(Alias alias)
     {
-        return alias != null && (alias.getMatchIdentifier() instanceof Talkgroup ||
-            alias.getMatchIdentifier() instanceof TalkgroupRange);
+        return alias != null;
     }
 
     private static List<AliasSaveRequest> inheritedRequests(List<Alias> aliases)
@@ -1100,7 +1122,8 @@ public final class AliasAdministrationService
         }
         ScanListConfiguration scanListConfiguration = scanListModel().configuration();
         return new Catalog(revision(), definitions, scanListConfiguration.scanLists(),
-            scanListConfiguration.unmatchedAliasListMemberships(), aliasCounts, channelCounts);
+            scanListConfiguration.unmatchedAliasListMemberships(), scanListConfiguration.newAliasListMemberships(),
+            aliasCounts, channelCounts);
     }
 
     private DeleteImpact deleteImpact(AliasListDefinition definition)
@@ -1230,15 +1253,25 @@ public final class AliasAdministrationService
             .stream().anyMatch(configuration -> configurationId.equals(configuration.getConfigurationId()));
     }
 
-    private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous)
+    private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, String label)
     {
-        if(policy.getStreamDestinations().size() > MAX_BROADCAST_CHANNELS)
+        validatePolicyStreams(policy.getStreamDestinations(), label);
+    }
+
+    private void validatePolicyStreams(NewAliasBehavior behavior, String label)
+    {
+        validatePolicyStreams(behavior.getStreamDestinations(), label);
+    }
+
+    private void validatePolicyStreams(Collection<BroadcastChannel> destinations, String label)
+    {
+        if(destinations.size() > MAX_BROADCAST_CHANNELS)
         {
-            throw new IllegalArgumentException("Unmatched Talkgroups cannot have more than " +
+            throw new IllegalArgumentException(label + " cannot have more than " +
                 MAX_BROADCAST_CHANNELS + " broadcast channels");
         }
 
-        for(BroadcastChannel destination: policy.getStreamDestinations())
+        for(BroadcastChannel destination: destinations)
         {
             if(destination == null || !destination.isValid())
             {
@@ -1312,6 +1345,12 @@ public final class AliasAdministrationService
     private UnmatchedTalkgroupPolicy canonicalPolicy(UnmatchedTalkgroupPolicy policy)
     {
         return new UnmatchedTalkgroupPolicy(policy.isRecordEnabled(), policy.getStreamDestinations().stream()
+            .map(destination -> requireBroadcastDestination(destination.getConfigurationId())).toList());
+    }
+
+    private NewAliasBehavior canonicalBehavior(NewAliasBehavior behavior)
+    {
+        return new NewAliasBehavior(behavior.isRecordEnabled(), behavior.getStreamDestinations().stream()
             .map(destination -> requireBroadcastDestination(destination.getConfigurationId())).toList());
     }
 
@@ -1854,7 +1893,7 @@ public final class AliasAdministrationService
     private static AliasListDefinition copyDefinition(AliasListDefinition source)
     {
         AliasListDefinition copy = new AliasListDefinition(source.getName(), source.getFamily(),
-            source.getUnmatchedTalkgroupPolicy());
+            source.getUnmatchedTalkgroupPolicy(), source.getNewAliasBehavior());
         copy.setId(source.getId());
         return copy;
     }
@@ -1889,7 +1928,8 @@ public final class AliasAdministrationService
     }
 
     public record Catalog(long revision, List<AliasListDefinition> aliasLists, List<ScanList> scanLists,
-                          Map<Long,Set<Long>> unmatchedAliasListMemberships, Map<Long,Integer> aliasCounts,
+                          Map<Long,Set<Long>> unmatchedAliasListMemberships,
+                          Map<Long,Set<Long>> newAliasListMemberships, Map<Long,Integer> aliasCounts,
                           Map<Long,Integer> assignedChannelCounts)
     {
         public Catalog
@@ -1897,6 +1937,7 @@ public final class AliasAdministrationService
             aliasLists = List.copyOf(aliasLists);
             scanLists = List.copyOf(scanLists);
             unmatchedAliasListMemberships = Map.copyOf(unmatchedAliasListMemberships);
+            newAliasListMemberships = Map.copyOf(newAliasListMemberships);
             aliasCounts = Map.copyOf(aliasCounts);
             assignedChannelCounts = Map.copyOf(assignedChannelCounts);
         }
@@ -2008,7 +2049,7 @@ public final class AliasAdministrationService
 
     public record Options(long revision, AliasListDefinition aliasList, List<AliasMatchDescriptor> matchers,
                           List<String> iconNames, List<BroadcastDestination> streams, List<String> groupNames,
-                          List<ScanList> scanLists, Set<Long> unmatchedScanListIds)
+                          List<ScanList> scanLists, Set<Long> unmatchedScanListIds, Set<Long> newAliasScanListIds)
     {
         public Options
         {
@@ -2018,6 +2059,7 @@ public final class AliasAdministrationService
             groupNames = List.copyOf(groupNames);
             scanLists = List.copyOf(scanLists);
             unmatchedScanListIds = Set.copyOf(unmatchedScanListIds);
+            newAliasScanListIds = Set.copyOf(newAliasScanListIds);
         }
     }
 

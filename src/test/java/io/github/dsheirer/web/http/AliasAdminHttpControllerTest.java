@@ -264,6 +264,8 @@ class AliasAdminHttpControllerTest
             assertFalse(initialCustomPolicy.get("recordable").booleanValue());
             assertTrue(initialCustomPolicy.get("broadcast_configuration_ids").isEmpty());
             assertTrue(initialCustomPolicy.get("scan_list_ids").isEmpty());
+            assertTrue(aliasList(initialCustomCatalog, aliasListId).has("unknown_alias_behavior"));
+            assertTrue(aliasList(initialCustomCatalog, aliasListId).has("new_alias_behavior"));
 
             JsonNode createdScanList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH).POST(HttpRequest.BodyPublishers.ofString(
@@ -272,6 +274,26 @@ class AliasAdminHttpControllerTest
                     "published", true, "default", false)))))));
             long clevelandScanListId = createdScanList.get("scan_list_id").longValue();
             revision = createdScanList.get("revision").longValue();
+
+            JsonNode defaultsChanged = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/defaults")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision,
+                    "unknown_alias_behavior", Map.of("recordable", false,
+                        "broadcast_configuration_ids", java.util.List.of(),
+                        "scan_list_ids", java.util.List.of(defaultScanListId)),
+                    "new_alias_behavior", Map.of("recordable", true,
+                        "broadcast_configuration_ids", java.util.List.of(primary.getConfigurationId()),
+                        "scan_list_ids", java.util.List.of(clevelandScanListId))))))));
+            revision = defaultsChanged.get("revision").longValue();
+            JsonNode independentDefaults = aliasList(json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET())), aliasListId);
+            assertFalse(independentDefaults.at("/unknown_alias_behavior/recordable").booleanValue());
+            assertEquals(defaultScanListId,
+                independentDefaults.at("/unknown_alias_behavior/scan_list_ids/0").longValue());
+            assertTrue(independentDefaults.at("/new_alias_behavior/recordable").booleanValue());
+            assertEquals(clevelandScanListId,
+                independentDefaults.at("/new_alias_behavior/scan_list_ids/0").longValue());
 
             JsonNode policyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
@@ -429,8 +451,8 @@ class AliasAdminHttpControllerTest
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                     "revision", revision, "operation", "add",
                     "alias_scope", Map.of("alias_list_id", aliasListId)))))));
-            assertEquals(1, scopeAdded.get("affected").intValue(),
-                "Only the radio range lacks the inherited Cleveland membership");
+            assertEquals(0, scopeAdded.get("affected").intValue(),
+                "Every newly created Alias inherits the configured Cleveland membership");
             revision = scopeAdded.get("revision").longValue();
             clevelandDetail = json(send(client, request(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId).GET()));

@@ -36,7 +36,7 @@ final class SqliteIdentityRepair
     private static final int MAXIMUM_SCHEMA_NAME_BYTES = 128;
     private static final Set<String> CONFIGURATION_TABLES = Set.of(
         "alias_list", "alias", "scan_list", "alias_broadcast_channel",
-        "alias_list_unmatched_talkgroup_stream", "configuration_channel",
+        "alias_list_unmatched_talkgroup_stream", "alias_list_new_alias_stream", "configuration_channel",
         "configuration_broadcast_stream", "web_user");
 
     private SqliteIdentityRepair()

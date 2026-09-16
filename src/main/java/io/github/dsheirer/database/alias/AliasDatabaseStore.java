@@ -15,6 +15,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.NewAliasBehavior;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
@@ -131,6 +132,7 @@ public class AliasDatabaseStore
         {
             statement.executeUpdate("DELETE FROM alias");
             statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_stream");
+            statement.executeUpdate("DELETE FROM alias_list_new_alias_stream");
         }
     }
 
@@ -360,10 +362,11 @@ public class AliasDatabaseStore
     {
         List<AliasListDefinition> definitions = new ArrayList<>();
         Map<Long,List<BroadcastChannel>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
+        Map<Long,List<BroadcastChannel>> newAliasStreamDestinations = loadNewAliasStreams(connection);
         Set<Long> loadedDefinitionIds = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, family, unmatched_talkgroup_record_enabled
+            SELECT id, name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
             FROM alias_list
             ORDER BY id
             """);
@@ -377,11 +380,14 @@ public class AliasDatabaseStore
                     throw new SQLException("Persisted alias-list IDs must be greater than zero");
                 }
                 UnmatchedTalkgroupPolicy policy;
+                NewAliasBehavior newAliasBehavior;
                 try
                 {
                     policy = new UnmatchedTalkgroupPolicy(
                         getBoolean(resultSet, "unmatched_talkgroup_record_enabled"),
                         streamDestinations.getOrDefault(definitionId, List.of()));
+                    newAliasBehavior = new NewAliasBehavior(getBoolean(resultSet, "new_alias_record_enabled"),
+                        newAliasStreamDestinations.getOrDefault(definitionId, List.of()));
                 }
                 catch(IllegalArgumentException e)
                 {
@@ -390,7 +396,8 @@ public class AliasDatabaseStore
                 }
 
                 AliasListDefinition definition = new AliasListDefinition(resultSet.getString("name"),
-                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"), policy);
+                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"), policy,
+                    newAliasBehavior);
                 definition.setId(definitionId);
                 definitions.add(definition);
                 loadedDefinitionIds.add(definitionId);
@@ -402,6 +409,14 @@ public class AliasDatabaseStore
             if(!loadedDefinitionIds.contains(aliasListId))
             {
                 throw new SQLException("Unmatched talkgroup stream route references unknown alias_list_id [" +
+                    aliasListId + "]");
+            }
+        }
+        for(Long aliasListId: newAliasStreamDestinations.keySet())
+        {
+            if(!loadedDefinitionIds.contains(aliasListId))
+            {
+                throw new SQLException("New Alias stream route references unknown alias_list_id [" +
                     aliasListId + "]");
             }
         }
@@ -531,6 +546,22 @@ public class AliasDatabaseStore
                 throw new SQLException("Alias list [" + definition.getName() +
                     "] has an invalid unmatched talkgroup policy");
             }
+            NewAliasBehavior newAliasBehavior = definition.getNewAliasBehavior();
+            if(newAliasBehavior == null)
+            {
+                throw new SQLException("Alias list [" + definition.getName() +
+                    "] has an invalid New Alias behavior");
+            }
+            Set<String> newAliasStreams = new HashSet<>();
+            for(BroadcastChannel destination: newAliasBehavior.getStreamDestinations())
+            {
+                if(destination == null || !destination.isValid() ||
+                    !newAliasStreams.add(destination.getConfigurationId()))
+                {
+                    throw new SQLException("Alias list [" + definition.getName() +
+                        "] has invalid New Alias stream destinations");
+                }
+            }
             Set<String> streamDestinations = new HashSet<>();
             for(BroadcastChannel destination: policy.getStreamDestinations())
             {
@@ -607,8 +638,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        name, family, unmatched_talkgroup_record_enabled
-                    ) VALUES (?, ?, ?)
+                        name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
+                    ) VALUES (?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindDefinition(statement, definition, 1);
@@ -627,12 +658,13 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        id, name, family, unmatched_talkgroup_record_enabled
-                    ) VALUES (?, ?, ?, ?)
+                        id, name, family, unmatched_talkgroup_record_enabled, new_alias_record_enabled
+                    ) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         name=excluded.name,
                         family=excluded.family,
-                        unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled
+                        unmatched_talkgroup_record_enabled=excluded.unmatched_talkgroup_record_enabled,
+                        new_alias_record_enabled=excluded.new_alias_record_enabled
                     """))
                 {
                     statement.setLong(1, definition.getId());
@@ -642,6 +674,7 @@ public class AliasDatabaseStore
             }
 
             insertUnmatchedTalkgroupStreams(connection, definition);
+            insertNewAliasStreams(connection, definition);
         }
     }
 
@@ -652,6 +685,7 @@ public class AliasDatabaseStore
         statement.setString(offset + 1, definition.getFamily().name());
         UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
         statement.setInt(offset + 2, policy.isRecordEnabled() ? 1 : 0);
+        statement.setInt(offset + 3, definition.getNewAliasBehavior().isRecordEnabled() ? 1 : 0);
     }
 
     private void insertUnmatchedTalkgroupStreams(Connection connection, AliasListDefinition definition)
@@ -699,6 +733,55 @@ public class AliasDatabaseStore
                 if(!destination.isValid())
                 {
                     throw new SQLException("Unmatched talkgroup stream route for alias list [" + aliasListId +
+                        "] must have a valid broadcast configuration ID");
+                }
+                destinations.computeIfAbsent(aliasListId, ignored -> new ArrayList<>()).add(destination);
+            }
+        }
+        return destinations;
+    }
+
+    private void insertNewAliasStreams(Connection connection, AliasListDefinition definition) throws SQLException
+    {
+        for(BroadcastChannel destination: definition.getNewAliasBehavior().getStreamDestinations())
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list_new_alias_stream (alias_list_id, broadcast_configuration_id)
+                VALUES (?, ?)
+                """))
+            {
+                statement.setLong(1, definition.getId());
+                statement.setString(2, destination.getConfigurationId());
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private Map<Long,List<BroadcastChannel>> loadNewAliasStreams(Connection connection) throws SQLException
+    {
+        Map<Long,List<BroadcastChannel>> destinations = new LinkedHashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT route.alias_list_id, route.broadcast_configuration_id,
+                   json_extract(stream.config_json, '$.name') AS channel_name
+            FROM alias_list_new_alias_stream route
+            JOIN configuration_broadcast_stream stream
+              ON stream.configuration_id = route.broadcast_configuration_id
+            ORDER BY route.alias_list_id, route.id
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                long aliasListId = resultSet.getLong("alias_list_id");
+                if(resultSet.wasNull() || aliasListId <= AliasListDefinition.UNASSIGNED_ID)
+                {
+                    throw new SQLException("New Alias stream route has no valid alias_list_id");
+                }
+
+                BroadcastChannel destination = new BroadcastChannel(
+                    resultSet.getString("broadcast_configuration_id"), resultSet.getString("channel_name"));
+                if(!destination.isValid())
+                {
+                    throw new SQLException("New Alias stream route for alias list [" + aliasListId +
                         "] must have a valid broadcast configuration ID");
                 }
                 destinations.computeIfAbsent(aliasListId, ignored -> new ArrayList<>()).add(destination);

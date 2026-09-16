@@ -262,7 +262,8 @@ public class AliasModel
             AliasListDefinition second = committed.get(index);
             if(first.getId() != second.getId() || !Objects.equals(first.getName(), second.getName()) ||
                 first.getFamily() != second.getFamily() ||
-                !Objects.equals(first.getUnmatchedTalkgroupPolicy(), second.getUnmatchedTalkgroupPolicy()))
+                !Objects.equals(first.getUnmatchedTalkgroupPolicy(), second.getUnmatchedTalkgroupPolicy()) ||
+                !Objects.equals(first.getNewAliasBehavior(), second.getNewAliasBehavior()))
             {
                 return false;
             }
@@ -863,7 +864,9 @@ public class AliasModel
         for(AliasListDefinition definition: mAliasListDefinitions)
         {
             if(definition.getUnmatchedTalkgroupPolicy().getStreamDestinations().stream()
-                .anyMatch(destination -> configurationId.equals(destination.getConfigurationId())))
+                .anyMatch(destination -> configurationId.equals(destination.getConfigurationId())) ||
+                definition.getNewAliasBehavior().getStreamDestinations().stream()
+                    .anyMatch(destination -> configurationId.equals(destination.getConfigurationId())))
             {
                 return true;
             }

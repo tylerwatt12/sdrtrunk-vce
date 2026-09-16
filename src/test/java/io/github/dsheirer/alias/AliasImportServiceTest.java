@@ -409,7 +409,8 @@ class AliasImportServiceTest
             String streamName = fixture.stream.getName();
             BroadcastChannel stream = new BroadcastChannel(fixture.stream.getConfigurationId(), streamName);
             service.updateAliasListDefaults(fixture.list,
-                new AliasListDefaults(new UnmatchedTalkgroupPolicy(true, List.of(stream)), Set.of(scan)),
+                new AliasListDefaults(UnmatchedTalkgroupPolicy.DEFAULT, Set.of(),
+                    new NewAliasBehavior(true, List.of(stream)), Set.of(scan)),
                 service.currentRevision());
             var importer = new AliasImportService(service);
             Alias rrAlias = alias(fixture.list, 400, "RadioReference defaults");

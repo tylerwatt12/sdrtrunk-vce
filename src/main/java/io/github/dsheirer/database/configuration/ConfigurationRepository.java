@@ -52,8 +52,10 @@ public final class ConfigurationRepository
         new FingerprintTable("alias_scan_list_membership", "alias_id, scan_list_id"),
         new FingerprintTable("alias_list_unmatched_talkgroup_scan_list_membership",
             "alias_list_id, scan_list_id"),
+        new FingerprintTable("alias_list_new_alias_scan_list_membership", "alias_list_id, scan_list_id"),
         new FingerprintTable("alias_broadcast_channel", "id"),
         new FingerprintTable("alias_list_unmatched_talkgroup_stream", "id"),
+        new FingerprintTable("alias_list_new_alias_stream", "id"),
         new FingerprintTable("configuration_channel", "id"),
         new FingerprintTable("configuration_broadcast_stream", "id"));
     private final Path mDatabasePath;

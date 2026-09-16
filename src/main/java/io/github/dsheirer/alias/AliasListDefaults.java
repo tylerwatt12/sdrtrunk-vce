@@ -17,33 +17,45 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Recording, browser scan-list delivery, and external streaming defaults owned by one Alias List.
- *
- * <p>The same values supply unmatched destination-talkgroup behavior and initialize newly-created talkgroup and
- * talkgroup-range Aliases.  They are deliberately not applied to source-radio or other matcher types.</p>
+ * Independent unknown-call and newly-created Alias behaviors owned by one Alias List.
  */
-public record AliasListDefaults(UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy, Set<Long> scanListIds)
+public record AliasListDefaults(UnmatchedTalkgroupPolicy unknownAliasBehavior, Set<Long> unknownScanListIds,
+                                NewAliasBehavior newAliasBehavior, Set<Long> newAliasScanListIds)
 {
     public AliasListDefaults
     {
-        unmatchedTalkgroupPolicy = Objects.requireNonNull(unmatchedTalkgroupPolicy,
+        unknownAliasBehavior = Objects.requireNonNull(unknownAliasBehavior,
             "Unmatched talkgroup policy cannot be null");
-        scanListIds = scanListIds != null ? Set.copyOf(new LinkedHashSet<>(scanListIds)) : Set.of();
+        unknownScanListIds = immutable(unknownScanListIds);
+        newAliasBehavior = Objects.requireNonNull(newAliasBehavior, "New Alias behavior cannot be null");
+        newAliasScanListIds = immutable(newAliasScanListIds);
     }
 
-    public AliasListDefaults(UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy, Collection<Long> scanListIds)
+    public AliasListDefaults(UnmatchedTalkgroupPolicy unknownAliasBehavior, Collection<Long> unknownScanListIds,
+                             NewAliasBehavior newAliasBehavior, Collection<Long> newAliasScanListIds)
     {
-        this(unmatchedTalkgroupPolicy,
-            scanListIds != null ? new LinkedHashSet<>(scanListIds) : Set.of());
+        this(unknownAliasBehavior, mutable(unknownScanListIds), newAliasBehavior, mutable(newAliasScanListIds));
     }
 
-    public boolean isRecordEnabled()
+    /** Compatibility constructor for callers that still supply one shared behavior. */
+    public AliasListDefaults(UnmatchedTalkgroupPolicy behavior, Collection<Long> scanListIds)
     {
-        return unmatchedTalkgroupPolicy.isRecordEnabled();
+        this(behavior, scanListIds, NewAliasBehavior.copyOf(behavior), scanListIds);
     }
 
-    public Set<io.github.dsheirer.alias.id.broadcast.BroadcastChannel> streamDestinations()
+    /** Compatibility name for the former shared scan-list defaults. */
+    public Set<Long> scanListIds()
     {
-        return Set.copyOf(unmatchedTalkgroupPolicy.getStreamDestinations());
+        return unknownScanListIds;
+    }
+
+    private static Set<Long> immutable(Collection<Long> values)
+    {
+        return values != null ? Set.copyOf(new LinkedHashSet<>(values)) : Set.of();
+    }
+
+    private static Set<Long> mutable(Collection<Long> values)
+    {
+        return values != null ? new LinkedHashSet<>(values) : Set.of();
     }
 }

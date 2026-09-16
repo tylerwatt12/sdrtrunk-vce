@@ -63,6 +63,11 @@ public final class ScanListModel
         return mConfiguration.scanListIdsForUnmatchedTalkgroups(aliasListId);
     }
 
+    public Set<Long> scanListIdsForNewAliases(long aliasListId)
+    {
+        return mConfiguration.scanListIdsForNewAliases(aliasListId);
+    }
+
     public synchronized void replaceConfiguration(ScanListConfiguration configuration)
     {
         mConfiguration = Objects.requireNonNull(configuration, "Scan-list configuration cannot be null");
@@ -90,7 +95,8 @@ public final class ScanListModel
             clearDefault(definitions);
         }
         definitions.add(scanList);
-        publish(definitions, mConfiguration.aliasMemberships(), mConfiguration.unmatchedAliasListMemberships());
+        publish(definitions, mConfiguration.aliasMemberships(), mConfiguration.unmatchedAliasListMemberships(),
+            mConfiguration.newAliasListMemberships());
     }
 
     public synchronized void updateScanList(ScanList replacement)
@@ -120,7 +126,8 @@ public final class ScanListModel
             clearDefault(definitions);
         }
         definitions.set(index, replacement);
-        publish(definitions, mConfiguration.aliasMemberships(), mConfiguration.unmatchedAliasListMemberships());
+        publish(definitions, mConfiguration.aliasMemberships(), mConfiguration.unmatchedAliasListMemberships(),
+            mConfiguration.newAliasListMemberships());
     }
 
     public synchronized void removeScanList(long scanListId)
@@ -134,7 +141,8 @@ public final class ScanListModel
         List<ScanList> definitions = mConfiguration.scanLists().stream()
             .filter(scanList -> scanList.getId() != scanListId).toList();
         publish(definitions, removeScanListId(mConfiguration.aliasMemberships(), scanListId),
-            removeScanListId(mConfiguration.unmatchedAliasListMemberships(), scanListId));
+            removeScanListId(mConfiguration.unmatchedAliasListMemberships(), scanListId),
+            removeScanListId(mConfiguration.newAliasListMemberships(), scanListId));
     }
 
     public synchronized void replaceAliasMemberships(long aliasId, Collection<Long> scanListIds)
@@ -153,9 +161,18 @@ public final class ScanListModel
         publishUnmatchedTalkgroupMembership(aliasListId, scanListIds);
     }
 
+    public synchronized void replaceNewAliasMemberships(long aliasListId, Collection<Long> scanListIds)
+    {
+        publishNewAliasMembership(aliasListId, scanListIds);
+    }
+
     public synchronized void removeAliasList(long aliasListId)
     {
-        replaceUnmatchedTalkgroupMemberships(aliasListId, Set.of());
+        Map<Long,Set<Long>> unmatched = withMembership(mConfiguration.unmatchedAliasListMemberships(), aliasListId,
+            Set.of());
+        Map<Long,Set<Long>> newAliases = withMembership(mConfiguration.newAliasListMemberships(), aliasListId,
+            Set.of());
+        publish(mConfiguration.scanLists(), mConfiguration.aliasMemberships(), unmatched, newAliases);
     }
 
     private void publishAliasMembership(long ownerId, Collection<Long> scanListIds)
@@ -163,7 +180,8 @@ public final class ScanListModel
         Map<Long,Set<Long>> updated = withMembership(mConfiguration.aliasMemberships(), ownerId, scanListIds);
         if(!updated.equals(mConfiguration.aliasMemberships()))
         {
-            publish(mConfiguration.scanLists(), updated, mConfiguration.unmatchedAliasListMemberships());
+            publish(mConfiguration.scanLists(), updated, mConfiguration.unmatchedAliasListMemberships(),
+                mConfiguration.newAliasListMemberships());
         }
     }
 
@@ -173,14 +191,27 @@ public final class ScanListModel
             scanListIds);
         if(!updated.equals(mConfiguration.unmatchedAliasListMemberships()))
         {
-            publish(mConfiguration.scanLists(), mConfiguration.aliasMemberships(), updated);
+            publish(mConfiguration.scanLists(), mConfiguration.aliasMemberships(), updated,
+                mConfiguration.newAliasListMemberships());
+        }
+    }
+
+    private void publishNewAliasMembership(long ownerId, Collection<Long> scanListIds)
+    {
+        Map<Long,Set<Long>> updated = withMembership(mConfiguration.newAliasListMemberships(), ownerId, scanListIds);
+        if(!updated.equals(mConfiguration.newAliasListMemberships()))
+        {
+            publish(mConfiguration.scanLists(), mConfiguration.aliasMemberships(),
+                mConfiguration.unmatchedAliasListMemberships(), updated);
         }
     }
 
     private void publish(Collection<ScanList> definitions, Map<Long,? extends Collection<Long>> aliasMemberships,
-                         Map<Long,? extends Collection<Long>> unmatchedAliasListMemberships)
+                         Map<Long,? extends Collection<Long>> unmatchedAliasListMemberships,
+                         Map<Long,? extends Collection<Long>> newAliasListMemberships)
     {
-        mConfiguration = new ScanListConfiguration(definitions, aliasMemberships, unmatchedAliasListMemberships);
+        mConfiguration = new ScanListConfiguration(definitions, aliasMemberships, unmatchedAliasListMemberships,
+            newAliasListMemberships);
     }
 
     private ScanList requireScanList(long scanListId)

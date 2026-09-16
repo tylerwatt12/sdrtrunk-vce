@@ -44,7 +44,7 @@ public record AliasConfigurationSnapshot(List<AliasListDefinition> definitions, 
             "Alias-list definitions cannot be null"))
         {
             AliasListDefinition copy = new AliasListDefinition(definition.getName(), definition.getFamily(),
-                definition.getUnmatchedTalkgroupPolicy());
+                definition.getUnmatchedTalkgroupPolicy(), definition.getNewAliasBehavior());
             copy.setId(definition.getId());
             definitionCopies.add(copy);
             definitionsBySource.put(definition, copy);
@@ -76,7 +76,8 @@ public record AliasConfigurationSnapshot(List<AliasListDefinition> definitions, 
                 scanList.getDescription(), scanList.isPublished(), scanList.isDefault()))
             .toList();
         ScanListConfiguration scanListCopy = new ScanListConfiguration(scanListCopies,
-            scanLists.aliasMemberships(), scanLists.unmatchedAliasListMemberships());
+            scanLists.aliasMemberships(), scanLists.unmatchedAliasListMemberships(),
+            scanLists.newAliasListMemberships());
         return new AliasConfigurationSnapshot(definitionCopies, aliasCopies, scanListCopy);
     }
 

@@ -33,10 +33,19 @@ public final class ScanListConfiguration
     private final List<ScanList> mScanLists;
     private final Map<Long,Set<Long>> mAliasMemberships;
     private final Map<Long,Set<Long>> mUnmatchedAliasListMemberships;
+    private final Map<Long,Set<Long>> mNewAliasListMemberships;
 
     public ScanListConfiguration(Collection<ScanList> scanLists,
                                  Map<Long,? extends Collection<Long>> aliasMemberships,
                                  Map<Long,? extends Collection<Long>> unmatchedAliasListMemberships)
+    {
+        this(scanLists, aliasMemberships, unmatchedAliasListMemberships, unmatchedAliasListMemberships);
+    }
+
+    public ScanListConfiguration(Collection<ScanList> scanLists,
+                                 Map<Long,? extends Collection<Long>> aliasMemberships,
+                                 Map<Long,? extends Collection<Long>> unmatchedAliasListMemberships,
+                                 Map<Long,? extends Collection<Long>> newAliasListMemberships)
     {
         List<ScanList> preparedLists = prepareLists(scanLists);
         Set<Long> persistedScanListIds = new LinkedHashSet<>();
@@ -52,6 +61,8 @@ public final class ScanListConfiguration
         mAliasMemberships = immutableMemberships(aliasMemberships, persistedScanListIds, "Alias");
         mUnmatchedAliasListMemberships = immutableMemberships(unmatchedAliasListMemberships, persistedScanListIds,
             "Unmatched-talkgroup Alias List");
+        mNewAliasListMemberships = immutableMemberships(newAliasListMemberships, persistedScanListIds,
+            "New-Alias Alias List");
     }
 
     public static ScanListConfiguration defaultConfiguration()
@@ -77,6 +88,12 @@ public final class ScanListConfiguration
         return mUnmatchedAliasListMemberships;
     }
 
+    /** Returns scan-list defaults applied when a new Alias is created in an Alias List. */
+    public Map<Long,Set<Long>> newAliasListMemberships()
+    {
+        return mNewAliasListMemberships;
+    }
+
     public Set<Long> scanListIdsForAlias(long aliasId)
     {
         return mAliasMemberships.getOrDefault(aliasId, Set.of());
@@ -88,6 +105,11 @@ public final class ScanListConfiguration
     public Set<Long> scanListIdsForUnmatchedTalkgroups(long aliasListId)
     {
         return mUnmatchedAliasListMemberships.getOrDefault(aliasListId, Set.of());
+    }
+
+    public Set<Long> scanListIdsForNewAliases(long aliasListId)
+    {
+        return mNewAliasListMemberships.getOrDefault(aliasListId, Set.of());
     }
 
     public ScanList scanList(long scanListId)

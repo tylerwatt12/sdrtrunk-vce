@@ -19,6 +19,8 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchDescriptor;
+import io.github.dsheirer.alias.AliasListDefaults;
+import io.github.dsheirer.alias.NewAliasBehavior;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
@@ -259,6 +261,7 @@ public final class AliasAdminHttpController
                         catalog.aliasLists().stream()
                             .map(definition -> aliasListCatalogView(definition,
                                 catalog.unmatchedAliasListMemberships().getOrDefault(definition.getId(), Set.of()),
+                                catalog.newAliasListMemberships().getOrDefault(definition.getId(), Set.of()),
                                 catalog.aliasCounts().get(definition.getId()),
                                 catalog.assignedChannelCounts().get(definition.getId())))
                             .toList(), "scanLists", catalog.scanLists().stream()
@@ -286,10 +289,13 @@ public final class AliasAdminHttpController
 
         String impactSuffix = "/delete-impact";
         String policySuffix = "/unmatched-talkgroups";
+        String defaultsSuffix = "/defaults";
         boolean impact = path.endsWith(impactSuffix);
         boolean policy = path.endsWith(policySuffix);
+        boolean defaults = path.endsWith(defaultsSuffix);
         String itemPath = impact ? path.substring(0, path.length() - impactSuffix.length()) :
-            policy ? path.substring(0, path.length() - policySuffix.length()) : path;
+            policy ? path.substring(0, path.length() - policySuffix.length()) :
+            defaults ? path.substring(0, path.length() - defaultsSuffix.length()) : path;
         long aliasListId = requiredItemId(itemPath,
             ALIAS_LISTS_PATH);
         requireNoQuery(exchange);
@@ -313,6 +319,26 @@ public final class AliasAdminHttpController
             sendData(exchange, 200, mutationResponse(changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId,
                 replacement, boundedIds(request.scanListIds(), "scan_list_ids"),
                 requiredRevision(request.revision())))));
+            return;
+        }
+
+        if(defaults)
+        {
+            requireMethod(exchange, "PUT");
+            AliasListDefaultsRequest request = readJson(exchange, AliasListDefaultsRequest.class);
+            BehaviorRequest unknown = required(request.unknownAliasBehavior(), "unknown_alias_behavior");
+            BehaviorRequest newAliases = required(request.newAliasBehavior(), "new_alias_behavior");
+            AliasListDefaults replacement = new AliasListDefaults(
+                new UnmatchedTalkgroupPolicy(required(unknown.recordable(), "unknown_alias_behavior.recordable"),
+                    requiredConfigurationIds(unknown.broadcastConfigurationIds()).stream()
+                        .map(configurationId -> new BroadcastChannel(configurationId, null)).toList()),
+                boundedIds(unknown.scanListIds(), "unknown_alias_behavior.scan_list_ids"),
+                new NewAliasBehavior(required(newAliases.recordable(), "new_alias_behavior.recordable"),
+                    requiredConfigurationIds(newAliases.broadcastConfigurationIds()).stream()
+                        .map(configurationId -> new BroadcastChannel(configurationId, null)).toList()),
+                boundedIds(newAliases.scanListIds(), "new_alias_behavior.scan_list_ids"));
+            sendData(exchange, 200, mutationResponse(changed(mService.updateAliasListDefaults(aliasListId,
+                replacement, requiredRevision(request.revision())))));
             return;
         }
 
@@ -675,7 +701,8 @@ public final class AliasAdminHttpController
         AliasAdministrationService.Options options = mService.options(aliasListId, includeGroupNames);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("revision", options.revision());
-        response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds()));
+        response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds(),
+            options.newAliasScanListIds()));
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
         putBoundedOptions(response, "iconNames", options.iconNames());
@@ -932,22 +959,28 @@ public final class AliasAdminHttpController
         return response;
     }
 
-    private static Map<String,Object> aliasListView(AliasListDefinition definition, Set<Long> unmatchedScanListIds)
+    private static Map<String,Object> aliasListView(AliasListDefinition definition, Set<Long> unmatchedScanListIds,
+                                                     Set<Long> newAliasScanListIds)
     {
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("aliasListId", definition.getId());
         response.put("name", definition.getName());
         response.put("family", familyName(definition.getFamily()));
-        response.put("unmatchedTalkgroupPolicy", unmatchedTalkgroupPolicyView(
-            definition.getUnmatchedTalkgroupPolicy(), unmatchedScanListIds));
+        Map<String,Object> unknown = behaviorView(definition.getUnmatchedTalkgroupPolicy().isRecordEnabled(),
+            definition.getUnmatchedTalkgroupPolicy().getStreamDestinations(), unmatchedScanListIds);
+        response.put("unmatchedTalkgroupPolicy", unknown);
+        response.put("unknownAliasBehavior", unknown);
+        response.put("newAliasBehavior", behaviorView(definition.getNewAliasBehavior().isRecordEnabled(),
+            definition.getNewAliasBehavior().getStreamDestinations(), newAliasScanListIds));
         return response;
     }
 
     private static Map<String,Object> aliasListCatalogView(AliasListDefinition definition,
-                                                            Set<Long> unmatchedScanListIds, Integer aliasCount,
+                                                            Set<Long> unmatchedScanListIds,
+                                                            Set<Long> newAliasScanListIds, Integer aliasCount,
                                                             Integer assignedChannelCount)
     {
-        Map<String,Object> response = aliasListView(definition, unmatchedScanListIds);
+        Map<String,Object> response = aliasListView(definition, unmatchedScanListIds, newAliasScanListIds);
 
         if(aliasCount != null)
         {
@@ -976,9 +1009,15 @@ public final class AliasAdminHttpController
     private static Map<String,Object> unmatchedTalkgroupPolicyView(UnmatchedTalkgroupPolicy policy,
                                                                     Set<Long> scanListIds)
     {
+        return behaviorView(policy.isRecordEnabled(), policy.getStreamDestinations(), scanListIds);
+    }
+
+    private static Map<String,Object> behaviorView(boolean recordable, List<BroadcastChannel> destinations,
+                                                    Set<Long> scanListIds)
+    {
         Map<String,Object> response = new LinkedHashMap<>();
-        response.put("recordable", policy.isRecordEnabled());
-        response.put("broadcastConfigurationIds", policy.getStreamDestinations().stream()
+        response.put("recordable", recordable);
+        response.put("broadcastConfigurationIds", destinations.stream()
             .map(BroadcastChannel::getConfigurationId).toList());
         response.put("scanListIds", scanListIds.stream().sorted().toList());
         return response;
@@ -1643,6 +1682,8 @@ public final class AliasAdminHttpController
     {
         Set<String> defaults = options.aliasList().getUnmatchedTalkgroupPolicy().getStreamDestinations().stream()
             .map(BroadcastChannel::getConfigurationId).collect(java.util.stream.Collectors.toSet());
+        options.aliasList().getNewAliasBehavior().getStreamDestinations().stream()
+            .map(BroadcastChannel::getConfigurationId).forEach(defaults::add);
         if(defaults.isEmpty())
         {
             return options.streams();
@@ -1698,6 +1739,10 @@ public final class AliasAdminHttpController
     private record UnmatchedPolicyRequest(Long revision, Boolean recordable,
                                           List<String> broadcastConfigurationIds,
                                           List<Long> scanListIds) {}
+    private record AliasListDefaultsRequest(Long revision, BehaviorRequest unknownAliasBehavior,
+                                            BehaviorRequest newAliasBehavior) {}
+    private record BehaviorRequest(Boolean recordable, List<String> broadcastConfigurationIds,
+                                   List<Long> scanListIds) {}
     private record RevisionRequest(Long revision) {}
     private record AliasRequest(Long revision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,

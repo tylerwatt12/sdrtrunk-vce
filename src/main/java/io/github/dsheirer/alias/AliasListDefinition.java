@@ -23,6 +23,7 @@ public final class AliasListDefinition
     private final String mName;
     private final AliasListFamily mFamily;
     private volatile UnmatchedTalkgroupPolicy mUnmatchedTalkgroupPolicy;
+    private volatile NewAliasBehavior mNewAliasBehavior;
 
     public AliasListDefinition(String name, AliasListFamily family)
     {
@@ -32,9 +33,17 @@ public final class AliasListDefinition
     public AliasListDefinition(String name, AliasListFamily family,
                                UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy)
     {
+        this(name, family, unmatchedTalkgroupPolicy, NewAliasBehavior.copyOf(unmatchedTalkgroupPolicy));
+    }
+
+    public AliasListDefinition(String name, AliasListFamily family,
+                               UnmatchedTalkgroupPolicy unmatchedTalkgroupPolicy,
+                               NewAliasBehavior newAliasBehavior)
+    {
         mName = name;
         mFamily = family;
         setUnmatchedTalkgroupPolicy(unmatchedTalkgroupPolicy);
+        setNewAliasBehavior(newAliasBehavior);
     }
 
     public long getId()
@@ -79,6 +88,21 @@ public final class AliasListDefinition
         }
 
         mUnmatchedTalkgroupPolicy = unmatchedTalkgroupPolicy;
+    }
+
+    public NewAliasBehavior getNewAliasBehavior()
+    {
+        return mNewAliasBehavior;
+    }
+
+    public void setNewAliasBehavior(NewAliasBehavior newAliasBehavior)
+    {
+        if(newAliasBehavior == null)
+        {
+            throw new IllegalArgumentException("New Alias behavior cannot be null");
+        }
+
+        mNewAliasBehavior = newAliasBehavior;
     }
 
     @Override

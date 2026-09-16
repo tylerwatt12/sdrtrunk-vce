@@ -379,6 +379,8 @@ class CurrentDatabaseBestEffortRepairTest
                 "SELECT COUNT(DISTINCT alias_id) FROM alias_scan_list_membership");
             long aliasListOwners = number(connection, "SELECT COUNT(DISTINCT alias_list_id) FROM " +
                 "alias_list_unmatched_talkgroup_scan_list_membership");
+            long newAliasListOwners = number(connection, "SELECT COUNT(DISTINCT alias_list_id) FROM " +
+                "alias_list_new_alias_scan_list_membership");
             assertTrue(aliasListOwners > 0, "The factory Alias Lists should begin routed to Default");
             execute(connection, "UPDATE sqlite_sequence SET seq=" + Long.MAX_VALUE + " WHERE name='scan_list'");
             execute(connection, "PRAGMA foreign_keys=OFF");
@@ -389,7 +391,8 @@ class CurrentDatabaseBestEffortRepairTest
                 CurrentDatabaseBestEffortRepair.inspect(connection);
             assertEquals(1, inspection.droppedScanLists());
             assertEquals(1, inspection.repairedDefaultScanList());
-            assertEquals(aliasOwners + aliasListOwners, inspection.remappedScanListMemberships());
+            assertEquals(aliasOwners + aliasListOwners + newAliasListOwners,
+                inspection.remappedScanListMemberships());
             assertEquals(0, inspection.droppedRelationships());
 
             CurrentDatabaseBestEffortRepair.repair(connection);
@@ -403,6 +406,8 @@ class CurrentDatabaseBestEffortRepairTest
             assertEquals(aliasOwners, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership"));
             assertEquals(aliasListOwners, number(connection,
                 "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership"));
+            assertEquals(newAliasListOwners, number(connection,
+                "SELECT COUNT(*) FROM alias_list_new_alias_scan_list_membership"));
             assertEquals(aliasListOwners, number(connection, """
                 SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership membership
                 JOIN scan_list target ON target.id=membership.scan_list_id AND target.is_default=1
@@ -436,8 +441,10 @@ class CurrentDatabaseBestEffortRepairTest
                 SELECT
                     (SELECT COUNT(*) FROM alias_scan_list_membership WHERE scan_list_id=%d) +
                     (SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership
+                     WHERE scan_list_id=%d) +
+                    (SELECT COUNT(*) FROM alias_list_new_alias_scan_list_membership
                      WHERE scan_list_id=%d)
-                """.formatted(oldDefault, oldDefault));
+                """.formatted(oldDefault, oldDefault, oldDefault));
             execute(connection, "PRAGMA foreign_keys=OFF");
             execute(connection, "UPDATE scan_list SET id=9007199254740991 WHERE id=" + oldDefault);
             execute(connection, "PRAGMA foreign_keys=ON");

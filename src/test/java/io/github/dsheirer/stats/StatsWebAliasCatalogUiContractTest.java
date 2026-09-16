@@ -474,15 +474,20 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(observed.contains("pager({ ...page, rows })"));
 
         assertFalse(source.contains("function unmatchedTalkgroupPolicy"));
-        assertTrue(policy.contains("selectedList?.unmatched_talkgroup_policy"));
+        assertTrue(policy.contains("selectedList?.unknown_alias_behavior"));
+        assertTrue(policy.contains("selectedList?.new_alias_behavior"));
         assertTrue(prefill.contains("selectedList?.unmatched_talkgroup_policy"));
-        assertTrue(policy.contains("/unmatched-talkgroups"));
+        assertTrue(policy.contains("/defaults"));
+        assertTrue(policy.contains("'Unknown Alias Behavior'"));
+        assertTrue(policy.contains("'New Alias Behavior'"));
+        assertTrue(policy.contains("unknown_alias_behavior"));
+        assertTrue(policy.contains("new_alias_behavior"));
         for(String field: new String[]{"recordable", "broadcast_configuration_ids", "scan_list_ids"})
         {
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }
-        assertTrue(policy.contains("aliasScanListChoices(options, policy.scan_list_ids || [])"));
-        assertTrue(policy.contains("selectedAliasScanListIds(form)"));
+        assertTrue(policy.contains("aliasScanListChoices(options, policy?.scan_list_ids || [])"));
+        assertTrue(policy.contains("selectedAliasScanListIds(behavior.panel)"));
         assertTrue(policy.contains("'Scan List'"));
         assertTrue(policy.contains("'Save Alias List Defaults'"));
         assertTrue(policy.contains("'Recording'"));

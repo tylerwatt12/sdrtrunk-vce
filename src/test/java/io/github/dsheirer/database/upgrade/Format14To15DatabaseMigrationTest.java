@@ -99,7 +99,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-19-to-20", report.steps().getLast().id());
+                assertEquals("format-20-to-21", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -743,7 +743,7 @@ class Format14To15DatabaseMigrationTest
                 SELECT group_concat(name, '|') FROM
                     (SELECT name FROM scan_list WHERE id IN (99101, 99102) ORDER BY id)
                 """));
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
         }
     }
 
@@ -776,6 +776,8 @@ class Format14To15DatabaseMigrationTest
             new Format18To19DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 19);
             new Format19To20DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stampForMigration(connection, 20);
+            new Format20To21DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             connection.commit();
 
@@ -839,7 +841,7 @@ class Format14To15DatabaseMigrationTest
                 """));
             assertEquals(1, number(connection,
                 "SELECT COUNT(*) FROM alias_scan_list_membership WHERE alias_id=97401"));
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -870,7 +872,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(sourceAliases, number(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals(1, number(connection, "SELECT description IS NULL FROM alias " +
                 "WHERE name='Migration Dispatch'"));
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -945,7 +947,7 @@ class Format14To15DatabaseMigrationTest
             assertFalse(report.contains("OVERSIZED_PROVIDER_SENTINEL"));
             assertFalse(report.contains("OVERSIZED_ROUTE_SENTINEL"));
             assertTrue(report.length() < 20_000, report);
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -1294,7 +1296,7 @@ class Format14To15DatabaseMigrationTest
                 SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership membership
                 JOIN scan_list target ON target.id=membership.scan_list_id AND target.is_default=1
                 """));
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -1348,7 +1350,7 @@ class Format14To15DatabaseMigrationTest
                 customOnlyOwner + " AND scan_list_id=" + newDefault));
             assertEquals(1, number(connection,
                 "SELECT COUNT(*) FROM scan_list WHERE id=" + customList + " AND is_default=0"));
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -2058,7 +2060,7 @@ class Format14To15DatabaseMigrationTest
                 """.formatted(configurationId)));
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DROP,
                 "orphaned legacy relationships").affectedRows() >= 1);
-            new ConfigurationRepository(database).load(connection);
+            migrateToCurrentAndLoad(database, connection);
             connection.rollback();
         }
     }
@@ -2656,6 +2658,13 @@ class Format14To15DatabaseMigrationTest
         {
             statement.executeUpdate(sql);
         }
+    }
+
+    private static void migrateToCurrentAndLoad(Path database, Connection connection) throws Exception
+    {
+        DatabaseFormatCatalog.stampForMigration(connection, 15);
+        DatabaseMigrationChain.migrate(connection);
+        new ConfigurationRepository(database).load(connection);
     }
 
     private static Connection open(Path database) throws Exception

@@ -51,7 +51,8 @@ final class CurrentDatabaseBestEffortRepair
         "radresGuid", "radres_guid", "autoStart", "enabled", "autoStartOrder", "order", "channelType");
     private static final Set<String> REPAIRABLE_FOREIGN_KEY_TABLES = Set.of(
         "alias", "alias_broadcast_channel", "alias_list_unmatched_talkgroup_stream", "alias_scan_list_membership",
-        "alias_list_unmatched_talkgroup_scan_list_membership", "configuration_channel");
+        "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_new_alias_stream",
+        "alias_list_new_alias_scan_list_membership", "configuration_channel");
 
     private CurrentDatabaseBestEffortRepair()
     {
@@ -123,16 +124,22 @@ final class CurrentDatabaseBestEffortRepair
         deleteRows(connection, "alias_broadcast_channel", analysis.streamRoutes().aliasRoutes().invalidRowIds());
         deleteRows(connection, "alias_list_unmatched_talkgroup_stream",
             analysis.streamRoutes().unmatchedRoutes().invalidRowIds());
+        deleteRows(connection, "alias_list_new_alias_stream",
+            analysis.streamRoutes().newAliasRoutes().invalidRowIds());
         deleteMembershipRows(connection, "alias_scan_list_membership", "alias_id",
             analysis.memberships().aliasRowsToDelete());
         deleteMembershipRows(connection, "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id",
             analysis.memberships().unmatchedRowsToDelete());
+        deleteMembershipRows(connection, "alias_list_new_alias_scan_list_membership", "alias_list_id",
+            analysis.memberships().newAliasRowsToDelete());
         deleteRows(connection, "configuration_broadcast_stream", analysis.providers().invalidRowIds());
         applyProviderRepairs(connection, analysis.providers().repairs());
         applyStreamRouteRepairs(connection, "alias_broadcast_channel",
             analysis.streamRoutes().aliasRoutes().repairs());
         applyStreamRouteRepairs(connection, "alias_list_unmatched_talkgroup_stream",
             analysis.streamRoutes().unmatchedRoutes().repairs());
+        applyStreamRouteRepairs(connection, "alias_list_new_alias_stream",
+            analysis.streamRoutes().newAliasRoutes().repairs());
         deleteRows(connection, "configuration_channel", analysis.channels().invalidRowIds());
         applyChannelRepairs(connection, analysis.channels().repairs());
         reassignUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists(),
@@ -240,7 +247,7 @@ final class CurrentDatabaseBestEffortRepair
                    typeof(family) AS family_type,
                    CASE WHEN typeof(family)='text' AND length(CAST(family AS BLOB))<=32
                         THEN family END AS safe_family,
-                   unmatched_talkgroup_record_enabled
+                   unmatched_talkgroup_record_enabled, new_alias_record_enabled
             FROM alias_list ORDER BY id
             """))
         {
@@ -263,7 +270,8 @@ final class CurrentDatabaseBestEffortRepair
                         }
                         String family = requiredBoundedText(rows, "safe_family", "family_type", null, 32);
                         AliasListFamily.valueOf(family);
-                        if(!booleanInteger(rows.getObject("unmatched_talkgroup_record_enabled")))
+                        if(!booleanInteger(rows.getObject("unmatched_talkgroup_record_enabled")) ||
+                            !booleanInteger(rows.getObject("new_alias_record_enabled")))
                         {
                             defaultedPolicies.add(rowId);
                         }
@@ -481,11 +489,16 @@ final class CurrentDatabaseBestEffortRepair
         MembershipTableInspection unmatchedMemberships = inspectMembershipTable(connection,
             "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id", "alias_list",
             invalidAliasListRows, invalidScanListRows, retainedScanLists, aliasListIds);
-        long recoveredRows = Math.addExact(aliasMemberships.recoveredRows(), unmatchedMemberships.recoveredRows());
+        Set<Long> newAliasListIds = new LinkedHashSet<>();
+        MembershipTableInspection newAliasMemberships = inspectMembershipTable(connection,
+            "alias_list_new_alias_scan_list_membership", "alias_list_id", "alias_list",
+            invalidAliasListRows, invalidScanListRows, retainedScanLists, newAliasListIds);
+        long recoveredRows = Math.addExact(Math.addExact(aliasMemberships.recoveredRows(),
+            unmatchedMemberships.recoveredRows()), newAliasMemberships.recoveredRows());
         GeneratedDefaultMembershipRecovery recovery = new GeneratedDefaultMembershipRecovery(Set.copyOf(aliasIds),
-            Set.copyOf(aliasListIds), recoveredRows);
+            Set.copyOf(aliasListIds), Set.copyOf(newAliasListIds), recoveredRows);
         return new MembershipInspection(aliasMemberships.rowsToDelete(), unmatchedMemberships.rowsToDelete(),
-            recovery);
+            newAliasMemberships.rowsToDelete(), recovery);
     }
 
     private static MembershipTableInspection inspectMembershipTable(Connection connection, String membershipTable,
@@ -1057,7 +1070,9 @@ final class CurrentDatabaseBestEffortRepair
         RouteTableInspection unmatchedRoutes = inspectStreamRouteTable(connection,
             "alias_list_unmatched_talkgroup_stream", "alias_list_id", "alias_list", invalidAliasListRows,
             providers);
-        return new StreamRouteInspection(aliasRoutes, unmatchedRoutes);
+        RouteTableInspection newAliasRoutes = inspectStreamRouteTable(connection,
+            "alias_list_new_alias_stream", "alias_list_id", "alias_list", invalidAliasListRows, providers);
+        return new StreamRouteInspection(aliasRoutes, unmatchedRoutes, newAliasRoutes);
     }
 
     private static RouteTableInspection inspectStreamRouteTable(Connection connection, String table,
@@ -1371,8 +1386,11 @@ final class CurrentDatabaseBestEffortRepair
             inspection.nameRepairs(), 25);
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE alias_list
-            SET name=?, unmatched_talkgroup_record_enabled=
-                CASE WHEN ?<>0 THEN 0 ELSE unmatched_talkgroup_record_enabled END
+            SET name=?,
+                unmatched_talkgroup_record_enabled=
+                    CASE WHEN ?<>0 THEN 0 ELSE unmatched_talkgroup_record_enabled END,
+                new_alias_record_enabled=
+                    CASE WHEN ?<>0 THEN 0 ELSE new_alias_record_enabled END
             WHERE id=?
             """))
         {
@@ -1380,7 +1398,8 @@ final class CurrentDatabaseBestEffortRepair
             {
                 statement.setString(1, entry.getValue());
                 statement.setInt(2, inspection.defaultedPolicies().contains(entry.getKey()) ? 1 : 0);
-                statement.setLong(3, entry.getKey());
+                statement.setInt(3, inspection.defaultedPolicies().contains(entry.getKey()) ? 1 : 0);
+                statement.setLong(4, entry.getKey());
                 if(statement.executeUpdate() != 1)
                 {
                     throw new SQLException("Accepted Alias List changed during current-format repair");
@@ -1400,7 +1419,7 @@ final class CurrentDatabaseBestEffortRepair
             }
         }
         try(PreparedStatement statement = connection.prepareStatement(
-            "UPDATE alias_list SET unmatched_talkgroup_record_enabled=0 WHERE rowid=?"))
+            "UPDATE alias_list SET unmatched_talkgroup_record_enabled=0, new_alias_record_enabled=0 WHERE rowid=?"))
         {
             for(long rowId: inspection.defaultedPolicies())
             {
@@ -1522,6 +1541,8 @@ final class CurrentDatabaseBestEffortRepair
             recovery.aliasIds(), defaultScanListId);
         insertGeneratedDefaultMemberships(connection, "alias_list_unmatched_talkgroup_scan_list_membership",
             "alias_list_id", recovery.aliasListIds(), defaultScanListId);
+        insertGeneratedDefaultMemberships(connection, "alias_list_new_alias_scan_list_membership",
+            "alias_list_id", recovery.newAliasListIds(), defaultScanListId);
     }
 
     private static void insertGeneratedDefaultMemberships(Connection connection, String table, String ownerColumn,
@@ -1933,24 +1954,28 @@ final class CurrentDatabaseBestEffortRepair
         }
     }
 
-    private record StreamRouteInspection(RouteTableInspection aliasRoutes, RouteTableInspection unmatchedRoutes)
+    private record StreamRouteInspection(RouteTableInspection aliasRoutes, RouteTableInspection unmatchedRoutes,
+                                         RouteTableInspection newAliasRoutes)
     {
         private long droppedRows()
         {
-            return Math.addExact(aliasRoutes.invalidRowIds().size(), unmatchedRoutes.invalidRowIds().size());
+            return Math.addExact(Math.addExact(aliasRoutes.invalidRowIds().size(),
+                unmatchedRoutes.invalidRowIds().size()), newAliasRoutes.invalidRowIds().size());
         }
 
         private long repairedRows()
         {
-            return Math.addExact(aliasRoutes.repairedRows(), unmatchedRoutes.repairedRows());
+            return Math.addExact(Math.addExact(aliasRoutes.repairedRows(), unmatchedRoutes.repairedRows()),
+                newAliasRoutes.repairedRows());
         }
     }
 
-    private record GeneratedDefaultMembershipRecovery(Set<Long> aliasIds, Set<Long> aliasListIds, long sourceRows)
+    private record GeneratedDefaultMembershipRecovery(Set<Long> aliasIds, Set<Long> aliasListIds,
+                                                       Set<Long> newAliasListIds, long sourceRows)
     {
         private static GeneratedDefaultMembershipRecovery none()
         {
-            return new GeneratedDefaultMembershipRecovery(Set.of(), Set.of(), 0);
+            return new GeneratedDefaultMembershipRecovery(Set.of(), Set.of(), Set.of(), 0);
         }
     }
 
@@ -1964,12 +1989,13 @@ final class CurrentDatabaseBestEffortRepair
 
     private record MembershipInspection(List<MembershipRowKey> aliasRowsToDelete,
                                         List<MembershipRowKey> unmatchedRowsToDelete,
+                                        List<MembershipRowKey> newAliasRowsToDelete,
                                         GeneratedDefaultMembershipRecovery recovery)
     {
         private long droppedRows()
         {
-            return Math.subtractExact(Math.addExact(aliasRowsToDelete.size(), unmatchedRowsToDelete.size()),
-                recovery.sourceRows());
+            return Math.subtractExact(Math.addExact(Math.addExact(aliasRowsToDelete.size(),
+                unmatchedRowsToDelete.size()), newAliasRowsToDelete.size()), recovery.sourceRows());
         }
     }
 

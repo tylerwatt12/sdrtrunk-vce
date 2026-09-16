@@ -98,10 +98,14 @@ public final class ScanListDatabaseStore
         Map<Long,Set<Long>> unmatchedAliasListMemberships = loadMemberships(connection,
             "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id");
         requireKnownOwners(unmatchedAliasListMemberships.keySet(), loadIds(connection, "alias_list"), "Alias List");
+        Map<Long,Set<Long>> newAliasListMemberships = loadMemberships(connection,
+            "alias_list_new_alias_scan_list_membership", "alias_list_id");
+        requireKnownOwners(newAliasListMemberships.keySet(), loadIds(connection, "alias_list"), "Alias List");
 
         try
         {
-            return new ScanListConfiguration(scanLists, aliasMemberships, unmatchedAliasListMemberships);
+            return new ScanListConfiguration(scanLists, aliasMemberships, unmatchedAliasListMemberships,
+                newAliasListMemberships);
         }
         catch(IllegalArgumentException e)
         {
@@ -127,6 +131,7 @@ public final class ScanListDatabaseStore
         requireKnownOwners(configuration.aliasMemberships().keySet(), aliasIds, "Alias");
         Set<Long> aliasListIds = loadIds(connection, "alias_list");
         requireKnownOwners(configuration.unmatchedAliasListMemberships().keySet(), aliasListIds, "Alias List");
+        requireKnownOwners(configuration.newAliasListMemberships().keySet(), aliasListIds, "Alias List");
 
         clearConfiguration(connection);
         saveScanLists(connection, configuration.scanLists());
@@ -134,6 +139,8 @@ public final class ScanListDatabaseStore
             configuration.aliasMemberships());
         saveMemberships(connection, "alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id",
             configuration.unmatchedAliasListMemberships());
+        saveMemberships(connection, "alias_list_new_alias_scan_list_membership", "alias_list_id",
+            configuration.newAliasListMemberships());
     }
 
     private static void clearConfiguration(Connection connection) throws SQLException
@@ -142,6 +149,7 @@ public final class ScanListDatabaseStore
         {
             statement.executeUpdate("DELETE FROM alias_scan_list_membership");
             statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
+            statement.executeUpdate("DELETE FROM alias_list_new_alias_scan_list_membership");
             statement.executeUpdate("DELETE FROM scan_list");
         }
     }

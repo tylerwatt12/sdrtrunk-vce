@@ -85,7 +85,9 @@ public final class ConfigurationSnapshotValidator
         for(AliasListDefinition definition: definitions)
         {
             requireConfiguredDestinations(definition.getUnmatchedTalkgroupPolicy().getStreamDestinations(),
-                configured, "Alias List [" + definition.getName() + "]");
+                configured, "Alias List [" + definition.getName() + "] Unknown Alias Behavior");
+            requireConfiguredDestinations(definition.getNewAliasBehavior().getStreamDestinations(),
+                configured, "Alias List [" + definition.getName() + "] New Alias Behavior");
         }
     }
 

@@ -60,10 +60,12 @@ class ScanListDatabaseStoreTest
             definitions.stream().map(definition -> definition.getName() + ":" + definition.getFamily().name())
                 .toList());
         assertEquals(4, configuration.unmatchedAliasListMemberships().size());
+        assertEquals(4, configuration.newAliasListMemberships().size());
         for(AliasListDefinition definition: definitions)
         {
             assertEquals(Set.of(defaultList.getId()),
                 configuration.scanListIdsForUnmatchedTalkgroups(definition.getId()));
+            assertEquals(Set.of(defaultList.getId()), configuration.scanListIdsForNewAliases(definition.getId()));
         }
     }
 
@@ -95,7 +97,8 @@ class ScanListDatabaseStoreTest
         ScanListConfiguration memberships = new ScanListConfiguration(
             List.of(seeded.defaultScanList(), southwest),
             Map.of(alias.getId(), Set.of(seeded.defaultScanList().getId(), southwest.getId())),
-            Map.of(definition.getId(), Set.of(southwest.getId())));
+            Map.of(definition.getId(), Set.of(southwest.getId())),
+            Map.of(definition.getId(), Set.of(seeded.defaultScanList().getId())));
         AliasConfigurationSnapshot configured = aliasState(definition, alias, memberships);
         snapshotStore.commitAliasConfiguration(configured);
 
@@ -104,6 +107,8 @@ class ScanListDatabaseStoreTest
             loaded.scanListIdsForAlias(alias.getId()));
         assertEquals(Set.of(southwest.getId()),
             loaded.scanListIdsForUnmatchedTalkgroups(definition.getId()));
+        assertEquals(Set.of(seeded.defaultScanList().getId()),
+            loaded.scanListIdsForNewAliases(definition.getId()));
 
         //An Alias-only edit carries forward the current scan-list snapshot and retains the normalized joins.
         alias.setDescription("Unrelated Alias edit");
@@ -111,6 +116,7 @@ class ScanListDatabaseStoreTest
         ScanListConfiguration afterAliasEdit = store.loadConfiguration();
         assertEquals(loaded.aliasMemberships(), afterAliasEdit.aliasMemberships());
         assertEquals(loaded.unmatchedAliasListMemberships(), afterAliasEdit.unmatchedAliasListMemberships());
+        assertEquals(loaded.newAliasListMemberships(), afterAliasEdit.newAliasListMemberships());
         assertEquals(loaded.scanLists(), afterAliasEdit.scanLists());
     }
 

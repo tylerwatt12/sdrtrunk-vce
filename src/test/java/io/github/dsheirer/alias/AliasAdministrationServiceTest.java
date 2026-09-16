@@ -611,7 +611,7 @@ class AliasAdministrationServiceTest
     }
 
     @Test
-    void centralDefaultsInitializeOnlyNewTalkgroupMatchersAndExplicitRoutingWins() throws Exception
+    void newAliasDefaultsInitializeEveryNewMatcherAndExplicitRoutingWins() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("central-defaults-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -655,9 +655,10 @@ class AliasAdministrationServiceTest
             radio.setAliasListName("County P25");
             radio.setMatchIdentifier(new Radio(Protocol.APCO25, 5001));
             long radioId = service.createAlias(radio, service.currentRevision()).aliasIds().getFirst();
-            assertFalse(service.getAlias(radioId).alias().isRecordable());
-            assertTrue(service.getAlias(radioId).alias().getBroadcastChannels().isEmpty());
-            assertTrue(service.getAlias(radioId).scanListIds().isEmpty());
+            assertTrue(service.getAlias(radioId).alias().isRecordable());
+            assertEquals(Set.of("Primary"), service.getAlias(radioId).alias().getBroadcastChannels().stream()
+                .map(BroadcastChannel::getChannelName).collect(java.util.stream.Collectors.toSet()));
+            assertEquals(Set.of(defaultScanListId), service.getAlias(radioId).scanListIds());
 
             Alias explicit = alias("Encrypted", list.aliasListId(), "County P25", 102);
             long explicitId = service.createAlias(explicit, Set.of(), service.currentRevision()).aliasIds().getFirst();

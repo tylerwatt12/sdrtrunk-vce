@@ -5976,6 +5976,21 @@ th.numeric {
   box-shadow: inset 0 -3px 0 var(--accent);
 }
 
+.alias-defaults-tabs button {
+  min-width: min(220px, 46vw);
+}
+
+.alias-defaults-tab-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+
+.alias-defaults-tab-panel[hidden] {
+  display: none;
+}
+
 .alias-stream-options {
   min-width: 0;
   display: grid;

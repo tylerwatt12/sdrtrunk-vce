@@ -91,9 +91,9 @@ public final class AliasImportService
                 Set<Long> scans = old == null ? Set.of() : old.scanListIds();
                 if(old == null && input.radioReference())
                 {
-                    alias.setRecordable(options.aliasList().getUnmatchedTalkgroupPolicy().isRecordEnabled());
-                    alias.setBroadcastChannels(options.aliasList().getUnmatchedTalkgroupPolicy().getStreamDestinations());
-                    scans = options.unmatchedScanListIds();
+                    alias.setRecordable(options.aliasList().getNewAliasBehavior().isRecordEnabled());
+                    alias.setBroadcastChannels(options.aliasList().getNewAliasBehavior().getStreamDestinations());
+                    scans = options.newAliasScanListIds();
                 }
                 List<String> scanNames = input.scanLists();
                 List<String> streamNames = input.streams();

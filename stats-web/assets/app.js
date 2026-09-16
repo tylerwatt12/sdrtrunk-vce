@@ -5501,65 +5501,103 @@ function openAliasTransferModal(selectedList, action = 'Import') {
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
-  const policy = selectedList?.unmatched_talkgroup_policy || {};
   const form = node('form', 'alias-editor-form alias-policy-form');
   form.append(node('p', 'modal-introduction',
-    'These settings apply when a destination talkgroup or patch group has no exact Alias or covering talkgroup ' +
-    'range in this Alias List. New talkgroup Aliases created in this list start with the same selections. ' +
-    'Existing Aliases are not changed.'));
+    'Set how this Alias List handles unknown traffic and how future Aliases begin. Each tab has its own recording, ' +
+    'scan-list, and streaming choices. Existing Aliases are not changed.'));
 
-  const record = node('input');
-  record.type = 'checkbox';
-  record.name = 'recordable';
-  record.checked = Boolean(policy.recordable);
-  const behavior = node('fieldset', 'alias-stream-options alias-defaults-section');
-  behavior.append(node('legend', '', 'Recording'), node('p', 'muted',
-    'Records completed unmatched talkgroup calls in the configured recording directory. New talkgroup Aliases ' +
-    'are created with these defaults. Existing Aliases are unchanged.'), aliasCheckOption('Record calls', record));
+  const behaviorPanel = (kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) => {
+    const panel = node('section', 'alias-defaults-tab-panel');
+    panel.dataset.behavior = kind;
+    panel.append(node('p', 'muted', description));
+    const record = node('input');
+    record.type = 'checkbox';
+    record.name = `${kind}Recordable`;
+    record.checked = Boolean(policy?.recordable);
+    const recording = node('fieldset', 'alias-stream-options alias-defaults-section');
+    recording.append(node('legend', '', 'Recording'), node('p', 'muted', recordCopy),
+      aliasCheckOption('Record calls', record));
 
-  const scanLists = aliasScanListChoices(options, policy.scan_list_ids || []);
-  const scanListLegend = scanLists.querySelector('legend');
-  if (scanListLegend) scanListLegend.textContent = 'Scan List';
-  scanListLegend?.after(node('p', 'muted',
-    'Routes unmatched talkgroup calls to the selected scan lists for browser playback. New talkgroup Aliases are ' +
-    'created with these defaults.'));
+    const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
+    const scanListLegend = scanLists.querySelector('legend');
+    if (scanListLegend) scanListLegend.textContent = 'Scan List';
+    scanListLegend?.after(node('p', 'muted', scanCopy));
 
-  const streams = node('fieldset', 'alias-stream-options');
-  streams.append(node('legend', '', 'Streaming'), node('p', 'muted',
-    'Sends unmatched talkgroup calls to the selected external streaming destinations. New talkgroup Aliases are ' +
-    'created with these defaults.'));
-  const selectedStreams = new Set(policy.broadcast_configuration_ids || []);
-  const configuredStreams = new Map((options.streams || []).map((entry) =>
-    [entry.configuration_id, entry.name || entry.configuration_id]));
-  const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
-  if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
-  streamIds.forEach((configurationId) => {
-    const label = node('label', 'alias-check-option');
-    const checkbox = node('input');
-    checkbox.type = 'checkbox';
-    checkbox.name = 'broadcastChannel';
-    checkbox.value = configurationId;
-    checkbox.checked = selectedStreams.has(configurationId);
-    const missing = !configuredStreams.has(configurationId);
-    if (missing) label.classList.add('missing');
-    label.append(checkbox, node('span', '', missing ? `Missing destination (${configurationId})` :
-      configuredStreams.get(configurationId)));
-    streams.append(label);
+    const streams = node('fieldset', 'alias-stream-options');
+    streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
+    const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
+    const configuredStreams = new Map((options.streams || []).map((entry) =>
+      [entry.configuration_id, entry.name || entry.configuration_id]));
+    const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
+    if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+    streamIds.forEach((configurationId) => {
+      const label = node('label', 'alias-check-option');
+      const checkbox = node('input');
+      checkbox.type = 'checkbox';
+      checkbox.name = `${kind}BroadcastChannel`;
+      checkbox.value = configurationId;
+      checkbox.checked = selectedStreams.has(configurationId);
+      const missing = !configuredStreams.has(configurationId);
+      if (missing) label.classList.add('missing');
+      label.append(checkbox, node('span', '', missing ? `Missing destination (${configurationId})` :
+        configuredStreams.get(configurationId)));
+      streams.append(label);
+    });
+    const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
+      'Destinations already saved in these defaults remain visible.');
+    if (streamLimitNotice) streams.append(streamLimitNotice);
+    panel.append(recording, scanLists, streams);
+    if (warning) panel.append(warning);
+    return { panel, record, streams };
+  };
+
+  const unknown = behaviorPanel('unknown', selectedList?.unknown_alias_behavior ||
+    selectedList?.unmatched_talkgroup_policy || {},
+    'Applies when a destination talkgroup or patch group has no exact Alias or covering talkgroup range in this list.',
+    'Records completed calls whose talkgroup identity is not covered by an Alias.',
+    'Routes unknown calls to the selected scan lists for browser playback.',
+    'Sends unknown calls to the selected external streaming destinations.',
+    node('div', 'logging-notice warning',
+      'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
+      'individually reviewed, including sensitive traffic. If a selected streaming destination sends to ' +
+      'Broadcastify or another third-party provider, leave catch-all Streaming disabled and configure approved ' +
+      'talkgroups individually.'));
+  const newAliases = behaviorPanel('newAlias', selectedList?.new_alias_behavior || {},
+    'Applies only when a new Alias is manually created or imported from RadioReference. Changes here do not alter ' +
+    'existing Aliases, and RadioReference updates preserve each existing Alias\'s local handling settings.',
+    'New Aliases begin with recording enabled or disabled as selected here.',
+    'New Aliases begin in the selected scan lists.',
+    'New Aliases begin with the selected external streaming destinations.');
+
+  const tabs = node('nav', 'tabs alias-modal-tabs alias-defaults-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Alias List Default behaviors');
+  const activate = (id) => {
+    [[unknown, 'unknown'], [newAliases, 'newAlias']].forEach(([behavior, key]) => {
+      behavior.panel.hidden = key !== id;
+    });
+    [...tabs.children].forEach((button) => {
+      const active = button.dataset.tab === id;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+  };
+  [['unknown', 'Unknown Alias Behavior'], ['newAlias', 'New Alias Behavior']].forEach(([id, label]) => {
+    const button = node('button', 'secondary', label);
+    button.type = 'button';
+    button.dataset.tab = id;
+    button.setAttribute('role', 'tab');
+    button.addEventListener('click', () => activate(id));
+    tabs.append(button);
   });
-  const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
-    'Destinations already saved in these defaults remain visible.');
-  if (streamLimitNotice) streams.append(streamLimitNotice);
+  activate('unknown');
 
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
   cancel.type = 'button';
-  const warning = node('div', 'logging-notice warning',
-    'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
-    'individually reviewed, including sensitive traffic. If a selected streaming destination sends to Broadcastify ' +
-    'or another third-party provider, leave catch-all Streaming disabled and configure approved talkgroups individually.');
   const save = node('button', 'button', 'Save Alias List Defaults');
   save.type = 'submit';
-  form.append(behavior, scanLists, streams, warning, errorHost, aliasModalFooter(cancel, save));
+  form.append(tabs, unknown.panel, newAliases.panel, errorHost, aliasModalFooter(cancel, save));
   const modal = openReadOnlyModal(`Alias List Defaults · ${selectedList.name}`, form, {
     id: `unmatched-talkgroups-${listId}`,
     className: 'alias-editor-modal alias-policy-modal',
@@ -5575,13 +5613,17 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     save.disabled = true;
     modal.setBusy(true);
     try {
-      const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/unmatched-talkgroups`, {
+      const payload = (behavior, prefix) => ({
+        recordable: behavior.record.checked,
+        broadcast_configuration_ids: [...behavior.streams
+          .querySelectorAll(`[name="${prefix}BroadcastChannel"]:checked`)].map((checkbox) => checkbox.value),
+        scan_list_ids: selectedAliasScanListIds(behavior.panel)
+      });
+      const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/defaults`, {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
-          recordable: record.checked,
-          broadcast_configuration_ids: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
-            .map((checkbox) => checkbox.value),
-          scan_list_ids: selectedAliasScanListIds(form)
+          unknown_alias_behavior: payload(unknown, 'unknown'),
+          new_alias_behavior: payload(newAliases, 'newAlias')
         }
       });
       await finishAliasMutation(modal, result);
@@ -6200,8 +6242,12 @@ async function renderAliases() {
       aliasListId(options.alias_list) === aliasListId(selectedList)) {
     const unmatchedPolicy = selectedList.unmatched_talkgroup_policy ||
       options.alias_list.unmatched_talkgroup_policy;
+    const unknownBehavior = selectedList.unknown_alias_behavior || options.alias_list.unknown_alias_behavior;
+    const newAliasBehavior = selectedList.new_alias_behavior || options.alias_list.new_alias_behavior;
     selectedList = { ...selectedList, ...options.alias_list,
-      ...(unmatchedPolicy ? { unmatched_talkgroup_policy: unmatchedPolicy } : {}) };
+      ...(unmatchedPolicy ? { unmatched_talkgroup_policy: unmatchedPolicy } : {}),
+      ...(unknownBehavior ? { unknown_alias_behavior: unknownBehavior } : {}),
+      ...(newAliasBehavior ? { new_alias_behavior: newAliasBehavior } : {}) };
     const selectedIndex = lists.findIndex((row) => aliasListId(row) === aliasListId(selectedList));
     if (selectedIndex >= 0) lists[selectedIndex] = selectedList;
     aliasEditorContext.selectedList = selectedList;
