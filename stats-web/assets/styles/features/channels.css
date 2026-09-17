@@ -368,6 +368,13 @@
   font-weight: 700;
 }
 
+.channel-input-with-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 7px;
+}
+
 .channel-map-editor {
   --channel-map-columns: 110px minmax(150px, 1fr) 40px;
 }

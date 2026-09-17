@@ -56,7 +56,7 @@ class ChannelDefinitionCodecTest
 
         assertEquals("p25-phase1", read.protocolId());
         assertEquals(List.of(851_012_500L, 852_112_500L), read.source().frequenciesHz());
-        assertEquals(Boolean.FALSE, read.settings().get("learn_announced_control_channels"));
+        assertEquals(Boolean.TRUE, read.settings().get("learn_announced_control_channels"));
         assertEquals(list.getId(), read.aliasListId());
     }
 

@@ -54,9 +54,9 @@ class ChannelProtocolRegistryTest
 
         assertEquals("CQPSK", registry.require("p25-conventional").defaultSettings().get("modulation"));
         assertEquals("CQPSK", registry.require("p25-phase1").defaultSettings().get("modulation"));
-        assertEquals(false, registry.require("p25-phase1").defaultSettings()
+        assertEquals(true, registry.require("p25-phase1").defaultSettings()
             .get("learn_announced_control_channels"));
-        assertEquals(false, registry.require("p25-phase2").defaultSettings()
+        assertEquals(true, registry.require("p25-phase2").defaultSettings()
             .get("learn_announced_control_channels"));
         assertEquals(false, registry.require("p25-phase2").defaultSettings()
             .get("auto_detect_scramble_parameters"));

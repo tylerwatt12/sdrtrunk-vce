@@ -16215,13 +16215,11 @@ function renderNestedRadioDirectory(renderContext) {
           row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') : '' },
       { id: 'live', label: 'Live', render: (row) => row.directory_type === 'channel' ?
         channelNavigationButton('Live', href('live', { channel: row.configuration_id })) : '' },
-      { id: 'channel', label: 'View', render: (row) => row.directory_type === 'channel' ?
-        channelNavigationButton(channelViewLabel(row, 'site'), href('channel', { configuration_id: row.configuration_id })) :
-        channelNavigationButton(channelViewLabel(row, 'system'), entityRefHref(row.entity_ref)) },
       { id: 'alias-list', label: 'Alias List', render: radioDirectoryAliasLists,
         sortValue: (row) => row.alias_list_name || (row.alias_lists || []).map((entry) => entry.name).join(' ') }
     ];
-    const conventionalColumns = channelAdminColumns(new Set(), {}, null, false);
+    const conventionalColumns = channelAdminColumns(new Set(), {}, null, false)
+      .filter((column) => column.id !== 'channel');
 
     const draw = () => {
       const term = search.value.trim().toLowerCase();
@@ -16916,7 +16914,12 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         const grid = node('div', 'alias-editor-grid channel-editor-grid');
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
-          const presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
+          let presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
+          if (field.unit && control instanceof HTMLInputElement) {
+            const unit = node('span', 'channel-input-with-unit');
+            unit.append(presentedControl, node('span', 'ui-input-unit', field.unit));
+            presentedControl = unit;
+          }
           const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
             field.type === 'frequency_map' || field.type === 'frequency_list' ?
             node('div', 'alias-editor-field channel-wide-field') :
