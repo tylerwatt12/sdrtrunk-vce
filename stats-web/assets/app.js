@@ -5499,8 +5499,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const options = aliasEditorContext?.options || {};
   const form = node('form', 'alias-editor-form alias-policy-form');
   form.append(node('p', 'modal-introduction',
-    'Set how this Alias List handles unknown traffic and how future Aliases begin. Each tab has its own recording, ' +
-    'scan-list, and streaming choices. Existing Aliases are not changed.'));
+    'Set how this Alias List handles unknown traffic and how future Aliases begin.'));
 
   const behaviorPanel = (kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) => {
     const panel = node('section', 'alias-defaults-tab-panel');
@@ -15948,6 +15947,16 @@ function channelSummaryCards(catalog, editable) {
   return wrapper;
 }
 
+function channelNavigationButton(label, target) {
+  return anchor(label, target, 'ui-button ui-button-secondary channel-navigation-button');
+}
+
+function channelViewLabel(row, context = '') {
+  if (context === 'system') return 'View System';
+  if (context === 'site' || String(row?.channel_kind || '').toUpperCase() === 'TRUNKED') return 'View Site';
+  return 'View Channel';
+}
+
 async function channelAdminMutation(path, options, statusHost) {
   try {
     statusHost?.replaceChildren(node('span', 'muted', 'Working…'));
@@ -16014,10 +16023,10 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
       row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') },
-    { id: 'live', label: 'Live', render: (row) => anchor('Open', href('live', { channel: row.configuration_id }),
-      'channel-navigation-link') },
-    { id: 'channel', label: 'Channel', render: (row) => anchor('View',
-      href('channel', { configuration_id: row.configuration_id }), 'channel-navigation-link') }
+    { id: 'live', label: 'Live', render: (row) => channelNavigationButton('Live',
+      href('live', { channel: row.configuration_id })) },
+    { id: 'channel', label: 'View', render: (row) => channelNavigationButton(channelViewLabel(row),
+      href('channel', { configuration_id: row.configuration_id })) }
   );
   if (editable) columns.push(
     { id: 'auto-start', label: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
@@ -16056,7 +16065,219 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
   return columns;
 }
 
+function radioDirectoryAliasLists(row) {
+  const entries = Array.isArray(row.alias_lists) ? row.alias_lists : [];
+  if (!entries.length && row.alias_list_name) {
+    return aliasListLink(row.alias_list_name, row.alias_list_id) || node('span', 'muted', '—');
+  }
+  if (!entries.length) return node('span', 'muted', '—');
+  const values = node('span', 'radio-directory-alias-lists');
+  entries.forEach((entry, index) => {
+    if (index) values.append(node('span', 'muted', ' · '));
+    values.append(aliasListLink(entry.name, entry.id));
+  });
+  return values;
+}
+
+function radioDirectoryTrunkedGroups(catalog, systems) {
+  const channels = (catalog.channels || []).filter((row) =>
+    String(row.channel_kind || '').toUpperCase() === 'TRUNKED');
+  const byId = new Map(channels.map((row) => [String(row.configuration_id), row]));
+  const assigned = new Set();
+  const groups = (systems.rows || []).map((system) => {
+    const children = (system.channel_preview || []).map((preview) => {
+      const channel = byId.get(String(preview.configuration_id));
+      if (!channel) return null;
+      assigned.add(String(channel.configuration_id));
+      return { ...preview, ...channel, directory_type: 'channel' };
+    }).filter(Boolean);
+    return {
+      ...system,
+      directory_type: 'radio_system',
+      children,
+      child_count: children.length,
+      running_count: children.filter((row) => row.processing_state === 'RUNNING').length
+    };
+  });
+
+  // The system directory preview is intentionally bounded. Keep every configured trunked channel visible.
+  const unmatched = channels.filter((row) => !assigned.has(String(row.configuration_id)));
+  const unmatchedBySystem = new Map();
+  unmatched.forEach((row) => {
+    const key = String(row.system || 'Other trunked channels');
+    const rows = unmatchedBySystem.get(key) || [];
+    rows.push({ ...row, directory_type: 'channel' });
+    unmatchedBySystem.set(key, rows);
+  });
+  unmatchedBySystem.forEach((children, systemName) => {
+    const existing = groups.find((group) => String(group.system_name || '').trim().toLowerCase() ===
+      String(systemName).trim().toLowerCase());
+    if (existing) {
+      existing.children.push(...children);
+      existing.child_count = existing.children.length;
+      existing.running_count = existing.children.filter((row) => row.processing_state === 'RUNNING').length;
+      return;
+    }
+    const aliasLists = [...new Map(children.filter((row) => row.alias_list_name).map((row) => [
+      String(row.alias_list_id || row.alias_list_name), { id: row.alias_list_id, name: row.alias_list_name }
+    ])).values()];
+    groups.push({
+      directory_type: 'radio_system', system_name: systemName, protocol: children[0]?.protocol_id,
+      children, child_count: children.length,
+      running_count: children.filter((row) => row.processing_state === 'RUNNING').length,
+      alias_lists: aliasLists, local_catalog_group: true
+    });
+  });
+  return groups.sort((left, right) => String(left.system_name || radioSystemLabel(left)).localeCompare(
+    String(right.system_name || radioSystemLabel(right))));
+}
+
+function renderNestedRadioDirectory(renderContext) {
+  const loading = createAsyncSection('Radio Directory', {
+    loadingMessage: 'Loading radio systems and channels…',
+    errorMessage: 'The radio directory could not be loaded.'
+  });
+  if (!beginPage(renderContext, pageHeader('Radio Directory',
+    'Browse trunked systems by site, with conventional channels in their own table'), loading.element)) return;
+
+  const loadDirectory = async (options = {}) => {
+    const [catalog, systems] = await Promise.all([
+      requestChannelConfigurationJson('/api/v1/channel-catalog', { csrf: false, ...options }),
+      apiPage('/api/v1/radio-systems', { limit: 25, includeChannelPreview: true }, options)
+    ]);
+    return { catalog, systems };
+  };
+
+  return loading.load(() => loadDirectory(), (initial) => {
+    let directory = initial;
+    const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
+    const summaryHost = node('div');
+    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+    const searchWrap = node('label', 'ui-search');
+    searchWrap.append(iconGlyph('icon-search'));
+    const search = node('input', 'ui-input');
+    search.type = 'search';
+    search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
+    search.setAttribute('aria-label', search.placeholder);
+    searchWrap.append(search);
+    let activeView = 'running';
+    const filters = uiSegmentedControl([
+      { value: 'running', label: 'Running' },
+      { value: 'stopped', label: 'Stopped' },
+      { value: 'all', label: 'All' }
+    ], activeView, (value) => { activeView = value; draw(); });
+    filters.setAttribute('aria-label', 'Filter radio directory');
+    const exportLink = exportCsvLink('channels');
+    exportLink.classList.add('ui-button', 'ui-button-secondary');
+    exportLink.prepend(iconGlyph('icon-download'));
+    const refresh = uiActionButton('', 'icon-refresh', () => renderRadioSystems(), 'ui-button ui-icon-button');
+    refresh.title = 'Refresh radio directory';
+    refresh.setAttribute('aria-label', refresh.title);
+    toolbar.append(searchWrap, filters, exportLink, refresh);
+    const tableHost = node('div', 'channel-catalog-table-host radio-directory-local-table-host');
+
+    const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
+      row.name, row.protocol, row.protocol_label, row.alias_list_name,
+      ...(Array.isArray(row.alias_lists) ? row.alias_lists.map((entry) => entry.name) : []),
+      channelAdminFrequencyList(row.frequencies_hz)]
+      .some((value) => String(value || '').toLowerCase().includes(term));
+    const parentLabel = (row) => row.system_name || radioSystemLabel(row) || 'Trunked system';
+    const parentSiteCount = (row) => `${row.child_count} ${row.child_count === 1 ? 'site' : 'sites'} shown`;
+    const systemName = (row) => {
+      const entity = node('div', 'directory-entity');
+      if (row.directory_type === 'radio_system') {
+        const heading = node('strong');
+        heading.append(radioSystemLink(row.entity_ref, parentLabel(row)));
+        entity.append(heading, node('span', 'muted', parentSiteCount(row)));
+      } else {
+        entity.append(node('span', 'directory-branch', '↳'));
+        const detail = node('span', 'radio-directory-channel-name');
+        detail.append(anchor(row.name || 'Unnamed channel', href('channel', {
+          configuration_id: row.configuration_id
+        }), 'channel-name-link'));
+        detail.append(node('span', 'channel-row-context', row.site || row.site_name || 'Site not identified'));
+        entity.append(detail);
+      }
+      return entity;
+    };
+    const systemColumns = [
+      { id: 'system-site', label: 'Trunked System / Site', width: 260, render: systemName,
+        sortValue: (row) => `${parentLabel(row)} ${row.site || row.site_name || row.name || ''}` },
+      { id: 'frequency', label: 'Frequencies (MHz)', className: 'channel-frequency-cell', render: (row) =>
+        row.directory_type === 'channel' ? channelAdminFrequencyList(row.frequencies_hz) : '',
+        sortValue: (row) => Number(row.frequencies_hz?.[0] || 0) },
+      { id: 'protocol', label: 'Protocol', render: (row) => row.directory_type === 'channel' ? uiPill(
+        row.protocol_label || protocolFamily(row) || 'Unknown', 'protocol') : '' },
+      { id: 'status', label: 'Status', render: (row) => row.directory_type === 'channel' ? uiPill(
+          row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
+          row.processing_state === 'RUNNING' ? 'success' : 'neutral',
+          row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') : '' },
+      { id: 'live', label: 'Live', render: (row) => row.directory_type === 'channel' ?
+        channelNavigationButton('Live', href('live', { channel: row.configuration_id })) : '' },
+      { id: 'channel', label: 'View', render: (row) => row.directory_type === 'channel' ?
+        channelNavigationButton(channelViewLabel(row, 'site'), href('channel', { configuration_id: row.configuration_id })) :
+        channelNavigationButton(channelViewLabel(row, 'system'), entityRefHref(row.entity_ref)) },
+      { id: 'alias-list', label: 'Alias List', render: radioDirectoryAliasLists,
+        sortValue: (row) => row.alias_list_name || (row.alias_lists || []).map((entry) => entry.name).join(' ') }
+    ];
+    const conventionalColumns = channelAdminColumns(new Set(), {}, null, false);
+
+    const draw = () => {
+      const term = search.value.trim().toLowerCase();
+      const matchesState = (row) => activeView === 'all' ||
+        activeView === 'running' && row.processing_state === 'RUNNING' ||
+        activeView === 'stopped' && row.processing_state !== 'RUNNING';
+      const trunkedRows = [];
+      radioDirectoryTrunkedGroups(directory.catalog, directory.systems).forEach((parent) => {
+        const parentMatches = matches(parent, term);
+        const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
+        if (children.length) {
+          trunkedRows.push({ ...parent, children, child_count: children.length,
+            running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
+          trunkedRows.push(...children);
+        }
+      });
+      const conventionalRows = (directory.catalog.channels || []).filter((row) =>
+        String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term));
+      summaryHost.replaceChildren(channelSummaryCards(directory.catalog, false));
+      tableHost.replaceChildren(
+        section('Trunked Systems', table(trunkedRows, systemColumns,
+          'No trunked systems or channels match this search', {
+            type: 'radio-system-directory-local', sortable: false,
+            rowClass: (row) => row.directory_type === 'radio_system' ?
+              'directory-system-row' : 'directory-channel-row',
+            tableClass: 'channel-catalog-table radio-directory-local-table',
+            wrapperClass: 'channel-catalog-table-wrap radio-directory-local-table-wrap'
+          })),
+        section('Conventional Channels', table(conventionalRows, conventionalColumns,
+          'No conventional channels match this search', {
+            type: 'conventional-channel-directory-local', clientSort: true,
+            rowKey: (row) => row.configuration_id,
+            tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap'
+          }))
+      );
+    };
+    search.addEventListener('input', draw);
+    wrapper.append(summaryHost, toolbar, tableHost);
+    draw();
+
+    let refreshInFlight = false;
+    pageInterval(async () => {
+      if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
+      refreshInFlight = true;
+      try {
+        directory = await loadDirectory({ page: false });
+        draw();
+      } catch (_) { /* Preserve the last confirmed directory until the next refresh. */ }
+      finally { refreshInFlight = false; }
+    }, 5_000);
+    return wrapper;
+  }, renderContext);
+}
+
 async function renderModernChannelCatalog(renderContext, editable) {
+  if (!editable) return renderNestedRadioDirectory(renderContext);
   const loading = createAsyncSection(editable ? 'Channel Configuration' : 'Receiver Channels', {
     loadingMessage: editable ? 'Loading channel configuration…' : 'Loading receiver channels…',
     errorMessage: editable ? 'Channel configuration could not be loaded.' :

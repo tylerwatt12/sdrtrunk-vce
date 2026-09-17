@@ -73,6 +73,46 @@
   font-size: 10px;
 }
 
+.radio-directory-local-table-host {
+  display: grid;
+  gap: var(--ui-layout-gap);
+}
+
+.radio-directory-local-table-host > .section {
+  min-width: 0;
+}
+
+.radio-directory-local .channel-catalog-table-wrap {
+  max-height: none;
+  overflow: visible;
+}
+
+.radio-directory-local .directory-system-row td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--surface-2);
+  border-top: 2px solid var(--line-dark);
+  font-weight: 650;
+}
+
+.radio-directory-local .directory-channel-row .directory-entity {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.radio-directory-channel-name {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.radio-directory-local .directory-branch {
+  color: var(--muted);
+}
+
+.radio-directory-alias-lists {
+  display: inline;
+}
+
 @media (max-width: 700px) {
   .identity-range-select {
     width: 100%;

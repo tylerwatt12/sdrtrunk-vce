@@ -109,6 +109,14 @@
   font-size: 10px;
 }
 
+.channel-navigation-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  font-size: 11px;
+  text-decoration: none;
+}
+
 .channel-order-controls {
   display: inline-grid;
   grid-template-columns: var(--ui-control-height) 28px var(--ui-control-height);
