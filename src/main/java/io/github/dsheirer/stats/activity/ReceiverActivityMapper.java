@@ -37,6 +37,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
@@ -125,17 +126,9 @@ class ReceiverActivityMapper
             case PRIVATE -> ReceiverActivityRecords.NxdnTargetKind.PRIVATE;
             case UNKNOWN -> ReceiverActivityRecords.NxdnTargetKind.UNKNOWN;
         };
-        Integer talkgroup = positiveNxdn(event.talkgroupId());
+        Integer talkgroup = nxdnTalkgroup(event.talkgroupId());
         Integer sourceRadio = positiveNxdn(event.sourceRadioId());
         Integer targetRadio = positiveNxdn(event.targetRadioId());
-
-        // NXDN Null Group (0x0000) is valid signaling but is not a persistable group identity.  Preserve the call
-        // as an unknown-target observation instead of emitting GROUP with a null target and violating the activity
-        // schema's target-kind constraint.
-        if(targetKind == ReceiverActivityRecords.NxdnTargetKind.GROUP && talkgroup == null)
-        {
-            targetKind = ReceiverActivityRecords.NxdnTargetKind.UNKNOWN;
-        }
 
         if(targetKind != ReceiverActivityRecords.NxdnTargetKind.GROUP)
         {
@@ -1180,7 +1173,8 @@ class ReceiverActivityMapper
     {
         Integer talkgroup = talkgroup(identifier);
 
-        if(talkgroup != null && (talkgroup > 0 || talkgroup == 0 && hasStableP25Home(identifier)))
+        if(talkgroup != null && (talkgroup > 0 || talkgroup == 0 &&
+            (hasStableP25Home(identifier) || identifier instanceof NXDNTalkgroupIdentifier)))
         {
             return talkgroup;
         }
@@ -1194,7 +1188,8 @@ class ReceiverActivityMapper
         {
             int parsed = identifier.getValue() instanceof Number number ? number.intValue() :
                 Integer.parseInt(identifier.getValue().toString());
-            return parsed > 0 || parsed == 0 && hasStableP25Home(identifier) ? parsed : null;
+            return parsed > 0 || parsed == 0 &&
+                (hasStableP25Home(identifier) || identifier instanceof NXDNTalkgroupIdentifier) ? parsed : null;
         }
         catch(NumberFormatException e)
         {
@@ -1249,6 +1244,11 @@ class ReceiverActivityMapper
     private static Integer positiveNxdn(Integer value)
     {
         return value != null && value > 0 && value <= 0xFFFF ? value : null;
+    }
+
+    private static Integer nxdnTalkgroup(Integer value)
+    {
+        return value != null && value >= 0 && value <= 0xFFFF ? value : null;
     }
 
     private static TrunkedIdentityDomain configuredIdentityDomain(Channel channel)

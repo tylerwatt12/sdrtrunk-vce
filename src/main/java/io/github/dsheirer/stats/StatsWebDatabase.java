@@ -4502,6 +4502,8 @@ class StatsWebDatabase
 
             for(Map<String,Object> row: rows)
             {
+                row.put("protocol_code", configured.protocolCode());
+                row.put("address_domain_code", configured.addressDomainCode());
                 WebEntityRef.put(row, WebEntityRef.channel(configured.configurationId()));
                 row.put("entity_tab", "groups");
             }

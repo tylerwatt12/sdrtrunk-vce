@@ -1075,6 +1075,7 @@ class StatsWebDatabaseTest
                     (75, 3600000, 1, 1, 42, 4, 1, 2, 3),
                     (75, 3600000, 2, 2, 900, 4, 1, 2, 3),
                     (76, 3600000, 1, 1, 43, 5, 2, 1, 0),
+                    (76, 3600000, 1, 1, 0, 2, 0, 1, 1),
                     (76, 3600000, 2, 2, 901, 5, 2, 1, 0)
                 """);
             statement.executeUpdate("""
@@ -1093,11 +1094,19 @@ class StatsWebDatabaseTest
         assertEquals(CONVENTIONAL_P25_CHANNEL, p25Group.get("configuration_id"));
         assertEquals("groups", p25Group.get("entity_tab"));
 
-        Map<String,Object> nxdnGroup = rows(mDatabase.channelGroupIdentities(
-            CONVENTIONAL_NXDN_CHANNEL, request("/"))).getFirst();
+        List<Map<String,Object>> nxdnGroups = rows(mDatabase.channelGroupIdentities(
+            CONVENTIONAL_NXDN_CHANNEL, request("/")));
+        Map<String,Object> nxdnGroup = nxdnGroups.getFirst();
         assertEquals(43, number(nxdnGroup.get("native_id")));
         assertEquals("NXDN Group", nxdnGroup.get("alias_name"));
         assertEquals(CONVENTIONAL_NXDN_CHANNEL, nxdnGroup.get("configuration_id"));
+        Map<String,Object> nullGroup = nxdnGroups.stream()
+            .filter(row -> number(row.get("native_id")) == 0).findFirst().orElseThrow();
+        assertEquals(1, number(nullGroup.get("group_identity_kind_code")));
+        assertEquals(2, number(nullGroup.get("logical_call_count")));
+        assertEquals(1, number(nullGroup.get("recorded_logical_call_count")));
+        assertEquals(1, number(nullGroup.get("stream_submitted_logical_call_count")));
+        assertEquals(4, number(nullGroup.get("protocol_code")));
 
         Map<String,Object> p25Radio = rows(mDatabase.channelRadios(
             CONVENTIONAL_P25_CHANNEL, request("/"))).getFirst();

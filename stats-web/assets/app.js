@@ -1669,7 +1669,8 @@ function radioDisplayId(row, id) {
 
 function groupIdentityLink(row, id, label, reference = row?.entity_ref) {
   id = groupIdentityDisplayId(row, id);
-  const text = label || identityNumber(row, id);
+  const specialLabel = specialIdentifierLabel(row, id, rowGroupIdentityKind(row));
+  const text = label || specialLabel || identityNumber(row, id);
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
     entityTarget(reference, { channel: 'groups' }) : '';
   return target ? anchor(text, target) : text;
@@ -15631,7 +15632,7 @@ function specialIdentifierLabel(row, value, kind) {
 
 function activityIdentifier(row, value, kind, reference) {
   const identifier = identityNumber(row, value);
-  if (!identifier) return '';
+  if (identifier === '') return '';
   const specialLabel = specialIdentifierLabel(row, value, kind);
   if (specialLabel) {
     const protocol = protocolFamily(row);

@@ -99,7 +99,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-20-to-21", report.steps().getLast().id());
+            assertEquals("format-21-to-22", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -778,6 +778,8 @@ class Format14To15DatabaseMigrationTest
             new Format19To20DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 20);
             new Format20To21DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stampForMigration(connection, 21);
+            new Format21To22DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             connection.commit();
 

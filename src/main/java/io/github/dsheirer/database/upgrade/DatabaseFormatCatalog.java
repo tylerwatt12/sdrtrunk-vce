@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 21;
+    public static final int CURRENT_VERSION = 22;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -76,6 +76,8 @@ public final class DatabaseFormatCatalog
         "190b00e68d988236732ad25a10de187e54944a6dd6f7d1cd7a7fd3e60956722a";
     private static final String FORMAT_21_FINGERPRINT =
         "1a99f9cf678ae68cc38248dc4eaf34c41ce32088341c264c8f79f8cd4b9b1dad";
+    private static final String FORMAT_22_FINGERPRINT =
+        "918d6a5d9530af078d94ef4827397e4d6c6d52f36f1e3306f0a43987424f0e7b";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -279,10 +281,20 @@ public final class DatabaseFormatCatalog
             "Copy existing Alias List recording, scan-list, and streaming defaults into both behavior tabs",
             "Allow future unknown calls and newly created Aliases to use independent handling defaults"));
 
+    private static final FormatDescriptor FORMAT_22 = new FormatDescriptor(22, "nxdn-null-group-statistics-v1",
+        "Distinct NXDN Null Group call statistics", FORMAT_22_FINGERPRINT, Map.of(),
+        List.of("main format 22"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format22TestDatabase.java", List.of(
+            "Preserve every administrator-owned setting and all retained receiver activity",
+            "Preserve every existing conventional call identity counter",
+            "Allow future NXDN Null Group calls, recordings, and stream submissions to use talkgroup zero",
+            "Keep the durable indexed Alias Activity summary unchanged",
+            "Keep talkgroup zero unavailable to Alias matching and editing"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19, FORMAT_20, FORMAT_21);
+            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -438,7 +450,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_21;
+        return FORMAT_22;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */

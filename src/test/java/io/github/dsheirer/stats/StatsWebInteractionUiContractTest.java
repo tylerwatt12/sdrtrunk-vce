@@ -546,11 +546,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(labels.contains("0xFFFEC0: 'PSTN Gateway'"));
         assertTrue(labels.contains("0xFFFECA: 'Trunking System Controller'"));
         assertTrue(labels.contains("0xFFFFFD: 'All Radios at Site'"));
+        assertTrue(labels.contains("0x0000: 'Null Group'"));
         assertTrue(labels.contains("0xFFF0: 'Reserved Group'"));
         assertTrue(labels.contains("0xFFF0: 'Trunking Controller'"));
         assertTrue(labels.contains("row.address_domain !== 'nxdn_type_d'"));
         assertFalse(labels.contains("identity_domain_code"));
         assertTrue(renderer.contains("node('span', 'special-identifier', specialLabel)"));
+        assertTrue(renderer.contains("if (identifier === '') return '';"));
         assertTrue(renderer.contains("groupIdentityLink(row, value, identifier, reference)"));
         assertTrue(renderer.contains("radioLink(row, value, identifier, reference)"));
         assertFalse(renderer.contains("badge('System/special'"));
@@ -583,6 +585,8 @@ class StatsWebInteractionUiContractTest
             .contains("String(numeric & 0x7FF).padStart(4, '0')"));
         assertTrue(function(source, "function radioLink(row, id, label, reference = row?.entity_ref)")
             .contains("identityNumber(row, id)"));
+        assertTrue(function(source, "function groupIdentityLink(row, id, label, reference = row?.entity_ref)")
+            .contains("specialIdentifierLabel(row, id, rowGroupIdentityKind(row))"));
         assertTrue(source.contains("render: (row) => number(row.logical_call_count)"));
     }
 

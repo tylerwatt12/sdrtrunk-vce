@@ -78,7 +78,7 @@ class Format20To21DatabaseMigrationTest
             assertEquals(aliasCount, number(statement, "SELECT count(*) FROM alias"));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(21).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
     }

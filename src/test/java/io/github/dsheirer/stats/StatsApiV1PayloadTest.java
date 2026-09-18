@@ -197,6 +197,21 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void preservesNxdnNullGroupAsAProtocolDefinedTalkgroup()
+    {
+        JsonNode group = StatsApiV1Payload.present(Map.of(
+            "configuration_id", "channel-2", "protocol_code", 4, "address_domain_code", 1,
+            "group_identity_kind_code", 1, "native_id", 0, "logical_call_count", 3));
+
+        assertEquals("nxdn", group.path("protocol").textValue());
+        assertEquals("nxdn_type_c", group.path("address_domain").textValue());
+        assertEquals("talkgroup", group.path("group_identity_kind").textValue());
+        assertEquals(0, group.path("native_id").intValue());
+        assertEquals(3, group.path("logical_call_count").intValue());
+        assertNoInternalFields(group);
+    }
+
+    @Test
     void presentsAuthoritativeNativeSystemDimensionsWithoutDatabaseCodes()
     {
         JsonNode dmr = StatsApiV1Payload.present(Map.of(

@@ -125,16 +125,17 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE);
+        create(connection, MAXIMUM_OBSERVED_SITE, true);
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
     public static void createFormat17(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE);
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false);
     }
 
-    private static void create(Connection connection, int maximumObservedSite) throws SQLException
+    private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup)
+        throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
@@ -144,7 +145,7 @@ public class ReceiverActivitySchema
             createTrunkedCallTables(statement);
             RadioSystemSchema.create(statement);
             createConventionalTables(statement);
-            createConventionalCallIdentityTable(statement);
+            createConventionalCallIdentityTable(statement, allowNxdnNullGroup);
             createP25SiteTables(statement);
             createControlChannelQualityTable(statement);
             statement.executeUpdate("""
@@ -483,6 +484,17 @@ public class ReceiverActivitySchema
         {
             statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE)
                 .replace("receiver_activity_event (", "receiver_activity_event_format18 ("));
+        }
+    }
+
+    /** Creates the replacement identity bucket used only by the adjacent format-21-to-22 migration. */
+    public static void createFormat22ConventionalCallIdentityMigrationTable(Connection connection)
+        throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(createConventionalCallIdentityBucketSql(true).replace(
+                "conventional_call_identity_bucket (", "conventional_call_identity_bucket_format22 ("));
         }
     }
 
@@ -1234,7 +1246,7 @@ public class ReceiverActivitySchema
             call.callEndEpochMilliseconds() < call.callStartEpochMilliseconds() ||
             call.configurationId() == null || call.configurationId().isBlank() || call.frequencyHertz() <= 0 ||
             call.targetKind() == null || !validNxdnId(call.sourceRadioId()) ||
-            !validNxdnId(call.talkgroupId()) || !validNxdnId(call.targetRadioId()))
+            !validNxdnTalkgroupId(call.talkgroupId()) || !validNxdnId(call.targetRadioId()))
         {
             throw new SQLException("Invalid completed conventional NXDN call");
         }
@@ -1251,6 +1263,11 @@ public class ReceiverActivitySchema
     private static boolean validNxdnId(Integer identifier)
     {
         return identifier == null || identifier > 0 && identifier <= 0xFFFF;
+    }
+
+    private static boolean validNxdnTalkgroupId(Integer identifier)
+    {
+        return identifier == null || identifier >= 0 && identifier <= 0xFFFF;
     }
 
     private static String value(Integer identifier)
@@ -2064,9 +2081,10 @@ public class ReceiverActivitySchema
      * retention. Existing site and conventional hourly buckets cannot serve this query because they contain physical
      * totals but no protocol-neutral source identity, destination kind, or patch-member dimensions.
      */
-    private static void createConventionalCallIdentityTable(Statement statement) throws SQLException
+    private static void createConventionalCallIdentityTable(Statement statement, boolean allowNxdnNullGroup)
+        throws SQLException
     {
-        statement.executeUpdate(createConventionalCallIdentityBucketSql());
+        statement.executeUpdate(createConventionalCallIdentityBucketSql(allowNxdnNullGroup));
     }
 
     /**
@@ -2100,6 +2118,19 @@ public class ReceiverActivitySchema
 
     private static String createConventionalCallIdentityBucketSql()
     {
+        return createConventionalCallIdentityBucketSql(true);
+    }
+
+    private static String createConventionalCallIdentityBucketSql(boolean allowNxdnNullGroup)
+    {
+        String identityConstraint = allowNxdnNullGroup ? """
+                    (identity_kind_code = 0 AND identity_id = 0)
+                    OR (identity_kind_code = 1 AND identity_id >= 0)
+                    OR (identity_kind_code IN (2, 3) AND identity_id > 0)
+            """.stripTrailing() : """
+                    (identity_kind_code = 0 AND identity_id = 0)
+                    OR (identity_kind_code IN (1, 2, 3) AND identity_id > 0)
+            """.stripTrailing();
         return """
             CREATE TABLE IF NOT EXISTS conventional_call_identity_bucket (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
@@ -2116,15 +2147,14 @@ public class ReceiverActivitySchema
                     channel_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
                 ),
                 CHECK (
-                    (identity_kind_code = 0 AND identity_id = 0)
-                    OR (identity_kind_code IN (1, 2, 3) AND identity_id > 0)
+%s
                 ),
                 CHECK (
                     identity_role_code = 1
                     OR (identity_role_code = 2 AND identity_kind_code = 2 AND identity_id > 0)
                 )
             ) WITHOUT ROWID
-            """;
+            """.formatted(identityConstraint);
     }
 
     private static void createP25SiteTables(Statement statement) throws SQLException
@@ -2875,8 +2905,10 @@ public class ReceiverActivitySchema
     {
         long bucket = bucketStart(output.callStartEpochMilliseconds());
 
+        String destinationId = output.destinationId() > 0 || isNxdnNullGroup(protocol, output.targetKind(),
+            output.destinationId()) ? Integer.toString(output.destinationId()) : null;
         for(CallIdentity destination: destinationIdentities(
-            output.destinationId() > 0 ? Integer.toString(output.destinationId()) : null,
+            destinationId,
             output.targetKind(), output.patchMemberTalkgroupIds(), protocol, output.identityDomain()))
         {
             upsertCallIdentityBucket(connection, channelId, bucket, IDENTITY_ROLE_DESTINATION,
@@ -2929,10 +2961,15 @@ public class ReceiverActivitySchema
         Integer target = positiveInteger(targetId);
         List<CallIdentity> identities = new ArrayList<>();
         Integer kind = TrunkedIdentityPolicy.identityKindCode(targetKind);
+        boolean nxdnNullGroup = isNxdnNullGroup(protocol, targetKind, parseInteger(targetId));
         boolean validTarget = target != null && kind != null &&
             TrunkedIdentityPolicy.isDirectoryIdentity(protocol, identityDomain, kind, target);
 
-        if(validTarget && kind == IDENTITY_KIND_PATCH_GROUP)
+        if(nxdnNullGroup)
+        {
+            identities.add(new CallIdentity(IDENTITY_KIND_TALKGROUP, 0));
+        }
+        else if(validTarget && kind == IDENTITY_KIND_PATCH_GROUP)
         {
             identities.add(new CallIdentity(IDENTITY_KIND_PATCH_GROUP, target));
         }
@@ -2963,6 +3000,12 @@ public class ReceiverActivitySchema
         }
 
         return identities;
+    }
+
+    private static boolean isNxdnNullGroup(int protocol, String targetKind, Integer targetId)
+    {
+        return protocol == PROTOCOL_NXDN && Form.TALKGROUP.name().equals(targetKind) &&
+            targetId != null && targetId == 0;
     }
 
     private static long insertReceiverActivityEvent(Connection connection,

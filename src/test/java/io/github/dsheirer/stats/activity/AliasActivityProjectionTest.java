@@ -335,14 +335,28 @@ class AliasActivityProjectionTest
 
             Long nullGroupActivity = ReceiverActivitySchema.recordNxdnConventionalCall(connection,
                 new ReceiverActivityRecords.NxdnConventionalCall(5_000, 5_750, NXDN_CONVENTIONAL,
-                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, null, 501, null, false,
+                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 0, 501, null, false,
                     TrunkedIdentityDomain.NXDN_TYPE_C), true);
-            assertNotNull(nullGroupActivity, "NXDN Null Group calls must remain persistable without a target ID");
+            assertNotNull(nullGroupActivity, "NXDN Null Group calls must retain a distinct destination");
+            assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
+                new ReceiverActivityRecords.ConventionalCallOutput(5_000, NXDN_CONVENTIONAL,
+                    ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_NXDN, "NXDN", 460_025_000L, null,
+                    0, "TALKGROUP", List.of(), 501, ReceiverActivityRecords.CallOutput.RECORDED,
+                    TrunkedIdentityDomain.NXDN_TYPE_C, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of())));
             try(Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(
-                "SELECT COUNT(*) FROM receiver_activity_event"))
+                """
+                    SELECT event.target_observed_local_id, event.target_kind_code,
+                        bucket.call_count, bucket.recorded_count
+                    FROM receiver_activity_event event
+                    JOIN conventional_call_identity_bucket bucket ON bucket.identity_kind_code=1
+                        AND bucket.identity_id=0
+                    """))
             {
                 assertTrue(rows.next());
-                assertEquals(1, rows.getInt(1));
+                assertEquals(0, rows.getInt(1));
+                assertEquals(1, rows.getInt(2));
+                assertEquals(1, rows.getInt(3));
+                assertEquals(1, rows.getInt(4));
             }
         }
     }

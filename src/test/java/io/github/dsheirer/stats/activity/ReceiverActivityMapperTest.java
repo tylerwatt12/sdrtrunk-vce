@@ -65,15 +65,15 @@ class ReceiverActivityMapperTest
     }
 
     @Test
-    void normalizesNxdnNullGroupToAnUnknownPersistedTarget()
+    void preservesNxdnNullGroupForStatistics()
     {
         NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000, 2_000, CONFIGURATION_ID,
             461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 0, 101, null, false,
             TrunkedIdentityDomain.NXDN_TYPE_C);
         ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(event);
 
-        assertEquals(ReceiverActivityRecords.NxdnTargetKind.UNKNOWN, record.targetKind());
-        assertNull(record.talkgroupId());
+        assertEquals(ReceiverActivityRecords.NxdnTargetKind.GROUP, record.targetKind());
+        assertEquals(0, record.talkgroupId());
         assertEquals(101, record.sourceRadioId());
     }
 
