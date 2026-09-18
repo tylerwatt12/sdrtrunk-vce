@@ -181,6 +181,7 @@
 .support-report-form {
   display: grid;
   gap: var(--space-4);
+  padding: var(--space-5);
 }
 
 .support-report-fields {
@@ -267,6 +268,10 @@
 
   .support-report-fields {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .support-report-form {
+    padding: var(--space-3);
   }
 
   .support-report-progress {

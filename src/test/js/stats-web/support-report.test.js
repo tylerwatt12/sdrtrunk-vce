@@ -25,3 +25,5 @@ assert.match(application, /\/api\/v1\/admin\/support-reports/);
 assert.match(application, /accessSession\.tier === 'ADMIN'/);
 assert.match(css, /\.support-report-progress/);
 assert.match(css, /\.support-report-warning/);
+assert.match(css, /\.support-report-form\s*\{[^}]*padding:\s*var\(--space-5\)/);
+assert.match(css, /\.support-report-form\s*\{\s*padding:\s*var\(--space-3\)/);
