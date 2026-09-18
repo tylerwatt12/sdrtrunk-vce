@@ -881,7 +881,6 @@ class StatsWebInteractionUiContractTest
         String callQuality = function(source, "function scannerCallQuality(call)");
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String coverageTree = function(source, "function scanListCoverageTree(coverage)");
-        String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
 
         assertTrue(html.contains("id=\"navigation-toggle\""));
@@ -985,9 +984,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("@media (max-width: 1180px)"));
         assertTrue(css.contains("body.navigation-open .primary-nav"));
 
-        assertTrue(html.contains("view=configuration&amp;tab=scan-lists"));
-        assertTrue(configuration.contains("id: 'scan-lists', label: 'Scan Lists'"));
-        assertTrue(configuration.contains("await renderAdminScanLists()"));
+        assertTrue(html.contains("data-view=\"scan-lists\" href=\"/?view=scan-lists\""));
+        assertTrue(source.contains("'scan-lists': renderAdminScanLists"));
+        assertTrue(source.contains("return renderAdminScanLists()"));
+        assertTrue(scanLists.contains("beginPage(renderContext, pageHeader('Scan Lists'"));
+        assertTrue(source.contains("function renderStreaming()"));
+        assertTrue(source.contains("function renderTuners()"));
+        assertTrue(source.contains("function renderRfPlanner()"));
+        assertFalse(source.contains("href('configuration', { tab: 'scan-lists' })"));
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));
         assertTrue(scanLists.contains("unmatched_alias_list_count"));

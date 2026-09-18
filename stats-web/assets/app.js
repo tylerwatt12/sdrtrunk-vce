@@ -6000,7 +6000,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   };
   updateSummary(scanList);
   const summaryActions = node('div', 'alias-list-summary-actions');
-  summaryActions.append(anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }),
+  summaryActions.append(anchor('Back to Scan Lists', href('scan-lists'),
     'button secondary'));
   const addAll = node('button', 'button secondary scan-list-add-all', 'Add All from Alias List');
   addAll.type = 'button';
@@ -6194,7 +6194,7 @@ async function renderAliases() {
     const missing = node('section', 'alias-editor-welcome');
     missing.append(node('h2', '', 'Scan list not found'),
       node('p', '', 'This scan list may have been deleted or changed.'),
-      anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }), 'button secondary'));
+      anchor('Back to Scan Lists', href('scan-lists'), 'button secondary'));
     main.append(missing);
     return;
   }
@@ -17971,6 +17971,9 @@ function adminScanListMemberCount(scanList) {
 }
 
 async function renderAdminScanLists() {
+  const renderContext = captureRenderContext();
+  if (!beginPage(renderContext, pageHeader('Scan Lists',
+    'Organize aliases into the listener groups used by the receiver'))) return;
   const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
   const revision = Number(response?.revision ?? 0);
   const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
@@ -18043,6 +18046,9 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 }
 
 async function renderAdminRadioReferenceSettings() {
+  const renderContext = captureRenderContext();
+  if (!beginPage(renderContext, pageHeader('RadioReference',
+    'Connect an account and choose the region used for frequency lookups'))) return;
   const body = node('div', 'admin-section-body radioreference-settings');
   const accountForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
@@ -19653,37 +19659,35 @@ async function renderSettings() {
   content.append(section('Personal preferences', overview));
 }
 
-async function renderConfiguration() {
+function renderStreaming() {
   const renderContext = captureRenderContext();
-  const availableTabs = [
-    { id: 'scan-lists', label: 'Scan Lists' },
-    { id: 'radioreference', label: 'RadioReference' },
-    { id: 'streaming', label: 'Streaming' }
-  ];
+  beginPage(renderContext, pageHeader('Streaming',
+    'Connect and manage streaming services'), comingSoonPanel('Streaming'));
+}
+
+function renderTuners() {
+  const renderContext = captureRenderContext();
+  beginPage(renderContext, pageHeader('Tuners',
+    'Inspect and configure receiver hardware'), comingSoonPanel('Tuners'));
+}
+
+function renderRfPlanner() {
+  const renderContext = captureRenderContext();
+  beginPage(renderContext, pageHeader('RF Planner',
+    'Plan channel coverage and tuner center frequencies'), rfPlanner.createPlanner(() =>
+    api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })));
+}
+
+async function renderConfiguration() {
   const requested = route.get('tab') || 'scan-lists';
-  const active = availableTabs.some((item) => item.id === requested) ? requested : 'scan-lists';
-  if (!beginPage(renderContext, pageHeader('Manage',
-    'Set up aliases, scan lists, streaming, and external data sources'),
-    tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
-  if (active === 'scan-lists') await renderAdminScanLists();
-  else if (active === 'radioreference') await renderAdminRadioReferenceSettings();
-  else content.append(comingSoonPanel('Streaming'));
+  if (requested === 'radioreference') return renderAdminRadioReferenceSettings();
+  if (requested === 'streaming') return renderStreaming();
+  return renderAdminScanLists();
 }
 
 function renderHardware() {
-  const renderContext = captureRenderContext();
-  const availableTabs = [
-    { id: 'tuners', label: 'Tuners' },
-    { id: 'rf-planner', label: 'RF Planner' }
-  ];
-  const requested = route.get('tab') || 'tuners';
-  const active = availableTabs.some((item) => item.id === requested) ? requested : 'tuners';
-  const description = active === 'rf-planner' ? 'Plan channel coverage and tuner center frequencies' :
-    'Inspect and configure receiver hardware';
-  if (!beginPage(renderContext, pageHeader('Hardware', description),
-    tabs(availableTabs.map((item) => ({ ...item, href: href('hardware', { tab: item.id }) })), active))) return;
-  content.append(active === 'rf-planner' ? rfPlanner.createPlanner(() =>
-    api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })) : comingSoonPanel('Tuners'));
+  if (route.get('tab') === 'rf-planner') return renderRfPlanner();
+  return renderTuners();
 }
 
 function adminSystemStatusSection() {
@@ -20351,7 +20355,8 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'scanner', 'configuration', 'hardware', 'tuner-spectrum', 'admin', 'credits']
+      !['live', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
+        'tuners', 'rf-planner', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
   }
@@ -20371,6 +20376,11 @@ applicationRoutes = routeFoundation.createRegistry({
   'channel-setup': renderChannelSetup,
   channel: renderChannel,
   aliases: renderAliases,
+  'scan-lists': renderAdminScanLists,
+  radioreference: renderAdminRadioReferenceSettings,
+  streaming: renderStreaming,
+  tuners: renderTuners,
+  'rf-planner': renderRfPlanner,
   configuration: renderConfiguration,
   hardware: renderHardware,
   admin: renderAdmin,

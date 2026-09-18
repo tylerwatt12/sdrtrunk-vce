@@ -21,18 +21,16 @@ class StatsWebFrequencyActionsUiContractTest
     void manageOwnsRadioReferenceLookupSettings() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String configuration = block(source, "async function renderConfiguration()");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String html = Files.readString(INDEX_HTML);
 
-        assertTrue(configuration.contains("id: 'radioreference', label: 'RadioReference'"));
-        assertFalse(configuration.contains("focused migration"));
-        assertTrue(configuration.contains("await renderAdminRadioReferenceSettings()"));
-        assertFalse(configuration.contains("comingSoonPanel('RadioReference')"));
+        assertTrue(source.contains("radioreference: renderAdminRadioReferenceSettings"));
+        assertTrue(source.contains("function renderConfiguration()"));
+        assertFalse(source.contains("focused migration"));
+        assertFalse(source.contains("comingSoonPanel('RadioReference')"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
         assertTrue(settings.contains("Disconnect RadioReference"));
-        assertTrue(html.contains("data-nav-tab=\"radioreference\" " +
-            "href=\"/?view=configuration&amp;tab=radioreference\""));
+        assertTrue(html.contains("data-view=\"radioreference\" href=\"/?view=radioreference\""));
     }
 
     @Test
