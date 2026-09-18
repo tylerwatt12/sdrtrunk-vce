@@ -10560,8 +10560,6 @@ function liveDetailFilterModel(options = {}) {
       if (catalog?.signature === next.signature) return 'same';
       const state = catalog ? 'changed' : 'initial';
       catalog = next;
-      excludedLeafKeys = new Set([...excludedLeafKeys].filter((key) => catalog.leafKeys.includes(key)));
-      excludedTimeslots = new Set([...excludedTimeslots].filter((key) => catalog.timeslots.includes(key)));
       return state;
     },
     resetFilters,
