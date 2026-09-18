@@ -29,10 +29,10 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"134\">"));
         assertTrue(html.contains("/assets/app.css?v=110"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=155\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=156\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
-        assertTrue(html.contains("data-nav-tab=\"recording\" href=\"/?view=configuration&amp;tab=recording\""));
+        assertFalse(html.contains("data-nav-tab=\"recording\""));
         assertTrue(html.contains("data-nav-tab=\"streaming\" href=\"/?view=configuration&amp;tab=streaming\""));
         assertTrue(html.contains("data-nav-tab=\"rf-planner\" href=\"/?view=hardware&amp;tab=rf-planner\""));
         assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js';"));
@@ -42,7 +42,9 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(hardware.contains("api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })"));
         assertTrue(html.contains("<span>RadioReference</span><svg class=\"nav-lock\""));
         assertFalse(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
-        assertTrue(html.contains("<use href=\"#icon-recording\"></use>"));
+        assertFalse(html.contains("<span>Recording</span><small>Coming soon</small>"));
+        assertFalse(source.contains("{ id: 'recording', label: 'Recording' }"));
+        assertFalse(source.contains("active === 'recording'"));
         assertTrue(html.contains("<use href=\"#icon-streaming\"></use>"));
         String channel = fragment(html, "<symbol id=\"icon-channel\"", "</symbol>");
         assertTrue(channel.contains("M4 18a8 8 0 0 1 16 0"));

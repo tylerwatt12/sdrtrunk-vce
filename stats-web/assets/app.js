@@ -19658,17 +19658,15 @@ async function renderConfiguration() {
   const availableTabs = [
     { id: 'scan-lists', label: 'Scan Lists' },
     { id: 'radioreference', label: 'RadioReference' },
-    { id: 'recording', label: 'Recording' },
     { id: 'streaming', label: 'Streaming' }
   ];
   const requested = route.get('tab') || 'scan-lists';
   const active = availableTabs.some((item) => item.id === requested) ? requested : 'scan-lists';
   if (!beginPage(renderContext, pageHeader('Manage',
-    'Set up aliases, scan lists, recordings, streaming, and external data sources'),
+    'Set up aliases, scan lists, streaming, and external data sources'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
   if (active === 'scan-lists') await renderAdminScanLists();
   else if (active === 'radioreference') await renderAdminRadioReferenceSettings();
-  else if (active === 'recording') content.append(comingSoonPanel('Recording'));
   else content.append(comingSoonPanel('Streaming'));
 }
 
