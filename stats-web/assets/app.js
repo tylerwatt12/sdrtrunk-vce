@@ -8512,6 +8512,28 @@ const liveChannelActivitySubscribers = new Set();
 const liveChannelActivityTables = new Map();
 let liveChannelActivityRevision = 0;
 let liveChannelActivityNeedsResync = false;
+let liveChannelActivityActiveTableId = null;
+const LIVE_UI_STATE_STORAGE_KEY = 'sdrtrunk-vce.live-ui-state.v1';
+const LIVE_DETAIL_TAB_IDS = new Set(['events', 'messages', 'channel']);
+
+function liveUiState() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LIVE_UI_STATE_STORAGE_KEY) || '{}');
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    return stored;
+  } catch (_) {
+    return {};
+  }
+}
+
+function storeLiveUiState(update) {
+  try {
+    const current = liveUiState();
+    localStorage.setItem(LIVE_UI_STATE_STORAGE_KEY, JSON.stringify({ ...current, ...update }));
+  } catch (_) {
+    //Live UI state is optional when browser storage is unavailable.
+  }
+}
 
 function applyLiveChannelActivitySnapshot(snapshot) {
   liveChannelActivityTables.clear();
@@ -10500,6 +10522,17 @@ function liveDetailFilterModel(options = {}) {
   let excludedTimeslots = new Set();
   let excludedValidity = new Set();
   let searchText = '';
+  const stateValues = (value, maximum = 256) => Array.isArray(value) ? value
+    .map((entry) => String(entry ?? '').trim()).filter(Boolean).slice(0, maximum) : [];
+  const restoreState = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    excludedLeafKeys = new Set(stateValues(value.excluded_leaf_keys));
+    excludedTimeslots = new Set(stateValues(value.excluded_timeslots));
+    excludedValidity = new Set(stateValues(value.excluded_validity, 2)
+      .filter((entry) => entry === 'valid' || entry === 'invalid'));
+    searchText = String(value.search || '').trim().slice(0, 256).toLowerCase();
+  };
+  restoreState(options.initialState);
   const enabledLeafCount = () => catalog ?
     catalog.leafKeys.filter((key) => !excludedLeafKeys.has(key)).length : 0;
   const enabledTimeslotCount = () => catalog ?
@@ -10527,6 +10560,8 @@ function liveDetailFilterModel(options = {}) {
       if (catalog?.signature === next.signature) return 'same';
       const state = catalog ? 'changed' : 'initial';
       catalog = next;
+      excludedLeafKeys = new Set([...excludedLeafKeys].filter((key) => catalog.leafKeys.includes(key)));
+      excludedTimeslots = new Set([...excludedTimeslots].filter((key) => catalog.timeslots.includes(key)));
       return state;
     },
     resetFilters,
@@ -10567,7 +10602,13 @@ function liveDetailFilterModel(options = {}) {
       if (!options.validity || excludedValidity.size === 0) return true;
       return !excludedValidity.has(value === true ? 'valid' : 'invalid');
     },
-    query: () => searchText
+    query: () => searchText,
+    state: () => ({
+      excluded_leaf_keys: [...excludedLeafKeys].sort(),
+      excluded_timeslots: [...excludedTimeslots].sort(),
+      excluded_validity: [...excludedValidity].sort(),
+      search: searchText
+    })
   };
 }
 
@@ -10608,6 +10649,7 @@ function liveDetailFilterController(options) {
   const notifyChange = () => {
     updateCompactSummary();
     options.onChange?.();
+    options.onStateChange?.(model.state());
   };
 
   const closeModal = () => {
@@ -10843,7 +10885,9 @@ function liveMessagesPane() {
     searchPlaceholder: 'Search message text',
     timeslots: true,
     validity: true,
-    onChange: () => scheduleRender()
+    initialState: liveUiState().message_filters,
+    onChange: () => scheduleRender(),
+    onStateChange: (state) => storeLiveUiState({ message_filters: state })
   });
   toolbar.append(selectionLabel, filters.element);
   const gap = node('div', 'live-detail-gap');
@@ -13722,12 +13766,15 @@ function tunerSpectrumPanel(snapPresetDocument) {
 }
 
 function liveEventsPanel(onCollapse) {
+  const savedUiState = liveUiState();
   const events = new Map();
   const order = [];
   let selection = null;
   let paused = false;
   let eventsActive = true;
-  let collapsed = false;
+  let collapsed = savedUiState.details_collapsed === true;
+  let activePaneId = LIVE_DETAIL_TAB_IDS.has(savedUiState.details_active_tab) ?
+    savedUiState.details_active_tab : 'events';
   let stream = null;
   let streamEpoch = 0;
   let renderTimer = null;
@@ -13762,7 +13809,9 @@ function liveEventsPanel(onCollapse) {
     title: 'Event filters',
     typeHeading: 'Event types',
     searchPlaceholder: 'Search parties or details',
-    onChange: () => scheduleRender()
+    initialState: savedUiState.event_filters,
+    onChange: () => scheduleRender(),
+    onStateChange: (state) => storeLiveUiState({ event_filters: state })
   });
   eventToolbar.append(selectionLabel, filters.element);
   const eventGap = node('div', 'live-detail-gap');
@@ -13943,29 +13992,30 @@ function liveEventsPanel(onCollapse) {
   };
 
   const panes = { events: eventPane, messages: messagesPane, channel: channelPane };
+  const selectPane = (id, persist = true) => {
+    activePaneId = id;
+    Object.entries(panes).forEach(([paneId, pane]) => {
+      const active = paneId === id;
+      pane.hidden = !active;
+      tabBar.querySelector(`[data-tab="${paneId}"]`)?.setAttribute('aria-selected', String(active));
+    });
+    messagesController.setActive(id === 'messages');
+    channelController.setActive(id === 'channel');
+    const nextEventsActive = id === 'events';
+    if (eventsActive && !nextEventsActive) closeStream();
+    eventsActive = nextEventsActive;
+    if (persist) storeLiveUiState({ details_active_tab: id });
+    sync();
+  };
   ['events', 'messages', 'channel'].forEach((id) => {
     const button = node('button', 'live-details-tab', id[0].toUpperCase() + id.slice(1));
     button.type = 'button';
     button.setAttribute('role', 'tab');
-    button.addEventListener('click', () => {
-      Object.entries(panes).forEach(([paneId, pane]) => {
-        const active = paneId === id;
-        pane.hidden = !active;
-        tabBar.querySelector(`[data-tab="${paneId}"]`)?.setAttribute('aria-selected', String(active));
-      });
-      messagesController.setActive(id === 'messages');
-      channelController.setActive(id === 'channel');
-      const nextEventsActive = id === 'events';
-      if (eventsActive && !nextEventsActive) {
-        closeStream();
-      }
-      eventsActive = nextEventsActive;
-      sync();
-    });
+    button.addEventListener('click', () => selectPane(id));
     button.dataset.tab = id;
-    button.setAttribute('aria-selected', String(id === 'events'));
+    button.setAttribute('aria-selected', String(id === activePaneId));
     tabBar.append(button);
-    panes[id].hidden = id !== 'events';
+    panes[id].hidden = id !== activePaneId;
   });
 
   collapse.addEventListener('click', () => {
@@ -13976,6 +14026,7 @@ function liveEventsPanel(onCollapse) {
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
     onCollapse(collapsed);
+    storeLiveUiState({ details_collapsed: collapsed });
     sync();
   });
   pause.addEventListener('click', () => {
@@ -13987,6 +14038,15 @@ function liveEventsPanel(onCollapse) {
     channelController.setPaused(paused);
     if (!paused) scheduleRender();
   });
+  selectPane(activePaneId, false);
+  if (collapsed) {
+    panel.classList.add('collapsed');
+    collapse.textContent = 'Expand';
+    collapse.setAttribute('aria-expanded', 'false');
+    messagesController.setCollapsed(true);
+    channelController.setCollapsed(true);
+    onCollapse(true);
+  }
   renderEvents();
   return {
     element: panel,
@@ -14226,6 +14286,7 @@ function livePresentedTableRows(tableValue, presentation) {
 }
 
 function liveChannelsSection(onSelectionChange) {
+  liveChannelActivityActiveTableId = String(liveUiState().active_channel_table_id || '').trim() || null;
   const tables = new Map();
   const tabNodes = new Map();
   const dismissedStoppedTables = new Set();
@@ -14363,6 +14424,7 @@ function liveChannelsSection(onSelectionChange) {
     titleActions.append(presentationSettings);
   }
   let activeTableId = null;
+  let applyingSnapshot = false;
   let selection = null;
   let selectRow = () => {};
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
@@ -14401,6 +14463,8 @@ function liveChannelsSection(onSelectionChange) {
     if (!value) return;
     clearSelection();
     activeTableId = tableId;
+    liveChannelActivityActiveTableId = tableId;
+    storeLiveUiState({ active_channel_table_id: tableId });
     const activeFilter = presentation.show_only_active_trunked_channels && tableId !== 'conventional';
     liveTable.tableController.setSortable(!activeFilter);
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
@@ -14472,7 +14536,8 @@ function liveChannelsSection(onSelectionChange) {
       });
       tab.append(select, title, close);
       tabNodes.set(value.table_id, tab);
-      tabBar.append(tab);
+      if(value.table_id === 'conventional') tabBar.prepend(tab);
+      else tabBar.append(tab);
     }
     const label = value.title || value.channel_name || value.table_id;
     const select = tab.querySelector('.channels-tab-select');
@@ -14527,10 +14592,19 @@ function liveChannelsSection(onSelectionChange) {
     close.setAttribute('aria-label', `Close stopped channel ${label}`);
     if (requestedChannel && value.configuration_id === requestedChannel && activeTableId !== value.table_id) {
       showTable(value.table_id);
-    } else if (!activeTableId) {
+    } else if (!applyingSnapshot && !activeTableId && (!liveChannelActivityActiveTableId ||
+      liveChannelActivityActiveTableId === value.table_id)) {
       showTable(tables.has('conventional') ? 'conventional' : value.table_id);
     }
     else updateVisibleRows(value);
+  };
+
+  const showFallbackTable = () => {
+    if (activeTableId) return;
+    const preferred = liveChannelActivityActiveTableId;
+    const fallback = tables.has(preferred) ? preferred :
+      (tables.has('conventional') ? 'conventional' : tables.keys().next().value);
+    if (fallback) showTable(fallback);
   };
 
   const removeTable = (tableId) => {
@@ -14550,10 +14624,13 @@ function liveChannelsSection(onSelectionChange) {
     snapshot: (snapshot) => {
       const values = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
       const tableIds = new Set(values.map((value) => String(value?.table_id || '')).filter(Boolean));
+      applyingSnapshot = true;
       [...tables.keys()].forEach((tableId) => {
         if (!tableIds.has(tableId)) removeTable(tableId);
       });
       values.forEach(upsertTable);
+      applyingSnapshot = false;
+      showFallbackTable();
     },
     activityTable: (update) => {
       if (update.operation === 'remove') removeTable(update.table_id);
