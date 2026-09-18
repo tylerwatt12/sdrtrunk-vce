@@ -295,7 +295,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"133\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"134\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -627,7 +627,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=108"));
+        assertTrue(html.contains("/assets/app.css?v=109"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1383,8 +1383,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("All profiles use 8-bit spectrum data."));
         assertTrue(parameters.contains("profile: spectrumProfile"));
         assertTrue(acceptState.contains("Object.hasOwn(TUNER_SPECTRUM_PROFILES, acceptedProfile)"));
-        assertFalse(source.contains("_STORAGE_KEY"));
-        assertFalse(source.contains("localStorage"));
+        assertTrue(source.contains("LIVE_UI_STATE_STORAGE_KEY"));
+        assertFalse(source.contains("TUNER_SPECTRUM_STORAGE_KEY"));
         assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile'"));
         assertFalse(source.contains("function tunerPersistentSpectrumProfile(value)"));
         assertTrue(tuner.contains("profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE"));

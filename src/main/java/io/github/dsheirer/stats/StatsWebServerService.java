@@ -50,6 +50,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.health.ReceiverHealthService;
+import io.github.dsheirer.support.SupportBundleService;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
@@ -70,6 +71,7 @@ import io.github.dsheirer.web.http.WebSessionHttpController;
 import io.github.dsheirer.web.http.WebReceiverSettingsHttpController;
 import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
 import io.github.dsheirer.web.http.SpectrumSnapPresetHttpController;
+import io.github.dsheirer.web.http.SupportReportHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
@@ -162,6 +164,7 @@ public class StatsWebServerService implements AutoCloseable
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final ReceiverHealthService mReceiverHealthService;
+    private final SupportBundleService mSupportBundleService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
@@ -284,6 +287,9 @@ public class StatsWebServerService implements AutoCloseable
         });
         mReceiverHealthService = new ReceiverHealthService(userPreferences, tunerManager,
             channelProcessingManager, activityLogService);
+        mSupportBundleService = new SupportBundleService(mWebAccessDatabasePath,
+            mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog(),
+            mReceiverHealthService::snapshot);
         mReceiverHealthService.setWebStatusSupplier(this::receiverHealthObserverStatus);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
@@ -736,6 +742,11 @@ public class StatsWebServerService implements AutoCloseable
             new P25BandplanOverrideHttpController(mUserPreferences.getP25BandplanOverrideRegistry());
         server.createContext(P25BandplanOverrideHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, bandplanOverrideController::handle));
+
+        SupportReportHttpController supportReportController =
+            new SupportReportHttpController(mSupportBundleService);
+        server.createContext(SupportReportHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, supportReportController::handle));
 
         WebUserPreferencesHttpController userPreferencesController = new WebUserPreferencesHttpController(
             mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));
@@ -2253,6 +2264,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         mClosed = true;
+        mSupportBundleService.close();
         mReceiverHealthService.close();
         mTlsMaintenanceExecutor.shutdownNow();
         MyEventBus.getGlobalEventBus().unregister(this);

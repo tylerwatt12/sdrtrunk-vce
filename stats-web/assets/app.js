@@ -702,6 +702,9 @@ function updateNavigationAccess() {
   document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
     group.hidden = !group.querySelector('a[data-view]:not([hidden])');
   });
+  const supportReport = document.getElementById('support-report-indicator');
+  if (supportReport) supportReport.hidden = !(accessSession.tier === 'ADMIN' &&
+    capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS));
 }
 
 function updateAccessControls() {
@@ -19754,11 +19757,342 @@ function adminSettingsTree(groups, active) {
   return navigation;
 }
 
+const supportReportCategories = Object.freeze([
+  { id: 'audio-recordings', label: 'Audio and recordings', issues: [
+    ['no-audio', 'No audio', ['application', 'health', 'hardware', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['poor-audio', 'Broken or poor audio', ['application', 'health', 'hardware', 'setup', 'logs', 'recent-activity']],
+    ['not-recording', 'Calls are not recording', ['application', 'health', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['browser-playback', 'Browser playback problem', ['application', 'health', 'setup', 'aliases', 'logs', 'recent-activity']]
+  ] },
+  { id: 'tuners-reception', label: 'Tuners and reception', issues: [
+    ['tuner-not-found', 'Tuner is not detected', ['application', 'health', 'hardware', 'setup', 'logs']],
+    ['usb', 'USB connection problem', ['application', 'health', 'hardware', 'setup', 'logs']],
+    ['channel-start', 'Channel will not start', ['application', 'health', 'hardware', 'setup', 'logs']],
+    ['poor-reception', 'Poor or unstable reception', ['application', 'health', 'hardware', 'setup', 'logs', 'recent-activity']]
+  ] },
+  { id: 'decoding-calls', label: 'Decoding and calls', issues: [
+    ['calls-missing', 'Calls are missing', ['application', 'health', 'hardware', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['call-info', 'Call information is incorrect', ['application', 'health', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['control-channel', 'Control or trunking problem', ['application', 'health', 'hardware', 'setup', 'logs', 'recent-activity']],
+    ['radio-format', 'P25, DMR, NXDN, or conventional problem', ['application', 'health', 'hardware', 'setup', 'aliases', 'logs', 'recent-activity']]
+  ] },
+  { id: 'streaming', label: 'Streaming', issues: [
+    ['not-uploading', 'Calls are not uploading', ['application', 'health', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['metadata', 'Uploaded call information is incorrect', ['application', 'health', 'setup', 'aliases', 'logs', 'recent-activity']],
+    ['delay', 'Uploads are delayed', ['application', 'health', 'setup', 'logs', 'recent-activity']],
+    ['connection', 'Streaming connection problem', ['application', 'health', 'setup', 'logs']]
+  ] },
+  { id: 'web-interface', label: 'Web interface', issues: [
+    ['page-display', 'Page or display problem', ['application', 'health', 'logs']],
+    ['live-page', 'Live page problem', ['application', 'health', 'setup', 'logs', 'recent-activity']],
+    ['sign-in', 'Sign-in or access problem', ['application', 'health', 'logs']],
+    ['slow', 'Page is slow or unresponsive', ['application', 'health', 'logs', 'recent-activity']]
+  ] },
+  { id: 'setup-upgrades', label: 'Setup and upgrades', issues: [
+    ['wont-start', 'Application will not start', ['application', 'setup', 'logs']],
+    ['upgrade', 'Upgrade or data move problem', ['application', 'setup', 'aliases', 'logs']],
+    ['import', 'Import problem', ['application', 'setup', 'aliases', 'logs']],
+    ['settings', 'Settings are not saved', ['application', 'setup', 'logs']]
+  ] },
+  { id: 'other', label: 'Other', issues: [
+    ['other', 'Something else', ['application', 'health', 'setup', 'logs', 'recent-activity']]
+  ] }
+]);
+
+const supportReportSections = Object.freeze([
+  ['application', 'Application and computer details',
+    'App version, operating system, processor, memory, and storage totals.'],
+  ['health', 'Current receiver status',
+    'Current warnings, recently cleared problems, receiver workload, output, and service status.'],
+  ['hardware', 'Tuners and USB devices',
+    'Connected tuners, USB connection performance, incoming radio data, and channel processing.'],
+  ['setup', 'Receiver and channel setup',
+    'Channel names, radio formats, frequencies, sources, and recording choices. Private service details are removed.'],
+  ['aliases', 'Aliases and listening setup',
+    'Aliases, scan lists, recording choices, and stream assignments. Passwords and service keys are never included.'],
+  ['logs', 'Recent application messages',
+    'The current and previous application log, limited in size with private values removed.'],
+  ['recent-activity', 'Recent call and activity history',
+    'Available activity from approximately the last two hours.'],
+  ['full-activity', 'Full activity history',
+    'All available activity history. This may take much longer and create a very large upload.']
+]);
+
+function supportReportSelect(entries) {
+  const select = node('select', 'ui-select');
+  entries.forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    select.append(option);
+  });
+  return select;
+}
+
+function renderAdminSupportReport() {
+  pageTitleController.update({ pageTitle: 'Report a problem' });
+  const form = node('form', 'admin-form support-report-form');
+  const title = node('input', 'ui-input');
+  title.type = 'text';
+  title.required = true;
+  title.maxLength = 160;
+  title.autocomplete = 'off';
+  const email = node('input', 'ui-input');
+  email.type = 'email';
+  email.required = true;
+  email.maxLength = 254;
+  email.autocomplete = 'email';
+  const description = node('textarea', 'ui-input support-report-textarea');
+  description.required = true;
+  description.maxLength = 10000;
+  description.rows = 6;
+  const steps = node('textarea', 'ui-input support-report-textarea');
+  steps.required = true;
+  steps.maxLength = 10000;
+  steps.rows = 6;
+  const category = supportReportSelect(supportReportCategories.map((entry) => [entry.id, entry.label]));
+  const issue = supportReportSelect([]);
+  const identityFields = node('div', 'support-report-fields');
+  identityFields.append(formField('Title for your issue', title), formField('Email address', email,
+    'Used only to follow up about this report.'), formField('Category', category), formField('Issue', issue));
+  form.append(identityFields, formField('Description for your issue', description),
+    formField('Steps to reproduce this issue', steps));
+
+  const choices = node('details', 'support-report-options');
+  choices.open = true;
+  choices.append(node('summary', '', 'Information to include'));
+  const choiceList = node('div', 'support-report-choice-list');
+  const controls = new Map();
+  supportReportSections.forEach(([id, label, detail]) => {
+    const item = preferenceCheckbox(`support-${id}`, label, false, detail);
+    item.input.dataset.supportSection = id;
+    controls.set(id, item.input);
+    choiceList.append(item.control);
+  });
+  const fullWarning = node('div', 'support-report-warning',
+    'Full activity history may take much longer to prepare and upload, especially on a busy receiver.');
+  fullWarning.hidden = true;
+  choiceList.append(fullWarning);
+  choices.append(choiceList);
+  form.append(choices);
+
+  const status = node('div', 'admin-form-message support-report-message');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  const progressWrap = node('div', 'support-report-progress');
+  progressWrap.hidden = true;
+  const progress = node('progress');
+  progress.max = 100;
+  progress.value = 0;
+  const progressLabel = node('span', '', 'Waiting');
+  progressWrap.append(progress, progressLabel);
+  const outputWrap = node('details', 'support-report-output');
+  outputWrap.hidden = true;
+  outputWrap.append(node('summary', '', 'What’s happening'));
+  const output = node('pre');
+  outputWrap.append(output);
+
+  const generate = node('button', '', 'Generate Support Bundle');
+  generate.type = 'submit';
+  const stop = node('button', 'secondary', 'Stop');
+  stop.type = 'button';
+  stop.hidden = true;
+  const download = anchor('Download Support Bundle', '#', 'button secondary');
+  download.hidden = true;
+  const submit = node('button', '', 'Submit Bug Report');
+  submit.type = 'button';
+  submit.hidden = true;
+  const actions = node('div', 'admin-form-actions');
+  actions.append(generate, stop, download, submit);
+  form.append(progressWrap, outputWrap, status, actions);
+
+  let jobId = null;
+  let working = false;
+  let generated = false;
+  const reportInputs = [title, email, description, steps, category, issue, ...controls.values()];
+  const setInputsDisabled = (disabled) => {
+    reportInputs.forEach((input) => { input.disabled = disabled; });
+    generate.disabled = disabled;
+  };
+  const invalidateBundle = () => {
+    if (!generated || working) return;
+    const oldJob = jobId;
+    jobId = null;
+    generated = false;
+    submit.hidden = true;
+    download.hidden = true;
+    status.textContent = 'The report changed. Generate a new support bundle before submitting.';
+    if (oldJob) void requestJson(`/api/v1/admin/support-reports/${encodeURIComponent(oldJob)}/cancel`,
+      { method: 'POST', page: false }).catch(() => {});
+  };
+  reportInputs.forEach((input) => input.addEventListener('input', invalidateBundle));
+
+  const currentCategory = () => supportReportCategories.find((entry) => entry.id === category.value) ||
+    supportReportCategories[0];
+  const applyPreset = () => {
+    const categoryValue = currentCategory();
+    issue.replaceChildren(...categoryValue.issues.map(([value, label]) => {
+      const option = node('option', '', label);
+      option.value = value;
+      return option;
+    }));
+    const preset = new Set(categoryValue.issues[0]?.[2] || []);
+    controls.forEach((input, id) => setUiToggle(input, preset.has(id)));
+    fullWarning.hidden = !controls.get('full-activity').checked;
+    invalidateBundle();
+  };
+  const applyIssuePreset = () => {
+    const selected = currentCategory().issues.find(([id]) => id === issue.value);
+    const preset = new Set(selected?.[2] || []);
+    controls.forEach((input, id) => setUiToggle(input, preset.has(id)));
+    fullWarning.hidden = !controls.get('full-activity').checked;
+    invalidateBundle();
+  };
+  category.addEventListener('change', applyPreset);
+  issue.addEventListener('change', applyIssuePreset);
+  controls.get('full-activity').addEventListener('change', () => {
+    if (controls.get('full-activity').checked) setUiToggle(controls.get('recent-activity'), false);
+    fullWarning.hidden = !controls.get('full-activity').checked;
+  });
+  controls.get('recent-activity').addEventListener('change', () => {
+    if (controls.get('recent-activity').checked) setUiToggle(controls.get('full-activity'), false);
+    fullWarning.hidden = !controls.get('full-activity').checked;
+  });
+  applyPreset();
+
+  const updateJob = (job) => {
+    progress.value = Number(job.progress) || 0;
+    progressLabel.textContent = job.message || 'Working…';
+    status.textContent = job.message || '';
+    output.textContent = Array.isArray(job.output) ? job.output.join('\n') : '';
+    outputWrap.hidden = !output.textContent;
+    if (job.state === 'ready') {
+      working = false;
+      generated = true;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      progressWrap.hidden = false;
+      const size = adminStatusBytes(job.bytes);
+      status.textContent = `Support bundle ready · ${size}`;
+      submit.hidden = false;
+      download.hidden = false;
+      download.href = `/api/v1/admin/support-reports/${encodeURIComponent(jobId)}/download`;
+    } else if (job.state === 'uploaded') {
+      working = false;
+      generated = false;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      submit.hidden = true;
+      download.hidden = true;
+      status.textContent = job.message;
+    } else if (job.state === 'uploading') {
+      stop.hidden = true;
+    } else if (job.state === 'cancelled' || job.state === 'failed') {
+      working = false;
+      generated = false;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      submit.hidden = true;
+      download.hidden = true;
+    }
+  };
+  const poll = async () => {
+    if (!jobId || !form.isConnected) return;
+    try {
+      const job = await api(`/api/v1/admin/support-reports/${encodeURIComponent(jobId)}`, {}, { page: false });
+      updateJob(job);
+      if (['queued', 'generating', 'uploading'].includes(job.state)) pageTimeout(poll, 750);
+    } catch (error) {
+      working = false;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      status.textContent = error.message;
+    }
+  };
+
+  stop.addEventListener('click', async () => {
+    if (!jobId || !working) return;
+    stop.disabled = true;
+    status.textContent = 'Stopping…';
+    try {
+      const job = await requestJson(`/api/v1/admin/support-reports/${encodeURIComponent(jobId)}/cancel`,
+        { method: 'POST', page: false });
+      updateJob(job);
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      stop.disabled = false;
+    }
+  });
+
+  submit.addEventListener('click', async () => {
+    if (!jobId || working) return;
+    working = true;
+    setInputsDisabled(true);
+    submit.hidden = true;
+    download.hidden = true;
+    stop.hidden = true;
+    try {
+      const job = await requestJson(`/api/v1/admin/support-reports/${encodeURIComponent(jobId)}/submit`,
+        { method: 'POST', page: false });
+      updateJob(job);
+      pageTimeout(poll, 500);
+    } catch (error) {
+      working = false;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      submit.hidden = false;
+      download.hidden = false;
+      status.textContent = error.message;
+    }
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (working || !form.reportValidity()) return;
+    const sections = [...controls].filter(([, input]) => input.checked).map(([id]) => id);
+    if (!sections.length) {
+      status.textContent = 'Choose at least one item to include.';
+      choices.open = true;
+      return;
+    }
+    working = true;
+    generated = false;
+    setInputsDisabled(true);
+    progressWrap.hidden = false;
+    outputWrap.hidden = true;
+    output.textContent = '';
+    progress.value = 0;
+    progressLabel.textContent = 'Starting…';
+    stop.hidden = false;
+    submit.hidden = true;
+    download.hidden = true;
+    status.textContent = 'Starting support bundle…';
+    try {
+      const job = await requestJson('/api/v1/admin/support-reports', { method: 'POST', page: false, body: {
+        title: title.value, email: email.value, category: currentCategory().label,
+        issue: currentCategory().issues.find(([id]) => id === issue.value)?.[1] || issue.value,
+        description: description.value, steps: steps.value, sections
+      } });
+      jobId = job.id;
+      updateJob(job);
+      pageTimeout(poll, 500);
+    } catch (error) {
+      working = false;
+      setInputsDisabled(false);
+      stop.hidden = true;
+      status.textContent = error.message;
+    }
+  });
+
+  content.append(section('Report a problem', form));
+}
+
 function adminSettingsGroups() {
   const allowed = (capability) => capabilityAllowed(capability);
   return [
     { label: 'Receiver status', open: true, items: [
-      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH }
+      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+      { id: 'support', label: 'Report a problem', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
     ] },
     { label: 'Accounts & access', items: [
       { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
@@ -19822,6 +20156,7 @@ async function renderAdmin() {
   shell.append(adminSettingsTree(groups, active), body);
   content.append(shell);
   if (active === 'health') await renderAdminHealth();
+  else if (active === 'support') renderAdminSupportReport();
   else if (active === 'live-timing') {
     pageTitleController.update({ pageTitle: 'Receiver-wide Live timing' });
     await renderAdminReceiverBehaviorSettings();

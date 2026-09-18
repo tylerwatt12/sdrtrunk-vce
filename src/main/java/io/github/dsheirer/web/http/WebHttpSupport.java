@@ -25,7 +25,7 @@ import java.util.Set;
 /** Bounded request parsing and response helpers shared by the small web-access controllers. */
 final class WebHttpSupport
 {
-    private static final int MAXIMUM_JSON_BODY_BYTES = 16 * 1024;
+    private static final int MAXIMUM_JSON_BODY_BYTES = 96 * 1024;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
         .build())

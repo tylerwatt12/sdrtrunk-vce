@@ -49,6 +49,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("receiver-health alert catalog", "receiver-health-alerts.test.js", CORE_MODULES),
         contract("receiver-health pagination", "receiver-health-pagination.test.js", APP_JAVASCRIPT),
         contract("status availability", "status-availability.test.js", APP_JAVASCRIPT),
+        contract("support report", "support-report.test.js", APP_JAVASCRIPT),
         contract("tuner idle markers", "tuner-idle-markers.test.js", APP_JAVASCRIPT),
         contract("web call player", "web-call-player.test.js", WEB_CALL_PLAYER));
 
