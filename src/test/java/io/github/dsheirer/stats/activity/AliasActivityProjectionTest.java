@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -331,6 +332,18 @@ class AliasActivityProjectionTest
                     TrunkedIdentityDomain.NXDN_TYPE_C));
             assertEquals(2, metric(connection, 42, "logical_call_count"),
                 "an NXDN self/private call is one logical identity contribution");
+
+            Long nullGroupActivity = ReceiverActivitySchema.recordNxdnConventionalCall(connection,
+                new ReceiverActivityRecords.NxdnConventionalCall(5_000, 5_750, NXDN_CONVENTIONAL,
+                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, null, 501, null, false,
+                    TrunkedIdentityDomain.NXDN_TYPE_C), true);
+            assertNotNull(nullGroupActivity, "NXDN Null Group calls must remain persistable without a target ID");
+            try(Statement query = connection.createStatement(); ResultSet rows = query.executeQuery(
+                "SELECT COUNT(*) FROM receiver_activity_event"))
+            {
+                assertTrue(rows.next());
+                assertEquals(1, rows.getInt(1));
+            }
         }
     }
 

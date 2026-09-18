@@ -1202,16 +1202,15 @@ public class ReceiverActivitySchema
             return null;
         }
 
-        String targetId = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
-            value(call.talkgroupId()) :
-            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ?
-                value(call.targetRadioId()) : null;
-        String targetKind = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
-            Form.TALKGROUP.name() :
-            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ? Form.RADIO.name() : null;
-        String eventType = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP ?
+        boolean groupTarget = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.GROUP &&
+            call.talkgroupId() != null;
+        boolean privateTarget = call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE &&
+            call.targetRadioId() != null;
+        String targetId = groupTarget ? value(call.talkgroupId()) : privateTarget ? value(call.targetRadioId()) : null;
+        String targetKind = groupTarget ? Form.TALKGROUP.name() : privateTarget ? Form.RADIO.name() : null;
+        String eventType = groupTarget ?
             (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
-            call.targetKind() == ReceiverActivityRecords.NxdnTargetKind.PRIVATE ?
+            privateTarget ?
                 (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
                 (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());

@@ -129,6 +129,14 @@ class ReceiverActivityMapper
         Integer sourceRadio = positiveNxdn(event.sourceRadioId());
         Integer targetRadio = positiveNxdn(event.targetRadioId());
 
+        // NXDN Null Group (0x0000) is valid signaling but is not a persistable group identity.  Preserve the call
+        // as an unknown-target observation instead of emitting GROUP with a null target and violating the activity
+        // schema's target-kind constraint.
+        if(targetKind == ReceiverActivityRecords.NxdnTargetKind.GROUP && talkgroup == null)
+        {
+            targetKind = ReceiverActivityRecords.NxdnTargetKind.UNKNOWN;
+        }
+
         if(targetKind != ReceiverActivityRecords.NxdnTargetKind.GROUP)
         {
             talkgroup = null;

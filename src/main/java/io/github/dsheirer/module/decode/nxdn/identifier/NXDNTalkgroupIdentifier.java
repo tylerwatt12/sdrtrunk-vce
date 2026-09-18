@@ -51,6 +51,17 @@ public class NXDNTalkgroupIdentifier extends TalkgroupIdentifier
     }
 
     /**
+     * NXDN reserves group 0 as the Null Group value.  It is signaling filler rather than a user-configurable
+     * talkgroup, but it still must remain in the identifier collection so unmatched-call routing can handle the
+     * call.  See NXDN TS 1-A v2.1, section 6.5.4, table 6.5-3.
+     */
+    @Override
+    public boolean isValid()
+    {
+        return getValue() != null && (getValue() == 0 || super.isValid());
+    }
+
+    /**
      * Indicates if the identifier is for a Type-D system.
      */
     public boolean isTypeD()

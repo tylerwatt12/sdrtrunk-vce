@@ -23,8 +23,10 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
@@ -137,6 +139,24 @@ class ResolvedCallPolicyTest
         assertTrue(aliasList.getAliases(destination).isEmpty(), "The test must publish a replacement lookup index");
         assertEquals(AliasList.TalkgroupMatchStatus.MATCHED, context.talkgroupMatchStatus());
         assertEquals(Set.of(101L), context.matchedAliasIds());
+    }
+
+    @Test
+    void retainsNxdnNullGroupForUnmatchedRouting()
+    {
+        AliasListDefinition definition = new AliasListDefinition("NXDN", AliasListFamily.NXDN);
+        definition.setId(10);
+        AliasList aliasList = new AliasList(definition);
+        NXDNTalkgroupIdentifier nullGroup = NXDNTalkgroupIdentifier.createTo(0);
+        MutableIdentifierCollection mutable = new MutableIdentifierCollection();
+        mutable.update(nullGroup);
+
+        assertTrue(mutable.getIdentifiers().contains(nullGroup));
+        ResolvedCallPolicy policy = ResolvedCallPolicy.capture(snapshot(aliasList,
+            new IdentifierCollection(mutable.getIdentifiers())));
+
+        assertEquals(AliasList.TalkgroupMatchStatus.UNMATCHED,
+            policy.matchContexts().getFirst().talkgroupMatchStatus());
     }
 
     private static AudioCallSnapshot snapshot(Identifier<?> destination)

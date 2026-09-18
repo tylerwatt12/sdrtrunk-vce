@@ -29,6 +29,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.am.AMTalkgroup;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
@@ -128,6 +129,20 @@ class CompletedCallScanListMatcherTest
         knownPatch.addPatchedRadio(APCO25RadioIdentifier.createFrom(9001));
         assertEquals(Set.of(PATCH.getId()),
             matcher.match(call(aliasList, APCO25PatchGroup.create(knownPatch))));
+    }
+
+    @Test
+    void routesNxdnNullGroupThroughTheUnmatchedScanList()
+    {
+        AliasListDefinition definition = new AliasListDefinition("NXDN", AliasListFamily.NXDN);
+        definition.setId(10);
+        AliasList aliasList = new AliasList(definition);
+        CompletedCallScanListMatcher matcher = matcher(Map.of(), Map.of(10L, Set.of(UNKNOWN.getId())));
+        CompletedAudioCall nullGroup = call(aliasList, NXDNTalkgroupIdentifier.createTo(0));
+
+        assertEquals(AliasList.TalkgroupMatchStatus.UNMATCHED,
+            nullGroup.resolvedPolicy().matchContexts().getFirst().talkgroupMatchStatus());
+        assertEquals(Set.of(UNKNOWN.getId()), matcher.match(nullGroup));
     }
 
     @Test
