@@ -140,7 +140,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(note.contains("page.unknown_source_observation_count"));
         assertFalse(activity.contains("/api/v1/activity-analytics"));
         assertFalse(activity.contains("group_by"));
-        assertFalse(activity.contains("detailedHistoryAvailable()"));
+        assertTrue(activity.contains("detailedHistoryAvailable()"));
+        assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
+        assertTrue(activity.contains("Saved activity is unavailable."));
         assertFalse(activity.contains("Retained-detail sample"));
         assertFalse(activity.contains("openReadOnlyModal"));
         assertFalse(activity.contains("pageInterval"));

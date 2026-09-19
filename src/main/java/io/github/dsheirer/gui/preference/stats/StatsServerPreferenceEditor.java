@@ -128,7 +128,7 @@ public class StatsServerPreferenceEditor extends HBox
         {
             mDetailedHistoryCheckBox = new CheckBox("Store Detailed Event History");
             mDetailedHistoryCheckBox.setTooltip(new Tooltip(
-                "Additionally stores individual compact P25 event rows for Activity pages."));
+                "Stores individual event rows for historical Activity pages. New activity is saved from the time this is enabled."));
             mDetailedHistoryCheckBox.setSelected(mApplicationPreference.isStatsDetailedHistoryEnabled());
             mDetailedHistoryCheckBox.setOnAction(event ->
                 mApplicationPreference.setStatsDetailedHistoryEnabled(mDetailedHistoryCheckBox.isSelected()));

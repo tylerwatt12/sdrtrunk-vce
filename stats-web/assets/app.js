@@ -1972,6 +1972,51 @@ function detailedHistoryAvailable() {
   return !logging.available || logging.historyActive || logging.historyRetained;
 }
 
+function detailedHistoryNotice() {
+  const logging = statsLoggingState();
+  if (!logging.available) {
+    return node('div', 'logging-notice warning',
+      'Saved activity status could not be checked. Previously saved activity may still be available.');
+  }
+  if (logging.historyActive) return null;
+  if (logging.historyRetained) {
+    const lastSaved = logging.lastHistoryMs ?
+      ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
+    return node('div', 'logging-notice',
+      `New activity is not being saved.${lastSaved} Enable Store Detailed Event History in Stats & Web > Stats Server to save new activity.`);
+  }
+  if (logging.historyConfigured && !logging.summaryActive) {
+    return node('div', 'logging-notice warning',
+      'Saved activity is unavailable because Collect Summary Statistics is turned off. Turn it on in Stats & Web > Stats Server to begin saving activity.');
+  }
+  return node('div', 'logging-notice warning',
+    'No saved activity is available because Store Detailed Event History is turned off. Enable it in Stats & Web > Stats Server. Activity begins saving from that point forward; earlier activity cannot be recovered.');
+}
+
+function liveActivityHistoryNotice() {
+  const message = node('span', '', 'Live shows data received after this page was opened. For earlier activity, ');
+  const link = anchor('browse saved activity', href('radio-systems'));
+  const detail = node('span', '', '. Saved activity is available when Store Detailed Event History is enabled in ' +
+    'Stats & Web > Stats Server.');
+  const notice = node('div', 'logging-notice live-activity-history-notice');
+  notice.append(message, link, detail);
+  return {
+    element: notice,
+    select(selection) {
+      if (!selection?.configurationId) {
+        link.textContent = 'browse saved activity';
+        link.href = href('radio-systems');
+        link.removeAttribute('title');
+        return;
+      }
+      link.textContent = 'view saved activity for this channel';
+      link.href = href('channel', { configuration_id: selection.configurationId, tab: 'activity' });
+      link.title = selection.label ? `Open saved activity for ${selection.label}` :
+        'Open saved activity for this channel';
+    }
+  };
+}
+
 function databaseLoggingNotice(view) {
   if (applicationRoutes?.[view]?.databaseNotice !== true) return null;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
@@ -9619,8 +9664,7 @@ function radioSystemTabItems(system) {
     items.push({ id: 'radios', label: 'Radios', href: href('radio-system', { ...values, tab: 'radios' }) });
   }
   if (radioSystemCapability(system, 'activity')) {
-    items.push({ id: 'activity', label: 'Activity', href: href('radio-system', { ...values, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
+    items.push({ id: 'activity', label: 'Activity', href: href('radio-system', { ...values, tab: 'activity' }) });
   }
   if (radioSystemCapability(system, 'talker_aliases')) {
     items.push({ id: 'talker-aliases', label: 'Talker Aliases',
@@ -9635,8 +9679,7 @@ function radioSystemTabs(system, active) {
 
 function entityTabs(view, system, identityKey, active, radio) {
   const values = { ...radioSystemRoute(system), identity_key: identityKey };
-  const activity = { id: 'activity', label: 'Activity', href: href(view, { ...values, tab: 'activity' }),
-    disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' };
+  const activity = { id: 'activity', label: 'Activity', href: href(view, { ...values, tab: 'activity' }) };
   const items = [{ id: 'info', label: 'Info', href: href(view, { ...values, tab: 'info' }) }];
   if (radio && radioSystemCapability(system, 'group_identities')) {
     items.push({ id: 'groups', label: 'Groups', href: href(view, { ...values, tab: 'groups' }) });
@@ -9672,9 +9715,7 @@ function trunkedChannelTabItems(channel) {
     items.push({ id: 'patches', label: 'Patches', href: href('channel', { ...values, tab: 'patches' }) });
   }
   if (channelCapability(channel, 'activity')) {
-    items.push({ id: 'activity', label: 'Activity', href: href('channel', { ...values, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
-    );
+    items.push({ id: 'activity', label: 'Activity', href: href('channel', { ...values, tab: 'activity' }) });
   }
   return items;
 }
@@ -10094,6 +10135,14 @@ async function renderDashboardActivity(renderContext) {
   const showRadioPrompt = () => {
     if (!radioHost || !radioStatus || !radioTitle) return;
     radioTitle.textContent = 'Source radios';
+    const historyNotice = detailedHistoryNotice();
+    if (!detailedHistoryAvailable()) {
+      radioStatus.textContent = 'Saved activity is unavailable.';
+      radioHost.setAttribute('aria-busy', 'false');
+      cleanupTableLayoutMenu(radioTableController);
+      radioHost.replaceChildren(historyNotice);
+      return;
+    }
     radioStatus.textContent = 'Select an activity type to list source radios.';
     radioHost.setAttribute('aria-busy', 'false');
     cleanupTableLayoutMenu(radioTableController);
@@ -10107,6 +10156,14 @@ async function renderDashboardActivity(renderContext) {
     const action = selectedAction;
     const actionLabel = selectedActionLabel || semanticLabel(action);
     radioTitle.textContent = `${actionLabel} · Source radios`;
+    const historyNotice = detailedHistoryNotice();
+    if (!detailedHistoryAvailable()) {
+      radioStatus.textContent = 'Saved activity is unavailable.';
+      radioHost.setAttribute('aria-busy', 'false');
+      cleanupTableLayoutMenu(radioTableController);
+      radioHost.replaceChildren(historyNotice);
+      return;
+    }
     if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
       radioRequest?.controller.abort();
       radioRequest?.unlink();
@@ -10136,6 +10193,7 @@ async function renderDashboardActivity(renderContext) {
       const result = node('div', 'dashboard-activity-radio-result');
       const pager = dashboardActivityRadioPager(page,
         (nextOffset) => void loadRadios(nextOffset, true));
+      if (historyNotice) result.append(historyNotice);
       result.append(dashboardActivityRadioNote(page, actionLabel),
         table(page.rows, dashboardActivityRadioColumns,
           `No source radios were identified in currently retained ${actionLabel.toLowerCase()} detail.`,
@@ -14655,9 +14713,13 @@ async function renderLive() {
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
-  const channels = liveChannelsSection(eventsPanel.select);
+  const historyNotice = liveActivityHistoryNotice();
+  const channels = liveChannelsSection((selection) => {
+    eventsPanel.select(selection);
+    historyNotice.select(selection);
+  });
   split.append(channels, eventsPanel.element);
-  beginPage(renderContext, split);
+  beginPage(renderContext, historyNotice.element, split);
 }
 
 async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',
@@ -14962,12 +15024,7 @@ async function renderGroupIdentity() {
     content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
       columns, null, radioTableType('group-identity-radios', columns), action));
   } else if (tab === 'activity') {
-    if (detailedHistoryAvailable()) {
-      await renderActivity({ ...radioSystem, group_identity_key: identityKey }, 'Activity Log');
-    } else {
-      content.append(section('Activity Log', node('div', 'empty',
-        'Detailed history logging is not running.')));
-    }
+    await renderActivity({ ...radioSystem, group_identity_key: identityKey }, 'Activity Log');
   } else {
     const infoColumn = node('div', 'entity-info-column');
     const blocks = [section('Identity', keyValues([
@@ -15727,9 +15784,10 @@ function activityColumns() {
 
 async function renderActivity(scopeParameters, title = 'Activity') {
   const renderContext = captureRenderContext();
+  const historyNotice = detailedHistoryNotice();
   if (!detailedHistoryAvailable()) {
     if (renderIsCurrent(renderContext)) {
-      content.append(section(title, node('div', 'empty', 'Detailed history logging is not running.')));
+      content.append(section(title, historyNotice));
     }
     return;
   }
@@ -15742,11 +15800,14 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   if (!renderIsCurrent(renderContext)) return;
   const columns = activityColumns();
   const initialRows = withoutGrantActions(data.rows);
+  const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
+    'Detailed event history is enabled, but no matching activity has been recorded yet.';
   const titleActions = node('div', 'section-title-actions');
-  const activityTable = table(initialRows, columns, 'No activity recorded',
+  const activityTable = table(initialRows, columns, emptyMessage,
     { type: 'activity', rowKey: (row) => row.id, layoutMenuHost: titleActions });
   activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable, titleActions);
+  if (historyNotice) block.insertBefore(historyNotice, activityTable);
   const controls = node('div', 'pager');
   let newestControl = null;
   let olderControl = null;
@@ -15778,7 +15839,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   block.append(controls);
   content.append(block);
 
-  if (!route.get('before_id')) {
+  if (!route.get('before_id') && (!statsLoggingState().available || statsLoggingState().historyActive)) {
     const refreshControls = node('div', 'section-title-actions activity-refresh-controls');
     const countdown = node('span', 'activity-refresh-countdown');
     countdown.setAttribute('role', 'timer');
@@ -17261,8 +17322,7 @@ function channelTabItems(channel) {
   }
   if (channelCapability(channel, 'activity')) {
     items.push({ id: 'activity', label: 'Activity',
-      href: href('channel', { ...values, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
+      href: href('channel', { ...values, tab: 'activity' }) });
   }
   return items;
 }

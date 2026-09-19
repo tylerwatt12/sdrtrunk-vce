@@ -45,7 +45,7 @@ class StatsWebInteractionUiContractTest
     void pausesEveryNewestActivityRefreshWithoutQueueingLiveEvents() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
-        assertTrue(activity.contains("if (!route.get('before_id'))"));
+        assertTrue(activity.contains("if (!route.get('before_id') && (!statsLoggingState().available || statsLoggingState().historyActive))"));
         assertTrue(activity.contains("'Pause refresh'"));
         assertTrue(activity.contains("'Resume refresh'"));
         assertTrue(activity.contains("refreshGeneration += 1"));
@@ -141,13 +141,19 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String globalNotice = function(source, "function databaseLoggingNotice(view)");
         String status = function(source, "async function loadStatus(refreshCurrentView = false)");
+        String historyNotice = function(source, "function detailedHistoryNotice()");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertFalse(globalNotice.contains("Detailed history"));
         assertFalse(globalNotice.contains("Activity pages"));
         assertFalse(status.contains("historyLabel"));
         assertFalse(status.contains("History off"));
-        assertTrue(activity.contains("Detailed history logging is not running."));
+        assertTrue(historyNotice.contains("Store Detailed Event History"));
+        assertTrue(historyNotice.contains("Stats & Web > Stats Server"));
+        assertTrue(historyNotice.contains("earlier activity cannot be recovered"));
+        assertTrue(historyNotice.contains("New activity is not being saved."));
+        assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
+        assertTrue(activity.contains("Detailed event history is enabled, but no matching activity has been recorded yet."));
     }
 
     @Test
@@ -1182,7 +1188,9 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
-        assertTrue(live.contains("liveChannelsSection(eventsPanel.select)"));
+        assertTrue(live.contains("const historyNotice = liveActivityHistoryNotice()"));
+        assertTrue(live.contains("liveChannelsSection((selection) =>"));
+        assertTrue(live.contains("historyNotice.select(selection)"));
         assertTrue(systems.contains("node('div', 'section-title-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
