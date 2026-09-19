@@ -158,11 +158,17 @@ class StatsWebTrunkedChannelUiContractTest
     {
         String source = source();
         String channelInfo = function(source, "async function renderTrunkedChannelInfo(channel, renderContext)");
+        String radioSystemInfo = function(source, "function radioSystemInfoValue(row)");
+        String namedRadioSystemInfo = function(source, "function namedRadioSystemInfoValue(row, identity)");
         String siteName = function(source, "function siteNameValue(row)");
         String groups = function(source, "async function channelTopGroupsSection(channel)");
         String frequencies = function(source, "function trunkedChannelFrequencyColumns()");
         assertTrue(channelInfo.contains("['Metadata Updates', channel.observation_count]"));
         assertTrue(channelInfo.contains("['Decoder', decoderDisplay(channel.decoder)]"));
+        assertTrue(channelInfo.contains("radioSystemInfoValue(channel)"));
+        assertTrue(radioSystemInfo.contains("namedRadioSystemInfoValue(row, result)"));
+        assertTrue(namedRadioSystemInfo.contains("row?.system_name"));
+        assertTrue(namedRadioSystemInfo.contains("'radio-system-info-name'"));
         assertTrue(channelInfo.contains("['Site', siteNameValue(channel)]"));
         assertTrue(channelInfo.contains("['Name', nameValue(channel)]"));
         assertTrue(channelInfo.contains("summary.push(['Affiliated Radios', channel.affiliated_radios, linked])"));

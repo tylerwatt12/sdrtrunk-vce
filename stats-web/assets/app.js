@@ -1196,18 +1196,27 @@ function radioSystemAliasLists(row) {
   return values;
 }
 
+function namedRadioSystemInfoValue(row, identity) {
+  const systemName = String(row?.system_name || '').trim();
+  if (!systemName || !identity) return systemName || identity;
+  const result = node('span', 'radio-system-info-value');
+  result.append(node('span', 'radio-system-info-name', systemName),
+    node('span', 'number-base-separator', '·'), identity);
+  return result;
+}
+
 function radioSystemInfoValue(row) {
-  if (!isP25(row)) return radioSystemValue(row);
+  if (!isP25(row)) return namedRadioSystemInfoValue(row, radioSystemValue(row));
   const hexadecimal = radioSystemLabel(row);
   const wacn = row.wacn === null || row.wacn === undefined || row.wacn === '' ? '' : Number(row.wacn);
   const system = row.system_id === null || row.system_id === undefined || row.system_id === '' ? '' :
     Number(row.system_id);
-  if (!hexadecimal || wacn === '' || system === '') return hexadecimal;
+  if (!hexadecimal || wacn === '' || system === '') return namedRadioSystemInfoValue(row, hexadecimal);
   const result = node('span', 'number-base-pair');
   result.append(labeledBaseValue(hexadecimal, 'HEX'),
     node('span', 'number-base-separator', '·'),
     labeledBaseValue(`${wacn}-${system}`, 'DEC'));
-  return result;
+  return namedRadioSystemInfoValue(row, result);
 }
 
 function observedSiteLabel(row) {
