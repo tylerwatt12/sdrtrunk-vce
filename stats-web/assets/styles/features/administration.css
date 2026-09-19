@@ -181,7 +181,8 @@
 .support-report-form {
   display: grid;
   gap: var(--space-4);
-  padding: var(--space-5);
+  padding: var(--space-4) 18px 20px;
+  background: linear-gradient(120deg, var(--surface-2), var(--surface));
 }
 
 .support-report-fields {
