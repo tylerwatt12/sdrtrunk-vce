@@ -224,6 +224,16 @@ Build every supported package with one command:
 This creates all six OS and CPU archives under `build/image`. Target Java runtimes are downloaded once, verified, and
 kept in the Gradle user cache for later builds.
 
+### Live web-only previews
+
+When a change only affects files under `stats-web/`, you may copy the matching HTML, CSS, or JavaScript into a running
+installation's `stats-web/` directory and refresh the browser to review it without rebuilding or restarting SDRTrunk.
+That edit is only a temporary preview. Make the matching source edit in this repository, update an asset version or
+import query when browser caching would otherwise retain an old file, and verify the refreshed page.
+
+For the change to persist, commit the canonical `stats-web/` source files in their own focused Git commit. Do not add
+files from a running installation to Git or combine the web-only persistence commit with unrelated work.
+
 ## More Information
 
 - [Release channels](docs/release-channels.md)
