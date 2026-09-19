@@ -205,7 +205,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
         assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
         assertTrue(tuner.contains("plot('FFT', 'Tuner frequency spectrum'"));
-        assertTrue(tuner.contains("plot('Waterfall', 'Tuner spectrum history'"));
+        assertTrue(tuner.contains("'Tuner spectrum history. Each row keeps the receiver window that created it."));
+        assertTrue(tuner.contains("Gold dividers mark tuner retunes.'"));
         assertFalse(live.contains("java-ui"));
         assertFalse(channel.contains("java-ui"));
         assertFalse(tuner.contains("java-ui"));
@@ -1453,7 +1454,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(pointerMove.contains("closeStreams();"));
         assertTrue(acceptFrame.contains("drag?.moved"));
         assertTrue(tuner.contains("if (moved) queueViewportUpdate();"));
-        assertTrue(refinement.contains("restoreWaterfallHistory();\n        drawWaterfall();"));
+        assertFalse(refinement.contains("restoreWaterfallHistory();"));
+        assertFalse(refinement.contains("drawWaterfall();"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
@@ -1491,14 +1493,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("TUNER_SPECTRUM_SMOOTH_PREFERENCE, true"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked)"));
         assertTrue(tuner.contains("'Smooth FFT'"));
-        assertTrue(tuner.contains("waterfallChannelsInput.type = 'checkbox'"));
-        assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE, false"));
-        assertTrue(tuner.contains("'Highlight channels on waterfall when hovered'"));
+        assertFalse(tuner.contains("Highlight channels on waterfall when hovered"));
         assertTrue(tuner.contains("'Show idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
         assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl)"));
-        assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl, waterfallChannelsControl)"));
+        assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
@@ -1527,6 +1527,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("cursorFrequency.textContent = `Pointer ${"));
         assertFalse(tuner.contains("`Snapped ${(guideHz / 1_000_000).toFixed(6)} MHz"));
         assertTrue(tuner.contains("waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs"));
+        assertTrue(tuner.contains("waterfallMetadataRows[nextWaterfallRow] = metadata"));
+        assertTrue(tuner.contains("waterfallRetuneRows[nextWaterfallRow] = count === 0 ? retune : null"));
         assertTrue(tuner.contains("function activeCarrierDescription(carrier)"));
         assertTrue(tuner.contains("function activeCarrierFields(carrier, fftPower = null)"));
         assertTrue(tuner.contains("function activityAliasLabel(row, prefix)"));
@@ -1542,17 +1544,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("row.vc_quality_pct"));
         assertTrue(tuner.contains("carrier.rows.push(decorated)"));
         assertTrue(tuner.contains("const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
-        assertTrue(tuner.contains("const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
-        assertTrue(tuner.contains("waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide)"));
+        assertFalse(tuner.contains("const waterfallActiveFlags"));
         assertTrue(tuner.contains("`tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`"));
         assertTrue(tuner.contains("flag.style.left ="));
-        assertTrue(tuner.contains("waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz"));
-        assertTrue(tuner.contains("if (waterfallLayer) flag.style.width"));
-        assertTrue(tuner.contains("waterfallChannelsInput.checked ? createFlags(true) : []"));
-        assertTrue(tuner.contains("waterfallActiveFlags.hidden = event.currentTarget !== waterfall.canvas"));
-        assertTrue(tuner.contains("if (event.currentTarget === waterfall.canvas) waterfallActiveFlags.hidden = true"));
-        assertTrue(tuner.contains("node(waterfallLayer ? 'span' : 'button'"));
-        assertTrue(tuner.contains("if (!waterfallLayer) flag.type = 'button'"));
+        assertFalse(tuner.contains("waterfallChannelsInput"));
+        assertTrue(tuner.contains("const createFlags = () => carriers.map"));
+        assertTrue(tuner.contains("flag.type = 'button'"));
         assertTrue(tuner.contains("flag.addEventListener('pointerenter'"));
         assertTrue(tuner.contains("flag.addEventListener('focus'"));
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
@@ -1569,13 +1566,24 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
         assertTrue(tuner.contains("if (signature === activeFlagSignature) return;"));
         assertTrue(tuner.contains("waterfallObservedAtRows = new Float64Array(waterfallBuffer.height)"));
+        assertTrue(tuner.contains("waterfallMetadataRows = Array(waterfallBuffer.height).fill(null)"));
+        assertTrue(tuner.contains("waterfallRetuneRows = Array(waterfallBuffer.height).fill(null)"));
         assertTrue(source.contains("const TUNER_WATERFALL_HISTORY_ROWS = 256"));
         assertTrue(tuner.contains("const waterfallHistoryRows = []"));
         assertTrue(tuner.contains("waterfallHistoryRows.push(cached)"));
-        assertTrue(tuner.contains("Math.max(domain.startHz, viewport.startHz)"));
-        assertTrue(tuner.contains("Math.min(domain.endHz, viewport.endHz)"));
-        assertTrue(tuner.contains("pixelStartHz"));
-        assertTrue(tuner.contains("pixelEndHz"));
+        assertTrue(tuner.contains("Math.floor(x * values.length / waterfallBuffer.width)"));
+        assertTrue(tuner.contains("function waterfallHistoryRow(yRatio)"));
+        assertTrue(tuner.contains("function waterfallFrequencyAt(row, ratio)"));
+        assertTrue(tuner.contains("const historyRow = event.currentTarget === waterfall.canvas ? waterfallHistoryRow(yRatio) : null"));
+        assertTrue(tuner.contains("if (viewingHistory) setWaterfallCursorGuide(ratio)"));
+        assertTrue(tuner.contains("waterfallRetuneRows.forEach((retune, physicalRow) =>"));
+        assertTrue(tuner.contains("function waterfallRetuneLabel(retune)"));
+        assertTrue(acceptState.contains("pendingWaterfallRetune = {"));
+        assertFalse(acceptState.contains("waterfallHistoryRows.length = 0"));
+        assertFalse(acceptState.contains("resetWaterfallBuffer(1, 1)"));
+        assertFalse(function(tuner, "function transformPlots(fromViewport, toViewport)")
+            .contains("waterfall"));
+        assertFalse(acceptFrame.contains("restoreWaterfallHistory()"));
         assertTrue(tuner.contains("restoreWaterfallHistory()"));
         assertFalse(tuner.contains("' (digital)'"));
         assertTrue(tuner.contains("const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length)"));
@@ -1631,7 +1639,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(acceptFrame.contains("domain.endHz < viewport.endHz"));
         assertTrue(acceptFrame.contains("if (generationChanged || analysisChanged)"));
         assertFalse(acceptFrame.contains("resetWaterfallBuffer(1, 1)"));
-        assertTrue(acceptFrame.contains("restoreWaterfallHistory()"));
+        assertFalse(acceptFrame.contains("restoreWaterfallHistory()"));
         assertTrue(acceptFrame.contains("if (analysisChanged) renderActiveChannels()"));
         assertTrue(acceptFrame.contains("frameMetadata = frame"));
         assertFalse(acceptFrame.contains("fullViewport = nextFull"));
@@ -1643,9 +1651,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
         assertTrue(source.contains("TUNER_SPECTRUM_FLOOR_PREFERENCE = 'floor_db'"));
         assertTrue(source.contains("TUNER_WATERFALL_SPEED_PREFERENCE = 'waterfall_speed'"));
-        assertTrue(source.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE = 'highlight_waterfall_channels'"));
+        assertFalse(source.contains("TUNER_WATERFALL_CHANNELS_PREFERENCE"));
         assertFalse(source.contains("sdrtrunk.wideband."));
-        assertTrue(source.contains("const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000"));
         assertTrue(diagnostic.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
         assertTrue(diagnostic.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));
         assertFalse(css.contains(".tuner-spectrum-modal"));
@@ -1676,9 +1683,6 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("--range-upper"));
         assertTrue(binary.contains("liveMultiplexer.subscribe(topic, parameters"));
         assertTrue(binary.contains("return close();"));
-        assertTrue(css.contains(".tuner-spectrum-waterfall .tuner-spectrum-active-flag {"));
-        assertTrue(css.contains("height: 100%;"));
-        assertTrue(css.contains("pointer-events: none;"));
     }
 
     @Test

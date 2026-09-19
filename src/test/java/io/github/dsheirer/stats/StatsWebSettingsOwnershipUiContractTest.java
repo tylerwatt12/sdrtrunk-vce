@@ -92,7 +92,6 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(personalSummary.contains("preferences.tuner.waterfall_speed"));
         assertTrue(personalSummary.contains("preferences.tuner.snap_frequency"));
         assertTrue(personalSummary.contains("preferences.tuner.smooth_fft"));
-        assertTrue(personalSummary.contains("preferences.tuner.highlight_waterfall_channels"));
         assertTrue(personalSummary.contains("preferences.tuner.profile"));
         assertTrue(personalSummary.contains("preferences.health_alerts.disabled_codes"));
         assertTrue(personalSummary.contains("preferences.tables"));

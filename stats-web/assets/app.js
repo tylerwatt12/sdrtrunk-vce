@@ -11605,7 +11605,6 @@ const TUNER_WATERFALL_SPEED_PREFERENCE = 'waterfall_speed';
 const TUNER_SPECTRUM_SNAP_PREFERENCE = 'snap_frequency';
 const TUNER_SPECTRUM_SMOOTH_PREFERENCE = 'smooth_fft';
 const TUNER_SPECTRUM_IDLE_PREFERENCE = 'show_idle_channels';
-const TUNER_WATERFALL_CHANNELS_PREFERENCE = 'highlight_waterfall_channels';
 const TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile';
 let tunerSpectrumSessionTarget = '';
 const TUNER_SPECTRUM_PROFILES = Object.freeze({
@@ -11614,9 +11613,6 @@ const TUNER_SPECTRUM_PROFILES = Object.freeze({
   'high-detail': Object.freeze({ fftSize: 16384, fps: 20 }),
   'maximum-detail': Object.freeze({ fftSize: 32768, fps: 20 })
 });
-const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000;
-const TUNER_CHANNEL_MINIMUM_WIDTH_PX = 3.5;
-const TUNER_CHANNEL_MAXIMUM_WIDTH_PX = 14;
 const TUNER_ACTIVITY_PRIORITY = Object.freeze({
   ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
 });
@@ -12160,20 +12156,12 @@ function tunerSpectrumPanel(snapPresetDocument) {
   idleChannelsControl.title = 'Outline idle channels from the current activity feed on the FFT. ' +
     'Markers do not indicate allocation to this tuner.';
   idleChannelsControl.append(idleChannelsInput, node('span', '', 'Show idle channel markers'));
-  const waterfallChannelsControl = node('label', 'tuner-spectrum-toggle-control');
-  const waterfallChannelsInput = node('input');
-  waterfallChannelsInput.type = 'checkbox';
-  waterfallChannelsInput.checked = tunerStoredBoolean(TUNER_WATERFALL_CHANNELS_PREFERENCE, false);
-  waterfallChannelsControl.title = 'Highlight active channels while the pointer is over the waterfall.';
-  waterfallChannelsControl.append(waterfallChannelsInput,
-    node('span', '', 'Highlight channels on waterfall when hovered'));
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
-  waterfallChannelsControl.hidden = !liveActivityAllowed;
   idleChannelsControl.hidden = !liveActivityAllowed;
   const fftOptions = node('fieldset', 'tuner-spectrum-display-section');
   fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl);
   const waterfallOptions = node('fieldset', 'tuner-spectrum-display-section');
-  waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl, waterfallChannelsControl);
+  waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl);
   const profilePanel = node('fieldset', 'tuner-spectrum-profile');
   profilePanel.append(node('legend', '', 'Spectrum performance'));
   const profileControl = node('label', 'tuner-spectrum-display-control');
@@ -12241,18 +12229,16 @@ function tunerSpectrumPanel(snapPresetDocument) {
     return { card, host, canvas, guide, overlay };
   };
   const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
-  const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
+  const waterfall = plot('Waterfall',
+    'Tuner spectrum history. Each row keeps the receiver window that created it. Gold dividers mark tuner retunes.',
+    'tuner-spectrum-waterfall');
   const fftBandRail = node('div', 'tuner-spectrum-band-rail');
   fftBandRail.setAttribute('role', 'img');
   fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency bands`);
   spectrum.card.append(fftBandRail);
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
-  const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags');
-  waterfallActiveFlags.hidden = true;
-  waterfallActiveFlags.setAttribute('aria-hidden', 'true');
-  const activeFlagLayers = [spectrumActiveFlags, waterfallActiveFlags];
+  const activeFlagLayers = [spectrumActiveFlags];
   spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
-  waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide);
   const cursorPopup = node('div', 'tuner-spectrum-cursor-popup');
   const cursorFrequency = node('span', 'tuner-spectrum-cursor-frequency');
   const cursorSnap = node('span', 'tuner-spectrum-cursor-snap');
@@ -12308,15 +12294,17 @@ function tunerSpectrumPanel(snapPresetDocument) {
   let drawPending = false;
   const waterfallBuffer = document.createElement('canvas');
   const spectrumScratch = document.createElement('canvas');
-  const waterfallScratch = document.createElement('canvas');
   const waterfallContext = waterfallBuffer.getContext('2d', { alpha: false });
   const palette = tunerWaterfallPalette();
   let newestWaterfallRow = -1;
   let nextWaterfallRow = -1;
   let waterfallRowImage = null;
   let waterfallObservedAtRows = new Float64Array(0);
+  let waterfallMetadataRows = [];
+  let waterfallRetuneRows = [];
   const waterfallHistoryRows = [];
   let retainedWaterfallRows = 0;
+  let pendingWaterfallRetune = null;
   let readoutTimer = null;
   let lastReadoutAt = 0;
   let frequencyBandSignature = '';
@@ -12588,6 +12576,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
     waterfallContext.fillRect(0, 0, waterfallBuffer.width, waterfallBuffer.height);
     waterfallRowImage = waterfallContext.createImageData(waterfallBuffer.width, 1);
     waterfallObservedAtRows = new Float64Array(waterfallBuffer.height);
+    waterfallMetadataRows = Array(waterfallBuffer.height).fill(null);
+    waterfallRetuneRows = Array(waterfallBuffer.height).fill(null);
     newestWaterfallRow = -1;
     nextWaterfallRow = waterfallBuffer.height - 1;
   };
@@ -12607,22 +12597,22 @@ function tunerSpectrumPanel(snapPresetDocument) {
     return values.subarray(first, end);
   }
 
-  function waterfallMetadata(metadata) {
+  function waterfallMetadata(metadata, valueCount) {
     return {
       centerFrequencyHz: metadata.centerFrequencyHz,
       sampleRateHz: metadata.sampleRateHz,
       fftSize: metadata.fftSize,
       firstBin: metadata.firstBin,
-      sourceBinCount: metadata.sourceBinCount
+      sourceBinCount: metadata.sourceBinCount,
+      valueCount
     };
   }
 
-  const renderWaterfallRow = (values, metadata, observedAtEpochMs, rowCount = 1) => {
-    if (!values.length || !metadata || !viewport || !waterfallRowImage) return;
+  const renderWaterfallRow = (values, metadata, observedAtEpochMs, rowCount = 1, retune = null) => {
+    if (!values.length || !metadata || !waterfallRowImage) return;
     const domain = tunerFrameDomain(metadata, values.length);
-    const viewportSpan = viewport.endHz - viewport.startHz;
     const domainSpan = domain.endHz - domain.startHz;
-    if (!(viewportSpan > 0) || !(domainSpan > 0)) return;
+    if (!(domainSpan > 0)) return;
     const row = waterfallRowImage;
     for (let x = 0; x < waterfallBuffer.width; x += 1) {
       row.data[x * 4] = palette[0];
@@ -12630,36 +12620,28 @@ function tunerSpectrumPanel(snapPresetDocument) {
       row.data[x * 4 + 2] = palette[2];
       row.data[x * 4 + 3] = 255;
     }
-    const overlapStart = Math.max(domain.startHz, viewport.startHz);
-    const overlapEnd = Math.min(domain.endHz, viewport.endHz);
-    if (overlapEnd > overlapStart) {
-      const firstX = Math.max(0,
-        Math.floor((overlapStart - viewport.startHz) / viewportSpan * waterfallBuffer.width));
-      const lastX = Math.min(waterfallBuffer.width,
-        Math.ceil((overlapEnd - viewport.startHz) / viewportSpan * waterfallBuffer.width));
-      for (let x = firstX; x < lastX; x += 1) {
-        const pixelStartHz = viewport.startHz + x / waterfallBuffer.width * viewportSpan;
-        const pixelEndHz = viewport.startHz + (x + 1) / waterfallBuffer.width * viewportSpan;
-        const firstBin = Math.max(0, Math.min(values.length - 1,
-          Math.floor((Math.max(pixelStartHz, domain.startHz) - domain.startHz) / domainSpan * values.length)));
-        const lastBin = Math.min(values.length, Math.max(firstBin + 1,
-          Math.ceil((Math.min(pixelEndHz, domain.endHz) - domain.startHz) / domainSpan * values.length)));
-        let raw = -Infinity;
-        for (let bin = firstBin; bin < lastBin; bin += 1) {
-          if (Number.isFinite(values[bin])) raw = Math.max(raw, values[bin]);
-        }
-        const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
-        const color = Math.max(0, Math.min(255,
-          Math.round((value - dbFloor) / (dbCeiling - dbFloor) * 255)));
-        row.data[x * 4] = palette[color * 4];
-        row.data[x * 4 + 1] = palette[color * 4 + 1];
-        row.data[x * 4 + 2] = palette[color * 4 + 2];
-        row.data[x * 4 + 3] = 255;
+    for (let x = 0; x < waterfallBuffer.width; x += 1) {
+      const firstBin = Math.max(0, Math.min(values.length - 1,
+        Math.floor(x * values.length / waterfallBuffer.width)));
+      const lastBin = Math.min(values.length, Math.max(firstBin + 1,
+        Math.ceil((x + 1) * values.length / waterfallBuffer.width)));
+      let raw = -Infinity;
+      for (let bin = firstBin; bin < lastBin; bin += 1) {
+        if (Number.isFinite(values[bin])) raw = Math.max(raw, values[bin]);
       }
+      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
+      const color = Math.max(0, Math.min(255,
+        Math.round((value - dbFloor) / (dbCeiling - dbFloor) * 255)));
+      row.data[x * 4] = palette[color * 4];
+      row.data[x * 4 + 1] = palette[color * 4 + 1];
+      row.data[x * 4 + 2] = palette[color * 4 + 2];
+      row.data[x * 4 + 3] = 255;
     }
     for (let count = 0; count < rowCount; count += 1) {
       waterfallContext.putImageData(row, 0, nextWaterfallRow);
       waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs;
+      waterfallMetadataRows[nextWaterfallRow] = metadata;
+      waterfallRetuneRows[nextWaterfallRow] = count === 0 ? retune : null;
       newestWaterfallRow = nextWaterfallRow;
       nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height) % waterfallBuffer.height;
     }
@@ -12671,7 +12653,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const height = Math.max(1, Math.round(bounds.height));
     resetWaterfallBuffer(width, height);
     waterfallHistoryRows.forEach((row) =>
-      renderWaterfallRow(row.values, row.metadata, row.observedAtEpochMs, row.repeat));
+      renderWaterfallRow(row.values, row.metadata, row.observedAtEpochMs, row.repeat, row.retune));
   };
 
   const ensureWaterfallBuffer = () => {
@@ -12690,14 +12672,16 @@ function tunerSpectrumPanel(snapPresetDocument) {
     if (rowCount < 1) return;
     waterfallScrollAccumulator -= rowCount;
     const observedAtEpochMs = Number(frameMetadata?.observedAtEpochMs || 0);
-    const cached = { values: fftValues.slice(), metadata: waterfallMetadata(frameMetadata),
-      observedAtEpochMs, repeat: rowCount };
+    const retune = pendingWaterfallRetune ? { ...pendingWaterfallRetune, observedAtEpochMs } : null;
+    pendingWaterfallRetune = null;
+    const cached = { values: fftValues.slice(), metadata: waterfallMetadata(frameMetadata, fftValues.length),
+      observedAtEpochMs, repeat: rowCount, retune };
     waterfallHistoryRows.push(cached);
     retainedWaterfallRows += rowCount;
     while (retainedWaterfallRows > TUNER_WATERFALL_HISTORY_ROWS && waterfallHistoryRows.length) {
       retainedWaterfallRows -= waterfallHistoryRows.shift().repeat;
     }
-    renderWaterfallRow(cached.values, cached.metadata, observedAtEpochMs, rowCount);
+    renderWaterfallRow(cached.values, cached.metadata, observedAtEpochMs, rowCount, retune);
   };
 
   const drawWaterfall = () => {
@@ -12717,6 +12701,19 @@ function tunerSpectrumPanel(snapPresetDocument) {
       context.drawImage(waterfallBuffer, 0, 0, ringWidth, newestWaterfallRow,
         0, firstHeight, waterfall.canvas.width, waterfall.canvas.height - firstHeight);
     }
+    context.strokeStyle = 'rgba(255, 190, 88, 0.95)';
+    context.fillStyle = 'rgba(255, 190, 88, 0.95)';
+    context.lineWidth = 1;
+    waterfallRetuneRows.forEach((retune, physicalRow) => {
+      if (!retune) return;
+      const displayRow = (physicalRow - newestWaterfallRow + ringHeight) % ringHeight;
+      const y = (displayRow + 0.5) / ringHeight * waterfall.canvas.height;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(waterfall.canvas.width, y);
+      context.stroke();
+      context.fillRect(0, Math.max(0, y - 2), 6, 4);
+    });
   };
 
   const draw = () => {
@@ -12755,6 +12752,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     hoverFlag = null;
     waterfallHistoryRows.length = 0;
     retainedWaterfallRows = 0;
+    pendingWaterfallRetune = null;
     resetWaterfallBuffer(1, 1);
     setRefining(false);
     setOverlay(message);
@@ -12850,15 +12848,21 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const sampleRate = stateNumber(tunerState, 'sample_rate_hz');
     if (center > 0 && sampleRate > 0) {
       const nextFull = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
-      const changed = fullViewport && !sameViewport(fullViewport, nextFull);
+      const previousFull = fullViewport;
+      const changed = previousFull && !sameViewport(previousFull, nextFull);
+      if (changed) {
+        pendingWaterfallRetune = {
+          fromStartHz: previousFull.startHz,
+          fromEndHz: previousFull.endHz,
+          toStartHz: nextFull.startHz,
+          toEndHz: nextFull.endHz
+        };
+      }
       fullViewport = nextFull;
       if (!viewport || changed) viewport = { ...nextFull };
       renderFrequencyBands();
       if (changed) {
         analysisViewport = null;
-        waterfallHistoryRows.length = 0;
-        retainedWaterfallRows = 0;
-        resetWaterfallBuffer(1, 1);
         clearSpectrumSmoothing();
         if (shouldRun()) queueViewportUpdate(true);
       }
@@ -12950,9 +12954,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
     fftValues = values;
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
-    if (analysisChanged) {
-      restoreWaterfallHistory();
-    }
     analysisViewport = nextAnalysis;
     updateSpectrumPeak();
     const now = performance.now();
@@ -13018,8 +13019,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
         awaitingViewportState = false;
         setRefining(false);
       } else if (stream) {
-        restoreWaterfallHistory();
-        drawWaterfall();
         if (!stream.update(diagnosticParameters())) {
           awaitingViewportState = false;
           setRefining(false);
@@ -13076,8 +13075,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   function transformPlots(fromViewport, toViewport) {
     transformCanvas(spectrum.canvas, spectrumScratch, fromViewport, toViewport);
-    transformCanvas(waterfall.canvas, waterfallScratch, fromViewport, toViewport);
-    transformCanvas(waterfallBuffer, waterfallScratch, fromViewport, toViewport);
   }
 
   function clampViewport(startHz, endHz) {
@@ -13143,7 +13140,11 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const rect = event.currentTarget.getBoundingClientRect();
     if (!(rect.width > 0)) return null;
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const rawFrequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
+    const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const historyRow = event.currentTarget === waterfall.canvas ? waterfallHistoryRow(yRatio) : null;
+    const rawFrequencyHz = historyRow ? waterfallFrequencyAt(historyRow, ratio) :
+      viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
+    if (!Number.isFinite(rawFrequencyHz)) return null;
     const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz, frequencyScopes) : null;
     const target = targetsById.get(selectedTargetId());
     return Object.freeze({
@@ -13174,42 +13175,80 @@ function tunerSpectrumPanel(snapPresetDocument) {
     if (selection) openTunerFrequencyActions(selection);
   }
 
-  function waterfallObservedAt(yRatio) {
-    if (newestWaterfallRow < 0 || !waterfallObservedAtRows.length) return 0;
+  function waterfallHistoryRow(yRatio) {
+    if (newestWaterfallRow < 0 || !waterfallObservedAtRows.length) return null;
     const displayRow = Math.max(0, Math.min(waterfallObservedAtRows.length - 1,
       Math.floor(yRatio * waterfallObservedAtRows.length)));
-    return waterfallObservedAtRows[(newestWaterfallRow + displayRow) % waterfallObservedAtRows.length];
+    const physicalRow = (newestWaterfallRow + displayRow) % waterfallObservedAtRows.length;
+    const observedAtEpochMs = waterfallObservedAtRows[physicalRow];
+    const metadata = waterfallMetadataRows[physicalRow];
+    return metadata && observedAtEpochMs > 0 ? {
+      observedAtEpochMs,
+      metadata,
+      retune: waterfallRetuneRows[physicalRow]
+    } : null;
   }
 
-  function setCursorGuide(frequencyHz) {
+  function waterfallFrequencyAt(row, ratio) {
+    const domain = tunerFrameDomain(row?.metadata, Number(row?.metadata?.valueCount || 0));
+    const spanHz = domain.endHz - domain.startHz;
+    return spanHz > 0 ? domain.startHz + ratio * spanHz : null;
+  }
+
+  function setSpectrumCursorGuide(frequencyHz) {
     const spanHz = viewport.endHz - viewport.startHz;
     const ratio = Math.max(0, Math.min(1, (frequencyHz - viewport.startHz) / spanHz));
-    const left = `${(ratio * 100).toFixed(3)}%`;
-    spectrum.guide.style.left = left;
-    waterfall.guide.style.left = left;
+    spectrum.guide.style.left = `${(ratio * 100).toFixed(3)}%`;
+  }
+
+  function setWaterfallCursorGuide(ratio) {
+    waterfall.guide.style.left = `${(ratio * 100).toFixed(3)}%`;
+  }
+
+  function waterfallRetuneLabel(retune) {
+    if (!retune) return '';
+    const fromCenter = (retune.fromStartHz + retune.fromEndHz) / 2;
+    const toCenter = (retune.toStartHz + retune.toEndHz) / 2;
+    return `Retuned · ${formatScopeFrequency(fromCenter)} → ${formatScopeFrequency(toCenter)}`;
   }
 
   function updateCursor(ratio) {
     if (!viewport) return hideCursor();
-    const spanHz = viewport.endHz - viewport.startHz;
-    const pointerHz = viewport.startHz + ratio * spanHz;
     const viewingHistory = hoverCanvas === waterfall.canvas;
+    const historyRow = viewingHistory ? waterfallHistoryRow(hoverYRatio) : null;
+    const pointerHz = historyRow ? waterfallFrequencyAt(historyRow, ratio) :
+      viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
+    if (!Number.isFinite(pointerHz)) {
+      cursorFrequency.textContent = 'No recorded frequency';
+      cursorSnap.hidden = true;
+      cursorPower.textContent = 'Waiting for a waterfall row';
+      cursorChannel.hidden = true;
+      cursorChannel.textContent = '';
+      cursorPopup.hidden = false;
+      positionCursorPopup();
+      return;
+    }
     const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null;
     const displayHz = snap?.frequencyHz ?? pointerHz;
-    setCursorGuide(displayHz);
+    if (viewingHistory) setWaterfallCursorGuide(ratio);
+    else setSpectrumCursorGuide(displayHz);
 
     cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = true;
     cursorSnap.textContent = '';
 
     if (viewingHistory) {
-      const observedAtEpochMs = waterfallObservedAt(hoverYRatio);
-      if (observedAtEpochMs > 0) {
-        cursorPower.textContent = `History · ${new Date(observedAtEpochMs).toLocaleTimeString([], {
+      if (historyRow) {
+        cursorPower.textContent = `History · ${new Date(historyRow.observedAtEpochMs).toLocaleTimeString([], {
           hour: 'numeric', minute: '2-digit', second: '2-digit'
         })}`;
+        const retuneLabel = waterfallRetuneLabel(historyRow.retune);
+        cursorChannel.hidden = !retuneLabel;
+        cursorChannel.textContent = retuneLabel;
       } else {
-        cursorPower.textContent = 'Historical row';
+        cursorPower.textContent = 'Waiting for a waterfall row';
+        cursorChannel.hidden = true;
+        cursorChannel.textContent = '';
       }
     } else if (refining || !fftValues.length) {
       cursorPower.textContent = refining ? 'Refining…' : '—';
@@ -13218,8 +13257,10 @@ function tunerSpectrumPanel(snapPresetDocument) {
       const value = displayedSpectrumValues()[index];
       cursorPower.textContent = Number.isFinite(value) ? `${value.toFixed(1)} dB` : '—';
     }
-    cursorChannel.hidden = true;
-    cursorChannel.textContent = '';
+    if (!viewingHistory) {
+      cursorChannel.hidden = true;
+      cursorChannel.textContent = '';
+    }
     cursorPopup.hidden = false;
     positionCursorPopup();
   }
@@ -13229,8 +13270,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
     hoverRatio = ratio;
     hoverCanvas = canvas;
     hoverYRatio = yRatio;
-    spectrum.guide.hidden = false;
-    waterfall.guide.hidden = false;
+    spectrum.guide.hidden = canvas === waterfall.canvas;
+    waterfall.guide.hidden = canvas !== waterfall.canvas;
     updateCursor(ratio);
   }
 
@@ -13303,7 +13344,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
   }
 
   function onPlotPointerMove(event) {
-    waterfallActiveFlags.hidden = event.currentTarget !== waterfall.canvas;
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
@@ -13349,7 +13389,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
   }
 
   function onPlotPointerLeave(event) {
-    if (event.currentTarget === waterfall.canvas) waterfallActiveFlags.hidden = true;
     if (!drag || drag.pointerId !== event.pointerId) hideCursor();
   }
 
@@ -13569,9 +13608,9 @@ function tunerSpectrumPanel(snapPresetDocument) {
     hoverRatio = null;
     hoverCanvas = null;
     hoverYRatio = null;
-    setCursorGuide(carrier.frequencyHz);
+    setSpectrumCursorGuide(carrier.frequencyHz);
     spectrum.guide.hidden = false;
-    waterfall.guide.hidden = false;
+    waterfall.guide.hidden = true;
     cursorFrequency.textContent = `${(carrier.frequencyHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = false;
     cursorSnap.textContent = TUNER_ACTIVITY_LABELS[carrier.status] || TUNER_ACTIVITY_LABELS.ACTIVE;
@@ -13595,38 +13634,28 @@ function tunerSpectrumPanel(snapPresetDocument) {
     }
     const carriers = activeCarriers(idleChannelsInput.checked);
     const visibleSpanHz = Math.max(1, viewport.endHz - viewport.startHz);
-    const waterfallPlotWidth = Math.max(0, waterfall.host.getBoundingClientRect().width);
-    const waterfallFlagWidth = Math.max(TUNER_CHANNEL_MINIMUM_WIDTH_PX,
-      Math.min(TUNER_CHANNEL_MAXIMUM_WIDTH_PX,
-        waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz));
     const signature = JSON.stringify([viewport.startHz, viewport.endHz,
-      idleChannelsInput.checked, waterfallChannelsInput.checked, waterfallFlagWidth,
+      idleChannelsInput.checked,
       carriers.map((carrier) => [carrier.frequencyHz, carrier.status, activeCarrierDescription(carrier)])]);
     if (signature === activeFlagSignature) return;
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
-    const createFlags = (waterfallLayer) => carriers.filter((carrier) =>
-      !waterfallLayer || carrier.status !== 'IDLE').map((carrier) => {
-      const flag = node(waterfallLayer ? 'span' : 'button',
-        `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
-      if (!waterfallLayer) flag.type = 'button';
+    const createFlags = () => carriers.map((carrier) => {
+      const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
+      flag.type = 'button';
       flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / visibleSpanHz * 100).toFixed(3)}%`;
-      if (waterfallLayer) flag.style.width = `${waterfallFlagWidth.toFixed(2)}px`;
       flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
       const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
-      if (!waterfallLayer) {
-        flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
-          (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
-        flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
-        flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
-        flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
-        flag.addEventListener('blur', () => hideActiveFlag(flag));
-        flag.addEventListener('click', () => openTunerFrequencyActions(frequencySelectionForCarrier(carrier)));
-      }
+      flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
+        (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
+      flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
+      flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
+      flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
+      flag.addEventListener('blur', () => hideActiveFlag(flag));
+      flag.addEventListener('click', () => openTunerFrequencyActions(frequencySelectionForCarrier(carrier)));
       return flag;
     });
-    spectrumActiveFlags.replaceChildren(...createFlags(false));
-    waterfallActiveFlags.replaceChildren(...(waterfallChannelsInput.checked ? createFlags(true) : []));
+    spectrumActiveFlags.replaceChildren(...createFlags());
     if (hoverRatio !== null) updateCursor(hoverRatio);
   }
 
@@ -13728,11 +13757,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
     setReadouts(true);
     if (hoverRatio !== null) updateCursor(hoverRatio);
     if (!refining) scheduleDraw('spectrum');
-  });
-  waterfallChannelsInput.addEventListener('change', () => {
-    storeTunerBoolean(TUNER_WATERFALL_CHANNELS_PREFERENCE, waterfallChannelsInput.checked);
-    activeFlagSignature = '';
-    renderActiveChannels();
   });
   idleChannelsInput.addEventListener('change', () => {
     storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
@@ -19332,7 +19356,6 @@ function userPreferenceSummaryCards(preferences) {
       ['Snap frequency', settingsEnabled(preferences.tuner.snap_frequency)],
       ['Smooth FFT', settingsEnabled(preferences.tuner.smooth_fft)],
       ['Idle FFT markers', settingsEnabled(preferences.tuner.show_idle_channels)],
-      ['Highlight channels', settingsEnabled(preferences.tuner.highlight_waterfall_channels)],
       ['Performance profile', semanticLabel(preferences.tuner.profile)]
     ])),
     settingsCard('Status icon', 'Changed here in My Settings.', settingsSummary([

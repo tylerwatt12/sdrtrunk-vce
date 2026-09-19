@@ -37,7 +37,7 @@ class Element {
 
 function harness(liveAllowed = true) {
   let preferences = { tuner: { snap_frequency: true, smooth_fft: true,
-    highlight_waterfall_channels: false, show_idle_channels: false } };
+    show_idle_channels: false } };
   let subscriber;
   let closed = 0;
   const context = {
@@ -48,7 +48,7 @@ function harness(liveAllowed = true) {
     settleUserPreferenceMutation: (mutate) => mutate(preferences),
     viewport: { startHz: 150_000_000, endHz: 151_000_000 },
     activeChannelTables: new Map(), activeChannelSource: null, activeFlagSignature: '',
-    spectrumActiveFlags: new Element(), waterfallActiveFlags: new Element(),
+    spectrumActiveFlags: new Element(),
     waterfall: { host: new Element(), guide: new Element() }, spectrum: { guide: new Element() },
     hoverFlag: null, hoverRatio: null, hoverCanvas: null, hoverYRatio: null,
     cursorChannel: new Element(), cursorSnap: new Element(), cursorPower: new Element(),
@@ -60,16 +60,16 @@ function harness(liveAllowed = true) {
     },
     decoderLabel: (value) => value || '',
     activeCarrierPower: () => null,
-    setCursorGuide: () => {}, positionCursorPopup: () => {},
+    setSpectrumCursorGuide: () => {}, positionCursorPopup: () => {},
     updateCursor: () => {},
     frequencySelectionForCarrier: (carrier) => carrier,
     openTunerFrequencyActions: () => {},
     hideCursor: () => { context.hoverFlag = null; context.cursorPopup.hidden = true; }
   };
-  context.activeFlagLayers = [context.spectrumActiveFlags, context.waterfallActiveFlags];
+  context.activeFlagLayers = [context.spectrumActiveFlags];
   vm.createContext(context);
   vm.runInContext([
-    ...source.matchAll(/^const TUNER_(?:SPECTRUM_(?:SNAP|SMOOTH|IDLE)_PREFERENCE|WATERFALL_CHANNELS_PREFERENCE|CHANNEL_\w+) = .*;$/gm)
+    ...source.matchAll(/^const TUNER_(?:SPECTRUM_(?:SNAP|SMOOTH|IDLE)_PREFERENCE) = .*;$/gm)
   ].map((match) => match[0]).join('\n'), context);
   vm.runInContext(source.slice(source.indexOf('const TUNER_ACTIVITY_PRIORITY'),
     source.indexOf('const RADIO_REFERENCE_DETAIL_CACHE_LIMIT')), context);
@@ -87,9 +87,9 @@ function harness(liveAllowed = true) {
   ].forEach((signature) => vm.runInContext(functionSource(signature), context));
   vm.runInContext(source.slice(source.indexOf("  const snapControl = node('label', 'tuner-spectrum-toggle-control')"),
     source.indexOf("  const profilePanel = node('fieldset', 'tuner-spectrum-profile')")), context);
-  vm.runInContext(source.slice(source.indexOf("  waterfallChannelsInput.addEventListener('change'"),
+  vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
     source.indexOf('  [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
-  const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, waterfallChannelsInput, fftOptions, waterfallOptions })', context);
+  const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, fftOptions, waterfallOptions })', context);
   const toggle = (control, value) => { control.checked = value; control.dispatch('change'); };
   return { context, controls, toggle,
     preferences: () => preferences,
@@ -173,13 +173,13 @@ const row = (status, frequency_hz = 150_250_000, extra = {}) => ({ status, frequ
 const table = (rows) => ({ table_id: 'test', channel_name: 'Dispatch', system_name: 'Local', rows });
 const statuses = (carriers) => Array.from(carriers, (carrier) => carrier.status);
 
-test('FFT and waterfall settings are separate and the new preference is per-user, default off', () => {
+test('FFT and waterfall settings are separate and idle markers remain per-user, default off', () => {
   const h = harness();
   assert.equal(h.controls.idleChannelsInput.checked, false);
   assert.equal(h.controls.fftOptions.children[0].textContent, 'FFT');
   assert.equal(h.controls.fftOptions.children.length, 3);
   assert.equal(h.controls.waterfallOptions.children[0].textContent, 'Waterfall');
-  assert.equal(h.controls.waterfallOptions.children.length, 3);
+  assert.equal(h.controls.waterfallOptions.children.length, 2);
   const original = JSON.parse(JSON.stringify(h.preferences()));
   h.toggle(h.controls.idleChannelsInput, true);
   assert.deepEqual(h.preferences(), { tuner: { ...original.tuner, show_idle_channels: true } });
@@ -188,20 +188,17 @@ test('FFT and waterfall settings are separate and the new preference is per-user
   assert.equal(harness(false).controls.idleChannelsControl.hidden, true);
 });
 
-test('idle rows are retained for immediate FFT toggles but excluded from waterfall and active-only calculations', () => {
+test('idle rows are retained for immediate FFT toggles but excluded from active-only calculations', () => {
   const h = harness();
   h.context.connectActiveChannels();
   h.subscriber().snapshot({ tables: [table([row('IDLE'), row('CALL', 150_500_000)])] });
   assert.equal(h.context.activeChannelTables.get('test').rows.length, 2);
   assert.deepEqual(statuses(h.context.activeCarriers()), ['CALL']);
   assert.equal(h.context.spectrumActiveFlags.children.length, 1);
-  h.toggle(h.controls.waterfallChannelsInput, true);
-  const waterfallBefore = h.context.waterfallActiveFlags.children.map((flag) => flag.className);
   h.toggle(h.controls.idleChannelsInput, true);
   assert.deepEqual(statuses(h.context.activeCarriers(true)), ['IDLE', 'CALL']);
   assert.deepEqual(statuses(h.context.activeCarriers()), ['CALL'], 'SNR source remains active-only');
   assert.equal(h.context.spectrumActiveFlags.children.length, 2);
-  assert.deepEqual(h.context.waterfallActiveFlags.children.map((flag) => flag.className), waterfallBefore);
   h.toggle(h.controls.idleChannelsInput, false);
   assert.equal(h.context.spectrumActiveFlags.children.length, 1);
 });
@@ -263,7 +260,6 @@ test('current control stays visible, alternate control stays hidden, invalid/out
   assert.equal(h.closed(), 1);
   assert.equal(h.context.activeChannelTables.size, 0);
   assert.equal(h.context.spectrumActiveFlags.children.length, 0);
-  assert.equal(h.context.waterfallActiveFlags.children.length, 0);
 });
 
 test('saved schema round-trips both boolean values and idle styling is outline-only', async () => {
