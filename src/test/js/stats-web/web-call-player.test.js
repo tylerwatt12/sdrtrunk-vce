@@ -30,6 +30,8 @@ async function main() {
     const presentation = Object.create(WebCallPlayer.prototype);
     Object.assign(presentation, {
       current: null,
+      holdTarget: null,
+      heldDisplayCall: null,
       idleDisplayCall: null,
       idleDisplayTimer: null,
       idleDisplayDeadline: 0,
@@ -49,6 +51,15 @@ async function main() {
     assert.equal(presentation.displayCall(), null);
     finalTimer.callback();
     assert.equal(presentation.renderCount, 1);
+
+    const held = { _callId: 'held', _playbackTargetKey: 'target:held' };
+    presentation.holdTarget = held._playbackTargetKey;
+    presentation.heldDisplayCall = held;
+    assert.equal(presentation.displayCall(), held,
+      'The held target must keep its call details visible after the normal idle display expires');
+    presentation.holdTarget = null;
+    assert.equal(presentation.displayCall(), null,
+      'Releasing Hold must remove the retained call details');
 
     const queuePlayer = Object.create(WebCallPlayer.prototype);
     Object.assign(queuePlayer, {
@@ -488,8 +499,21 @@ async function main() {
     await selectionWhilePaused.togglePause();
     selectionWhilePaused.toggleHold();
     assert.equal(selectionWhilePaused.holdTarget, overlap.playback_target.key);
+    assert.equal(selectionWhilePaused.heldDisplayCall, selectionWhilePaused.current,
+      'Enabling Hold must retain the current call for Scanner details');
+    selectionWhilePaused.stopCurrent();
+    assert.equal(selectionWhilePaused.displayCall(), selectionWhilePaused.heldDisplayCall,
+      'Held Scanner details must remain after the active call ends');
+    selectionWhilePaused.toggleHold();
+    assert.equal(selectionWhilePaused.heldDisplayCall, null,
+      'Releasing Hold must remove the retained Scanner details');
+    selectionWhilePaused.current = selectionWhilePaused.normalizeCall(overlap);
+    selectionWhilePaused.currentBuffer = { duration: 20 };
+    selectionWhilePaused.toggleHold();
     selectionWhilePaused.avoidCurrent();
     assert.equal(selectionWhilePaused.current, null);
+    assert.equal(selectionWhilePaused.heldDisplayCall, null,
+      'Avoiding the held target must remove its retained Scanner details');
     assert.equal(selectionWhilePaused.paused, true);
     assert.equal(selectionWhilePaused.avoids.size, 1);
     assert.equal([...selectionWhilePaused.avoids.values()][0].system_scope,

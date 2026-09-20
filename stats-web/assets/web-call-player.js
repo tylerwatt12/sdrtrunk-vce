@@ -20,6 +20,7 @@ export class WebCallPlayer {
     this.stateObservers = new Set();
     this.actions = {};
     this.holdTarget = null;
+    this.heldDisplayCall = null;
     this.current = null;
     this.currentBuffer = null;
     this.idleDisplayCall = null;
@@ -287,6 +288,7 @@ export class WebCallPlayer {
     this.replayingLast = false;
     this.stopAfterReplay = false;
     this.holdTarget = null;
+    this.heldDisplayCall = null;
     this.clearIdleDisplay();
     this.stopCurrent();
     if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
@@ -688,8 +690,10 @@ export class WebCallPlayer {
     if (this.replayingLast) return;
     if (this.holdTarget) {
       this.holdTarget = null;
+      this.heldDisplayCall = null;
     } else if (this.current && this.currentBuffer) {
       this.holdTarget = this.current._playbackTargetKey;
+      this.heldDisplayCall = this.current;
       this.filterQueuedCalls((call) => call._playbackTargetKey === this.holdTarget);
     }
 
@@ -708,7 +712,10 @@ export class WebCallPlayer {
     while (this.avoids.size > WebCallPlayer.MAXIMUM_AVOIDS) {
       this.avoids.delete(this.avoids.keys().next().value);
     }
-    if (this.holdTarget === target) this.holdTarget = null;
+    if (this.holdTarget === target) {
+      this.holdTarget = null;
+      this.heldDisplayCall = null;
+    }
     this.filterQueuedCalls((call) => call._playbackTargetKey !== target);
     this.stopCurrent();
     if (this.stopped || this.paused) this.setStatus('Ready');
@@ -779,6 +786,7 @@ export class WebCallPlayer {
 
     this.clearIdleDisplay();
     this.current = next;
+    if (this.holdTarget === next._playbackTargetKey) this.heldDisplayCall = next;
     this.currentBuffer = null;
     await this.loadCurrent();
   }
@@ -933,6 +941,9 @@ export class WebCallPlayer {
 
   displayCall() {
     if (this.current) return this.current;
+    if (this.holdTarget && this.heldDisplayCall?._playbackTargetKey === this.holdTarget) {
+      return this.heldDisplayCall;
+    }
     return this.idleDisplayCall && Date.now() < this.idleDisplayDeadline ? this.idleDisplayCall : null;
   }
 
