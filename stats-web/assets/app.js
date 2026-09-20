@@ -18004,7 +18004,7 @@ async function renderAdminScanLists() {
   body.append(node('p', 'admin-section-intro',
     'A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls ' +
     'listeners hear. To include calls that do not match an alias, open that Alias List and choose this Scan List ' +
-    'under Call Handling Defaults. If a listener selects overlapping Scan Lists, each call still plays only once.'),
+    'under Call Handling Defaults.'),
     table(scanLists, [
       { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
         sortValue: (row) => Number(row.sort_order || 0) },
