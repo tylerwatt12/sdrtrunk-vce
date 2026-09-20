@@ -350,6 +350,10 @@ class AliasAdminHttpControllerTest
                     scanListCatalog.get("scan_lists").spliterator(), false)
                 .filter(row -> row.get("id").longValue() == clevelandScanListId).findFirst().orElseThrow();
             assertEquals(1, clevelandSummary.get("unmatched_alias_list_count").intValue());
+            assertEquals(aliasListId,
+                clevelandSummary.at("/unmatched_alias_lists/0/alias_list_id").longValue());
+            assertEquals("County P25", clevelandSummary.at("/unmatched_alias_lists/0/name").textValue());
+            assertEquals("p25", clevelandSummary.at("/unmatched_alias_lists/0/family").textValue());
 
             JsonNode p25Options = json(send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId).GET()));

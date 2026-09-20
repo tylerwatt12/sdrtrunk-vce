@@ -514,6 +514,8 @@ class AliasAdministrationServiceTest
                 .stream().filter(summary -> summary.scanList().getId() == southwestId).findFirst().orElseThrow();
             assertEquals(2, southwestSummary.aliasCount());
             assertEquals(1, southwestSummary.unmatchedAliasListCount());
+            assertEquals(List.of("County P25"), southwestSummary.unmatchedAliasLists().stream()
+                .map(AliasAdministrationService.ScanListCoverageAliasList::name).toList());
 
             AliasAdministrationService.ScanListCoverage southwestCoverage =
                 service.scanListCoverage(southwestId);

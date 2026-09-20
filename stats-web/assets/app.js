@@ -4805,7 +4805,7 @@ function openFullScanListMembershipModal(scanList, operation) {
   } else {
     form.append(node('p', '', `Remove all ${number(scanList.alias_count || 0)} alias memberships from ${scanList.name}?`),
       node('p', 'muted',
-        'The aliases, their other scan-list memberships, and Alias List Defaults will be preserved.'));
+        'The aliases, their other scan-list memberships, and Call Handling Defaults will be preserved.'));
   }
   const message = node('div', 'alias-form-message');
   message.setAttribute('role', 'alert');
@@ -4940,7 +4940,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   destinationSummary.append(
     node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
     node('span', 'muted', importing ?
-      'Only aliases in this list can change. History, counters, and Alias List Defaults are preserved.' :
+      'Only aliases in this list can change. History, counters, and Call Handling Defaults are preserved.' :
       `${number(selectedList.alias_count || 0)} aliases will be saved in an importable VCE file.`));
   body.append(destinationSummary);
   const importPanel = node('div', 'alias-transfer-panel');
@@ -5513,7 +5513,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     selectedList?.unmatched_talkgroup_policy || {},
     'Applies when a destination talkgroup or patch group has no exact Alias or covering talkgroup range in this list.',
     'Records completed calls whose talkgroup identity is not covered by an Alias.',
-    'Routes unknown calls to the selected scan lists for browser playback.',
+    'Routes unmatched calls to the selected Scan Lists for browser playback.',
     'Sends unknown calls to the selected external streaming destinations.',
     node('div', 'logging-notice warning',
       'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
@@ -5540,7 +5540,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       button.setAttribute('aria-selected', String(active));
     });
   };
-  [['unknown', 'Unknown Alias Behavior'], ['newAlias', 'New Alias Behavior']].forEach(([id, label]) => {
+  [['unknown', 'Unmatched Calls'], ['newAlias', 'New Aliases']].forEach(([id, label]) => {
     const button = node('button', 'secondary', label);
     button.type = 'button';
     button.dataset.tab = id;
@@ -5553,10 +5553,10 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
   cancel.type = 'button';
-  const save = node('button', 'button', 'Save Alias List Defaults');
+  const save = node('button', 'button', 'Save Call Handling Defaults');
   save.type = 'submit';
   form.append(tabs, unknown.panel, newAliases.panel, errorHost, aliasModalFooter(cancel, save));
-  const modal = openReadOnlyModal(`Alias List Defaults · ${selectedList.name}`, form, {
+  const modal = openReadOnlyModal(`Call Handling Defaults · ${selectedList.name}`, form, {
     id: `unmatched-talkgroups-${listId}`,
     className: 'alias-editor-modal alias-policy-modal',
     returnFocusSelector: '.alias-policy-button'
@@ -5956,18 +5956,19 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     summaryMetrics
   ].filter(Boolean));
   const updateSummary = (value) => {
-    summaryMetrics.textContent = `${number(value?.alias_count || 0)} alias members · ` +
-      `${number(value?.unmatched_alias_list_count || 0)} unknown-talkgroup routes`;
+    summaryMetrics.textContent = `${number(value?.alias_count || 0)} assigned aliases · ` +
+      `${number(value?.unmatched_alias_list_count || 0)} Alias Lists route unmatched calls here`;
   };
   updateSummary(scanList);
   const summaryActions = node('div', 'alias-list-summary-actions');
   summaryActions.append(anchor('Back to Scan Lists', href('scan-lists'),
     'button secondary'));
-  const addAll = node('button', 'button secondary scan-list-add-all', 'Add All from Alias List');
+  const addAll = node('button', 'button secondary scan-list-add-all', 'Add an Entire Alias List');
   addAll.type = 'button';
   addAll.disabled = !(aliasEditorContext?.lists || []).length;
   addAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'add'));
-  const removeAll = node('button', 'button secondary danger-outline scan-list-remove-all', 'Remove All Members');
+  const removeAll = node('button', 'button secondary danger-outline scan-list-remove-all',
+    'Remove All Assigned Aliases');
   removeAll.type = 'button';
   removeAll.disabled = Number(scanList.alias_count || 0) <= 0;
   removeAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'remove'));
@@ -6244,7 +6245,7 @@ async function renderAliases() {
   exportAliases.addEventListener('click', () => openAliasTransferModal(selectedList, 'Export'));
   listActions.append(importAliases, exportAliases);
   if (unmatchedTalkgroupsSupported(selectedList)) {
-    const policy = node('button', 'button secondary alias-policy-button', 'Alias List Defaults');
+    const policy = node('button', 'button secondary alias-policy-button', 'Call Handling Defaults');
     policy.type = 'button';
     policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
     listActions.append(policy);
@@ -17900,7 +17901,7 @@ function openDeleteScanListAdminModal(scanList, revision) {
   const aliasCount = Number(scanList.alias_count || 0);
   const unmatchedAliasListCount = Number(scanList.unmatched_alias_list_count || 0);
   body.append(node('p', '', `Delete ${scanList.name}?`),
-    node('p', 'muted', `This removes the list from ${number(aliasCount)} aliases and the Alias List Defaults of ` +
+    node('p', 'muted', `This removes the list from ${number(aliasCount)} aliases and the Call Handling Defaults of ` +
       `${number(unmatchedAliasListCount)} alias lists. The aliases and alias lists ` +
       'themselves are preserved.'));
   const message = node('div', 'admin-form-message');
@@ -17948,10 +17949,10 @@ function adminScanListIdentity(scanList) {
 
 function adminScanListActions(scanList, revision) {
   const actions = node('div', 'admin-row-actions');
-  const members = anchor('View Aliases', href('aliases', {
+  const members = anchor('Manage Members', href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
   }), 'button secondary admin-scan-list-members');
-  const edit = node('button', 'secondary admin-scan-list-edit', 'Edit');
+  const edit = node('button', 'secondary admin-scan-list-edit', 'Edit Details');
   edit.type = 'button';
   edit.dataset.scanListId = String(scanList.id);
   edit.addEventListener('click', () => openScanListAdminModal(scanList, revision));
@@ -17971,10 +17972,24 @@ function adminScanListMemberCount(scanList) {
   }), 'admin-scan-list-member-count');
 }
 
+function adminScanListUnmatchedAliasLists(scanList) {
+  const aliasLists = Array.isArray(scanList?.unmatched_alias_lists) ? scanList.unmatched_alias_lists : [];
+  if (!aliasLists.length) return node('span', 'muted', 'None');
+  const links = node('span', 'badge-group');
+  aliasLists.forEach((aliasList) => {
+    const id = Number(aliasList?.alias_list_id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    links.append(anchor(aliasList.name || `Alias List ${id}`, href('aliases', {
+      list: id, aliasTab: 'configure'
+    }), 'badge'));
+  });
+  return links.childElementCount ? links : node('span', 'muted', 'None');
+}
+
 async function renderAdminScanLists() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('Scan Lists',
-    'Organize aliases into the listener groups used by the receiver'))) return;
+    'Choose which calls listeners can hear together'))) return;
   const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
   const revision = Number(response?.revision ?? 0);
   const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
@@ -17983,28 +17998,28 @@ async function renderAdminScanLists() {
   create.id = 'admin-create-scan-list';
   create.addEventListener('click', () => openScanListAdminModal(null, revision));
   const actions = node('div', 'section-title-actions');
-  actions.append(anchor('Manage Alias Membership', href('aliases', { aliasTab: 'configure' }),
+  actions.append(anchor('Assign Individual Aliases', href('aliases', { aliasTab: 'configure' }),
     'button secondary'), create);
   const body = node('div', 'admin-section-body');
   body.append(node('p', 'admin-section-intro',
-    'Scan lists group aliases from any alias list, and overlapping listener subscriptions are deduplicated. ' +
-    'Open a scan list to search all of its alias members and remove selected memberships in bounded batches. ' +
-    'Route unmatched talkgroups from an Alias List\'s Alias List Defaults.'),
+    'A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls ' +
+    'listeners hear. To include calls that do not match an alias, open that Alias List and choose this Scan List ' +
+    'under Call Handling Defaults. If a listener selects overlapping Scan Lists, each call still plays only once.'),
     table(scanLists, [
       { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
         sortValue: (row) => Number(row.sort_order || 0) },
       { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
-      { id: 'aliases', label: 'Aliases', width: 100, className: 'numeric',
+      { id: 'aliases', label: 'Assigned aliases', width: 130, className: 'numeric',
         render: adminScanListMemberCount, sortValue: (row) => Number(row.alias_count || 0) },
-      { id: 'unmatched-alias-lists', label: 'Alias List Defaults', width: 160, className: 'numeric',
-        render: (row) => number(row.unmatched_alias_list_count || 0),
+      { id: 'unmatched-alias-lists', label: 'Unmatched calls from', width: 260,
+        render: adminScanListUnmatchedAliasLists,
         sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
-      { id: 'actions', label: 'Actions', width: 300, sortable: false,
+      { id: 'actions', label: 'Actions', width: 360, sortable: false,
         render: (row) => adminScanListActions(row, revision) }
     ], 'No scan lists are configured', {
       type: 'admin-scan-lists', sortable: false, layoutMenuHost: actions
     }));
-  content.append(section('Scan-list management', body, actions));
+  content.append(section('Listener Scan Lists', body, actions));
 }
 
 function radioReferenceAccountMessage(account) {

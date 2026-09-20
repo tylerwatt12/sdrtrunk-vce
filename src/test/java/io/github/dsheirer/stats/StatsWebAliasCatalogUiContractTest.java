@@ -342,7 +342,7 @@ class StatsWebAliasCatalogUiContractTest
         String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
 
-        assertTrue(actions.contains("'View Aliases'"));
+        assertTrue(actions.contains("'Manage Members'"));
         assertTrue(actions.contains("scanListId: scanList.id"));
         assertTrue(count.contains("scanListId: scanList.id"));
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
@@ -366,8 +366,8 @@ class StatsWebAliasCatalogUiContractTest
             "function openFullScanListMembershipModal(scanList, operation)");
         String fullSetRequest = function(source,
             "function fullScanListMembershipRequest(revision, operation, aliasListId = null)");
-        assertTrue(members.contains("'Add All from Alias List'"));
-        assertTrue(members.contains("'Remove All Members'"));
+        assertTrue(members.contains("'Add an Entire Alias List'"));
+        assertTrue(members.contains("'Remove All Assigned Aliases'"));
         assertTrue(fullSet.contains("fullScanListMembershipRequest"));
         assertTrue(fullSet.contains("Add All Aliases"));
         assertTrue(fullSetRequest.contains("alias_scope"));
@@ -480,8 +480,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(policy.contains("selectedList?.new_alias_behavior"));
         assertTrue(prefill.contains("selectedList?.new_alias_behavior"));
         assertTrue(policy.contains("/defaults"));
-        assertTrue(policy.contains("'Unknown Alias Behavior'"));
-        assertTrue(policy.contains("'New Alias Behavior'"));
+        assertTrue(policy.contains("'Unmatched Calls'"));
+        assertTrue(policy.contains("'New Aliases'"));
         assertTrue(policy.contains("unknown_alias_behavior"));
         assertTrue(policy.contains("new_alias_behavior"));
         for(String field: new String[]{"recordable", "broadcast_configuration_ids", "scan_list_ids"})
@@ -491,12 +491,12 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(policy.contains("aliasScanListChoices(options, policy?.scan_list_ids || [])"));
         assertTrue(policy.contains("selectedAliasScanListIds(behavior.panel)"));
         assertTrue(policy.contains("'Scan List'"));
-        assertTrue(policy.contains("'Save Alias List Defaults'"));
+        assertTrue(policy.contains("'Save Call Handling Defaults'"));
         assertTrue(policy.contains("'Recording'"));
         assertTrue(policy.contains("'Streaming'"));
         assertTrue(policy.contains("including sensitive traffic"));
         assertTrue(prefill.contains("scan_list_ids: [...(policy.scan_list_ids || [])]"));
-        assertTrue(renderer.contains("'Alias List Defaults'"));
+        assertTrue(renderer.contains("'Call Handling Defaults'"));
         assertFalse(policy.contains("listen_enabled"));
         assertFalse(policy.contains("priority"));
 

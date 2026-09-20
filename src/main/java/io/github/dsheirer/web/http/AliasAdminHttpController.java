@@ -1028,7 +1028,16 @@ public final class AliasAdminHttpController
         Map<String,Object> response = new LinkedHashMap<>(scanListView(summary.scanList()));
         response.put("aliasCount", summary.aliasCount());
         response.put("unmatchedAliasListCount", summary.unmatchedAliasListCount());
+        response.put("unmatchedAliasLists", summary.unmatchedAliasLists().stream()
+            .map(AliasAdminHttpController::scanListCoverageAliasListView).toList());
         return response;
+    }
+
+    private static Map<String,Object> scanListCoverageAliasListView(
+        AliasAdministrationService.ScanListCoverageAliasList aliasList)
+    {
+        return Map.of("aliasListId", aliasList.aliasListId(), "name", aliasList.name(), "family",
+            familyName(AliasListFamily.valueOf(aliasList.family())));
     }
 
     private static Map<String,Object> scanListView(ScanList scanList)

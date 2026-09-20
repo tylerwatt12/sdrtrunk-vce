@@ -262,12 +262,23 @@ public final class AliasAdministrationService
         return onConfigurationThread(() ->
         {
             ScanListConfiguration configuration = scanListModel().configuration();
+            Map<Long,AliasListDefinition> definitions = aliasModel().aliasListDefinitions().stream()
+                .collect(java.util.stream.Collectors.toMap(AliasListDefinition::getId, definition -> definition));
             List<ScanListSummary> summaries = configuration.scanLists().stream().map(scanList ->
-                new ScanListSummary(scanList,
+            {
+                List<ScanListCoverageAliasList> unmatchedAliasLists =
+                    ownersFor(configuration.unmatchedAliasListMemberships(), scanList.getId()).stream()
+                        .map(definitions::get).filter(Objects::nonNull)
+                        .map(definition -> new ScanListCoverageAliasList(definition.getId(), definition.getName(),
+                            definition.getFamily().name()))
+                        .sorted(Comparator.comparing(ScanListCoverageAliasList::name,
+                            String.CASE_INSENSITIVE_ORDER).thenComparingLong(ScanListCoverageAliasList::aliasListId))
+                        .toList();
+                return new ScanListSummary(scanList,
                     Math.toIntExact(configuration.aliasMemberships().values().stream()
                         .filter(ids -> ids.contains(scanList.getId())).count()),
-                    Math.toIntExact(configuration.unmatchedAliasListMemberships().values().stream()
-                        .filter(ids -> ids.contains(scanList.getId())).count()))).toList();
+                    unmatchedAliasLists);
+            }).toList();
             return new ScanListCatalog(revision(), summaries);
         });
     }
@@ -1951,8 +1962,18 @@ public final class AliasAdministrationService
         }
     }
 
-    public record ScanListSummary(ScanList scanList, int aliasCount, int unmatchedAliasListCount)
+    public record ScanListSummary(ScanList scanList, int aliasCount,
+                                  List<ScanListCoverageAliasList> unmatchedAliasLists)
     {
+        public ScanListSummary
+        {
+            unmatchedAliasLists = List.copyOf(unmatchedAliasLists);
+        }
+
+        public int unmatchedAliasListCount()
+        {
+            return unmatchedAliasLists.size();
+        }
     }
 
     public record ScanListEntry(long revision, ScanList scanList, Set<Long> aliasIds,
