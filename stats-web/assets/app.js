@@ -2966,27 +2966,6 @@ function aliasListCatalogLink(row) {
   return aliasListLink(row.alias_list_name, row.alias_list_id) || '—';
 }
 
-function aliasCatalogCoreColumns() {
-  return [
-    { id: 'alias-list', label: 'Alias List', group: 'Configuration', render: aliasListCatalogLink,
-      className: 'alias-cell', sort: 'list', sortValue: (row) => row.alias_list_name || '' },
-    { id: 'family', label: 'Family', group: 'Configuration', key: 'family', sort: 'family' },
-    { id: 'matcher', label: 'Matcher', group: 'Configuration', render: (row) =>
-      availableValue(row.matcher_label || row.matcher_type), sort: 'matcher',
-      sortValue: (row) => row.matcher_label || row.matcher_type || '' },
-    { id: 'identifier', label: 'Identifier', group: 'Configuration', render: (row) =>
-      availableValue(row.identifier_display), sort: 'value', className: 'numeric',
-      sortValue: (row) => row.identifier_display || '' },
-    { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
-      className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
-    { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
-      availableValue(row.description), className: 'alias-cell' },
-    { id: 'group', label: 'Group', group: 'Configuration', render: (row) =>
-      availableValue(row.group), className: 'alias-cell', sort: 'group' },
-    { id: 'behavior', label: 'Behavior', group: 'Configuration', render: aliasBehavior }
-  ];
-}
-
 function aliasJoinedValues(values) {
   return Array.isArray(values) && values.length ? values.join(', ') : '—';
 }
@@ -3072,80 +3051,6 @@ function aliasMatcherOption(value) {
   const raw = String(value || '');
   return { value: raw, label: raw.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
     (character) => character.toUpperCase()) };
-}
-
-function aliasCatalogFilterToolbar(listResponse) {
-  const form = node('form', 'toolbar alias-catalog-toolbar');
-  form.method = 'get';
-  const view = node('input');
-  view.type = 'hidden';
-  view.name = 'view';
-  view.value = 'aliases';
-  form.append(view);
-  ['sort', 'direction'].forEach((key) => {
-    const value = route.get(key);
-    if (!value) return;
-    const hidden = node('input');
-    hidden.type = 'hidden';
-    hidden.name = key;
-    hidden.value = value;
-    form.append(hidden);
-  });
-
-  const selectFilter = (label, name, options) => {
-    const wrapper = node('label', 'alias-filter');
-    wrapper.append(node('span', '', label));
-    const select = node('select');
-    select.name = name;
-    options.forEach(([value, text]) => {
-      const option = node('option', '', text);
-      option.value = value;
-      option.selected = String(route.get(name) || '') === String(value);
-      select.append(option);
-    });
-    wrapper.append(select);
-    return wrapper;
-  };
-
-  const lists = (listResponse.rows || []).map((row) => [String(row.alias_list_id),
-    [row.name, aliasListFamilyLabel(row), `${number(row.alias_count)} aliases`].filter(Boolean).join(' · ')]);
-  const preferredFamilies = ['P25', 'DMR', 'NXDN', 'NBFM'];
-  const families = [...new Set((listResponse.rows || []).map((row) => String(row.family || '').trim())
-    .filter(Boolean))].sort((left, right) => {
-    const leftIndex = preferredFamilies.indexOf(left);
-    const rightIndex = preferredFamilies.indexOf(right);
-    if (leftIndex >= 0 || rightIndex >= 0) {
-      return (leftIndex < 0 ? preferredFamilies.length : leftIndex) -
-        (rightIndex < 0 ? preferredFamilies.length : rightIndex);
-    }
-    return left.localeCompare(right);
-  });
-  form.append(
-    selectFilter('Alias List', 'list', [['', 'All alias lists'], ...lists]),
-    selectFilter('Family', 'family', [['', 'All families'],
-      ...families.map((family) => [family, aliasListFamilyLabel(family)])]),
-    selectFilter('Identity', 'type', [['', 'All identities'], ['talkgroup', 'Talkgroups'],
-      ['radio', 'Radios'], ['other', 'Other']])
-  );
-  const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
-    .filter((option) => option.value).sort((left, right) => left.label.localeCompare(right.label))
-    .map((option) => [option.value, option.label]);
-  form.append(selectFilter('Matcher', 'matcher', [['', 'All matchers'], ...matcherOptions]));
-  const search = node('label', 'alias-filter alias-search-filter');
-  search.append(node('span', '', 'Search'));
-  const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
-  input.placeholder = 'Alias, description, group, or identifier';
-  search.append(input);
-  form.append(search, node('button', 'ui-button ui-button-primary', 'Apply'));
-  if (['list', 'family', 'type', 'matcher', 'q'].some((key) => route.get(key))) {
-    form.append(anchor('Clear', href('aliases'), 'button secondary'));
-  }
-  form.addEventListener('submit', () => {
-    [...form.elements].forEach((control) => {
-      if (control.name && control.name !== 'view' && !String(control.value || '').trim()) control.disabled = true;
-    });
-  });
-  return form;
 }
 
 function aliasRawValue(value) {
@@ -3248,15 +3153,15 @@ function aliasListFamily(row) {
   return String(row?.family || '').trim().toUpperCase();
 }
 
-function mergedAliasLists(publicRows, adminRows = []) {
-  const publicById = new Map((publicRows || []).map((row) => [aliasListId(row), row]));
-  return (adminRows || []).map((row) => {
-    const publicRow = publicById.get(aliasListId(row));
+function aliasEditorLists(configurationRows, metadataRows = []) {
+  const metadataById = new Map((metadataRows || []).map((row) => [aliasListId(row), row]));
+  return (configurationRows || []).map((row) => {
+    const metadata = metadataById.get(aliasListId(row));
     return {
       ...row,
-      ...(publicRow?.alias_count !== undefined ? { alias_count: publicRow.alias_count } : {}),
-      ...(publicRow?.assigned_channel_count !== undefined ?
-        { assigned_channel_count: publicRow.assigned_channel_count } : {})
+      ...(metadata?.alias_count !== undefined ? { alias_count: metadata.alias_count } : {}),
+      ...(metadata?.assigned_channel_count !== undefined ?
+        { assigned_channel_count: metadata.assigned_channel_count } : {})
     };
   })
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined,
@@ -3397,7 +3302,7 @@ function aliasLocalDateTimeValue(epoch) {
   return date.toISOString().slice(0, 16);
 }
 
-function aliasEditorFilterToolbar(listResponse, options = null) {
+function aliasEditorFilterToolbar(aliasPage, options = null) {
   const scanListScope = options?.scan_list_scope === true;
   const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar');
   form.method = 'get';
@@ -3429,7 +3334,7 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Alias, description, group, or identifier';
   search.append(input);
-  const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
+  const matcherOptions = (aliasPage.matcher_types || []).map(aliasMatcherOption)
     .filter((entry) => entry.value).sort((left, right) => left.label.localeCompare(right.label));
   const groupNames = [...new Set((options?.group_names || []).map((value) => String(value || '').trim())
     .filter(Boolean))].sort((left, right) => left.localeCompare(right));
@@ -6000,13 +5905,14 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
       if (!controller.isCurrent()) return false;
       const nextPagePromise = apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-group-identities`,
         pageParameters({ include_exact: false }));
-      const nextListsPromise = apiPage('/api/v1/alias-lists?limit=500');
-      const [nextPage, nextLists] = await Promise.all([nextPagePromise, nextListsPromise]);
+      const nextCatalogPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
+      const [nextPage, nextCatalog] = await Promise.all([nextPagePromise, nextCatalogPromise]);
       if (!controller.isCurrent()) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || [])
         .filter((row) => observedGroupIdentityMatchKind(row) !== 'exact'));
       aliasEditorContext.page = nextPage;
-      const nextList = (nextLists.rows || []).find((row) => aliasListId(row) === aliasListId(selectedList));
+      const nextList = (nextCatalog.alias_lists || [])
+        .find((row) => aliasListId(row) === aliasListId(selectedList));
       if (nextList) {
         Object.assign(selectedList, nextList);
         aliasEditorContext.selectedList = selectedList;
@@ -6020,7 +5926,7 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
   return controller;
 }
 
-async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext) {
+async function renderScanListMembers(main, scanListCatalog, scanList, renderContext) {
   const filters = {
     type: route.get('type'), matcher: route.get('matcher'), group: route.get('group'),
     scan_list_id: scanList.id, record: route.get('record'), stream: route.get('stream'),
@@ -6067,7 +5973,7 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
   removeAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'remove'));
   summaryActions.append(addAll, removeAll);
   summary.append(summaryCopy, summaryActions);
-  main.append(summary, aliasEditorFilterToolbar(listResponse, options));
+  main.append(summary, aliasEditorFilterToolbar(page, options));
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   const tableController = {};
@@ -6198,18 +6104,18 @@ async function renderAliases() {
     (requestedListId !== null || requestedScanListId !== null);
   clearInactiveAliasSelection(aliasAdminAllowed() && requestedTable);
   if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
-  const publicListsPromise = apiPage('/api/v1/alias-lists?limit=500');
-  const adminListsPromise = activityRequested ?
+  const aliasListMetadataPromise = apiPage('/api/v1/alias-lists?limit=500');
+  const editorCatalogPromise = activityRequested ?
     requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }) :
     requestJson('/api/v1/admin/alias-lists', { csrf: false });
   const scanListCatalogPromise = requestedScanListId ?
     requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
     Promise.resolve({ revision: null, scan_lists: [] });
-  const [listResponse, adminCatalog, scanListCatalog] = await Promise.all([
-    publicListsPromise, adminListsPromise, scanListCatalogPromise
+  const [aliasListMetadata, editorCatalog, scanListCatalog] = await Promise.all([
+    aliasListMetadataPromise, editorCatalogPromise, scanListCatalogPromise
   ]);
   if (!renderIsCurrent(renderContext)) return;
-  const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
+  const lists = aliasEditorLists(editorCatalog.alias_lists || [], aliasListMetadata.rows || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
   if (route.get('createAlias') === '1' && route.has('createListId')) {
     const routedListId = Number(route.get('createListId'));
@@ -6226,7 +6132,7 @@ async function renderAliases() {
     (scanListCatalog.scan_lists || []).find((row) => Number(row.id) === requestedScanListId) :
     null;
   aliasEditorContext = {
-    admin: true, revision: Number(scanListScope ? scanListCatalog.revision : adminCatalog.revision ?? 0),
+    admin: true, revision: Number(scanListScope ? scanListCatalog.revision : editorCatalog.revision ?? 0),
     lists, selectedList, scanListScope, options: null, page: null
   };
 
@@ -6240,7 +6146,7 @@ async function renderAliases() {
   if (!beginPage(renderContext, pageHeader('Alias Editor', subtitle), workspace)) return;
 
   if (scanListScope) {
-    await renderScanListMembers(main, listResponse, scanListCatalog, scanListScope, renderContext);
+    await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext);
     return;
   }
 
@@ -6346,7 +6252,7 @@ async function renderAliases() {
   listActions.append(remove);
   summary.append(listActions);
   main.append(summary, aliasEditorViewTabs(selectedList), view === 'discover' ?
-    observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
+    observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(page, options));
 
   if (view === 'discover') {
     aliasEditorPageController = renderObservedGroupIdentities(main, page, selectedList, renderContext,
@@ -6469,9 +6375,9 @@ async function renderAliases() {
         direction: route.get('direction') || defaultOrder.direction
       }));
       const nextOptionsPromise = api('/api/v1/admin/aliases/options', optionParameters);
-      const nextListsPromise = apiPage('/api/v1/alias-lists?limit=500');
-      const [nextPage, nextOptions, nextLists] = await Promise.all([
-        nextPagePromise, nextOptionsPromise, nextListsPromise
+      const nextCatalogPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
+      const [nextPage, nextOptions, nextCatalog] = await Promise.all([
+        nextPagePromise, nextOptionsPromise, nextCatalogPromise
       ]);
       if (!pageController.isCurrent()) return false;
       rows.splice(0, rows.length, ...(nextPage.rows || []));
@@ -6480,7 +6386,8 @@ async function renderAliases() {
       aliasEditorContext.page = nextPage;
       aliasEditorContext.options = nextOptions;
       aliasEditorContext.revision = Number(nextOptions?.revision ?? aliasEditorContext.revision ?? 0);
-      const nextList = (nextLists.rows || []).find((row) => aliasListId(row) === aliasListId(selectedList));
+      const nextList = (nextCatalog.alias_lists || [])
+        .find((row) => aliasListId(row) === aliasListId(selectedList));
       const nextOptionsList = nextOptions?.alias_list;
       if (nextList || nextOptionsList) {
         selectedList = { ...selectedList, ...nextList, ...nextOptionsList };

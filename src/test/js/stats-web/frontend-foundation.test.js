@@ -389,7 +389,7 @@ async function main() {
     if (literal) assert.match(literal[1], stableId, `Invalid table type ${literal[1]}`);
   });
   [
-    'aliasCatalogCoreColumns', 'aliasCustomConfigurationColumns',
+    'aliasCustomConfigurationColumns',
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',

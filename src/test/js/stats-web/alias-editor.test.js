@@ -68,7 +68,7 @@ vm.runInContext(`
   let aliasEditorSelectionRequest = 0;
   let aliasEditorLastSelectionIndex = null;
   ${functionSource('function aliasListId(row)')}
-  ${functionSource('function mergedAliasLists(publicRows, adminRows = [])')}
+  ${functionSource('function aliasEditorLists(configurationRows, metadataRows = [])')}
   ${functionSource('function aliasOptionLimit(options, name)')}
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
@@ -94,7 +94,7 @@ vm.runInContext(`
   ${functionSource('function clearInactiveAliasSelection(activeTable)')}
   ${functionSource('function clearAliasSelectionOutsideEditor(view)')}
   ${functionSource('async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)')}
-  globalThis.mergeLists = mergedAliasLists;
+  globalThis.editorLists = aliasEditorLists;
   globalThis.optionLimit = aliasOptionLimit;
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
@@ -141,25 +141,25 @@ const adminLists = Array.from({ length: 150 }, (_, offset) => {
     unmatched_talkgroup_policy: { recordable: id % 2 === 0 }
   };
 });
-const publicLists = adminLists.slice(0, 100).map((row) => ({
+const aliasListMetadata = adminLists.slice(0, 100).map((row) => ({
   alias_list_id: row.alias_list_id,
-  name: `Public ${row.alias_list_id}`,
+  name: `Metadata ${row.alias_list_id}`,
   family: 'WRONG',
   alias_count: row.alias_list_id * 100,
   assigned_channel_count: row.alias_list_id * 2,
-  unmatched_talkgroup_policy: { recordable: 'must not replace admin state' }
+  unmatched_talkgroup_policy: { recordable: 'must not replace configuration state' }
 }));
-const merged = context.mergeLists(publicLists, adminLists);
-assert.equal(merged.length, 150, 'The complete administrator catalog must drive list visibility.');
+const merged = context.editorLists(adminLists, aliasListMetadata);
+assert.equal(merged.length, 150, 'The complete Alias Editor catalog must drive list visibility.');
 const first = merged.find((row) => row.alias_list_id === 1);
-assert.equal(first.name, 'Admin 001', 'Public paging data must not replace administrator-owned list identity.');
+assert.equal(first.name, 'Admin 001', 'Statistics metadata must not replace editor-owned list identity.');
 assert.equal(first.family, 'P25');
 assert.deepEqual(JSON.parse(JSON.stringify(first.unmatched_talkgroup_policy)), { recordable: false });
-assert.equal(first.alias_count, 100, 'Public count data should overlay the matching administrator row.');
+assert.equal(first.alias_count, 100, 'Statistics metadata should enrich the matching editor row.');
 assert.equal(first.assigned_channel_count, 2);
-const beyondPublicPage = merged.find((row) => row.alias_list_id === 150);
-assert.equal(beyondPublicPage.alias_count, 1500,
-  'Counts supplied by the complete administrator catalog must survive beyond the public page.');
+const beyondMetadataPage = merged.find((row) => row.alias_list_id === 150);
+assert.equal(beyondMetadataPage.alias_count, 1500,
+  'Counts supplied by the complete editor catalog must survive beyond the metadata page.');
 assert.ok(merged.findIndex((row) => row.name === 'List 2') < merged.findIndex((row) => row.name === 'List 10'),
   'Alias lists should retain natural name ordering.');
 assert.deepEqual(JSON.parse(JSON.stringify(context.optionLimit({
@@ -182,7 +182,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure
   { sort: 'name', direction: 'asc' },
   'Configuration views must retain their alphabetical default.');
 const aliasRenderer = functionSource('async function renderAliases()');
-const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(listResponse, options = null)');
+const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null)');
 const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
 const aliasExportLink = functionSource("function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {})");
 const aliasDetailLink = functionSource('function aliasDetailLink(row)');
@@ -194,7 +194,7 @@ assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
 assert.match(aliasRenderer, /admin\/alias-lists\?include_counts=false/,
   'Activity renders must not recount the complete in-memory Alias model.');
 assert.match(aliasRenderer, /apiPage\('\/api\/v1\/alias-lists\?limit=500'\)/,
-  'The database-backed catalog must supply counts for every Alias List the administrator catalog can return.');
+  'The editor must enrich its configuration lists with bounded activity metadata.');
 assert.match(aliasRenderer, /optionParameters\.include_group_names = false/,
   'Activity renders must not rebuild global group-name suggestions.');
 assert.match(aliasFilterToolbar, /selectFilter\('Evidence', 'evidence'/,

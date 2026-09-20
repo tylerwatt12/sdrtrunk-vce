@@ -32,9 +32,9 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 
 /**
- * Read-only alias configuration catalog with compact statistics enrichment.  Configuration always comes from the
- * durable alias tables; statistics are projected through {@link StatsAliasResolver} so one observed identity can
- * contribute to only one winning alias.
+ * Bounded Alias Editor data queries with compact statistics enrichment. Configuration always comes from the durable
+ * alias tables; statistics are projected through {@link StatsAliasResolver} so one observed identity can contribute
+ * to only one winning alias.
  */
 final class StatsAliasCatalog
 {

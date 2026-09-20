@@ -41,14 +41,14 @@ class StatsWebAliasCatalogUiContractTest
     void usesTheCompleteAdministratorListCatalogAndLabelsBoundedOptionSuggestions() throws Exception
     {
         String source = source();
-        String merge = function(source, "function mergedAliasLists(publicRows, adminRows = [])");
+        String merge = function(source, "function aliasEditorLists(configurationRows, metadataRows = [])");
         String limits = function(source, "function aliasOptionLimit(options, name)");
 
-        assertTrue(merge.contains("return (adminRows || []).map"));
-        assertFalse(merge.contains("return (publicRows || []).map"));
-        assertTrue(merge.contains("publicRow?.alias_count"));
-        assertTrue(merge.contains("publicRow?.assigned_channel_count"));
-        assertFalse(merge.contains("...publicRow"));
+        assertTrue(merge.contains("return (configurationRows || []).map"));
+        assertFalse(merge.contains("return (metadataRows || []).map"));
+        assertTrue(merge.contains("metadata?.alias_count"));
+        assertTrue(merge.contains("metadata?.assigned_channel_count"));
+        assertFalse(merge.contains("...metadata"));
         assertTrue(limits.contains("`${name}_total`"));
         assertTrue(limits.contains("`${name}_truncated`"));
         assertTrue(source.contains("aliasOptionLimitNotice(options, 'group_names'"));
@@ -284,7 +284,7 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
-            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
         String selectAll = function(source,
             "async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)");
         String complete = function(source,
@@ -337,7 +337,7 @@ class StatsWebAliasCatalogUiContractTest
         String count = function(source, "function adminScanListMemberCount(scanList)");
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
-            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
         String columns = function(source, "function scanListMemberColumns(rows, onSelectionChange)");
         String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
@@ -409,7 +409,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String renderer = function(source, "async function renderAliases()");
-        String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
+        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
 
         for(String parameter: new String[]{"group", "record", "stream", "evidence", "use"})
         {
