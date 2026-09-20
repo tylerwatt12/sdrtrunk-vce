@@ -10,7 +10,7 @@ const application = fs.readFileSync(applicationPath, 'utf8');
 const html = fs.readFileSync(path.resolve(assets, '../index.html'), 'utf8');
 const css = fs.readFileSync(path.resolve(assets, 'styles/features/administration.css'), 'utf8');
 
-assert.match(html, /id="support-report-indicator"[^>]+view=admin&amp;tab=support/);
+assert.match(html, /id="support-report-indicator"[^>]+receiver-health-indicator receiver-health-neutral icon-button[^>]+view=admin&amp;tab=support/);
 assert.match(html, /id="icon-bug"/);
 assert.match(application, /function renderAdminSupportReport\(\)/);
 assert.match(application, /Title for your issue/);
@@ -25,5 +25,6 @@ assert.match(application, /\/api\/v1\/admin\/support-reports/);
 assert.match(application, /accessSession\.tier === 'ADMIN'/);
 assert.match(css, /\.support-report-progress/);
 assert.match(css, /\.support-report-warning/);
-assert.match(css, /\.support-report-form\s*\{[^}]*padding:\s*var\(--space-5\)/);
+assert.match(css, /\.support-report-choice-list \.admin-toggle-control\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;/);
+assert.match(css, /\.support-report-form\s*\{[^}]*padding:\s*var\(--space-4\)/);
 assert.match(css, /\.support-report-form\s*\{\s*padding:\s*var\(--space-3\)/);
