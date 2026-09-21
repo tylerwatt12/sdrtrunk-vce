@@ -49,8 +49,8 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 8796;
-const FEATURE_SHARED_SELECTOR_BUDGET = 22;
+const LEGACY_LINE_BUDGET = 8795;
+const FEATURE_SHARED_SELECTOR_BUDGET = 17;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
 ]);
@@ -560,8 +560,15 @@ function validateLegacyAndInlineStyleRatchets(stylesheets, entry) {
   const appSource = fs.readFileSync(path.resolve(assets, 'app.js'), 'utf8');
   assert.doesNotMatch(indexSource, /\sstyle\s*=/i,
     'Production HTML must use design-system classes instead of inline style attributes');
-  assert.doesNotMatch(appSource, /\.style\.cssText\s*=|setAttribute\(\s*['"]style['"]/,
+  const inlineStylePattern = /\.style\.cssText\s*=|setAttribute\(\s*['"]style['"]/;
+  assert.doesNotMatch(appSource, inlineStylePattern,
     'JavaScript must not inject arbitrary style strings; use classes, tokens, or bounded geometry properties');
+  assert.match(appSource, /element\.classList\.add\('ui-feedback', `ui-feedback-\$\{state\}`\)/,
+    'Legacy feedback constructors must be adapted to shared feedback primitives');
+  assert.match(appSource, /element\.classList\.contains\('admin-form-actions'\).*'ui-action-row'/,
+    'Legacy administration action rows must receive the shared action-row primitive');
+  assert.match(appSource, /control\.classList\.add\('ui-input'\)/,
+    'Administration fields must receive shared input primitives through formField');
 }
 
 function stylesheetModule(stylesheets, entry, relativeName) {

@@ -305,6 +305,12 @@ function node(tag, className, textValue) {
   const element = document.createElement(tag);
   if (className) element.className = className;
   if (String(tag).toLowerCase() === 'select') element.classList.add('ui-select');
+  if (String(tag).toLowerCase() === 'div') {
+    for (const state of ['empty', 'loading', 'error']) {
+      if (element.classList.contains(state)) element.classList.add('ui-feedback', `ui-feedback-${state}`);
+    }
+  }
+  if (element.classList.contains('admin-form-actions')) element.classList.add('ui-action-row');
   if (textValue !== undefined && textValue !== null) element.textContent = String(textValue);
   return element;
 }
@@ -744,6 +750,9 @@ function updateAccessControls() {
 }
 
 function formField(labelText, control, detail = '') {
+  if (control?.matches?.('input:not([type="checkbox"]):not([type="radio"])')) control.classList.add('ui-input');
+  else if (control?.matches?.('textarea')) control.classList.add('ui-textarea');
+  else if (control?.matches?.('select')) control.classList.add('ui-select');
   const label = node('label', 'admin-form-field ui-field');
   label.append(node('span', 'admin-form-label ui-field-label', labelText), control);
   if (detail) label.append(node('small', 'admin-form-help ui-field-detail', detail));

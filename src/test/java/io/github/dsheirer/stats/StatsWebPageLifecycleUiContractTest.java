@@ -25,7 +25,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=164\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=165\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -33,7 +33,7 @@ class StatsWebPageLifecycleUiContractTest
         assertFalse(html.contains("<script src=\"/assets/core/page-lifecycle.js"));
         assertFalse(html.contains("<script src=\"/assets/features/radio-systems-directory.js"));
         assertTrue(html.contains("class=\"content\" aria-live=\"polite\" aria-busy=\"true\""));
-        assertTrue(html.contains("<div class=\"loading\" role=\"status\">Loading</div>"));
+        assertTrue(html.contains("<div class=\"loading ui-feedback ui-feedback-loading\" role=\"status\">Loading</div>"));
     }
 
     @Test

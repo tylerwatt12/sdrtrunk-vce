@@ -3330,9 +3330,9 @@ body.modal-open {
   font-weight: 650;
 }
 
-.admin-form input,
-.admin-form select,
-.admin-form textarea,
+.admin-form input:not(.ui-input),
+.admin-form select:not(.ui-select),
+.admin-form textarea:not(.ui-textarea),
 .admin-tier-select {
   min-height: 34px;
   padding: 6px 8px;
@@ -3343,24 +3343,24 @@ body.modal-open {
   font: inherit;
 }
 
-.admin-form input,
-.admin-form select,
-.admin-form textarea {
+.admin-form input:not(.ui-input),
+.admin-form select:not(.ui-select),
+.admin-form textarea:not(.ui-textarea) {
   min-width: 0;
   width: 100%;
 }
 
-.admin-form input:not([type="checkbox"]):not([type="radio"]),
-.admin-form select,
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
+.admin-form select:not(.ui-select),
 .admin-tier-select {
   height: 36px;
   min-height: 36px;
   line-height: 1.25;
 }
 
-.admin-form input:focus,
-.admin-form select:focus,
-.admin-form textarea:focus,
+.admin-form input:not(.ui-input):focus,
+.admin-form select:not(.ui-select):focus,
+.admin-form textarea:not(.ui-textarea):focus,
 .admin-tier-select:focus {
   border-color: var(--accent);
   outline: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
@@ -3881,7 +3881,6 @@ body.modal-open {
   color: var(--danger);
 }
 
-.admin-form-actions,
 .admin-row-actions {
   display: flex;
   flex-wrap: wrap;

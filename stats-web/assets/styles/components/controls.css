@@ -315,6 +315,39 @@
   padding-right: 12px;
 }
 
+.ui-selection-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.ui-repeater,
+.ui-repeater-rows {
+  display: grid;
+}
+
+.ui-repeater {
+  gap: 9px;
+}
+
+.ui-repeater-rows {
+  gap: 7px;
+}
+
+.ui-repeater-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content 40px;
+  align-items: center;
+  gap: 7px;
+}
+
+.ui-input-unit {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .ui-field {
   min-width: 0;
   display: grid;
@@ -368,6 +401,26 @@
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));
   border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+}
+
+.ui-feedback {
+  min-width: 0;
+  padding: var(--space-4);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.ui-feedback-loading {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.ui-feedback-error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
+  border-radius: var(--radius-control);
 }
 
 .ui-empty-state {

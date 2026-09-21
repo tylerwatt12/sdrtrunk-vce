@@ -141,13 +141,6 @@
   text-align: center;
 }
 
-.ui-selection-check {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
 .channel-editor-modal {
   width: min(1060px, 96vw);
   border-radius: 14px;
@@ -343,29 +336,6 @@
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-}
-
-.ui-repeater {
-  display: grid;
-  gap: 9px;
-}
-
-.ui-repeater-rows {
-  display: grid;
-  gap: 7px;
-}
-
-.ui-repeater-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content 40px;
-  align-items: center;
-  gap: 7px;
-}
-
-.ui-input-unit {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .channel-input-with-unit {
