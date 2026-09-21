@@ -58,6 +58,7 @@
           <span class="ui-pill ui-pill-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><span>Running</span></span>
           <span class="ui-pill ui-pill-blue"><span>P25 Phase 2</span></span>
           <span class="ui-pill ui-pill-warning"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg><span>Attention</span></span>
+          <span class="ui-pill ui-pill-danger"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg><span>Action needed</span></span>
         </div>
         <div class="ui-segmented" role="group" aria-label="View density">
           <button class="ui-segmented-option active" type="button" aria-pressed="true">Compact</button>
@@ -261,6 +262,108 @@
         </form>
       </section>
     </div>
+  </main>
+
+  <main class="visual-feature-example visual-health-example">
+    <header class="visual-feature-header">
+      <div><p class="visual-settings-eyebrow">Administration</p><h1>Current status</h1><p>Receiver health, current issues, and measurements.</p></div>
+      <a class="receiver-health-indicator receiver-health-warning icon-button" href="#health" aria-label="Receiver status needs attention"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg></a>
+    </header>
+
+    <section class="section receiver-health-section">
+      <div class="section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Computer resources</button><button class="ui-button ui-button-secondary" type="button">Check again</button></div>
+      <div class="receiver-health-section-body">
+        <div class="receiver-health-resource-bars">
+          <article class="receiver-health-resource-bar receiver-health-healthy">
+            <div class="receiver-health-resource-heading"><strong>Application memory</strong><span class="ui-pill ui-pill-success">Normal</span></div>
+            <div class="receiver-health-resource-value"><strong>42</strong><span>%</span></div>
+            <progress class="receiver-health-resource-progress receiver-health-healthy" max="100" value="42">42%</progress>
+            <div class="receiver-health-resource-detail">860 MB of 2 GB in use</div>
+          </article>
+          <article class="receiver-health-resource-bar receiver-health-warning">
+            <div class="receiver-health-resource-heading"><strong>Computer memory</strong><span class="ui-pill ui-pill-warning">Check soon</span></div>
+            <div class="receiver-health-resource-value"><strong>78</strong><span>%</span></div>
+            <progress class="receiver-health-resource-progress receiver-health-warning" max="100" value="78">78%</progress>
+            <div class="receiver-health-resource-detail">Other applications are using additional memory.</div>
+          </article>
+          <article class="receiver-health-resource-bar receiver-health-critical">
+            <div class="receiver-health-resource-heading"><strong>Disk space</strong><span class="ui-pill ui-pill-danger">Action needed</span></div>
+            <div class="receiver-health-resource-value"><strong>94</strong><span>%</span></div>
+            <progress class="receiver-health-resource-progress receiver-health-critical" max="100" value="94">94%</progress>
+            <div class="receiver-health-resource-detail">18 GB remains in the recording location.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section receiver-health-section">
+      <div class="section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Summary</button></div>
+      <div class="receiver-health-section-body">
+        <div class="receiver-health-overview">
+          <div class="receiver-health-overview-state receiver-health-warning"><span>Receiver status</span><strong>Check soon</strong></div>
+          <div class="summary-band"><div class="metric"><span>Current issues</span><strong>2</strong></div><div class="metric"><span>Need action</span><strong>1</strong></div><div class="metric"><span>Check soon</span><strong>1</strong></div></div>
+          <dl class="receiver-health-timing"><dt>Status tracking started</dt><dd>Today at 8:04 AM</dd><dt>Last update</dt><dd>Just now</dd></dl>
+        </div>
+      </div>
+    </section>
+
+    <aside class="receiver-health-account-setting"><span>All current issues appear in your personal status icon. Every issue remains monitored here.</span><a href="#status-icon">Choose status icon issues</a></aside>
+
+    <section class="section receiver-health-section">
+      <div class="section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Issues needing attention</button></div>
+      <div class="receiver-health-section-body receiver-health-incident-list">
+        <article class="receiver-health-incident receiver-health-critical">
+          <div class="receiver-health-incident-heading"><div class="receiver-health-incident-identity"><h3>Recording disk is nearly full</h3><div class="receiver-health-incident-scope">Recording service</div></div><span class="ui-pill ui-pill-danger">Action needed</span></div>
+          <dl class="receiver-health-incident-facts"><dt>Issue code</dt><dd>RECORDING_DISK_CRITICAL</dd><dt>Started</dt><dd>Today at 10:31 AM</dd><dt>Last detected</dt><dd>Just now</dd></dl>
+          <div class="receiver-health-incident-guidance"><div class="receiver-health-guidance-item"><h4>Likely cause</h4><p>The recording location has less free space than the configured safety threshold.</p></div><div class="receiver-health-guidance-item"><h4>Impact</h4><p>New recordings may stop when the remaining space is exhausted.</p></div><div class="receiver-health-guidance-item"><h4>Check next</h4><p>Remove unneeded recordings or select a location with more space.</p></div><div class="receiver-health-guidance-item"><h4>Observed</h4><p>94% used · 18 GB available</p></div></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section receiver-health-section">
+      <div class="section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Detailed measurements</button></div>
+      <div class="receiver-health-section-body receiver-health-measurement-list" role="list">
+        <div class="receiver-health-measurement-row receiver-health-warning" role="listitem"><div class="receiver-health-measurement-scope">Computer</div><div class="receiver-health-measurement-label">Memory pressure</div><div class="receiver-health-measurement-value"><strong>78</strong><span>%</span></div><span class="ui-pill ui-pill-warning">Check soon</span><div class="receiver-health-measurement-detail">Sustained above the preferred operating range.</div></div>
+        <div class="receiver-health-measurement-row receiver-health-healthy" role="listitem"><div class="receiver-health-measurement-scope">Decoder</div><div class="receiver-health-measurement-label">Dropped buffers</div><div class="receiver-health-measurement-value"><strong>0</strong></div><span class="ui-pill ui-pill-success">Normal</span><div class="receiver-health-measurement-detail">No dropped native buffers were observed.</div></div>
+      </div>
+    </section>
+  </main>
+
+  <main class="visual-feature-example visual-p25-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>P25 receiver settings</h1><p>Receiver-wide P25 band plan override profiles.</p></div></header>
+    <section class="section">
+      <div class="section-title"><h2>P25 band plan overrides</h2></div>
+      <form class="admin-form settings-page-form p25-overrides-form">
+        <p class="p25-overrides-intro">A matching profile replaces the complete over-the-air band plan only for P25 channels that have the override enabled.</p>
+        <div class="p25-override-profile-list">
+          <details class="settings-card p25-override-profile" open>
+            <summary class="settings-card-header p25-override-profile-header"><h3 class="settings-card-title">BEE00-49F · 01-01</h3><button class="ui-button ui-button-danger p25-override-profile-delete" type="button">Delete profile</button></summary>
+            <div class="settings-card-body">
+              <div class="p25-override-identity">
+                <label class="ui-field"><span class="ui-field-label">WACN (hex)</span><input class="ui-input" value="BEE00"></label>
+                <label class="ui-field"><span class="ui-field-label">System ID (hex)</span><input class="ui-input" value="49F"></label>
+                <label class="ui-field"><span class="ui-field-label">RFSS (hex, optional)</span><input class="ui-input" value="01"></label>
+                <label class="ui-field"><span class="ui-field-label">Site ID (hex, optional)</span><input class="ui-input" value="01"></label>
+              </div>
+              <h4 class="p25-override-bands-title">Replacement bands</h4>
+              <div class="p25-override-bands">
+                <div class="p25-override-band-row">
+                  <label class="ui-field"><span class="ui-field-label">Band ID</span><input class="ui-input" value="1"></label>
+                  <label class="ui-field"><span class="ui-field-label">Type</span><select class="ui-select"><option>P25 2-slot TDMA</option></select></label>
+                  <label class="ui-field"><span class="ui-field-label">Base frequency (MHz)</span><input class="ui-input" value="851.00625"></label>
+                  <label class="ui-field"><span class="ui-field-label">Bandwidth (kHz)</span><input class="ui-input" value="12.5"></label>
+                  <label class="ui-field"><span class="ui-field-label">Spacing (kHz)</span><input class="ui-input" value="6.25"></label>
+                  <label class="ui-field"><span class="ui-field-label">Offset (MHz)</span><input class="ui-input" value="-45"></label>
+                  <button class="ui-button ui-button-danger p25-override-remove" type="button">Remove band</button>
+                </div>
+              </div>
+              <button class="ui-button ui-button-secondary" type="button">Add band</button>
+            </div>
+          </details>
+        </div>
+        <footer class="settings-form-footer"><div class="admin-form-message" role="status"></div><div class="ui-action-row"><button class="ui-button ui-button-secondary" type="button">Add P25 override</button><button class="ui-button ui-button-primary" type="button">Save overrides</button></div></footer>
+      </form>
+    </section>
   </main>
 
   <script src="/visual/design-system-gallery.js"></script>

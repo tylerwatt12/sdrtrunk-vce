@@ -172,10 +172,57 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.visual-feature-example {
+  width: min(1180px, calc(100% - 32px));
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.visual-feature-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-1);
+}
+
+.visual-feature-header > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.visual-feature-header h1,
+.visual-feature-header p {
+  margin: 0;
+}
+
+.visual-feature-header > div > p:last-child {
+  color: var(--muted);
+}
+
+.visual-feature-example > .section {
+  margin: 0;
+  overflow: clip;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+.visual-health-example .summary-band > div {
+  min-width: 0;
+}
+
+.visual-p25-example .settings-page-form {
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+}
+
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
-body:not([data-gallery-view="settings"]) .visual-settings-example {
+body:not([data-gallery-view="settings"]) .visual-settings-example,
+body:not([data-gallery-view="health"]) .visual-health-example,
+body:not([data-gallery-view="p25"]) .visual-p25-example {
   display: none;
 }
 
@@ -216,5 +263,14 @@ body:not([data-gallery-view="settings"]) .visual-settings-example {
 
   .visual-settings-form .settings-card-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .visual-feature-example {
+    width: min(100% - 20px, 1180px);
+    padding-top: var(--space-3);
+  }
+
+  .visual-feature-header {
+    display: grid;
   }
 }

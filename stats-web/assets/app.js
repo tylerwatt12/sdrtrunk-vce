@@ -18528,7 +18528,7 @@ function p25OverrideBandRow(band = null) {
     type.append(option);
   });
   type.value = band?.type === 'TDMA' ? 'TDMA' : 'FDMA';
-  const remove = node('button', 'button danger p25-override-remove', 'Remove band');
+  const remove = node('button', 'ui-button ui-button-danger p25-override-remove', 'Remove band');
   remove.type = 'button';
   remove.addEventListener('click', () => row.remove());
   row.append(
@@ -18555,7 +18555,7 @@ function p25OverrideProfileCard(profile = null) {
   const card = node('details', 'settings-card p25-override-profile');
   const header = node('summary', 'settings-card-header p25-override-profile-header');
   const title = node('h3', 'settings-card-title', 'New P25 override');
-  const remove = node('button', 'button danger', 'Delete profile');
+  const remove = node('button', 'ui-button ui-button-danger p25-override-profile-delete', 'Delete profile');
   remove.type = 'button';
   remove.addEventListener('click', (event) => {
     event.preventDefault();
@@ -18578,7 +18578,7 @@ function p25OverrideProfileCard(profile = null) {
   );
   const bands = node('div', 'p25-override-bands');
   (profile?.bands || [null]).forEach((band) => bands.append(p25OverrideBandRow(band)));
-  const addBand = node('button', 'button secondary', 'Add band');
+  const addBand = node('button', 'ui-button ui-button-secondary', 'Add band');
   addBand.type = 'button';
   addBand.addEventListener('click', () => bands.append(p25OverrideBandRow()));
   body.append(identity, node('h4', 'p25-override-bands-title', 'Replacement bands'), bands, addBand);
@@ -18652,7 +18652,7 @@ async function renderAdminP25BandplanOverrides() {
   const list = node('div', 'p25-override-profile-list');
   const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
-  const add = node('button', 'button secondary', 'Add P25 override');
+  const add = node('button', 'ui-button ui-button-secondary', 'Add P25 override');
   add.type = 'button';
   add.disabled = true;
   add.addEventListener('click', () => {
@@ -18661,7 +18661,7 @@ async function renderAdminP25BandplanOverrides() {
     list.append(card);
     card.querySelector('[data-p25-override-field="wacn"]')?.focus();
   });
-  const save = node('button', '', 'Save P25 band plan overrides');
+  const save = node('button', 'ui-button ui-button-primary', 'Save P25 band plan overrides');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
@@ -18776,7 +18776,8 @@ function receiverHealthTime(value) {
 function receiverHealthSeverityBadge(value) {
   const severity = receiverHealthSeverity(value);
   const label = severity === 'critical' ? 'Action needed' : severity === 'warning' ? 'Check soon' : 'Normal';
-  return badge(label, `receiver-health-severity receiver-health-${severity}`);
+  const tone = severity === 'critical' ? 'danger' : severity === 'warning' ? 'warning' : 'success';
+  return uiPill(label, tone);
 }
 
 function receiverHealthIncident(incident, resolved = false, expanded = false, onToggle = null) {
@@ -18913,12 +18914,12 @@ function receiverHealthResolvedPager(page, onPage) {
   navigation.append(node('span', 'muted',
     `Cleared issues ${number(first)}-${number(last)} of ${number(page.total_count)} · ` +
       `Page ${number(page.page + 1)} of ${number(page.page_count)}`));
-  const previous = node('button', 'secondary', 'Previous');
+  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
   previous.type = 'button';
   previous.dataset.receiverHealthFocus = 'resolved-previous';
   previous.disabled = page.page <= 0;
   previous.addEventListener('click', () => onPage(page.page - 1));
-  const next = node('button', 'secondary', 'Next');
+  const next = node('button', 'ui-button ui-button-secondary', 'Next');
   next.type = 'button';
   next.dataset.receiverHealthFocus = 'resolved-next';
   next.disabled = !page.has_more;
@@ -18934,7 +18935,7 @@ function receiverHealthResolvedSection(incidents) {
     return receiverHealthSection('resolved', 'Recently cleared', receiverHealthIncidentList(incidents, true));
   }
   const body = node('div');
-  const sort = node('select');
+  const sort = node('select', 'ui-select receiver-health-resolved-select');
   sort.setAttribute('aria-label', 'Sort cleared issues');
   sort.dataset.receiverHealthFocus = 'resolved-sort';
   [['recent', 'Most recently cleared'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
@@ -19070,7 +19071,7 @@ function receiverHealthMeasurementGroup(group, index) {
 }
 
 function receiverHealthRefreshButton() {
-  const refresh = node('button', 'secondary', 'Check again');
+  const refresh = node('button', 'ui-button ui-button-secondary', 'Check again');
   refresh.type = 'button';
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
@@ -19121,7 +19122,8 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     const message = stale ? (lastError || 'Receiver status is unavailable right now. Select Check again to try again.') :
       'Loading receiver status…';
     const body = node('div', 'admin-section-body');
-    body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
+    body.append(node('div', stale ? 'ui-notice ui-notice-warning' :
+      'ui-feedback ui-feedback-loading receiver-health-loading-message', message));
     host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()));
     receiverHealthRestoreFocus(host, focusedControl);
     return;
@@ -19149,7 +19151,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     timing.append(detail);
   });
   overview.append(timing);
-  if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
+  if (stale) overview.append(node('div', 'ui-notice ui-notice-warning receiver-health-stale-notice',
     'Live status is delayed. Showing the last update received.'));
 
   host.append(receiverHealthHostResourceOverview(snapshot),

@@ -20,6 +20,8 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
+  '@import url("./styles/features/p25-settings.css") layer(features);',
+  '@import url("./styles/features/receiver-health.css") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css") layer(utilities);',
 ];
 
@@ -32,10 +34,6 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
   ['button.secondary.danger-outline', 1],
   ['button.secondary', 1],
   ['table', 1],
-  ['button.receiver-health-section-toggle', 1],
-  ['button.receiver-health-section-toggle::before', 1],
-  ['button.receiver-health-section-toggle[aria-expanded="true"]::before', 1],
-  ['button.receiver-health-section-toggle:focus-visible', 1],
   ['th', 2],
   ['td', 1],
   ['th:last-child', 1],
@@ -51,7 +49,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 8354;
+const LEGACY_LINE_BUDGET = 7569;
 const FEATURE_SHARED_SELECTOR_BUDGET = 17;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
@@ -661,6 +659,35 @@ function validateSettingsComposition(stylesheets, entry) {
     'Shared settings forms must use the standard message-and-action footer');
 }
 
+function validateSettingsFeatures(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const p25 = stylesheetModule(stylesheets, entry, 'features/p25-settings.css').source;
+  const health = stylesheetModule(stylesheets, entry, 'features/receiver-health.css').source;
+  for(const [selector, stylesheet, label] of [
+    ['.p25-overrides-intro', p25, 'P25 settings'],
+    ['.p25-override-profile-header', p25, 'P25 settings'],
+    ['.p25-override-band-row', p25, 'P25 settings'],
+    ['.receiver-health-indicator', health, 'receiver health'],
+    ['.receiver-health-overview', health, 'receiver health'],
+    ['.receiver-health-resource-bars', health, 'receiver health'],
+    ['.receiver-health-incident', health, 'receiver health'],
+    ['.receiver-health-measurement-row', health, 'receiver health'],
+  ]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
+    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the ${label} feature stylesheet`);
+    assert.match(stylesheet, baseRule, `Missing ${label} rule ${selector}`);
+  }
+  assert.doesNotMatch(health, /:root\[data-theme="dark"\]/,
+    'Receiver-health presentation must adapt through semantic tokens instead of feature theme overrides');
+  assert.match(health,
+    /@media \(max-width: 560px\)[\s\S]*\.receiver-health-overview,[\s\S]*\.receiver-health-incident-guidance[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Receiver-health layouts must collapse on small screens');
+  assert.match(p25,
+    /@media \(max-width: 560px\)[\s\S]*\.p25-override-identity,[\s\S]*\.p25-override-band-row[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'P25 override fields must collapse on small screens');
+}
+
 function validateReducedMotionCoverage(stylesheets, entry) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
@@ -809,5 +836,6 @@ validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
+validateSettingsFeatures(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

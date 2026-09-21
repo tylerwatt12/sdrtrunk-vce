@@ -55,3 +55,27 @@ test('settings-dark-mobile', async ({ page }) => {
   await page.goto('/design-system.html?theme=dark&view=settings');
   await expect(page.locator('body')).toHaveScreenshot('settings-dark-mobile.png', { fullPage: true });
 });
+
+test('receiver-health-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=health');
+  await expect(page.locator('body')).toHaveScreenshot('receiver-health-light-desktop.png', { fullPage: true });
+});
+
+test('receiver-health-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=health');
+  await expect(page.locator('body')).toHaveScreenshot('receiver-health-dark-mobile.png', { fullPage: true });
+});
+
+test('p25-settings-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/design-system.html?theme=dark&view=p25');
+  await expect(page.locator('body')).toHaveScreenshot('p25-settings-dark-desktop.png', { fullPage: true });
+});
+
+test('p25-settings-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=p25');
+  await expect(page.locator('body')).toHaveScreenshot('p25-settings-light-mobile.png', { fullPage: true });
+});

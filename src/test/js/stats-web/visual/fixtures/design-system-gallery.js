@@ -2,7 +2,7 @@
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['gallery', 'modal', 'modal-long', 'focus', 'settings'].includes(parameters.get('view')) ?
+const view = ['gallery', 'modal', 'modal-long', 'focus', 'settings', 'health', 'p25'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
