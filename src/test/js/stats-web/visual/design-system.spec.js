@@ -103,3 +103,29 @@ test('admin-receiver-light-mobile', async ({ page }) => {
   await page.goto('/design-system.html?theme=light&view=admin-receiver');
   await expect(page.locator('body')).toHaveScreenshot('admin-receiver-light-mobile.png', { fullPage: true });
 });
+
+test('dashboard-health-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=dashboard-health');
+  await expect(page.locator('body')).toHaveScreenshot('dashboard-health-light-desktop.png', { fullPage: true });
+});
+
+test('dashboard-calls-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=dark&view=dashboard-calls');
+  await expect(page.locator('body')).toHaveScreenshot('dashboard-calls-dark-desktop.png', { fullPage: true });
+});
+
+test('dashboard-calls-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=dashboard-calls');
+  await expect(page.locator('body')).toHaveScreenshot('dashboard-calls-light-mobile.png', { fullPage: true });
+});
+
+for(const theme of ['light', 'dark']) {
+  test(`dashboard-activity-${theme}-mobile`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/design-system.html?theme=${theme}&view=dashboard-activity`);
+    await expect(page.locator('body')).toHaveScreenshot(`dashboard-activity-${theme}-mobile.png`, { fullPage: true });
+  });
+}

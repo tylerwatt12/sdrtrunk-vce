@@ -221,6 +221,59 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   min-width: 760px;
 }
 
+.visual-dashboard-example table {
+  min-width: 680px;
+}
+
+.visual-dashboard-grid {
+  fill: none;
+  stroke: var(--chart-grid);
+}
+
+.visual-dashboard-line-p25 {
+  stroke: var(--chart-call);
+}
+
+.visual-dashboard-line-nxdn {
+  stroke: var(--chart-data);
+}
+
+.visual-dashboard-p25 {
+  background: var(--chart-call);
+}
+
+.visual-dashboard-nxdn {
+  background: var(--chart-data);
+}
+
+.visual-dashboard-nbfm {
+  background: var(--chart-streamed);
+}
+
+.visual-dashboard-grant {
+  stroke: var(--chart-grant);
+}
+
+.visual-dashboard-register {
+  stroke: var(--chart-register);
+}
+
+.visual-dashboard-data {
+  stroke: var(--chart-data);
+}
+
+.visual-dashboard-grant-bg {
+  background: var(--chart-grant);
+}
+
+.visual-dashboard-register-bg {
+  background: var(--chart-register);
+}
+
+.visual-dashboard-data-bg {
+  background: var(--chart-data);
+}
+
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
@@ -228,7 +281,10 @@ body:not([data-gallery-view="settings"]) .visual-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,
 body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
-body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example {
+body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example,
+body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,
+body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
+body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example {
   display: none;
 }
 

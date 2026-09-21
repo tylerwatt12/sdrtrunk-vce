@@ -6766,8 +6766,8 @@ function dashboardCallActivityChart(activity) {
   let selectedChannelKind = DASHBOARD_CHANNEL_KIND_FILTERS[0].value;
   const wrapper = node('div', 'dashboard-call-activity');
   const controls = node('div', 'dashboard-activity-controls');
-  const metricControls = node('div', 'dashboard-control-group');
-  const channelControls = node('div', 'dashboard-control-group');
+  const metricControls = node('div', 'dashboard-control-group ui-segmented');
+  const channelControls = node('div', 'dashboard-control-group ui-segmented');
   const protocolLegend = node('div', 'activity-series-legend dashboard-protocol-legend');
   const chartHost = node('div', 'dashboard-call-activity-chart-host');
   metricControls.setAttribute('role', 'group');
@@ -6794,7 +6794,7 @@ function dashboardCallActivityChart(activity) {
       const seriesConfiguration = series.find((candidate) => candidate.key === configuration.key);
       const total = values.reduce((sum, row) =>
         sum + Number(row[seriesConfiguration.field] || 0), 0);
-      const button = node('button', 'activity-series-button secondary');
+      const button = node('button', 'ui-button ui-button-secondary activity-series-button');
       button.type = 'button';
       button.disabled = !collected;
       const swatch = node('span', 'activity-series-swatch');
@@ -6844,7 +6844,7 @@ function dashboardCallActivityChart(activity) {
   };
 
   DASHBOARD_CALL_METRICS.forEach((metric) => {
-    const button = node('button', 'dashboard-filter-button secondary', metric.label);
+    const button = node('button', 'ui-segmented-option dashboard-filter-button', metric.label);
     button.type = 'button';
     const coverageStatus = dashboardMetricCoverageStatus(activity, metric.field);
     if (coverageStatus === 'NOT_COLLECTED') {
@@ -6867,7 +6867,7 @@ function dashboardCallActivityChart(activity) {
     metricControls.append(button);
   });
   DASHBOARD_CHANNEL_KIND_FILTERS.forEach((filter) => {
-    const button = node('button', 'dashboard-filter-button secondary', filter.label);
+    const button = node('button', 'ui-segmented-option dashboard-filter-button', filter.label);
     button.type = 'button';
     button.addEventListener('click', () => {
       selectedChannelKind = filter.value;
@@ -9912,7 +9912,8 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
     svg.append(segment);
     offset += length;
 
-    const button = node('button', 'activity-series-button secondary dashboard-activity-legend-button');
+    const button = node('button',
+      'ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button');
     button.type = 'button';
     button.dataset.action = row.action;
     const swatch = node('span', 'activity-series-swatch');
@@ -9989,11 +9990,11 @@ function dashboardActivityRadioPager(page, onOffset) {
   navigation.append(node('span', 'muted', page.rows.length ?
     `Source radios ${number(first)}-${number(last)} of ${number(page.total_count)}` :
     `Source radios 0 of ${number(page.total_count)}`));
-  const previous = node('button', 'secondary', 'Previous');
+  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
   previous.type = 'button';
   previous.disabled = page.offset <= 0;
   previous.addEventListener('click', () => onOffset(Math.max(0, page.offset - page.limit)));
-  const next = node('button', 'secondary', 'Next');
+  const next = node('button', 'ui-button ui-button-secondary', 'Next');
   next.type = 'button';
   next.disabled = !page.has_more;
   next.addEventListener('click', () => onOffset(page.next_offset));

@@ -335,6 +335,14 @@ async function main() {
   assert.match(functionBinding(appSource, 'userIdentityCell'), /uiPill\('Primary', 'success'\)/);
   assert.match(functionBinding(appSource, 'userActions'),
     /ui-button ui-button-secondary[\s\S]+ui-button ui-button-danger/);
+  const dashboardCallChart = functionBinding(appSource, 'dashboardCallActivityChart');
+  assert.match(dashboardCallChart, /dashboard-control-group ui-segmented/);
+  assert.match(dashboardCallChart, /ui-segmented-option dashboard-filter-button/);
+  assert.match(dashboardCallChart, /ui-button ui-button-secondary activity-series-button/);
+  assert.match(functionBinding(appSource, 'dashboardActivityMix'),
+    /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
+  assert.match(functionBinding(appSource, 'dashboardActivityRadioPager'),
+    /ui-button ui-button-secondary/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
   const decodeReceiverSettings = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);

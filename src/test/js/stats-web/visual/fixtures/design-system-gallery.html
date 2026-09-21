@@ -434,6 +434,68 @@
     </section>
   </main>
 
+  <main class="visual-feature-example visual-dashboard-health-example visual-dashboard-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Last activity moments ago</p></div></header>
+    <nav class="tabs" aria-label="Dashboard views"><a class="active" href="#signal">Signal quality</a><a href="#calls">Calls</a><a href="#activity">Activity</a></nav>
+    <section class="section">
+      <div class="section-title"><h2>Signal quality</h2><button class="ui-button ui-button-secondary" type="button">Refresh</button></div>
+      <div class="summary-band">
+        <div class="metric"><span>Healthy channels</span><strong>18</strong></div>
+        <div class="metric"><span>Degraded channels</span><strong>2</strong></div>
+        <div class="metric"><span>Offline channels</span><strong>0</strong></div>
+      </div>
+    </section>
+    <section class="section dashboard-summary-section">
+      <div class="section-title"><h2>Monitored Coverage</h2></div>
+      <div class="summary-band"><div class="metric"><span>Radio Systems</span><strong>4</strong></div><div class="metric"><span>Trunked Channels</span><strong>12</strong></div><div class="metric"><span>Conventional Channels</span><strong>8</strong></div></div>
+    </section>
+    <section class="section">
+      <div class="section-title"><h2>Recent Channels</h2></div>
+      <div class="table-wrap"><table><thead><tr><th>Channel</th><th>Mode</th><th>Signal</th><th>Decode</th><th>Seen</th></tr></thead><tbody><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">County Simulcast</strong><small class="dashboard-identity-context">County Public Safety</small></div></td><td><span class="dashboard-mode">P25 · Trunked</span></td><td>-67 dBFS</td><td>98%</td><td>Moments ago</td></tr><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">Fire Dispatch</strong><small class="dashboard-identity-context">154.43000 MHz</small></div></td><td><span class="dashboard-mode">NBFM · Conventional</span></td><td>-74 dBFS</td><td>94%</td><td>1 minute ago</td></tr></tbody></table></div>
+    </section>
+  </main>
+
+  <main class="visual-feature-example visual-dashboard-calls-example visual-dashboard-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Call totals and protocol activity for the last 24 hours.</p></div></header>
+    <nav class="tabs" aria-label="Dashboard views"><a href="#signal">Signal quality</a><a class="active" href="#calls">Calls</a><a href="#activity">Activity</a></nav>
+    <section class="section dashboard-summary-section">
+      <div class="section-title"><h2>Logical Call Totals · Last 24 Hours</h2></div>
+      <div class="summary-band"><div class="metric"><span>Logical Calls</span><strong>12,846</strong></div><div class="metric"><span>Recorded</span><strong>8,203</strong></div><div class="metric"><span>Submitted</span><strong>6,744</strong></div></div>
+    </section>
+    <section class="section">
+      <div class="section-title"><h2>Call Activity · Last 24 Hours</h2></div>
+      <div class="dashboard-call-activity">
+        <div class="dashboard-activity-controls">
+          <div class="dashboard-control-group ui-segmented"><span class="dashboard-control-label">Metric</span><button class="ui-segmented-option dashboard-filter-button active" type="button">Logical Calls</button><button class="ui-segmented-option dashboard-filter-button" type="button">Recorded</button><button class="ui-segmented-option dashboard-filter-button" type="button">Submitted</button></div>
+          <div class="dashboard-control-group ui-segmented"><span class="dashboard-control-label">Channel type</span><button class="ui-segmented-option dashboard-filter-button active" type="button">All</button><button class="ui-segmented-option dashboard-filter-button" type="button">Trunked</button><button class="ui-segmented-option dashboard-filter-button" type="button">Conventional</button></div>
+        </div>
+        <div class="activity-series-legend dashboard-protocol-legend"><button class="ui-button ui-button-secondary activity-series-button active" type="button"><span class="activity-series-swatch visual-dashboard-p25"></span><span>P25</span><span class="activity-series-total">9,840</span></button><button class="ui-button ui-button-secondary activity-series-button active" type="button"><span class="activity-series-swatch visual-dashboard-nxdn"></span><span>NXDN</span><span class="activity-series-total">1,902</span></button><button class="ui-button ui-button-secondary activity-series-button active" type="button"><span class="activity-series-swatch visual-dashboard-nbfm"></span><span>NBFM</span><span class="activity-series-total">1,104</span></button></div>
+        <div class="activity-line-chart"><svg class="activity-line-svg" viewBox="0 0 900 270" role="img" aria-label="Call activity chart"><path class="visual-dashboard-grid" d="M50 30H880M50 90H880M50 150H880M50 210H880"></path><path class="activity-line-path visual-dashboard-line-p25" d="M50 205C130 180 170 190 250 140S390 80 470 120S610 165 690 95S820 60 880 75"></path><path class="activity-line-path visual-dashboard-line-nxdn" d="M50 225C150 215 220 195 300 205S470 175 560 190S720 145 880 165"></path></svg></div>
+        <details class="dashboard-coverage" open><summary>Metric availability</summary><div class="dashboard-coverage-grid"><div class="dashboard-coverage-protocol"><strong>P25</strong><span class="dashboard-coverage-entry"><span>Trunked</span><span class="ui-pill ui-pill-success">Full 24 hours</span></span><span class="dashboard-coverage-entry"><span>Conventional</span><span class="ui-pill ui-pill-success">Full 24 hours</span></span></div><div class="dashboard-coverage-protocol"><strong>NXDN</strong><span class="dashboard-coverage-entry"><span>Trunked</span><span class="ui-pill ui-pill-warning">Partial history</span></span><span class="dashboard-coverage-entry"><span>Conventional</span><span class="ui-pill ui-pill-success">Full 24 hours</span></span></div></div></details>
+      </div>
+    </section>
+  </main>
+
+  <main class="visual-feature-example visual-dashboard-activity-example visual-dashboard-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Signaling activity and identified source radios.</p></div></header>
+    <nav class="tabs" aria-label="Dashboard views"><a href="#signal">Signal quality</a><a href="#calls">Calls</a><a class="active" href="#activity">Activity</a></nav>
+    <div class="dashboard-activity-page-controls"><span class="dashboard-control-label">Time range</span><div class="signal-range-controls"><button class="signal-range-button secondary" type="button">6 hours</button><button class="signal-range-button secondary active" type="button">24 hours</button><button class="signal-range-button secondary" type="button">7 days</button></div></div>
+    <section class="section">
+      <div class="section-title"><h2>Activity Mix · 24 hours</h2></div>
+      <div class="dashboard-activity-mix-body">
+        <div class="dashboard-activity-layout">
+          <div class="dashboard-activity-chart"><svg class="dashboard-activity-donut" viewBox="0 0 220 220" role="img" aria-label="Activity mix"><circle class="dashboard-activity-donut-background" cx="110" cy="110" r="78"></circle><circle class="dashboard-activity-segment active visual-dashboard-grant" cx="110" cy="110" r="78" stroke-dasharray="285 205" transform="rotate(-90 110 110)"></circle><circle class="dashboard-activity-segment visual-dashboard-register" cx="110" cy="110" r="78" stroke-dasharray="125 365" stroke-dashoffset="-285" transform="rotate(-90 110 110)"></circle><circle class="dashboard-activity-segment visual-dashboard-data" cx="110" cy="110" r="78" stroke-dasharray="80 410" stroke-dashoffset="-410" transform="rotate(-90 110 110)"></circle><text class="dashboard-activity-center-count" x="110" y="106" text-anchor="middle">18,430</text><text class="dashboard-activity-center-label" x="110" y="127" text-anchor="middle">Grant</text></svg></div>
+          <div class="activity-series-legend dashboard-activity-legend"><button class="ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button active" type="button"><span class="activity-series-swatch visual-dashboard-grant-bg"></span><span>Grant</span><span class="activity-series-total">18,430 · 58.2%</span></button><button class="ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button" type="button"><span class="activity-series-swatch visual-dashboard-register-bg"></span><span>Register</span><span class="activity-series-total">8,190 · 25.9%</span></button><button class="ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button" type="button"><span class="activity-series-swatch visual-dashboard-data-bg"></span><span>Data</span><span class="activity-series-total">5,039 · 15.9%</span></button></div>
+        </div>
+        <p class="metric-meaning-note">Percentages use the visible activity total. Repeated signaling can produce more than one event for the same call or radio.</p>
+      </div>
+    </section>
+    <section class="section">
+      <div class="section-title"><h2>Grant · Source radios</h2></div>
+      <div class="dashboard-activity-radio-body"><p class="dashboard-activity-radio-status">248 source radios found for Grant.</p><div class="dashboard-activity-radio-result"><p class="metric-meaning-note">Exact currently retained detail identifies source radios heard during grant activity.</p><div class="table-wrap"><table><thead><tr><th>System / Channel</th><th>Radio</th><th>Alias</th><th>Observations</th><th>Last Seen</th></tr></thead><tbody><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">County Public Safety</strong><small class="dashboard-identity-context">Central Simulcast</small></div></td><td>4102841</td><td>Engine 12</td><td>384</td><td>Moments ago</td></tr><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">City Services</strong><small class="dashboard-identity-context">North Site</small></div></td><td>217033</td><td>Supervisor</td><td>190</td><td>2 minutes ago</td></tr></tbody></table></div><nav class="pager dashboard-activity-radio-pager"><span class="muted">Source radios 1-100 of 248</span><button class="ui-button ui-button-secondary" type="button" disabled>Previous</button><button class="ui-button ui-button-secondary" type="button">Next</button></nav></div></div>
+    </section>
+  </main>
+
   <script src="/visual/design-system-gallery.js"></script>
 </body>
 </html>

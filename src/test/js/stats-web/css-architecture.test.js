@@ -20,6 +20,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/identity-activity.css") layer(features);',
+  '@import url("./styles/features/dashboard.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
   '@import url("./styles/features/receiver-health.css") layer(features);',
@@ -50,7 +51,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 7499;
+const LEGACY_LINE_BUDGET = 7215;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
