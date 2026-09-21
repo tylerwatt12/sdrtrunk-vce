@@ -12004,7 +12004,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
-  targetLabel.append(node('span', '', 'Tuner'));
+  targetLabel.append(node('span', 'tuner-spectrum-field-label', 'Receiver window'));
   const targetSelect = node('select', 'ui-select');
   targetSelect.disabled = true;
   targetSelect.append(node('option', '', 'Loading tuners…'));
@@ -12020,8 +12020,18 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const pause = iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button');
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
-  toolbarActions.append(zoomIn, zoomOut, resetZoom, pause);
-  toolbar.append(targetLabel, status, toolbarActions);
+  const zoomActions = node('div', 'tuner-spectrum-zoom-actions');
+  zoomActions.setAttribute('role', 'group');
+  zoomActions.setAttribute('aria-label', 'Spectrum zoom');
+  zoomActions.append(zoomIn, zoomOut, resetZoom);
+  const playbackActions = node('div', 'tuner-spectrum-playback-actions');
+  playbackActions.setAttribute('role', 'group');
+  playbackActions.setAttribute('aria-label', 'Spectrum playback');
+  playbackActions.append(pause);
+  toolbarActions.append(zoomActions, playbackActions);
+  const tunerSelection = node('div', 'tuner-spectrum-selection');
+  tunerSelection.append(targetLabel, status);
+  toolbar.append(tunerSelection, toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
   const options = node('details', 'tuner-spectrum-options');
@@ -12130,7 +12140,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
-  optionsHeader.append(node('strong', '', 'Spectrum and waterfall'),
+  optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
+    node('strong', '', 'Spectrum and waterfall'),
     node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
   optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions, profilePanel);
   options.append(optionsSummary, optionsPanel);
@@ -12154,16 +12165,23 @@ function tunerSpectrumPanel(snapPresetDocument) {
     displayControls.append(node('span', 'tuner-spectrum-control-help',
       'Channel markers require Live access.'));
   }
-  displayControls.append(refiningBadge, flagLegend);
+  const legendLabel = node('span', 'tuner-spectrum-legend-label', 'Activity markers');
+  legendLabel.hidden = !liveActivityAllowed;
+  displayControls.append(refiningBadge, legendLabel, flagLegend);
 
   const instructions = node('p', 'visually-hidden',
     'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
     'Drag or use the arrow keys to pan. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
 
-  const plot = (title, ariaLabel, extraClass = '') => {
+  const plot = (kicker, title, description, ariaLabel, extraClass = '') => {
     const card = node('section', `tuner-spectrum-card ${extraClass}`.trim());
-    const heading = node('h3', 'channel-diagnostic-title', title);
+    const header = node('header', 'tuner-spectrum-card-header');
+    const copy = node('div', 'tuner-spectrum-card-copy');
+    copy.append(node('span', 'tuner-spectrum-card-kicker', kicker),
+      node('h3', 'channel-diagnostic-title', title),
+      node('p', 'tuner-spectrum-card-description', description));
+    header.append(copy);
     const host = node('div', 'tuner-spectrum-plot');
     const canvas = node('canvas', 'channel-diagnostic-canvas tuner-spectrum-canvas');
     canvas.setAttribute('role', 'img');
@@ -12175,11 +12193,12 @@ function tunerSpectrumPanel(snapPresetDocument) {
     guide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
     host.append(canvas, guide, overlay);
-    card.append(heading, host);
+    card.append(header, host);
     return { card, host, canvas, guide, overlay };
   };
-  const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
-  const waterfall = plot('Waterfall',
+  const spectrum = plot('FFT', 'Live spectrum', 'Signal power across the selected receiver window.',
+    'Tuner frequency spectrum', 'tuner-spectrum-fft');
+  const waterfall = plot('History', 'Waterfall', 'Recent signal intensity across the same receiver window.',
     'Tuner spectrum history. Each row keeps the receiver window that created it. Gold dividers mark tuner retunes.',
     'tuner-spectrum-waterfall');
   const fftBandRail = node('div', 'tuner-spectrum-band-rail');
@@ -12199,7 +12218,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
   cursorPopup.hidden = true;
   cursorPopup.append(cursorFrequency, cursorSnap, cursorPower, cursorChannel);
   const readouts = node('div', 'tuner-spectrum-readouts channel-diagnostic-readouts');
-  layout.append(instructions, toolbar, displayControls, spectrum.card, waterfall.card, cursorPopup, readouts);
+  readouts.setAttribute('aria-label', 'Spectrum measurements');
+  layout.append(instructions, toolbar, readouts, displayControls, spectrum.card, waterfall.card, cursorPopup);
 
   let disposed = false;
   let paused = false;

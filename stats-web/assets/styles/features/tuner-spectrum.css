@@ -36,39 +36,58 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   position: relative;
   display: grid;
   flex: 1 1 auto;
-  grid-template-rows: auto auto minmax(170px, 0.38fr) minmax(240px, 0.62fr) auto;
-  gap: var(--ui-control-gap);
-}
-
-.tuner-spectrum-card > .channel-diagnostic-title {
-  margin: 0;
-  padding: 5px 9px;
-  font-size: 13px;
-}
-
-.tuner-spectrum-readouts {
-  min-height: 38px;
-  gap: 18px;
-  padding: 4px 9px;
-  background: var(--section-header);
+  grid-template-rows: auto auto auto minmax(170px, .38fr) minmax(240px, .62fr);
+  gap: var(--space-3);
 }
 
 .tuner-spectrum-toolbar {
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
   align-items: end;
-  gap: var(--ui-control-gap);
-  padding: var(--ui-surface-padding);
-  background: var(--surface);
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
   border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
-  box-shadow: var(--shadow-surface-soft);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface);
+}
+
+.tuner-spectrum-selection {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 620px) auto;
+  align-items: end;
+  justify-content: start;
+  gap: var(--space-3);
 }
 
 .tuner-spectrum-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--ui-control-gap);
+  gap: var(--space-2);
+}
+
+.tuner-spectrum-zoom-actions,
+.tuner-spectrum-playback-actions {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius-control) + 2px);
+  box-shadow: var(--shadow-control);
+}
+
+.tuner-spectrum-zoom-actions > button,
+.tuner-spectrum-playback-actions > button {
+  --ui-control-height: 34px;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.tuner-spectrum-zoom-actions > button + button {
+  margin-left: 1px;
 }
 
 .tuner-spectrum-toolbar-actions > button svg,
@@ -122,15 +141,15 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-options-panel {
-  width: min(760px, calc(100vw - 32px));
-  max-height: min(680px, calc(100dvh - 150px));
+  width: min(430px, calc(100vw - 32px));
+  max-height: min(620px, calc(100dvh - 220px));
   position: absolute;
-  top: calc(100% + var(--space-2));
+  top: calc(100% + var(--space-3));
   right: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-  padding: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--interactive-border);
@@ -143,15 +162,20 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-options-header {
-  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: grid;
   gap: var(--space-1);
-  padding-bottom: var(--space-2);
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
   border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(12px);
 }
 
 .tuner-spectrum-options-header strong {
-  font-size: 15px;
+  font-size: 17px;
+  letter-spacing: -.01em;
 }
 
 .tuner-spectrum-options-header span {
@@ -160,16 +184,29 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   line-height: 1.45;
 }
 
+.tuner-spectrum-options-kicker,
+.tuner-spectrum-card-kicker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
 .tuner-spectrum-display-controls {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
+  gap: var(--space-2) var(--space-3);
+  padding: 0 var(--space-1);
+  color: var(--muted);
+}
+
+.tuner-spectrum-legend-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 
 .tuner-spectrum-display-control {
@@ -287,10 +324,11 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-toggle-control {
-  min-height: 54px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
 }
 
 .tuner-spectrum-toggle-copy {
@@ -314,33 +352,32 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-display-section {
   min-width: 0;
   margin: 0;
-  padding: var(--space-3);
+  padding: var(--space-4);
   display: grid;
   align-content: start;
-  gap: var(--space-2);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  gap: var(--space-3);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .tuner-spectrum-profile legend,
 .tuner-spectrum-display-section legend {
-  padding: 0 var(--space-1);
+  padding: 0;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
+}
+
+.tuner-spectrum-profile {
+  border-bottom: 0;
 }
 
 .tuner-spectrum-profile .tuner-spectrum-display-control {
   grid-template-columns: minmax(90px, auto) minmax(150px, 1fr);
 }
 
-.tuner-spectrum-range-section {
-  grid-row: span 2;
-}
-
 .tuner-spectrum-refining {
-  margin-left: auto;
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
@@ -352,7 +389,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3);
-  margin-left: auto;
   color: var(--muted);
   font-size: 10px;
 }
@@ -374,7 +410,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-target {
-  min-width: 220px;
+  min-width: 240px;
   display: grid;
   flex: 1 1 420px;
   gap: var(--space-1);
@@ -388,6 +424,14 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   width: min(620px, 100%);
 }
 
+.tuner-spectrum-field-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
 .tuner-spectrum-card {
   min-width: 0;
   min-height: 0;
@@ -396,8 +440,43 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
-  box-shadow: var(--shadow-surface-soft);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface);
+}
+
+.tuner-spectrum-card-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.tuner-spectrum-card-copy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 1px var(--space-2);
+}
+
+.tuner-spectrum-card-copy .channel-diagnostic-title {
+  font-size: 14px;
+  letter-spacing: -.01em;
+}
+
+.tuner-spectrum-card-description {
+  grid-column: 1 / -1;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tuner-spectrum-plot {
@@ -627,21 +706,48 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-readouts {
-  min-height: 46px;
-  flex-wrap: wrap;
-  row-gap: 6px;
-  overflow-x: hidden;
+  min-height: 58px;
+  gap: 0;
+  padding: 0;
+  overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-surface-soft);
+  scrollbar-width: thin;
+}
+
+.tuner-spectrum-readouts .channel-diagnostic-readout {
+  min-width: 104px;
+  align-self: stretch;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-2) var(--space-4);
+  border-right: 1px solid var(--line);
+}
+
+.tuner-spectrum-readouts .channel-diagnostic-readout small {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.tuner-spectrum-readouts .channel-diagnostic-readout strong {
+  font-size: 13px;
 }
 
 @media (max-width: 900px) {
   .tuner-spectrum-layout {
-    grid-template-rows: auto auto minmax(140px, .34fr) minmax(220px, .66fr) auto;
+    grid-template-rows: auto auto auto minmax(140px, .34fr) minmax(220px, .66fr);
   }
 
-  .tuner-spectrum-display-controls {
-    flex-wrap: wrap;
+  .tuner-spectrum-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuner-spectrum-toolbar-actions {
+    justify-content: flex-end;
   }
 }
 
@@ -651,20 +757,28 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   }
 
   .tuner-spectrum-toolbar {
+    display: grid;
     align-items: stretch;
-    flex-wrap: wrap;
+    padding: var(--space-3);
+  }
+
+  .tuner-spectrum-selection {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .tuner-spectrum-toolbar-actions {
     width: 100%;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    justify-content: stretch;
   }
 
   .tuner-spectrum-options[open] {
-    flex: 1 0 100%;
+    grid-column: 1 / -1;
   }
 
-  .tuner-spectrum-options[open] .tuner-spectrum-options-summary {
+  .tuner-spectrum-options-summary {
     width: 100%;
   }
 
@@ -677,10 +791,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     box-sizing: border-box;
   }
 
-  .tuner-spectrum-options-header,
-  .tuner-spectrum-range-section {
-    grid-column: auto;
-    grid-row: auto;
+  .tuner-spectrum-options-header {
+    position: static;
   }
 
   .tuner-spectrum-target {
@@ -696,12 +808,13 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .tuner-spectrum-layout {
     min-height: 720px;
     flex: 0 0 auto;
-    grid-template-rows: auto auto minmax(125px, .34fr) minmax(180px, .66fr) auto;
+    grid-template-rows: auto auto auto minmax(150px, .34fr) minmax(220px, .66fr);
   }
 
   .tuner-spectrum-display-controls {
-    align-items: stretch;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .tuner-spectrum-display-control {
@@ -716,9 +829,12 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     width: 100%;
   }
 
-  .tuner-spectrum-refining,
-  .tuner-spectrum-flag-legend {
-    margin-left: 0;
+  .tuner-spectrum-card-header {
+    padding-inline: var(--space-3);
+  }
+
+  .tuner-spectrum-card-description {
+    white-space: normal;
   }
 }
 
