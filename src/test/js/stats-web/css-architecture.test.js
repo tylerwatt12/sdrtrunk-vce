@@ -22,6 +22,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/identity-activity.css") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=2") layer(features);',
+  '@import url("./styles/features/scanner.css?v=1") layer(features);',
   '@import url("./styles/features/dashboard.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
@@ -710,6 +711,28 @@ function validateTunerSpectrumFeature(stylesheets, entry) {
     'Tuner Spectrum presentation must adapt through semantic tokens instead of feature theme overrides');
 }
 
+function validateScannerFeature(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const scanner = stylesheetModule(stylesheets, entry, 'features/scanner.css').source;
+  assert.doesNotMatch(legacy, /scanner-/,
+    'Scanner presentation belongs in its feature stylesheet');
+  for(const selector of ['.scanner-page', '.scanner-workspace', '.scanner-display',
+    '.scanner-controls', '.scanner-scan-lists']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(scanner, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
+      `Missing Scanner rule ${selector}`);
+  }
+  assert.match(scanner,
+    /@media \(max-width: 680px\)[\s\S]*\.scanner-controls\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/,
+    'Scanner controls must collapse on small screens');
+  assert.doesNotMatch(scanner, /:root\[data-theme="dark"\]/,
+    'Scanner presentation must adapt through semantic tokens instead of feature theme overrides');
+  assert.doesNotMatch(scanner, /#[0-9a-f]{3,8}\b|\brgba?\(/i,
+    'Scanner presentation must use semantic color tokens');
+  assert.doesNotMatch(scanner, /!important/,
+    'Scanner presentation must not add important declarations');
+}
+
 function validateLiveFeature(stylesheets, entry) {
   const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
@@ -877,6 +900,7 @@ validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);
 validateTunerSpectrumFeature(stylesheets, entryStylesheet);
+validateScannerFeature(stylesheets, entryStylesheet);
 validateLiveFeature(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

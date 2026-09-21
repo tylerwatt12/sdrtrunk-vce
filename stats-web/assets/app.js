@@ -9232,7 +9232,9 @@ function renderScannerCall(host, state, channelMetadata) {
 }
 
 function scannerControl(label, action, className = '') {
-  const button = node('button', `scanner-key ${className}`.trim(), label);
+  const styleClass = className === 'primary' ? 'ui-button-primary' :
+    className === 'danger' ? 'ui-button-danger' : 'ui-button-secondary';
+  const button = node('button', `ui-button ${styleClass} scanner-key`, label);
   button.type = 'button';
   button.addEventListener('click', action);
   return button;
@@ -9253,7 +9255,7 @@ function openPlaybackAvoidList(player = webCallPlayer) {
       const copy = node('div');
       copy.append(node('strong', '', avoid.label || 'Avoided target'));
       if (avoid.system_scope) copy.append(node('span', '', avoid.system_scope));
-      const remove = node('button', 'secondary', 'Remove');
+      const remove = node('button', 'ui-button ui-button-secondary', 'Remove');
       remove.type = 'button';
       remove.addEventListener('click', () => {
         player.removeAvoid(avoid.key);
@@ -9356,7 +9358,7 @@ function openPlaybackScanListCoverage(player = webCallPlayer, preferredId = null
     }
   };
   choices.forEach((scanList) => {
-    const button = node('button', 'secondary', scanList.name);
+    const button = node('button', 'ui-button ui-button-secondary', scanList.name);
     button.type = 'button';
     button.dataset.id = scanList.id;
     button.addEventListener('click', () => void load(scanList));
@@ -9376,17 +9378,17 @@ function renderScanner() {
     return;
   }
 
-  const modeBar = node('div', 'scanner-view-modes');
+  const modeBar = node('div', 'ui-segmented scanner-view-modes');
   Object.entries({ simple: 'Simple', normal: 'Normal', advanced: 'Advanced', engineer: 'Engineer' })
     .forEach(([id, label]) => {
-      const button = node('button', scannerDetailMode === id ? 'active' : '', label);
+      const button = node('button', `ui-segmented-option${scannerDetailMode === id ? ' active' : ''}`, label);
       button.type = 'button';
       button.dataset.mode = id;
       modeBar.append(button);
     });
-  const chassis = node('section', 'scanner-chassis');
+  const chassis = node('section', 'scanner-workspace');
   const statusBar = node('div', 'scanner-status-bar');
-  const playbackStatus = node('strong', 'scanner-live-status', 'Ready');
+  const playbackStatus = node('strong', 'ui-pill scanner-live-status', 'Ready');
   const age = node('output', 'scanner-relative-age', 'Time unavailable');
   statusBar.append(playbackStatus, age);
   const displayShell = node('div', 'scanner-display-shell');
@@ -9412,19 +9414,22 @@ function renderScanner() {
   volume.max = '1';
   volume.step = '0.05';
   volume.value = String(player.volume);
+  volume.className = 'ui-range';
   volume.setAttribute('aria-label', 'Browser playback volume');
+  const volumeValue = node('output', '', `${Math.round(player.volume * 100)}%`);
   volume.addEventListener('input', () => {
     player.ui.volume.value = volume.value;
+    volumeValue.textContent = `${Math.round(Number(volume.value) * 100)}%`;
     player.changeVolume(false);
   });
   volume.addEventListener('change', () => player.writePreferences());
-  utility.append(node('span', '', 'Browser volume'), volume);
+  utility.append(node('span', '', 'Browser volume'), volume, volumeValue);
 
   const scanPanel = node('section', 'scanner-scan-lists');
   const scanHeading = node('div', 'scanner-scan-heading');
   const scanCopy = node('div');
   scanCopy.append(node('strong', '', 'Scan Lists'), node('span', 'scanner-scan-summary', 'Loading'));
-  const coverage = node('button', 'secondary', 'View coverage tree');
+  const coverage = node('button', 'ui-button ui-button-secondary', 'View coverage tree');
   coverage.type = 'button';
   coverage.addEventListener('click', () => openPlaybackScanListCoverage(player));
   scanHeading.append(scanCopy, coverage);
@@ -9436,7 +9441,7 @@ function renderScanner() {
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
   const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
-    'button secondary icon-button section-title-icon scanner-settings');
+    'ui-button ui-button-secondary ui-icon-button scanner-settings');
   scannerSettings.id = 'scanner-settings';
   scannerSettings.addEventListener('click', () => openScannerSettings('#scanner-settings'));
   headingActions.append(modeBar, scannerSettings);
@@ -9480,6 +9485,7 @@ function renderScanner() {
     clearQueue.textContent = `Clear Queue${state.queuedCount ? ` (${state.queuedCount})` : ''}`;
     clearQueue.disabled = !state.queuedCount;
     volume.value = String(state.volume);
+    volumeValue.textContent = `${Math.round(Number(state.volume) * 100)}%`;
     updateAge();
     renderScannerCall(display, state, currentChannel);
 
@@ -9488,7 +9494,7 @@ function renderScanner() {
     scanCopy.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
       `${selectedCount} of ${state.scanLists.length} listening` : 'Loading available lists';
     state.scanLists.forEach((item, index) => {
-      const button = node('button', `scanner-scan-button${item.selected ? ' active' : ''}`);
+      const button = node('button', 'ui-choice-card scanner-scan-button');
       button.type = 'button';
       button.disabled = !item.enabled;
       button.setAttribute('aria-pressed', String(item.selected));
@@ -9519,7 +9525,7 @@ function renderScanner() {
       wave.classList.toggle('paused', !playing);
       wave.setAttribute('aria-label', playing ? 'Audio playing' : 'Audio idle');
       [...wave.children].forEach((bar, index) => {
-        bar.style.height = `${Math.round(3 + waveformLevels[index] * 31)}px`;
+        bar.style.height = `${playing ? Math.round(3 + waveformLevels[index] * 31) : 3}px`;
       });
     }
     waveformFrame = window.requestAnimationFrame(drawWaveform);

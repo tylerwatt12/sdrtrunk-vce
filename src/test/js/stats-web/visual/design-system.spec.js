@@ -47,6 +47,18 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
+test('scanner-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=scanner');
+  await expect(page.locator('body')).toHaveScreenshot('scanner-light-desktop.png', { fullPage: true });
+});
+
+test('scanner-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=scanner');
+  await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

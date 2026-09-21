@@ -282,6 +282,23 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1240px, calc(100% - 32px));
 }
 
+.visual-scanner-example {
+  width: min(1180px, calc(100% - 32px));
+}
+
+.visual-feature-header > .scanner-header-actions {
+  display: flex;
+}
+
+.visual-scanner-wave i:nth-child(1) { height: 8px; }
+.visual-scanner-wave i:nth-child(2) { height: 18px; }
+.visual-scanner-wave i:nth-child(3) { height: 28px; }
+.visual-scanner-wave i:nth-child(4) { height: 15px; }
+.visual-scanner-wave i:nth-child(5) { height: 33px; }
+.visual-scanner-wave i:nth-child(6) { height: 22px; }
+.visual-scanner-wave i:nth-child(7) { height: 10px; }
+.visual-scanner-wave i:nth-child(8) { height: 25px; }
+
 .visual-tuner-spectrum-example .tuner-spectrum-layout {
   min-height: 730px;
 }
@@ -362,6 +379,7 @@ body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-exampl
 body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
 body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example,
 body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
+body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
@@ -417,6 +435,10 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   }
 
   .visual-tuner-spectrum-example {
+    width: min(100% - 20px, 1180px);
+  }
+
+  .visual-scanner-example {
     width: min(100% - 20px, 1180px);
   }
 }

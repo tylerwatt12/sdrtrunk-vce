@@ -108,6 +108,20 @@
   transform: translateY(1px);
 }
 
+.ui-button.active,
+.ui-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.ui-button-primary.active,
+.ui-button-primary[aria-pressed="true"] {
+  color: var(--primary-control-ink);
+  background: var(--primary-control-hover);
+  border-color: var(--primary-control-hover);
+}
+
 .ui-button:focus-visible,
 .ui-segmented-option:focus-visible,
 .link-button:focus-visible {
@@ -326,6 +340,52 @@
   height: 18px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+.ui-choice-card {
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-shadow: none;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ui-choice-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.ui-choice-card[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.ui-choice-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-choice-card:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.ui-range {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.ui-range:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.ui-range:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .ui-repeater,

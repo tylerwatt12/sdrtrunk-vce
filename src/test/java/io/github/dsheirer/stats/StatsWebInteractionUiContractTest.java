@@ -303,7 +303,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"147\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"148\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -639,7 +639,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=124"));
+        assertTrue(html.contains("/assets/app.css?v=125"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -914,7 +914,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(html.contains("class=\"playback-field\">Now</span>"));
         assertFalse(html.contains("id=\"playback-clear\""));
         assertTrue(scanner.contains("scanner-player-host"));
-        assertTrue(scanner.contains("scanner-chassis"));
+        assertTrue(scanner.contains("scanner-workspace"));
+        assertTrue(scanner.contains("ui-segmented scanner-view-modes"));
         assertTrue(scanner.contains("Simple"));
         assertTrue(scanner.contains("Normal"));
         assertTrue(scanner.contains("Advanced"));
@@ -960,9 +961,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(scanner.contains("Tune"));
         assertFalse(scanner.contains("RF Signal"));
         assertTrue(css.contains(".scanner-player-host > .playback-bar {"));
-        assertTrue(css.contains(".scanner-chassis {"));
+        assertTrue(css.contains(".scanner-workspace {"));
         assertTrue(css.contains(".scanner-field-grid {"));
-        assertTrue(css.contains("height: clamp(380px, 46vh, 460px);"));
+        assertTrue(css.contains("height: clamp(380px, 46vh, 470px);"));
         assertTrue(css.contains("scrollbar-gutter: stable;"));
         assertTrue(css.contains(".scanner-idle {\n  height: 100%;"));
         assertTrue(css.contains(".scanner-call-quality-values {"));
@@ -978,14 +979,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("player.readAudioWaveform(waveformLevels)"));
         assertTrue(scanner.contains("window.cancelAnimationFrame(waveformFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));
-        assertTrue(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
-        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(140px, 320px);"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
+        assertFalse(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(160px, 320px);"));
+        assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
         assertTrue(css.contains("font-size: 14px;"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] #content .scanner-scan-button.active {"));
+        assertTrue(source.contains("ui-button ${styleClass} scanner-key"));
+        assertTrue(scanner.contains("ui-choice-card scanner-scan-button"));
+        assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
         assertTrue(css.contains("body[data-view=\"scanner\"] .page-header {"));
         assertTrue(css.contains("flex: 1 0 100%;"));
         assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
