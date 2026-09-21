@@ -15,6 +15,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/legacy.css") layer(legacy);',
   '@import url("./styles/components/controls.css") layer(components);',
   '@import url("./styles/compositions/workspaces.css") layer(compositions);',
+  '@import url("./styles/compositions/modals.css") layer(compositions);',
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
@@ -49,7 +50,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 8795;
+const LEGACY_LINE_BUDGET = 8718;
 const FEATURE_SHARED_SELECTOR_BUDGET = 17;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
@@ -624,6 +625,22 @@ function validateModernControlStates(stylesheets, entry) {
   );
 }
 
+function validateModalComposition(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const modals = stylesheetModule(stylesheets, entry, 'compositions/modals.css').source;
+  for(const selector of ['body.modal-open', '.modal-backdrop', '.read-only-modal', '.modal-header',
+    '.modal-header h2', '.modal-content']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
+    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the shared modal composition`);
+    assert.match(modals, baseRule, `Missing shared modal foundation rule ${selector}`);
+  }
+  assert.match(modals, /@media \(max-width: 560px\)[\s\S]*\.read-only-modal\s*\{[\s\S]*height:\s*100dvh/,
+    'Shared modals must become full-height dialogs on small screens');
+  assert.match(modals, /\.modal-content\s*\{[\s\S]*overflow:\s*auto/,
+    'Shared modal content must own bounded scrolling');
+}
+
 function validateReducedMotionCoverage(stylesheets, entry) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
@@ -770,5 +787,6 @@ validateSelectorBudget(stylesheets);
 validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
 validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
+validateModalComposition(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

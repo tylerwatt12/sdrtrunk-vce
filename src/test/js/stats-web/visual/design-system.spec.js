@@ -23,6 +23,20 @@ for(const theme of ['light', 'dark']) {
   });
 }
 
+test('modal-mobile-light', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=modal');
+  await expect(page.locator('body')).toHaveScreenshot('modal-mobile-light.png');
+});
+
+test('modal-long-dark', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=modal-long');
+  const content = page.locator('.modal-content');
+  await expect.poll(() => content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect(page.locator('body')).toHaveScreenshot('modal-long-dark.png');
+});
+
 test('keyboard-focus', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 500 });
   await page.goto('/design-system.html?theme=light&view=focus');

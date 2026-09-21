@@ -465,3 +465,9 @@
 :root[data-theme="dark"] .ui-button-danger-quiet {
   color: var(--danger);
 }
+
+@media (max-width: 560px) {
+  .ui-action-row {
+    justify-content: flex-start;
+  }
+}

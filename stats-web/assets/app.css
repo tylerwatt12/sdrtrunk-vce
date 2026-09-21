@@ -11,6 +11,7 @@
 @import url("./styles/legacy.css") layer(legacy);
 @import url("./styles/components/controls.css") layer(components);
 @import url("./styles/compositions/workspaces.css") layer(compositions);
+@import url("./styles/compositions/modals.css") layer(compositions);
 @import url("./styles/features/channels.css") layer(features);
 @import url("./styles/features/radio-directory.css") layer(features);
 @import url("./styles/features/administration.css") layer(features);

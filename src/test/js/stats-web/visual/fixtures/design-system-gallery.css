@@ -103,6 +103,17 @@ body {
   gap: var(--space-3);
 }
 
+.visual-modal-long-content {
+  display: none;
+  gap: var(--space-3);
+}
+
+body[data-gallery-view="modal-long"] .visual-modal-long-content {
+  min-height: 900px;
+  display: grid;
+  align-content: start;
+}
+
 .visual-focus-example {
   width: min(620px, calc(100% - 32px));
   display: grid;
@@ -115,7 +126,7 @@ body {
 }
 
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
-body:not([data-gallery-view="modal"]) .visual-modal-example,
+body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example {
   display: none;
 }

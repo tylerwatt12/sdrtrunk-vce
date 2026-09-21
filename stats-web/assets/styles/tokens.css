@@ -60,12 +60,17 @@
   --shadow-surface-soft: 0 4px 14px rgb(20 34 48 / 6%);
   --shadow-control: 0 1px 3px rgb(0 0 0 / 35%);
   --shadow-selected: 0 1px 5px rgb(0 0 0 / 15%);
+  --shadow-modal: 0 18px 54px rgb(0 0 0 / 38%);
+  --modal-backdrop: rgb(9 18 27 / 66%);
+  --modal-viewport-gap: 22px;
+  --modal-viewport-inset: 44px;
   --primary-control: var(--accent);
   --primary-control-hover: color-mix(in srgb, var(--accent) 85%, black);
   --primary-control-ink: #ffffff;
   --control-thumb: #ffffff;
   --radius-control: 8px;
   --radius-card: 12px;
+  --radius-modal: 6px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
