@@ -1446,6 +1446,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
         if(message.isValid() && message instanceof TSBKMessage tsbk)
         {
+            //The protected TSBK opcode and arguments are encrypted.  Its CRC still validates, but without decryption
+            //those fields cannot be interpreted as grants, network configuration, or other semantic messages.
+            if(tsbk.isEncrypted())
+            {
+                return;
+            }
+
             if(mChannel.isStandardChannel() && tsbk.getDirection() == Direction.OUTBOUND)
             {
                 observeNetworkConfiguration(mNetworkConfigurationMonitor.processVendor(tsbk.getVendor()),
