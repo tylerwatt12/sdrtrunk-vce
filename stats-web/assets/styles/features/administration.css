@@ -171,13 +171,6 @@
   line-height: 1.5;
 }
 
-.admin-toggle-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 .support-report-form {
   display: grid;
   gap: var(--space-4);

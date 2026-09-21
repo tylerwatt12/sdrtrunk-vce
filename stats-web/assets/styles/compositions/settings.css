@@ -1,0 +1,349 @@
+.admin-form {
+  display: grid;
+  gap: 13px;
+}
+
+.admin-form input:not(.ui-input),
+.admin-form select:not(.ui-select),
+.admin-form textarea:not(.ui-textarea),
+.admin-tier-select {
+  min-height: 34px;
+  padding: 6px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius-compact);
+  font: inherit;
+}
+
+.admin-form input:not(.ui-input),
+.admin-form select:not(.ui-select),
+.admin-form textarea:not(.ui-textarea) {
+  min-width: 0;
+  width: 100%;
+}
+
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
+.admin-form select:not(.ui-select),
+.admin-tier-select {
+  height: 36px;
+  min-height: 36px;
+  line-height: 1.25;
+}
+
+.admin-form input:not(.ui-input):focus,
+.admin-form select:not(.ui-select):focus,
+.admin-form textarea:not(.ui-textarea):focus,
+.admin-tier-select:focus {
+  border-color: var(--focus-ring);
+  outline: 2px solid color-mix(in srgb, var(--focus-ring) 24%, transparent);
+  outline-offset: 1px;
+}
+
+.settings-page-form {
+  gap: 18px;
+  padding: 20px;
+  background: var(--surface-2);
+}
+
+.settings-card-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-items: stretch;
+  gap: 18px;
+}
+
+.settings-card {
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+.settings-card:not(.settings-card-form) {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-card-header {
+  padding: 17px 18px 14px;
+  background: var(--section-header);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-card-title,
+.settings-card-form .admin-settings-form-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.settings-card-description {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.settings-card-body {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) 18px 18px;
+}
+
+.settings-card-body .admin-toggle-control,
+.live-presentation-form .admin-toggle-control {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.settings-form-footer {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-self: stretch;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-dark);
+}
+
+.settings-form-footer .admin-form-message {
+  min-height: 20px;
+}
+
+.settings-summary {
+  margin: 0;
+}
+
+.settings-summary dt,
+.settings-summary dd {
+  margin: 0;
+  padding: 9px 0;
+  line-height: 1.4;
+}
+
+.settings-summary dt {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-summary dd {
+  padding-top: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-summary dd:not(:last-child) {
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-table-layouts {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.settings-table-layout {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.settings-table-layout > summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.settings-table-layout > .settings-summary {
+  padding: 0 12px 6px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-summary-footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-dark);
+}
+
+.settings-summary-footer p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.admin-settings-form {
+  width: 100%;
+  max-width: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  padding: 18px;
+}
+
+.admin-settings-form-stack {
+  width: 100%;
+  max-width: none;
+  padding: 18px;
+}
+
+.admin-settings-form-title,
+.settings-card-form .settings-card-description,
+.admin-settings-form .admin-form-message,
+.admin-settings-form .admin-form-actions,
+.radioreference-remember {
+  grid-column: 1 / -1;
+}
+
+.admin-settings-form-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.radioreference-remember {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.radioreference-remember input {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.admin-toggle-control {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 14px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.admin-toggle-control input {
+  width: 20px;
+  min-height: 20px;
+  margin: 1px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.admin-toggle-control:has(input:disabled) {
+  cursor: wait;
+  opacity: .7;
+}
+
+.admin-toggle-copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.admin-toggle-copy span,
+.admin-form-help {
+  color: var(--muted);
+}
+
+.admin-form-help {
+  font-weight: 400;
+}
+
+.admin-form-message {
+  min-height: 18px;
+  color: var(--danger);
+}
+
+.admin-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.admin-confirmation p {
+  margin: 0 0 14px;
+  line-height: 1.45;
+}
+
+.admin-section-body {
+  min-width: 0;
+}
+
+.admin-section-intro {
+  margin: 0;
+  padding: 14px 18px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  line-height: 1.45;
+}
+
+.read-only-modal.live-presentation-modal {
+  width: min(680px, 96vw);
+}
+
+.live-presentation-form {
+  gap: var(--space-3);
+}
+
+.live-presentation-intro {
+  margin: 0 0 2px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.scan-list-admin-form input[type="checkbox"] {
+  width: 24px;
+  min-height: 24px;
+  justify-self: start;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 560px) {
+  .admin-row-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-page-form,
+  .admin-settings-form-stack {
+    padding: var(--space-3);
+  }
+
+  .settings-card-header,
+  .settings-card-body {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .settings-field-grid,
+  .settings-form-footer,
+  .admin-settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-summary-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

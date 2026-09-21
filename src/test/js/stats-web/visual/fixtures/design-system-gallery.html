@@ -177,6 +177,92 @@
     </div>
   </section>
 
+  <main class="visual-settings-example">
+    <header class="visual-settings-header">
+      <div>
+        <p class="visual-settings-eyebrow">Administration</p>
+        <h1>Receiver settings</h1>
+        <p>Shared settings cards keep receiver options predictable across every administration page.</p>
+      </div>
+      <span class="ui-pill ui-pill-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><span>Connected</span></span>
+    </header>
+
+    <div class="admin-settings-shell">
+      <nav class="admin-settings-tree" aria-label="Settings pages">
+        <details class="admin-settings-branch" open>
+          <summary>Receiver</summary>
+          <div class="admin-settings-branch-items">
+            <a class="admin-settings-leaf active" href="#receiver">General <span class="settings-scope-badge">Receiver</span></a>
+            <a class="admin-settings-leaf" href="#alerts">Health alerts <span class="settings-scope-badge">Receiver</span></a>
+            <a class="admin-settings-leaf" href="#p25">P25 overrides <span class="settings-scope-badge">Receiver</span></a>
+          </div>
+        </details>
+        <details class="admin-settings-branch" open>
+          <summary>Account</summary>
+          <div class="admin-settings-branch-items">
+            <a class="admin-settings-leaf" href="#profile">My settings <span class="settings-scope-badge">You</span></a>
+            <a class="admin-settings-leaf" href="#radio-reference">RadioReference <span class="settings-scope-badge">Receiver</span></a>
+          </div>
+        </details>
+      </nav>
+
+      <section class="admin-settings-content" id="receiver">
+        <form class="admin-form settings-page-form visual-settings-form">
+          <div class="settings-card-grid">
+            <section class="settings-card">
+              <header class="settings-card-header">
+                <h2 class="settings-card-title">Web interface</h2>
+                <p class="settings-card-description">Choose how this receiver appears to local operators.</p>
+              </header>
+              <div class="settings-card-body">
+                <div class="settings-field-grid">
+                  <label class="ui-field">
+                    <span class="ui-field-label">Receiver name</span>
+                    <input class="ui-input" value="Home receiver">
+                    <small class="ui-field-detail">Shown in the browser title and status menus.</small>
+                  </label>
+                  <label class="ui-field">
+                    <span class="ui-field-label">Default page</span>
+                    <span class="ui-select-frame">
+                      <select class="ui-select"><option>Live calls</option></select>
+                      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
+                    </span>
+                  </label>
+                </div>
+                <label class="admin-toggle-control ui-field-row">
+                  <span class="admin-toggle-copy"><strong>Show receiver notices</strong><span>Display health and configuration notices in the status menu.</span></span>
+                  <input type="checkbox" checked aria-label="Show receiver notices">
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-card">
+              <header class="settings-card-header">
+                <h2 class="settings-card-title">Current configuration</h2>
+                <p class="settings-card-description">Read-only values help confirm which receiver is being changed.</p>
+              </header>
+              <div class="settings-card-body">
+                <dl class="settings-summary">
+                  <dt>Interface access</dt><dd>Local network</dd>
+                  <dt>Configured channels</dt><dd>24 channels across 3 systems</dd>
+                  <dt>Last saved</dt><dd>Today at 10:42 AM</dd>
+                </dl>
+                <div class="settings-summary-footer">
+                  <p>Changes apply to this receiver.</p>
+                  <button class="ui-button ui-button-secondary" type="button">View status</button>
+                </div>
+              </div>
+            </section>
+          </div>
+          <footer class="settings-form-footer">
+            <div class="admin-form-message" role="status" aria-live="polite"></div>
+            <button class="ui-button ui-button-primary" type="button">Save settings</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+  </main>
+
   <script src="/visual/design-system-gallery.js"></script>
 </body>
 </html>

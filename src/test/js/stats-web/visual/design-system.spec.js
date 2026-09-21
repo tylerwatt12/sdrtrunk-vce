@@ -43,3 +43,15 @@ test('keyboard-focus', async ({ page }) => {
   await page.locator('#visual-focus-target').focus();
   await expect(page.locator('.visual-focus-example')).toHaveScreenshot('keyboard-focus.png');
 });
+
+test('settings-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.goto('/design-system.html?theme=light&view=settings');
+  await expect(page.locator('body')).toHaveScreenshot('settings-light-desktop.png', { fullPage: true });
+});
+
+test('settings-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=settings');
+  await expect(page.locator('body')).toHaveScreenshot('settings-dark-mobile.png', { fullPage: true });
+});

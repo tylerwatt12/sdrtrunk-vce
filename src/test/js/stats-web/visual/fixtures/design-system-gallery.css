@@ -125,9 +125,57 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   border-radius: var(--radius-card);
 }
 
+.visual-settings-example {
+  width: min(1180px, calc(100% - 32px));
+  display: grid;
+  gap: var(--space-4);
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.visual-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.visual-settings-header h1,
+.visual-settings-header p {
+  margin: 0;
+}
+
+.visual-settings-header > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.visual-settings-header > div > p:last-child,
+.visual-settings-eyebrow {
+  color: var(--muted);
+}
+
+.visual-settings-eyebrow {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.visual-settings-form {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface);
+}
+
+.visual-settings-form .settings-card-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
-body:not([data-gallery-view="focus"]) .visual-focus-example {
+body:not([data-gallery-view="focus"]) .visual-focus-example,
+body:not([data-gallery-view="settings"]) .visual-settings-example {
   display: none;
 }
 
@@ -155,5 +203,18 @@ body:not([data-gallery-view="focus"]) .visual-focus-example {
 
   .visual-row > .ui-button {
     flex: 1 1 auto;
+  }
+
+  .visual-settings-example {
+    width: min(100% - 20px, 1180px);
+    padding-top: var(--space-3);
+  }
+
+  .visual-settings-header {
+    display: grid;
+  }
+
+  .visual-settings-form .settings-card-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

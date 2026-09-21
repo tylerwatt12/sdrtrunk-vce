@@ -16,6 +16,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/components/controls.css") layer(components);',
   '@import url("./styles/compositions/workspaces.css") layer(compositions);',
   '@import url("./styles/compositions/modals.css") layer(compositions);',
+  '@import url("./styles/compositions/settings.css") layer(compositions);',
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
@@ -50,7 +51,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 8718;
+const LEGACY_LINE_BUDGET = 8354;
 const FEATURE_SHARED_SELECTOR_BUDGET = 17;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
@@ -641,6 +642,25 @@ function validateModalComposition(stylesheets, entry) {
     'Shared modal content must own bounded scrolling');
 }
 
+function validateSettingsComposition(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const settings = stylesheetModule(stylesheets, entry, 'compositions/settings.css').source;
+  for(const selector of ['.admin-form', '.settings-page-form', '.settings-card-grid', '.settings-card',
+    '.settings-card-header', '.settings-card-body', '.settings-form-footer', '.settings-summary',
+    '.admin-settings-form', '.admin-toggle-control', '.admin-form-message']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
+    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the shared settings composition`);
+    assert.match(settings, baseRule, `Missing shared settings foundation rule ${selector}`);
+  }
+  assert.match(settings,
+    /@media \(max-width: 560px\)[\s\S]*\.settings-field-grid,[\s\S]*\.settings-form-footer,[\s\S]*\.admin-settings-form\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Shared settings forms must collapse to a single column on small screens');
+  assert.match(settings,
+    /\.settings-form-footer\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) max-content/,
+    'Shared settings forms must use the standard message-and-action footer');
+}
+
 function validateReducedMotionCoverage(stylesheets, entry) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
@@ -788,5 +808,6 @@ validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
 validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);
+validateSettingsComposition(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);
