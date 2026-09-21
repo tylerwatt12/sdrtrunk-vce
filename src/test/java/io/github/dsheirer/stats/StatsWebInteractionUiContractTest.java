@@ -204,7 +204,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
         assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
         assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
-        assertTrue(tuner.contains("plot('FFT', 'Tuner frequency spectrum'"));
+        assertTrue(tuner.contains("plot('FFT', 'Live spectrum', 'Signal power across the selected receiver window.'"));
+        assertTrue(tuner.contains("'Tuner frequency spectrum', 'tuner-spectrum-fft'"));
         assertTrue(tuner.contains("'Tuner spectrum history. Each row keeps the receiver window that created it."));
         assertTrue(tuner.contains("Gold dividers mark tuner retunes.'"));
         assertFalse(live.contains("java-ui"));
@@ -1530,7 +1531,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', String(options.open))"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
-        assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
+        assertTrue(tuner.contains("displayControls.append(refiningBadge, legendLabel, flagLegend)"));
         assertFalse(tuner.contains("displayControls.append(options"));
         assertTrue(tuner.contains("const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null"));
         assertTrue(tuner.contains("const displayHz = snap?.frequencyHz ?? pointerHz"));
