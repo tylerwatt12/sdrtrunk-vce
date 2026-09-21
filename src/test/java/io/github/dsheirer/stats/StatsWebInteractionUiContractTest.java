@@ -302,7 +302,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"145\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"146\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -638,7 +638,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=122"));
+        assertTrue(html.contains("/assets/app.css?v=123"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1185,6 +1185,7 @@ class StatsWebInteractionUiContractTest
         String selection = function(source, "function liveDetailSelection(tableValue, row, bindingRow = row)");
         String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
+        String filters = function(source, "function liveDetailFilterController(options)");
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
@@ -1207,6 +1208,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("section('Live Channels', host, titleActions)"));
         assertTrue(events.contains("layoutMenuHost: eventToolbar"));
         assertTrue(messages.contains("layoutMenuHost: toolbar"));
+        assertTrue(events.contains("'live-details-tabs ui-segmented'"));
+        assertTrue(events.contains("'live-details-tab ui-segmented-option'"));
+        assertTrue(events.contains("'ui-button ui-button-secondary live-details-pause'"));
+        assertTrue(filters.contains("'ui-button ui-button-secondary live-detail-filter-trigger'"));
+        assertTrue(filters.contains("'ui-button ui-button-primary', 'Done'"));
         assertTrue(html.contains("id=\"icon-columns\""));
         assertTrue(html.contains("id=\"icon-live-presentation\""));
         assertTrue(events.contains("['events', 'messages', 'channel']"));
@@ -1330,13 +1336,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".live-event-category-other"));
         assertTrue(css.contains(".live-event-duration-value"));
         assertTrue(css.contains("border: 1px solid var(--live-event-accent);"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .live-event-category-voice"));
+        assertFalse(css.contains(":root[data-theme=\"dark\"] .live-event-category-voice"));
+        assertTrue(css.contains("color-mix(in srgb, var(--chart-call) 10%, var(--surface))"));
         assertTrue(css.contains(".channel-diagnostic-canvas"));
         assertTrue(css.contains(".channel-diagnostic-view-toggle"));
-        assertTrue(css.contains(".channel-diagnostic-view-button[aria-pressed=\"true\"]"));
-        assertTrue(css.contains(":not(.live-details-tab):not(.channel-diagnostic-view-button)"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-diagnostic-view-button[aria-pressed=\"true\"]"));
-        assertTrue(css.contains(".channel-diagnostic-view-button:hover {\n  color: var(--ink);"));
+        assertTrue(channel.contains("'channel-diagnostic-view-button ui-segmented-option'"));
+        assertTrue(channel.contains("button.classList.toggle('active'"));
+        assertFalse(css.contains(":root[data-theme=\"dark\"] .channel-diagnostic-view-button"));
+        assertFalse(css.contains(".channel-diagnostic-view-button:hover"));
         assertTrue(css.contains(".channel-diagnostic-grid {"));
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".channel-diagnostic-grid"));

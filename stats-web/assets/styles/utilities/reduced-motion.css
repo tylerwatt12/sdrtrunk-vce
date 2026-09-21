@@ -1,5 +1,14 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .channels-tab-quality span {
+    transition: none;
+  }
+
+  .channels-tab-select:hover .channels-tab-quality.quality-link span,
+  .channels-tab-select:focus-visible .channels-tab-quality.quality-link span {
+    transform: none;
+  }
+
   .ui-select,
   .ui-input,
   .ui-textarea,

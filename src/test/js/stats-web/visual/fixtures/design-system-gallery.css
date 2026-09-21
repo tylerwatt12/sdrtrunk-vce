@@ -296,52 +296,32 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
   margin: 0 auto;
   padding: 28px 0 var(--space-3);
   box-sizing: border-box;
 }
 
-.visual-live-workspace {
-  min-height: 0;
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-rows: minmax(180px, .9fr) minmax(160px, 1.1fr);
-  gap: var(--space-3);
-}
-
-.visual-live-workspace > .section {
+.visual-live-example .live-split > .section {
   min-height: 0;
   margin: 0;
   overflow: hidden;
   border-radius: var(--radius-card);
 }
 
-.visual-live-channel-tabs {
+.visual-live-example .live-details-body,
+.visual-live-example .live-events-pane,
+.visual-live-example .live-events-scroll {
+  min-height: 0;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  padding: var(--space-3);
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-}
-
-.visual-live-channel-tabs strong {
-  color: var(--accent);
-}
-
-.visual-live-detail {
-  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
 }
 
-.visual-live-empty {
-  display: grid;
-  flex: 1 1 auto;
-  place-items: center;
-  margin: 0;
-  color: var(--muted);
+.visual-live-filter-depth-0 { --filter-indent: 6px; }
+.visual-live-filter-depth-1 { --filter-indent: 24px; }
+
+.visual-live-filter-example {
+  min-height: 100vh;
 }
 
 .visual-spectrum-trace {
@@ -383,7 +363,8 @@ body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
 body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example,
 body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
-body:not([data-gallery-view="live-notice"]) .visual-live-example {
+body:not([data-gallery-view="live-notice"]) .visual-live-example,
+body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   display: none;
 }
 

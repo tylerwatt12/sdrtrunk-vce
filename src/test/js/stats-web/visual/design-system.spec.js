@@ -56,7 +56,7 @@ test('modal-mobile-light', async ({ page }) => {
 test('modal-long-dark', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=modal-long');
-  const content = page.locator('.modal-content');
+  const content = page.locator('.visual-modal-example .modal-content');
   await expect.poll(() => content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await expect(page.locator('body')).toHaveScreenshot('modal-long-dark.png');
 });
@@ -150,6 +150,12 @@ test('live-notice-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=live-notice');
   await expect(page.locator('body')).toHaveScreenshot('live-notice-light-mobile.png');
+});
+
+test('live-filter-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 980, height: 760 });
+  await page.goto('/design-system.html?theme=dark&view=live-filter');
+  await expect(page.locator('body')).toHaveScreenshot('live-filter-dark-desktop.png');
 });
 
 test('dashboard-health-light-desktop', async ({ page }) => {

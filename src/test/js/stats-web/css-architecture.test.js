@@ -18,7 +18,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/compositions/modals.css") layer(compositions);',
   '@import url("./styles/compositions/settings.css") layer(compositions);',
   '@import url("./styles/features/channels.css") layer(features);',
-  '@import url("./styles/features/live.css") layer(features);',
+  '@import url("./styles/features/live.css?v=2") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/identity-activity.css") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css") layer(features);',
@@ -710,6 +710,23 @@ function validateTunerSpectrumFeature(stylesheets, entry) {
     'Tuner Spectrum presentation must adapt through semantic tokens instead of feature theme overrides');
 }
 
+function validateLiveFeature(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
+  for(const selector of ['body[data-view="live"]', '.channels-live-tabs', '.live-details-header',
+    '.channel-diagnostic-grid', '.live-filter-editor', '.live-activity-history-notice']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
+    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the Live feature stylesheet`);
+    assert.match(live, baseRule, `Missing Live feature rule ${selector}`);
+  }
+  assert.doesNotMatch(live, /:root\[data-theme="dark"\]/,
+    'Live presentation must adapt through semantic tokens instead of feature theme overrides');
+  assert.match(live,
+    /@media \(max-width: 680px\)[\s\S]*\.live-details-header\s*\{[\s\S]*flex-wrap:\s*wrap/,
+    'Live detail controls must wrap cleanly on small screens');
+}
+
 function validateReducedMotionCoverage(stylesheets, entry) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
@@ -860,5 +877,6 @@ validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);
 validateTunerSpectrumFeature(stylesheets, entryStylesheet);
+validateLiveFeature(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

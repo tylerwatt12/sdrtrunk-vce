@@ -10613,7 +10613,7 @@ function liveDetailFilterController(options) {
   let modalApi = null;
   const triggerId = `live-detail-filter-trigger-${++liveDetailFilterSequence}`;
   const container = node('div', 'live-detail-filter-summary');
-  const trigger = node('button', 'button secondary live-detail-filter-trigger', 'Filters');
+  const trigger = node('button', 'ui-button ui-button-secondary live-detail-filter-trigger', 'Filters');
   trigger.id = triggerId;
   trigger.type = 'button';
   trigger.disabled = true;
@@ -10666,8 +10666,8 @@ function liveDetailFilterController(options) {
     const typeSection = node('section', 'live-filter-section');
     typeSection.append(node('h3', '', options.typeHeading || 'Types'));
     const typeActions = node('div', 'live-filter-type-actions');
-    const showAll = node('button', 'button secondary', 'Show all types');
-    const hideAll = node('button', 'button secondary', 'Hide all types');
+    const showAll = node('button', 'ui-button ui-button-secondary', 'Show all types');
+    const hideAll = node('button', 'ui-button ui-button-secondary', 'Hide all types');
     showAll.type = 'button';
     hideAll.type = 'button';
     typeActions.append(showAll, hideAll);
@@ -10698,7 +10698,9 @@ function liveDetailFilterController(options) {
       row.style.setProperty('--filter-indent', `${6 + depth * 18}px`);
       let children = null;
       if (branch) {
-        const expand = node('button', 'live-filter-expand', expandedKeys.has(filterNode.key) ? '−' : '+');
+        const expand = node('button',
+          'ui-button ui-button-secondary ui-icon-button live-filter-expand',
+          expandedKeys.has(filterNode.key) ? '−' : '+');
         expand.type = 'button';
         expand.setAttribute('aria-label', `${expandedKeys.has(filterNode.key) ? 'Collapse' : 'Expand'} ${filterNode.label}`);
         expand.setAttribute('aria-expanded', String(expandedKeys.has(filterNode.key)));
@@ -10725,6 +10727,7 @@ function liveDetailFilterController(options) {
       const label = node('label', 'live-filter-node-label');
       const input = node('input');
       input.type = 'checkbox';
+      input.className = 'ui-selection-check';
       const text = node('span', '', filterNode.label);
       const count = branch ? node('span', 'live-filter-node-count') : null;
       label.append(input, text);
@@ -10764,6 +10767,7 @@ function liveDetailFilterController(options) {
         const label = node('label');
         const input = node('input');
         input.type = 'checkbox';
+        input.className = 'ui-selection-check';
         input.checked = model.isTimeslotEnabled(value);
         input.addEventListener('change', () => {
           model.setTimeslot(value, input.checked);
@@ -10781,6 +10785,7 @@ function liveDetailFilterController(options) {
         const label = node('label');
         const input = node('input');
         input.type = 'checkbox';
+        input.className = 'ui-selection-check';
         input.checked = model.isValidityEnabled(value);
         input.addEventListener('change', () => {
           model.setValidity(value, input.checked);
@@ -10795,6 +10800,7 @@ function liveDetailFilterController(options) {
     searchField.append(node('span', '', 'Search'));
     const search = node('input');
     search.type = 'search';
+    search.className = 'ui-input';
     search.value = model.query();
     search.placeholder = options.searchPlaceholder || `Search ${options.noun}`;
     search.addEventListener('input', () => {
@@ -10806,8 +10812,8 @@ function liveDetailFilterController(options) {
     modalBody.append(settings);
 
     const footer = node('div', 'live-filter-footer');
-    const reset = node('button', 'button secondary', 'Reset filters');
-    const done = node('button', 'button', 'Done');
+    const reset = node('button', 'ui-button ui-button-secondary', 'Reset filters');
+    const done = node('button', 'ui-button ui-button-primary', 'Done');
     reset.type = 'button';
     done.type = 'button';
     reset.addEventListener('click', () => {
@@ -11114,13 +11120,14 @@ function liveChannelPane() {
   };
   const signalDiagnostic = diagnostic('Signal', 'Selected channel signal spectrum');
   const symbolDiagnostic = diagnostic('Symbols', 'Selected channel demodulated symbols');
-  const signalViewToggle = node('div', 'channel-diagnostic-view-toggle');
+  const signalViewToggle = node('div', 'channel-diagnostic-view-toggle ui-segmented');
   signalViewToggle.setAttribute('role', 'group');
   signalViewToggle.setAttribute('aria-label', 'Signal graph view');
   const signalViewButtons = ['FFT', 'Waterfall'].map((label) => {
-    const button = node('button', 'channel-diagnostic-view-button', label);
+    const button = node('button', 'channel-diagnostic-view-button ui-segmented-option', label);
     button.type = 'button';
     button.dataset.view = label.toLowerCase();
+    button.classList.toggle('active', button.dataset.view === signalView);
     button.setAttribute('aria-pressed', String(button.dataset.view === signalView));
     signalViewToggle.append(button);
     return button;
@@ -11289,6 +11296,7 @@ function liveChannelPane() {
   const setSignalView = (view) => {
     signalView = view === 'waterfall' ? 'waterfall' : 'fft';
     signalViewButtons.forEach((button) => {
+      button.classList.toggle('active', button.dataset.view === signalView);
       button.setAttribute('aria-pressed', String(button.dataset.view === signalView));
     });
     signalDiagnostic.canvas.setAttribute('aria-label', signalView === 'waterfall' ?
@@ -13812,15 +13820,15 @@ function liveEventsPanel(onCollapse) {
 
   const panel = node('section', 'section live-details');
   const header = node('div', 'live-details-header');
-  const tabBar = node('div', 'live-details-tabs');
+  const tabBar = node('div', 'live-details-tabs ui-segmented');
   tabBar.setAttribute('role', 'tablist');
   tabBar.setAttribute('aria-label', 'Live details');
   const controls = node('div', 'live-details-controls');
-  const pause = node('button', 'button secondary live-details-pause', 'Pause');
+  const pause = node('button', 'ui-button ui-button-secondary live-details-pause', 'Pause');
   pause.type = 'button';
   pause.setAttribute('aria-label', 'Pause Events, Messages, and Channel');
   pause.setAttribute('aria-pressed', 'false');
-  const collapse = node('button', 'button secondary live-details-collapse', 'Collapse');
+  const collapse = node('button', 'ui-button ui-button-secondary live-details-collapse', 'Collapse');
   collapse.type = 'button';
   collapse.setAttribute('aria-expanded', 'true');
   controls.append(pause, collapse);
@@ -14023,7 +14031,9 @@ function liveEventsPanel(onCollapse) {
     Object.entries(panes).forEach(([paneId, pane]) => {
       const active = paneId === id;
       pane.hidden = !active;
-      tabBar.querySelector(`[data-tab="${paneId}"]`)?.setAttribute('aria-selected', String(active));
+      const tab = tabBar.querySelector(`[data-tab="${paneId}"]`);
+      tab?.classList.toggle('active', active);
+      tab?.setAttribute('aria-selected', String(active));
     });
     messagesController.setActive(id === 'messages');
     channelController.setActive(id === 'channel');
@@ -14034,11 +14044,12 @@ function liveEventsPanel(onCollapse) {
     sync();
   };
   ['events', 'messages', 'channel'].forEach((id) => {
-    const button = node('button', 'live-details-tab', id[0].toUpperCase() + id.slice(1));
+    const button = node('button', 'live-details-tab ui-segmented-option', id[0].toUpperCase() + id.slice(1));
     button.type = 'button';
     button.setAttribute('role', 'tab');
     button.addEventListener('click', () => selectPane(id));
     button.dataset.tab = id;
+    button.classList.toggle('active', id === activePaneId);
     button.setAttribute('aria-selected', String(id === activePaneId));
     tabBar.append(button);
     panes[id].hidden = id !== activePaneId;
@@ -14443,7 +14454,7 @@ function liveChannelsSection(onSelectionChange) {
   titleActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
     const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
-      'button secondary icon-button section-title-icon live-presentation-settings');
+      'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
     presentationSettings.id = 'live-presentation-settings';
     presentationSettings.addEventListener('click', () =>
       openLivePresentationSettings('#live-presentation-settings'));
