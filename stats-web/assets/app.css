@@ -15,6 +15,7 @@
 @import url("./styles/compositions/settings.css") layer(compositions);
 @import url("./styles/features/channels.css") layer(features);
 @import url("./styles/features/radio-directory.css") layer(features);
+@import url("./styles/features/identity-activity.css") layer(features);
 @import url("./styles/features/administration.css") layer(features);
 @import url("./styles/features/p25-settings.css") layer(features);
 @import url("./styles/features/receiver-health.css") layer(features);

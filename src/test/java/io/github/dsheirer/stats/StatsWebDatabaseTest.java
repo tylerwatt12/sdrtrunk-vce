@@ -415,6 +415,14 @@ class StatsWebDatabaseTest
                        (7402, 74, 'Conventional Unit', 'RADIO_ID', 'DMR', 303)
                 """);
             statement.executeUpdate("""
+                INSERT INTO alias_activity_summary (
+                    alias_id, alias_list_id, protocol_code, metrics_state,
+                    logical_call_count, grant_observation_count, signaling_observation_count,
+                    first_evidence_ms, last_evidence_ms, updated_at_ms
+                ) VALUES (8111,81,3,'observed',4,2,2,1000,%1$d,%1$d),
+                         (8112,81,3,'observed',4,0,1,1000,%1$d,%1$d)
+                """.formatted(now));
+            statement.executeUpdate("""
                 INSERT INTO trunked_logical_call_identity_bucket (
                     radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_summary_id,
                     logical_call_count
@@ -469,6 +477,17 @@ class StatsWebDatabaseTest
             .filter(row -> DMR_CHANNEL.equals(row.get("configuration_id")))
             .filter(row -> number(row.get("identity_kind_code")) == 2)
             .findFirst().orElseThrow().get("alias_name"));
+
+        Map<String,Object> publicLists = mDatabase.publicIdentityLists(request("/?limit=100"));
+        assertEquals("DMR North", rows(publicLists).stream()
+            .filter(row -> number(row.get("alias_list_id")) == 81).findFirst().orElseThrow().get("name"));
+        Map<String,Object> publicOverview = mDatabase.publicIdentityOverview(81, request("/?range=24h"));
+        assertEquals(1, number(publicOverview.get("correlated_channel_count")));
+        assertEquals(2, number(map(publicOverview, "totals").get("active_alias_count")));
+        assertEquals("Shared Dispatch", rowsFrom(publicOverview, "top_active").getFirst().get("name"));
+        Map<String,Object> publicAliases = mDatabase.publicIdentityAliases(81,
+            request("/?range=24h&type=talkgroup&limit=100"));
+        assertEquals(List.of("Shared Dispatch"), rows(publicAliases).stream().map(row -> row.get("name")).toList());
 
         Map<String,Object> activity = mDatabase.dashboardActivityRadios(
             request("/?range=1h&action=UNKNOWN&limit=20"));
@@ -560,6 +579,9 @@ class StatsWebDatabaseTest
 
         List<Map<String,Object>> observed = rows(mDatabase.observedGroupIdentities(90, request("/")));
         assertEquals(2, observed.size(), "Retained fallback history must remain discoverable from its Alias List");
+        Map<String,Object> unassigned = mDatabase.unassignedGroupIdentities(90, request("/?limit=100"));
+        assertTrue(rows(unassigned).isEmpty(), "Range aliases must not be reported as unassigned");
+        assertEquals(0, number(unassigned.get("total_count")));
         Map<String,Object> retained = observed.stream()
             .filter(row -> number(row.get("group_identity_id")) == 91).findFirst().orElseThrow();
         assertEquals(fallbackKey, retained.get("radio_system_key"));

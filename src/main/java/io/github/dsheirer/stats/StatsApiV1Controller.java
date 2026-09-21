@@ -95,11 +95,7 @@ final class StatsApiV1Controller
         create(server, StatsApiV1.RADIO_SYSTEMS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.RADIO_SYSTEMS, this::radioSystems));
         create(server, StatsApiV1.IDENTITIES, WebCapability.RADIO_VIEW,
-            exchange -> handleJson(exchange, StatsApiV1.IDENTITIES, (request, segments) -> {
-                requireNoSegments(segments);
-                request.requireOnly("range", "limit", "offset");
-                return page(mDatabase.identityDirectory(request));
-            }));
+            exchange -> handleJson(exchange, StatsApiV1.IDENTITIES, this::identities));
         create(server, StatsApiV1.CHANNELS, WebCapability.RADIO_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CHANNELS, this::channels));
         server.createContext(StatsApiV1.ACTIVITY, mRequestSecurity.protectAny(ACTIVITY_CAPABILITIES,
@@ -148,6 +144,42 @@ final class StatsApiV1Controller
         {
             request.requireOnly("include_exact", "q", "sort", "direction", "limit", "offset");
             return page(mDatabase.observedGroupIdentities(pathIdentifier("alias_list_id", segments.get(0)), request));
+        }
+
+        throw notFound();
+    }
+
+    private Object identities(StatsRequest request, List<String> segments)
+    {
+        if(segments.isEmpty())
+        {
+            request.requireOnly("range", "limit", "offset");
+            return page(mDatabase.identityDirectory(request));
+        }
+        else if(segments.size() == 1 && "lists".equals(segments.getFirst()))
+        {
+            request.requireOnly("limit", "offset");
+            return page(mDatabase.publicIdentityLists(request));
+        }
+        else if(segments.size() == 3 && "lists".equals(segments.getFirst()))
+        {
+            int aliasListId = pathIdentifier("alias_list_id", segments.get(1));
+            return switch(segments.get(2))
+            {
+                case "overview" -> {
+                    request.requireOnly("range");
+                    yield mDatabase.publicIdentityOverview(aliasListId, request);
+                }
+                case "aliases" -> {
+                    request.requireOnly("range", "type", "q", "sort", "direction", "limit", "offset");
+                    yield page(mDatabase.publicIdentityAliases(aliasListId, request));
+                }
+                case "unassigned" -> {
+                    request.requireOnly("q", "sort", "direction", "limit", "offset");
+                    yield page(mDatabase.unassignedGroupIdentities(aliasListId, request));
+                }
+                default -> throw notFound();
+            };
         }
 
         throw notFound();

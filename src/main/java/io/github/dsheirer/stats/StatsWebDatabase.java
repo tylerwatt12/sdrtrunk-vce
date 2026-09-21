@@ -529,6 +529,15 @@ class StatsWebDatabase
         Map.entry("first_seen", "configured.first_seen_ms"),
         Map.entry("last_seen", "configured.last_seen_ms")
     );
+    private static final Map<String,String> PUBLIC_IDENTITY_ALIAS_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("name", "lower(alias.name)"),
+        Map.entry("identity", "coalesce(alias.value, alias.min_value, 0)"),
+        Map.entry("type", "identity_type"),
+        Map.entry("group", "lower(coalesce(alias.group_name, ''))"),
+        Map.entry("logical_call_count", "coalesce(summary.logical_call_count, 0)"),
+        Map.entry("signaling_observation_count", "coalesce(summary.signaling_observation_count, 0)"),
+        Map.entry("last_evidence", "summary.last_evidence_ms")
+    );
     private static final Map<String,String> DMR_CONVENTIONAL_GROUP_IDENTITY_SORT_COLUMNS = Map.ofEntries(
         Map.entry("id", "summary.talkgroup_id"),
         Map.entry("group_identity", "summary.talkgroup_id"),
@@ -823,6 +832,217 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
+    /** Public Alias List choices used by the read-only identity activity directory. */
+    Map<String,Object> publicIdentityLists(StatsRequest request)
+    {
+        int limit = request.limit();
+        int offset = request.offset();
+        return readSnapshot(connection -> {
+            List<Map<String,Object>> rows = queryRows(connection, """
+                SELECT list.id AS alias_list_id, list.name, list.family,
+                    (SELECT count(*) FROM alias WHERE alias.alias_list_id = list.id) AS alias_count,
+                    (SELECT count(*) FROM configuration_channel configuration
+                        WHERE configuration.alias_list_id = list.id) AS correlated_channel_count
+                FROM alias_list list
+                ORDER BY CASE list.family WHEN 'P25' THEN 1 WHEN 'DMR' THEN 2
+                    WHEN 'NXDN' THEN 3 ELSE 4 END, lower(list.name), list.id
+                LIMIT ? OFFSET ?
+                """, limit + 1, offset);
+            Map<String,Object> response = page(rows, limit, offset);
+            response.put("total_count", scalarLong(connection, "SELECT count(*) FROM alias_list"));
+            return response;
+        });
+    }
+
+    /**
+     * Returns bounded, read-only analytics for one Alias List from the durable Alias Activity summary. The selected
+     * range defines which aliases are considered recently active; retained counters remain explicitly cumulative.
+     */
+    Map<String,Object> publicIdentityOverview(int aliasListId, StatsRequest request)
+    {
+        long activeAfter = identityActivityCutoff(request);
+        return readSnapshot(connection -> {
+            Map<String,Object> aliasList = requirePublicAliasList(connection, aliasListId);
+            List<Map<String,Object>> channels = queryRows(connection, """
+                SELECT configuration.configuration_id,
+                    nullif(trim(configuration.name), '') AS name,
+                    nullif(trim(configuration.system_name), '') AS system_name,
+                    nullif(trim(configuration.site_name), '') AS site_name,
+                    configuration.channel_kind, configuration.decoder_type AS decoder,
+                    system.system_key AS radio_system_key,
+                    CASE configuration.decoder_type WHEN 'DMR' THEN 'DMR' WHEN 'NXDN' THEN 'NXDN'
+                        WHEN 'NBFM' THEN 'NBFM' WHEN 'AM' THEN 'AM' ELSE 'P25' END AS protocol
+                FROM configuration_channel configuration INDEXED BY idx_configuration_channel_alias_list
+                LEFT JOIN receiver_channel channel ON channel.configuration_id = configuration.configuration_id
+                LEFT JOIN radio_system system ON system.id = channel.radio_system_id
+                WHERE configuration.alias_list_id = ?
+                ORDER BY lower(coalesce(nullif(trim(configuration.system_name), ''),
+                    nullif(trim(configuration.name), ''), configuration.configuration_id)),
+                    lower(coalesce(nullif(trim(configuration.site_name), ''), '')),
+                    configuration.configuration_id
+                LIMIT 501
+                """, aliasListId);
+            if(channels.size() > 500)
+            {
+                throw new StatsApiException(413, "identity_scope_too_large",
+                    "Alias List is assigned to too many channels");
+            }
+
+            Map<String,Object> totals = first(queryRows(connection, """
+                SELECT count(*) AS configured_alias_count,
+                    sum(CASE WHEN summary.last_evidence_ms >= ? THEN 1 ELSE 0 END) AS active_alias_count,
+                    coalesce(sum(summary.logical_call_count), 0) AS retained_logical_call_count,
+                    coalesce(sum(summary.signaling_observation_count), 0) AS retained_signaling_observation_count,
+                    coalesce(sum(summary.grant_observation_count), 0) AS grant_observation_count,
+                    coalesce(sum(summary.join_observation_count), 0) AS join_observation_count,
+                    coalesce(sum(summary.register_observation_count), 0) AS register_observation_count,
+                    coalesce(sum(summary.emergency_observation_count), 0) AS emergency_observation_count,
+                    coalesce(sum(summary.denial_observation_count), 0) AS denial_observation_count,
+                    coalesce(sum(summary.data_observation_count), 0) AS data_observation_count,
+                    sum(CASE WHEN summary.last_evidence_ms >= ? AND alias.record_enabled = 1 THEN 1 ELSE 0 END)
+                        AS recording_enabled_active_count,
+                    sum(CASE WHEN summary.last_evidence_ms >= ? AND EXISTS (
+                        SELECT 1 FROM alias_broadcast_channel route WHERE route.alias_id = alias.id)
+                        THEN 1 ELSE 0 END) AS streaming_enabled_active_count
+                FROM alias
+                LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+                WHERE alias.alias_list_id = ?
+                  AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
+                """, activeAfter, activeAfter, activeAfter, aliasListId), "Alias List was not found");
+
+            List<Map<String,Object>> topActive = queryRows(connection, """
+                SELECT alias.id AS alias_id, alias.name,
+                    CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                        ELSE 'talkgroup' END AS identity_type,
+                    alias.value, alias.min_value, alias.max_value,
+                    summary.logical_call_count, summary.last_evidence_ms
+                FROM alias_activity_summary summary INDEXED BY idx_alias_activity_calls
+                JOIN alias ON alias.id = summary.alias_id
+                WHERE summary.alias_list_id = ? AND summary.last_evidence_ms >= ?
+                ORDER BY summary.logical_call_count DESC, summary.alias_id
+                LIMIT 5
+                """, aliasListId, activeAfter);
+
+            List<Map<String,Object>> topSignaling = queryRows(connection, """
+                SELECT alias.id AS alias_id, alias.name,
+                    CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                        ELSE 'talkgroup' END AS identity_type,
+                    alias.value, alias.min_value, alias.max_value,
+                    summary.signaling_observation_count, summary.last_evidence_ms
+                FROM alias_activity_summary summary INDEXED BY idx_alias_activity_signaling
+                JOIN alias ON alias.id = summary.alias_id
+                WHERE summary.alias_list_id = ? AND summary.last_evidence_ms >= ?
+                  AND summary.signaling_observation_count > 0
+                ORDER BY summary.signaling_observation_count DESC, summary.alias_id
+                LIMIT 5
+                """, aliasListId, activeAfter);
+
+            List<Map<String,Object>> lastHeard = queryRows(connection, """
+                SELECT CASE
+                        WHEN summary.last_evidence_ms IS NULL THEN 'never'
+                        WHEN summary.last_evidence_ms >= ? THEN 'hour'
+                        WHEN summary.last_evidence_ms >= ? THEN 'day'
+                        WHEN summary.last_evidence_ms >= ? THEN 'week'
+                        ELSE 'older' END AS bucket,
+                    count(*) AS alias_count
+                FROM alias
+                LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+                WHERE alias.alias_list_id = ?
+                  AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
+                GROUP BY bucket
+                """, System.currentTimeMillis() - HOUR_MILLISECONDS,
+                System.currentTimeMillis() - DAY_MILLISECONDS,
+                System.currentTimeMillis() - 7L * DAY_MILLISECONDS, aliasListId);
+
+            long systems = channels.stream().map(row -> row.get("radio_system_key"))
+                .filter(java.util.Objects::nonNull).distinct().count();
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("alias_list", aliasList);
+            response.put("range", identityActivityRange(request));
+            response.put("active_after_ms", activeAfter);
+            response.put("totals", totals);
+            response.put("top_active", topActive);
+            response.put("top_signaling", topSignaling);
+            response.put("last_heard_distribution", lastHeard);
+            response.put("channels", channels);
+            response.put("correlated_channel_count", channels.size());
+            response.put("correlated_radio_system_count", systems);
+            return response;
+        });
+    }
+
+    /** Public, configuration-safe Alias activity page for one selected list. */
+    Map<String,Object> publicIdentityAliases(int aliasListId, StatsRequest request)
+    {
+        long activeAfter = identityActivityCutoff(request);
+        String type = request.text("type");
+        if(type != null && !Set.of("talkgroup", "radio").contains(type))
+        {
+            throw new StatsApiException(400, "invalid_parameter", "type must be talkgroup or radio", "type");
+        }
+        int limit = request.limit();
+        int offset = request.offset();
+        String search = request.search();
+        StringBuilder sql = new StringBuilder("""
+            SELECT alias.id AS alias_id, alias.name, alias.description, alias.group_name AS `group`,
+                CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
+                    ELSE 'talkgroup' END AS identity_type,
+                alias.protocol, alias.value, alias.min_value, alias.max_value,
+                summary.logical_call_count, summary.signaling_observation_count,
+                summary.last_evidence_ms
+            FROM alias
+            LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+            WHERE alias.alias_list_id = ?
+              AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
+              AND summary.last_evidence_ms >= ?
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(aliasListId, activeAfter));
+        if(type != null)
+        {
+            sql.append(type.equals("radio") ?
+                " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE')" :
+                " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')");
+        }
+        if(search != null)
+        {
+            sql.append(" AND lower(alias.name || ' ' || coalesce(alias.description, '') || ' ' || " +
+                "coalesce(alias.group_name, '') || ' ' || coalesce(CAST(alias.value AS TEXT), '') || ' ' || " +
+                "coalesce(CAST(alias.min_value AS TEXT), '') || ' ' || " +
+                "coalesce(CAST(alias.max_value AS TEXT), '')) LIKE ?");
+            parameters.add(like(search));
+        }
+        sql.append(" ORDER BY ").append(order(request, PUBLIC_IDENTITY_ALIAS_SORT_COLUMNS, "last_evidence"))
+            .append(", alias.id LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit + 1, offset);
+
+        return readSnapshot(connection -> {
+            requirePublicAliasList(connection, aliasListId);
+            Map<String,Object> response = page(queryRows(connection, sql.toString(), parameters.toArray()),
+                limit, offset);
+            response.put("range", identityActivityRange(request));
+            return response;
+        });
+    }
+
+    Map<String,Object> unassignedGroupIdentities(int aliasListId, StatsRequest request)
+    {
+        Map<String,Object> response = observedGroupIdentities(aliasListId, request, ignored -> {}, true);
+        Object rows = response.get("rows");
+        if(rows instanceof List<?> values)
+        {
+            for(Object value: values)
+            {
+                if(value instanceof Map<?,?> map)
+                {
+                    map.remove("promotion_supported");
+                    map.remove("promotion_reason");
+                }
+            }
+        }
+        response.remove("include_exact");
+        return response;
+    }
+
     /** Streams the exact Alias table selection from one read-only SQLite snapshot in bounded batches. */
     void forEachFilteredAliasBatch(StatsRequest request, int batchSize,
                                    StatsAliasCatalog.AliasBatchConsumer consumer)
@@ -928,7 +1148,7 @@ class StatsWebDatabase
      */
     Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request)
     {
-        return observedGroupIdentities(aliasListId, request, ignored -> {});
+        return observedGroupIdentities(aliasListId, request, ignored -> {}, false);
     }
 
     /**
@@ -936,6 +1156,12 @@ class StatsWebDatabase
      */
     Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request,
                                           Consumer<ObservedGroupIdentityQuery> queryObserver)
+    {
+        return observedGroupIdentities(aliasListId, request, queryObserver, false);
+    }
+
+    private Map<String,Object> observedGroupIdentities(int aliasListId, StatsRequest request,
+        Consumer<ObservedGroupIdentityQuery> queryObserver, boolean onlyUnassigned)
     {
         if(aliasListId <= 0)
         {
@@ -1156,7 +1382,8 @@ class StatsWebDatabase
                     JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                     WHERE %d = 3 AND config.alias_list_id = ?
                       AND config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR'
-                ) SELECT * FROM observed WHERE 1 = 1
+                ) SELECT observed.*, count(*) OVER () AS result_total_count
+                FROM observed WHERE 1 = 1
                 """.formatted(protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
                     IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
                     protocolCode, protocolCode, decoderPredicate, protocolCode));
@@ -1170,6 +1397,23 @@ class StatsWebDatabase
             if(!includeExact)
             {
                 sql.append(" AND has_exact_definition = 0");
+            }
+
+            if(onlyUnassigned)
+            {
+                sql.append("""
+                     AND NOT EXISTS (
+                       SELECT 1 FROM alias definition
+                       WHERE definition.alias_list_id = observed.alias_list_id
+                         AND ((definition.matcher_type = 'TALKGROUP'
+                               AND definition.value = observed.group_identity_id)
+                           OR (definition.matcher_type = 'TALKGROUP_RANGE'
+                               AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value))
+                         AND ((observed.protocol_code = 1
+                               AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
+                           OR (observed.protocol_code = 3 AND definition.protocol = 'DMR')
+                           OR (observed.protocol_code = 4 AND definition.protocol = 'NXDN')))
+                    """);
             }
 
             if(request.search() != null)
@@ -1198,12 +1442,17 @@ class StatsWebDatabase
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.resolveObservedGroupIdentities(connection, rows);
 
+            long totalCount = rows.isEmpty() ? 0 : ((Number)rows.getFirst()
+                .getOrDefault("result_total_count", 0)).longValue();
+
             for(Map<String,Object> row: rows)
             {
                 row.remove("has_exact_definition");
+                row.remove("result_total_count");
             }
 
             Map<String,Object> response = page(rows, request);
+            response.put("total_count", totalCount);
             response.put("alias_list", aliasList);
             response.put("include_exact", includeExact);
             return response;
@@ -6047,6 +6296,31 @@ class StatsWebDatabase
         long retentionMilliseconds = Math.max(1,
             mUserPreferences.getApplicationPreference().getStatsLoggingRetentionDays()) * DAY_MILLISECONDS;
         return new ActivityRange(label, Math.min(requestedMilliseconds, retentionMilliseconds));
+    }
+
+    private long identityActivityCutoff(StatsRequest request)
+    {
+        return System.currentTimeMillis() - activityRange(request).milliseconds();
+    }
+
+    private String identityActivityRange(StatsRequest request)
+    {
+        return activityRange(request).label();
+    }
+
+    private static Map<String,Object> requirePublicAliasList(Connection connection, int aliasListId)
+        throws SQLException
+    {
+        if(aliasListId <= 0)
+        {
+            throw new StatsApiException(400, "alias_list_id is invalid");
+        }
+
+        return first(queryRows(connection, """
+            SELECT id AS alias_list_id, name, family
+            FROM alias_list
+            WHERE id = ?
+            """, aliasListId), "Alias List was not found");
     }
 
     private Path getDatabasePath()

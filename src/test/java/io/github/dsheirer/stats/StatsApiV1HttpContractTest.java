@@ -277,6 +277,29 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void publicIdentityActivityRoutesStayReadOnlyAndListScoped() throws Exception
+    {
+        HttpResponse<String> listsResponse = get(StatsApiV1.IDENTITIES + "/lists?limit=100");
+        assertEquals(200, listsResponse.statusCode(), listsResponse.body());
+        JsonNode lists = OBJECT_MAPPER.readTree(listsResponse.body());
+        assertTrue(lists.path("data").isArray(), listsResponse.body());
+        assertTrue(lists.at("/meta/total_count").isIntegralNumber(), listsResponse.body());
+
+        HttpResponse<String> overviewResponse = get(StatsApiV1.IDENTITIES + "/lists/71/overview?range=24h");
+        assertEquals(200, overviewResponse.statusCode(), overviewResponse.body());
+        JsonNode overview = OBJECT_MAPPER.readTree(overviewResponse.body()).path("data");
+        assertEquals("HTTP Aliases", overview.at("/alias_list/name").textValue(), overviewResponse.body());
+        assertEquals(1, overview.path("correlated_channel_count").intValue(), overviewResponse.body());
+        assertTrue(overview.path("channels").isArray(), overviewResponse.body());
+
+        HttpResponse<String> aliasesResponse = get(StatsApiV1.IDENTITIES +
+            "/lists/71/aliases?range=24h&limit=25");
+        assertEquals(200, aliasesResponse.statusCode(), aliasesResponse.body());
+        assertTrue(OBJECT_MAPPER.readTree(aliasesResponse.body()).path("data").isArray(), aliasesResponse.body());
+
+    }
+
+    @Test
     void staticIndexPublishesItsWebClientRevisionWithoutExpandingTheApi() throws Exception
     {
         HttpResponse<String> response = send(HttpRequest.newBuilder(mOrigin)

@@ -1,0 +1,213 @@
+.identity-activity {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-layout-gap);
+}
+
+.identity-activity-toolbar,
+.identity-activity-table-toolbar,
+.identity-activity-scope {
+  display: flex;
+  align-items: end;
+  gap: var(--ui-control-gap);
+  flex-wrap: wrap;
+}
+
+.identity-activity-toolbar,
+.identity-activity-scope,
+.identity-activity-table-section,
+.identity-activity-chart {
+  padding: var(--ui-surface-padding);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-surface-radius);
+}
+
+.identity-activity-field {
+  min-width: min(320px, 100%);
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.identity-activity-field:first-child {
+  flex: 1 1 360px;
+}
+
+.identity-activity-field .ui-select-frame,
+.identity-activity-field .ui-select {
+  width: 100%;
+}
+
+.identity-activity-scope {
+  align-items: center;
+  justify-content: space-between;
+  border-inline-start: 3px solid var(--accent);
+}
+
+.identity-activity-scope > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 3px 8px;
+}
+
+.identity-activity-scope .identity-activity-eyebrow {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.identity-activity-summary {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ui-control-gap);
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.identity-activity-summary .metric {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: var(--ui-surface-padding);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-surface-radius);
+}
+
+.identity-activity-summary .metric > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.identity-activity-summary .metric > strong {
+  font-size: 22px;
+}
+
+.identity-activity-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-layout-gap);
+}
+
+.identity-activity-chart {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.identity-activity-chart h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.identity-activity-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.identity-activity-bar {
+  display: grid;
+  grid-template-columns: minmax(85px, 1fr) minmax(90px, 2fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.identity-activity-bar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity-activity-bar-track,
+.identity-coverage-track {
+  height: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+
+.identity-activity-bar-fill,
+.identity-coverage-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+.identity-coverage-card {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.identity-coverage-card p,
+.identity-coverage-card .identity-coverage-track {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.identity-coverage-value {
+  color: var(--accent);
+  font-size: 24px;
+}
+
+.identity-activity-table-section {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-control-gap);
+}
+
+.identity-activity-table-toolbar {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.identity-activity-search {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-control-gap);
+  margin: 0;
+}
+
+.identity-activity-search .ui-search {
+  min-width: min(280px, 100%);
+}
+
+@media (max-width: 800px) {
+  .identity-activity-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-activity-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .identity-activity-toolbar,
+  .identity-activity-toolbar > *,
+  .identity-activity-table-toolbar,
+  .identity-activity-table-toolbar > * {
+    width: 100%;
+  }
+
+  .identity-activity-search .ui-search {
+    flex: 1 1 100%;
+  }
+
+  .identity-activity-scope {
+    align-items: stretch;
+  }
+}

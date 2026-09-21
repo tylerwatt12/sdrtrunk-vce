@@ -17134,124 +17134,233 @@ async function renderChannelSetup() {
   await renderModernChannelCatalog(renderContext, true);
 }
 
-function identityDirectoryKind(row) {
-  const kind = Number(row?.identity_kind_code);
-  if (kind === 1) return 'Talkgroup';
-  if (kind === 2) return 'Radio';
-  if (kind === 3) return 'Patch group';
-  return 'Other';
-}
-
-function identityDirectoryScope(row) {
-  if (String(row?.channel_kind || '').toUpperCase() === 'CONVENTIONAL') {
-    return [row.system_name, row.site_name, row.name].filter(Boolean).join(' · ') || 'Conventional channel';
+function identityActivityValue(row) {
+  if (row.value != null) return identifierNumber(row.value);
+  if (row.min_value != null && row.max_value != null) {
+    return `${identifierNumber(row.min_value)}–${identifierNumber(row.max_value)}`;
   }
-  return row.system_name || radioSystemLabel(row) || 'Trunked radio system';
+  return '—';
 }
 
-function identityDirectoryKey(row) {
-  return [row.channel_kind, row.radio_system_key, row.configuration_id, row.identity_kind_code,
-    row.identity_key, row.native_id].map((value) => String(value ?? '')).join('\u0000');
-}
-
-function identityDirectoryName(row) {
-  const label = identityNumber(row, row.native_id) || 'Unknown';
-  const target = entityRefHref(row.entity_ref);
-  return target ? anchor(label, target, 'identity-directory-link') : label;
-}
-
-function identityDirectoryAlias(row) {
-  const wrapper = node('span', 'identity-directory-alias');
-  const alias = aliasLabel(row);
-  wrapper.append(node('strong', '', alias || 'Unassigned'));
-  if (row.last_talker_alias && row.last_talker_alias !== alias) {
-    wrapper.append(node('small', 'muted', `Over the air: ${row.last_talker_alias}`));
-  }
-  return wrapper;
-}
-
-function identityDirectoryColumns() {
+function identityActivityAliasesColumns() {
   return [
-    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(protocolFamily(row), 'protocol'),
-      sortValue: (row) => protocolFamily(row) },
-    { id: 'kind', label: 'Type', render: (row) => identityDirectoryKind(row),
-      sortValue: identityDirectoryKind },
-    { id: 'identity', label: 'Identity', className: 'numeric', render: identityDirectoryName,
-      sortValue: (row) => Number(row.native_id || 0) },
-    { id: 'alias', label: 'Alias', render: identityDirectoryAlias, className: 'alias-cell',
-      sortValue: (row) => aliasLabel(row) || '' },
-    { id: 'description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
-    { id: 'scope', label: 'System / Channel', render: identityDirectoryScope,
-      sortValue: identityDirectoryScope },
-    { id: 'calls', label: 'Calls', className: 'numeric', render: (row) => number(row.logical_call_count),
-      sortValue: (row) => Number(row.logical_call_count || 0) },
-    { id: 'last-heard', label: 'Last heard', render: (row) => dateTime(row.last_active_ms),
-      sortValue: (row) => Number(row.last_active_ms || 0) }
+    { id: 'name', label: 'Alias', key: 'name', className: 'alias-cell', sort: 'name' },
+    { id: 'identity', label: 'Identity', render: identityActivityValue, className: 'numeric', sort: 'identity' },
+    { id: 'type', label: 'Type', render: (row) => uiPill(row.identity_type === 'radio' ? 'Radio' : 'Talkgroup'),
+      sort: 'type' },
+    { id: 'description', label: 'Description', key: 'description', className: 'alias-cell' },
+    { id: 'group', label: 'Group', key: 'group', sort: 'group' },
+    { id: 'calls', label: 'Calls', render: (row) => number(row.logical_call_count), className: 'numeric',
+      sort: 'logical_call_count' },
+    { id: 'signals', label: 'Signals', render: (row) => number(row.signaling_observation_count),
+      className: 'numeric', sort: 'signaling_observation_count' },
+    { id: 'heard', label: 'Last heard', render: (row) => dateTime(row.last_evidence_ms), sort: 'last_evidence' }
   ];
+}
+
+function identityActivityUnassignedColumns() {
+  return [
+    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol || 'Unknown', 'protocol') },
+    { id: 'identity', label: 'Identity', key: 'group_identity_id', className: 'numeric', sort: 'group_identity' },
+    { id: 'kind', label: 'Type', render: (row) => row.group_identity_kind || 'Talkgroup' },
+    { id: 'system', label: 'System / Channel', render: (row) =>
+      [row.system_name, row.channel_names].filter(Boolean).join(' · ') || 'Unknown' },
+    { id: 'calls', label: 'Calls', render: (row) => number(row.logical_call_count), className: 'numeric',
+      sort: 'logical_call_count' },
+    { id: 'first', label: 'First heard', render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen' },
+    { id: 'last', label: 'Last heard', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen' }
+  ];
+}
+
+function identityActivitySearch(placeholder) {
+  const form = node('form', 'identity-activity-search');
+  form.method = 'get';
+  for (const [key, value] of route.entries()) {
+    if (key === 'q' || key === 'offset') continue;
+    const hidden = node('input');
+    hidden.type = 'hidden';
+    hidden.name = key;
+    hidden.value = value;
+    form.append(hidden);
+  }
+  const field = node('label', 'ui-search');
+  field.append(iconGlyph('icon-search'));
+  const input = node('input', 'ui-input');
+  input.type = 'search';
+  input.name = 'q';
+  input.value = route.get('q') || '';
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', placeholder);
+  field.append(input);
+  const submit = node('button', 'ui-button ui-button-primary', 'Search');
+  submit.type = 'submit';
+  form.append(field, submit);
+  if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }),
+    'ui-button ui-button-secondary'));
+  return form;
+}
+
+function identityActivityBarChart(title, rows, label, value, emptyText = 'No activity in this range') {
+  const card = node('section', 'identity-activity-chart');
+  card.append(node('h3', '', title));
+  const values = rows.map((row) => Number(value(row) || 0));
+  const maximum = Math.max(1, ...values);
+  const plot = node('div', 'identity-activity-bars');
+  rows.forEach((row, index) => {
+    const item = node('div', 'identity-activity-bar');
+    const heading = node('span', 'identity-activity-bar-label', label(row));
+    const track = node('span', 'identity-activity-bar-track');
+    const fill = node('span', 'identity-activity-bar-fill');
+    fill.style.width = `${Math.max(2, values[index] / maximum * 100)}%`;
+    track.append(fill);
+    item.append(heading, track, node('strong', 'numeric', number(values[index])));
+    plot.append(item);
+  });
+  card.append(rows.length ? plot : node('p', 'muted', emptyText));
+  return card;
+}
+
+function identityCoverageCard(title, enabled, total, enabledLabel) {
+  const card = node('section', 'identity-activity-chart identity-coverage-card');
+  const safeTotal = Math.max(0, Number(total || 0));
+  const safeEnabled = Math.min(safeTotal, Math.max(0, Number(enabled || 0)));
+  const percent = safeTotal ? Math.round(safeEnabled / safeTotal * 100) : 0;
+  card.append(node('h3', '', title), node('strong', 'identity-coverage-value', `${percent}%`),
+    node('p', 'muted', `${number(safeEnabled)} of ${number(safeTotal)} active aliases ${enabledLabel}`));
+  const track = node('span', 'identity-coverage-track');
+  const fill = node('span', 'identity-coverage-fill');
+  fill.style.width = `${percent}%`;
+  track.append(fill);
+  card.append(track);
+  return card;
+}
+
+function identityChannelScope(overview) {
+  const count = Number(overview.correlated_channel_count || 0);
+  const systems = Number(overview.correlated_radio_system_count || 0);
+  const scope = node('section', 'identity-activity-scope');
+  const copy = node('div');
+  copy.append(node('span', 'identity-activity-eyebrow', 'Listening scope'),
+    node('strong', '', `${number(count)} correlated channel${count === 1 ? '' : 's'}`),
+    node('span', 'muted', systems ? ` across ${number(systems)} radio system${systems === 1 ? '' : 's'}` : ''));
+  const button = node('button', 'ui-button ui-button-secondary', 'View channels');
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    const rows = Array.isArray(overview.channels) ? overview.channels : [];
+    openReadOnlyModal('Correlated channels', table(rows, [
+      { id: 'name', label: 'Channel', render: (row) => row.name || row.configuration_id },
+      { id: 'system', label: 'System', key: 'system_name' },
+      { id: 'site', label: 'Site', key: 'site_name' },
+      { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol || 'Unknown', 'protocol') },
+      { id: 'kind', label: 'Type', key: 'channel_kind' }
+    ], 'No configured channels currently reference this Alias List', { type: 'identity-scope-v1', clientSort: true }));
+  });
+  scope.append(copy, button);
+  return scope;
 }
 
 async function renderIdentities() {
   const renderContext = captureRenderContext();
   const selectedRange = route.get('range') || '24h';
-  const directory = createAsyncSection('Recently Active Identities', {
-    loadingMessage: 'Loading identities…',
-    errorMessage: 'The identity directory could not be loaded.'
+  const activeTab = route.get('identity_tab') === 'unassigned' ? 'unassigned' : 'activity';
+  const directory = createAsyncSection('Identity activity', {
+    loadingMessage: 'Loading Alias Lists and activity…',
+    errorMessage: 'The identity activity directory could not be loaded.'
   });
-  if (!beginPage(renderContext, pageHeader('Identities',
-    'Look up talkgroups, patch groups, and radios heard by this receiver'), directory.element)) return;
-  await directory.load(() => apiPage('/api/v1/identities', { range: selectedRange, limit: 500 }), (page) => {
-    const wrapper = node('div', 'identity-directory data-workspace');
-    wrapper.dataset.uiDensity = 'compact';
-    const toolbar = node('div', 'ui-catalog-toolbar identity-directory-toolbar');
-    const searchWrap = node('label', 'ui-search');
-    searchWrap.append(iconGlyph('icon-search'));
-    const search = node('input', 'ui-input');
-    search.type = 'search';
-    search.placeholder = 'Search identity, alias, system, or channel';
-    search.setAttribute('aria-label', search.placeholder);
-    searchWrap.append(search);
-    let activeKind = 'all';
-    const tableHost = node('div', 'identity-directory-table-host');
-    const tableController = {};
-    let draw = () => {};
-    const filters = uiSegmentedControl([
-      { value: 'all', label: 'All' },
-      { value: 'talkgroup', label: 'Talkgroups' },
-      { value: 'radio', label: 'Radios' },
-      { value: 'patch-group', label: 'Patch groups' }
-    ], activeKind, (value) => { activeKind = value; draw(); });
-    filters.setAttribute('aria-label', 'Filter identities');
-    const range = uiSelectFrame(uiSelect(ACTIVITY_RANGES.map(([value, label]) => ({ value, label })),
-      selectedRange), 'identity-range-select');
-    const rangeSelect = range.querySelector('select');
-    rangeSelect.setAttribute('aria-label', 'Identity activity range');
-    rangeSelect.addEventListener('change', () => navigateTo(currentHref({ range: rangeSelect.value, offset: null })));
-    toolbar.append(searchWrap, filters, range);
+  if (!beginPage(renderContext, pageHeader('Identity Activity',
+    'Explore recently heard aliases and gaps in the selected public directory'), directory.element)) return;
 
-    const rows = Array.isArray(page.rows) ? page.rows : [];
-    const filteredRows = () => {
-      const term = search.value.trim().toLowerCase();
-      return rows.filter((row) => {
-        const kind = Number(row.identity_kind_code);
-        const matchesKind = activeKind === 'all' || activeKind === 'talkgroup' && kind === 1 ||
-          activeKind === 'radio' && kind === 2 || activeKind === 'patch-group' && kind === 3;
-        const matchesText = !term || [row.native_id, aliasLabel(row), row.alias_description,
-          row.last_talker_alias, protocolFamily(row), identityDirectoryKind(row), identityDirectoryScope(row)]
-          .some((value) => String(value || '').toLowerCase().includes(term));
-        return matchesKind && matchesText;
-      });
-    };
-    const identityTable = table(rows, identityDirectoryColumns(), 'No identities were heard in this time range', {
-      type: 'identity-directory-v1', clientSort: true, controller: tableController,
-      rowKey: identityDirectoryKey, tableClass: 'identity-directory-table',
-      wrapperClass: 'identity-directory-table-wrap', layoutMenuHost: toolbar
-    });
-    draw = () => tableController.reconcileRows?.(filteredRows());
-    search.addEventListener('input', draw);
-    tableHost.append(identityTable);
-    wrapper.append(toolbar, tableHost);
-    if (page.candidate_limit_reached === true) wrapper.append(node('p', 'directory-warning',
-      'This view shows the most active recent identities. Narrow the time range to see quieter identities.'));
+  await directory.load(async () => {
+    const lists = await apiPage('/api/v1/identities/lists', { limit: 500 });
+    if (!lists.rows.length) return { lists, selectedListId: null };
+    const requested = route.get('alias_list_id');
+    const selected = lists.rows.find((row) => String(row.alias_list_id) === String(requested)) || lists.rows[0];
+    const selectedListId = selected.alias_list_id;
+    const common = { range: selectedRange, q: route.get('q'), limit: 100, offset: route.get('offset') || 0,
+      sort: route.get('sort'), direction: route.get('direction') };
+    const emptyPage = { rows: [], limit: 100, offset: 0, has_more: false, next_offset: null };
+    const [overview, aliases, unassigned] = await Promise.all([
+      api(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`, { range: selectedRange }),
+      activeTab === 'activity' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
+        { ...common, type: route.get('type') }) : Promise.resolve(emptyPage),
+      activeTab === 'unassigned' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
+        { q: route.get('q'), limit: activeTab === 'unassigned' ? 100 : 1,
+          offset: activeTab === 'unassigned' ? route.get('offset') || 0 : 0,
+          sort: activeTab === 'unassigned' ? route.get('sort') : null,
+          direction: activeTab === 'unassigned' ? route.get('direction') : null }) : Promise.resolve(emptyPage)
+    ]);
+    return { lists, selectedListId, overview, aliases, unassigned };
+  }, (model) => {
+    if (!model.selectedListId) return node('div', 'empty', 'No Alias Lists are configured.');
+    const { lists, selectedListId, overview, aliases, unassigned } = model;
+    const wrapper = node('div', 'identity-activity data-workspace');
+    wrapper.dataset.uiDensity = 'compact';
+    const toolbar = node('div', 'identity-activity-toolbar');
+    const listControl = node('label', 'identity-activity-field');
+    listControl.append(node('span', '', 'Alias List'));
+    const listSelect = uiSelect(lists.rows.map((row) => ({ value: row.alias_list_id,
+      label: `${row.name} · ${number(row.alias_count)} aliases` })), selectedListId);
+    listSelect.addEventListener('change', () => navigateTo(currentHref({ alias_list_id: listSelect.value,
+      offset: null, sort: null, direction: null })));
+    listControl.append(uiSelectFrame(listSelect));
+    const rangeControl = node('label', 'identity-activity-field');
+    rangeControl.append(node('span', '', 'Recently active'));
+    const rangeSelect = uiSelect([
+      { value: '1h', label: 'Last hour' }, { value: '24h', label: 'Last day' },
+      { value: '7d', label: 'Last week' }, { value: '30d', label: 'Last 30 days' }
+    ], selectedRange);
+    rangeSelect.addEventListener('change', () => navigateTo(currentHref({ range: rangeSelect.value, offset: null })));
+    rangeControl.append(uiSelectFrame(rangeSelect));
+    toolbar.append(listControl, rangeControl);
+
+    const totals = overview.totals || {};
+    const summary = metrics([
+      ['Recently active', totals.active_alias_count || 0],
+      ['Unassigned identities', unassigned.total_count || 0,
+        activeTab === 'unassigned' ? number(unassigned.total_count || 0) : 'View'],
+      ['Retained calls', totals.retained_logical_call_count || 0],
+      ['Signaling events', totals.retained_signaling_observation_count || 0]
+    ]);
+    summary.classList.add('identity-activity-summary');
+
+    const charts = node('div', 'identity-activity-chart-grid');
+    charts.append(identityActivityBarChart('Most active', overview.top_active || [],
+      (row) => row.name || identityActivityValue(row), (row) => row.logical_call_count));
+    charts.append(identityActivityBarChart('Most signaling', overview.top_signaling || [],
+      (row) => row.name || identityActivityValue(row), (row) => row.signaling_observation_count,
+      'No signaling aliases in this range'));
+    charts.append(identityCoverageCard('Recording coverage', totals.recording_enabled_active_count,
+      totals.active_alias_count, 'have recording enabled'));
+    charts.append(identityCoverageCard('Streaming coverage', totals.streaming_enabled_active_count,
+      totals.active_alias_count, 'have a streaming destination'));
+
+    const tabs = uiSegmentedControl([
+      { value: 'activity', label: 'Recently active aliases' },
+      { value: 'unassigned', label: activeTab === 'unassigned' ?
+        `Unassigned (${number(unassigned.total_count || 0)})` : 'Unassigned' }
+    ], activeTab, (value) => navigateTo(currentHref({ identity_tab: value === 'activity' ? null : value,
+      offset: null, sort: null, direction: null })));
+    tabs.setAttribute('aria-label', 'Identity activity view');
+    const tableSection = node('section', 'identity-activity-table-section');
+    const tableToolbar = node('div', 'identity-activity-table-toolbar');
+    tableToolbar.append(tabs, identityActivitySearch(activeTab === 'unassigned' ?
+      'Search unassigned identities' : 'Search aliases'));
+    if (activeTab === 'activity') {
+      const kind = uiSegmentedControl([
+        { value: 'all', label: 'All' }, { value: 'talkgroup', label: 'Talkgroups' },
+        { value: 'radio', label: 'Radios' }
+      ], route.get('type') || 'all', (value) => navigateTo(currentHref({ type: value === 'all' ? null : value,
+        offset: null })));
+      kind.setAttribute('aria-label', 'Alias type');
+      tableToolbar.append(kind);
+    }
+    tableSection.append(tableToolbar, activeTab === 'unassigned' ?
+      pagedTableContent(unassigned, identityActivityUnassignedColumns(), 'identity-unassigned-v1', {
+        itemLabel: 'Identities', emptyText: 'Every heard identity is assigned in this Alias List' }) :
+      pagedTableContent(aliases, identityActivityAliasesColumns(), 'identity-activity-v2', {
+        itemLabel: 'Aliases', emptyText: 'No aliases were active in this time range' }));
+
+    wrapper.append(toolbar, identityChannelScope(overview), summary, charts, tableSection);
     return wrapper;
   }, renderContext);
 }

@@ -47,7 +47,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         String app = readText(APP);
         String css = StatsWebStylesheetTestSupport.readAll();
 
-        assertTrue(app.contains("apiPage('/api/v1/identities'"));
+        assertTrue(app.contains("apiPage('/api/v1/identities/lists'"));
+        assertTrue(app.contains("/overview`"));
+        assertTrue(app.contains("/unassigned`"));
         assertTrue(app.contains("value: 'talkgroup', label: 'Talkgroups'"));
         assertTrue(app.contains("value: 'radio', label: 'Radios'"));
         assertTrue(app.contains("function adminSettingsTree(groups, active)"));
@@ -61,7 +63,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
         assertTrue(css.contains(".admin-settings-shell {"));
         assertTrue(css.contains(".admin-settings-nested-branch"));
-        assertTrue(css.contains(".identity-directory-table-wrap {"));
+        assertTrue(css.contains(".identity-activity-chart-grid {"));
+        assertTrue(css.contains(".identity-activity-scope {"));
     }
 
     private static String readText(Path path) throws Exception
