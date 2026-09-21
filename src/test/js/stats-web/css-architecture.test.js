@@ -47,6 +47,14 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
   ['th.numeric', 1],
 ]);
 
+// These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
+// reduce the budgets without requiring an all-at-once legacy rewrite.
+const LEGACY_LINE_BUDGET = 8796;
+const FEATURE_SHARED_SELECTOR_BUDGET = 22;
+const MODERN_IMPORTANT_BUDGET = new Map([
+  ['features/channels.css', 2],
+]);
+
 function locator(source) {
   const lineStarts = [0];
   for (let index = 0; index < source.length; index += 1) {
@@ -458,6 +466,104 @@ function validateSelectorBudget(stylesheets, budget = LEGACY_UNSCOPED_SELECTOR_B
   }
 }
 
+function relativeStyleName(stylesheet, entry) {
+  const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
+  return path.relative(stylesDirectory, stylesheet.file).split(path.sep).join('/');
+}
+
+function topLevelCombinatorCount(selector) {
+  let parentheses = 0;
+  let brackets = 0;
+  let quote = '';
+  let combinators = 0;
+  let whitespace = false;
+  for(let index = 0; index < selector.length; index += 1) {
+    const character = selector[index];
+    if(quote) {
+      if(character === '\\') index += 1;
+      else if(character === quote) quote = '';
+      continue;
+    }
+    if(character === '"' || character === "'") quote = character;
+    else if(character === '(') parentheses += 1;
+    else if(character === ')') parentheses = Math.max(0, parentheses - 1);
+    else if(character === '[') brackets += 1;
+    else if(character === ']') brackets = Math.max(0, brackets - 1);
+    else if(parentheses === 0 && brackets === 0 && /\s/.test(character)) whitespace = true;
+    else if(parentheses === 0 && brackets === 0) {
+      if(character === '>' || character === '+' || character === '~') {
+        combinators += 1;
+        whitespace = false;
+      } else if(whitespace) {
+        combinators += 1;
+        whitespace = false;
+      }
+    }
+  }
+  return combinators;
+}
+
+function validateModernDesignSystemBoundaries(stylesheets, entry) {
+  const violations = [];
+  let featureSharedSelectors = 0;
+  for(const stylesheet of stylesheets) {
+    const relative = relativeStyleName(stylesheet, entry);
+    if(relative === 'legacy.css' || relative === 'tokens.css' || relative.startsWith('..')) continue;
+
+    const rawColors = stylesheet.source.match(/#[0-9a-f]{3,8}\b|rgba?\s*\(/gi) || [];
+    if(rawColors.length) {
+      violations.push(`${relative}: ${rawColors.length} raw color value(s); add a semantic token in tokens.css`);
+    }
+
+    if(/^(?:components|compositions|features|utilities)\//.test(relative)) {
+      const importantCount = (stylesheet.source.match(/!important\b/gi) || []).length;
+      const allowance = MODERN_IMPORTANT_BUDGET.get(relative) || 0;
+      if(importantCount > allowance) {
+        violations.push(`${relative}: !important budget is ${allowance}, found ${importantCount}`);
+      }
+    }
+
+    for(const rule of stylesheet.rules) {
+      for(const selector of splitSelectorList(rule.header)) {
+        if(relative.startsWith('features/') && /\.ui-[a-z0-9_-]+/i.test(selector)) {
+          featureSharedSelectors += 1;
+        }
+        if(/#[a-z_][a-z0-9_-]*/i.test(selector)) {
+          const { line, column } = stylesheet.locate(rule.index);
+          violations.push(`${relative}:${line}:${column}: modern selectors may not use IDs: ${selector}`);
+        }
+        const depth = topLevelCombinatorCount(selector);
+        if(depth > 4) {
+          const { line, column } = stylesheet.locate(rule.index);
+          violations.push(`${relative}:${line}:${column}: selector depth ${depth} exceeds 4: ${selector}`);
+        }
+      }
+    }
+  }
+  if(featureSharedSelectors > FEATURE_SHARED_SELECTOR_BUDGET) {
+    violations.push(`feature styles target shared .ui-* components ${featureSharedSelectors} times; `
+      + `budget is ${FEATURE_SHARED_SELECTOR_BUDGET}. Move the rule into components or compositions.`);
+  }
+  if(violations.length) {
+    throw new Error(`Design-system boundary contract failed:\n${violations.join('\n')}`);
+  }
+}
+
+function validateLegacyAndInlineStyleRatchets(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const legacyLines = (legacy.match(/\n/g) || []).length;
+  assert.ok(legacyLines <= LEGACY_LINE_BUDGET,
+    `legacy.css may shrink but not grow: budget ${LEGACY_LINE_BUDGET}, found ${legacyLines}`);
+
+  const assets = path.dirname(path.resolve(entry));
+  const indexSource = fs.readFileSync(path.resolve(assets, '../index.html'), 'utf8');
+  const appSource = fs.readFileSync(path.resolve(assets, 'app.js'), 'utf8');
+  assert.doesNotMatch(indexSource, /\sstyle\s*=/i,
+    'Production HTML must use design-system classes instead of inline style attributes');
+  assert.doesNotMatch(appSource, /\.style\.cssText\s*=|setAttribute\(\s*['"]style['"]/,
+    'JavaScript must not inject arbitrary style strings; use classes, tokens, or bounded geometry properties');
+}
+
 function stylesheetModule(stylesheets, entry, relativeName) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const expected = relativeName.split('/').join(path.sep);
@@ -654,6 +760,8 @@ validateEntryManifest(entryStylesheet);
 const stylesheets = readStylesheetGraph(entryStylesheet);
 validateModuleReachability(stylesheets, entryStylesheet);
 validateSelectorBudget(stylesheets);
+validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
+validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

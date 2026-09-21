@@ -25,6 +25,9 @@ hs_err_pid*
 ### Gradle template
 .gradle
 /build/
+node_modules/
+playwright-report/
+test-results/
 
 # Ignore Gradle GUI config
 gradle-app.setting

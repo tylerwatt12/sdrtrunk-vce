@@ -1,0 +1,14 @@
+{
+  "name": "sdrtrunk-vce-web-contracts",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test:web-visual": "playwright test --config=playwright.config.cjs",
+    "test:web-visual:update": "playwright test --config=playwright.config.cjs --update-snapshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

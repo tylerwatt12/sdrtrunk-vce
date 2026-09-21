@@ -43,14 +43,42 @@ jobs:
           ./gradlew --no-configuration-cache clean check
           -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
 
+  visual:
+    name: Web design-system visual contract
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install visual-test dependencies
+        run: npm ci
+      - name: Install the pinned Chromium browser
+        run: npx playwright install chromium
+      - name: Compare design-system screenshots
+        run: npm run test:web-visual
+      - name: Upload visual differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-design-system-visual-differences
+          path: |
+            build/playwright-results
+            build/playwright-report
+          if-no-files-found: ignore
+
   gate:
     name: Main CI gate
     if: ${{ always() }}
     needs:
       - check
+      - visual
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform check
         env:
           CHECK_RESULT: ${{ needs.check.result }}
-        run: test "$CHECK_RESULT" = "success"
+          VISUAL_RESULT: ${{ needs.visual.result }}
+        run: test "$CHECK_RESULT" = "success" && test "$VISUAL_RESULT" = "success"

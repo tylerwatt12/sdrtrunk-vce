@@ -14,7 +14,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
-  box-shadow: 0 5px 18px rgb(20 34 48 / 7%);
+  box-shadow: var(--shadow-surface);
 }
 
 .admin-settings-branch,
@@ -225,12 +225,6 @@
 
 .support-report-warning {
   margin-top: var(--space-2);
-  padding: 11px 13px;
-  color: var(--warning-ink, var(--ink));
-  background: var(--warning-soft, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--warning, #b7791f) 40%, var(--line));
-  border-radius: var(--radius-control);
-  line-height: 1.45;
 }
 
 .support-report-progress {

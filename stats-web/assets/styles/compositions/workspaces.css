@@ -23,7 +23,7 @@
   --ui-field-gap: 14px;
   --ui-row-height: 48px;
   --ui-surface-padding: var(--space-4);
-  --ui-surface-shadow: 0 5px 18px rgb(20 34 48 / 7%);
+  --ui-surface-shadow: var(--shadow-surface);
   --ui-summary-height: 76px;
   --ui-summary-number-size: 24px;
 }
@@ -51,7 +51,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, 0 4px 14px rgb(20 34 48 / 6%));
+  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
 .ui-summary-card > svg {

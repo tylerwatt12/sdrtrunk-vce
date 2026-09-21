@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sdrtrunk-vce design system</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/visual/design-system-gallery.css">
+</head>
+<body data-gallery-view="gallery">
+  <svg hidden aria-hidden="true">
+    <symbol id="visual-icon-radio" viewBox="0 0 24 24">
+      <path d="M5 8h14v11H5zM8 5l8-2M8 12h8M9 16h.01M13 16h2"></path>
+    </symbol>
+    <symbol id="visual-icon-check" viewBox="0 0 24 24">
+      <path d="m5 13 4 4L19 7"></path>
+    </symbol>
+    <symbol id="visual-icon-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"></circle><path d="m16 16 4 4"></path>
+    </symbol>
+    <symbol id="visual-icon-alert" viewBox="0 0 24 24">
+      <path d="M12 3 2.5 20h19zM12 9v4M12 17h.01"></path>
+    </symbol>
+  </svg>
+
+  <main class="design-system-gallery">
+    <header class="visual-gallery-header">
+      <div>
+        <h1>sdrtrunk-vce interface system</h1>
+        <p>Shared primitives are the required starting point for new web features.</p>
+      </div>
+      <span class="visual-theme-label" id="visual-theme-label">Light theme</span>
+    </header>
+
+    <div class="visual-grid">
+      <section class="visual-section">
+        <h2>Actions</h2>
+        <p class="visual-section-copy">Shared sizes, states, icon geometry, and semantic emphasis.</p>
+        <div class="visual-row">
+          <button class="ui-button ui-button-primary" type="button">Save changes</button>
+          <button class="ui-button ui-button-secondary" type="button">Cancel</button>
+          <button class="ui-button ui-button-danger" type="button">Remove</button>
+          <button class="ui-button ui-icon-button visual-icon-button" type="button" aria-label="Receiver health">
+            <svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg>
+          </button>
+          <button class="ui-button" type="button" disabled>Unavailable</button>
+        </div>
+        <div class="ui-action-row">
+          <button class="link-button" type="button">Open details</button>
+          <button class="ui-button ui-button-primary" type="button">Continue</button>
+        </div>
+      </section>
+
+      <section class="visual-section">
+        <h2>Status and choices</h2>
+        <p class="visual-section-copy">Use semantic variants rather than feature-owned colors.</p>
+        <div class="visual-row">
+          <span class="ui-pill ui-pill-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><span>Running</span></span>
+          <span class="ui-pill ui-pill-blue"><span>P25 Phase 2</span></span>
+          <span class="ui-pill ui-pill-warning"><svg aria-hidden="true"><use href="#visual-icon-alert"></use></svg><span>Attention</span></span>
+        </div>
+        <div class="ui-segmented" role="group" aria-label="View density">
+          <button class="ui-segmented-option active" type="button" aria-pressed="true">Compact</button>
+          <button class="ui-segmented-option" type="button" aria-pressed="false">Comfortable</button>
+        </div>
+        <div class="visual-row">
+          <label class="ui-toggle">
+            <input type="checkbox" checked aria-label="Enabled">
+            <span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span>
+            <span class="ui-toggle-state">On</span>
+          </label>
+          <label class="ui-toggle">
+            <input type="checkbox" aria-label="Disabled">
+            <span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span>
+            <span class="ui-toggle-state">Off</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="visual-section visual-section-wide editor-workspace">
+        <h2>Form controls</h2>
+        <p class="visual-section-copy">Fields own their labels, help text, control dimensions, and focus treatment.</p>
+        <div class="visual-form-grid">
+          <label class="ui-field">
+            <span class="ui-field-label">Channel name</span>
+            <input class="ui-input" value="County Dispatch">
+            <small class="ui-field-detail">Shown throughout the receiver interface.</small>
+          </label>
+          <label class="ui-field">
+            <span class="ui-field-label">Decoder</span>
+            <span class="ui-select-frame">
+              <select class="ui-select"><option>P25 Phase 2</option></select>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
+            </span>
+            <small class="ui-field-detail">Available values depend on the channel type.</small>
+          </label>
+          <label class="ui-field">
+            <span class="ui-field-label">Description</span>
+            <textarea class="ui-textarea" rows="3">Primary dispatch channel for county public safety.</textarea>
+          </label>
+        </div>
+      </section>
+
+      <section class="visual-section visual-section-wide data-workspace">
+        <h2>Data workspace</h2>
+        <p class="visual-section-copy">Catalog pages use compact controls and shared surfaces.</p>
+        <div class="visual-summary-grid">
+          <div class="ui-summary-card"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg><strong>24</strong><span>Configured channels</span></div>
+          <div class="ui-summary-card ui-summary-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><strong>7</strong><span>Running now</span></div>
+          <div class="ui-summary-card ui-summary-blue"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg><strong>12</strong><span>Auto-start enabled</span></div>
+        </div>
+        <div class="ui-catalog-toolbar">
+          <label class="ui-search">
+            <svg aria-hidden="true"><use href="#visual-icon-search"></use></svg>
+            <input class="ui-input" type="search" value="dispatch" aria-label="Search channels">
+          </label>
+          <button class="ui-button ui-button-primary" type="button">Add channel</button>
+          <button class="ui-button" type="button">Columns</button>
+        </div>
+      </section>
+
+      <section class="visual-section">
+        <h2>Messages</h2>
+        <div class="ui-notice">Settings were saved successfully.</div>
+        <div class="ui-notice ui-notice-warning">This change restarts the affected channel.</div>
+        <div class="ui-notice ui-notice-danger">The receiver could not apply this setting.</div>
+      </section>
+
+      <section class="visual-section">
+        <h2>Empty state</h2>
+        <div class="ui-empty-state">
+          <h3>No matching channels</h3>
+          <p>Clear the filters or add a channel to this receiver.</p>
+          <button class="ui-button ui-button-primary" type="button">Add channel</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="visual-modal-example">
+    <div class="modal-backdrop">
+      <section class="read-only-modal" role="dialog" aria-modal="true" aria-labelledby="visual-modal-title">
+        <header class="modal-header">
+          <h2 id="visual-modal-title">Edit channel</h2>
+          <button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button>
+        </header>
+        <div class="modal-content">
+          <form class="visual-modal-form editor-workspace">
+            <label class="ui-field"><span class="ui-field-label">Name</span><input class="ui-input" value="County Dispatch"></label>
+            <label class="ui-field"><span class="ui-field-label">Description</span><textarea class="ui-textarea" rows="3">Primary dispatch channel.</textarea></label>
+            <div class="ui-notice ui-notice-warning">Saving restarts this channel if it is running.</div>
+            <div class="ui-action-row"><button class="ui-button" type="button">Cancel</button><button class="ui-button ui-button-primary" type="button">Save channel</button></div>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="visual-focus-example">
+    <h1>Keyboard focus</h1>
+    <p class="visual-section-copy">Every interactive primitive must retain a visible focus indicator.</p>
+    <div class="visual-row">
+      <button class="ui-button" type="button">Previous</button>
+      <button class="ui-button ui-button-primary" id="visual-focus-target" type="button">Focused action</button>
+      <button class="ui-button ui-button-danger" type="button">Remove</button>
+    </div>
+  </section>
+
+  <script src="/visual/design-system-gallery.js"></script>
+</body>
+</html>

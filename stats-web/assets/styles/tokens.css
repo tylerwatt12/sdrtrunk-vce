@@ -52,8 +52,18 @@
   --focus-ring: #16877d;
   --success: #16794f;
   --success-soft: #ddf5e9;
+  --warning-ink: #5f3a00;
+  --warning-soft: #fff3d6;
   --blue-soft: #e4effc;
   --shadow-raised: 0 12px 32px rgb(25 38 50 / 14%);
+  --shadow-surface: 0 5px 18px rgb(20 34 48 / 7%);
+  --shadow-surface-soft: 0 4px 14px rgb(20 34 48 / 6%);
+  --shadow-control: 0 1px 3px rgb(0 0 0 / 35%);
+  --shadow-selected: 0 1px 5px rgb(0 0 0 / 15%);
+  --primary-control: var(--accent);
+  --primary-control-hover: color-mix(in srgb, var(--accent) 85%, black);
+  --primary-control-ink: #ffffff;
+  --control-thumb: #ffffff;
   --radius-control: 8px;
   --radius-card: 12px;
   --space-1: 4px;
@@ -122,6 +132,16 @@
   --focus-ring: #62d4c7;
   --success: #69d59f;
   --success-soft: #15382b;
+  --warning-ink: #ffe0a3;
+  --warning-soft: #3f3016;
   --blue-soft: #182f47;
   --shadow-raised: 0 16px 42px rgb(0 0 0 / 38%);
+  --shadow-surface: 0 5px 18px rgb(0 0 0 / 28%);
+  --shadow-surface-soft: 0 4px 14px rgb(0 0 0 / 22%);
+  --shadow-control: 0 1px 3px rgb(0 0 0 / 55%);
+  --shadow-selected: 0 1px 5px rgb(0 0 0 / 38%);
+  --primary-control: #69cec2;
+  --primary-control-hover: #82ded4;
+  --primary-control-ink: #071a18;
+  --control-thumb: #ffffff;
 }

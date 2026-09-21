@@ -744,9 +744,9 @@ function updateAccessControls() {
 }
 
 function formField(labelText, control, detail = '') {
-  const label = node('label', 'admin-form-field');
-  label.append(node('span', 'admin-form-label', labelText), control);
-  if (detail) label.append(node('small', 'admin-form-help', detail));
+  const label = node('label', 'admin-form-field ui-field');
+  label.append(node('span', 'admin-form-label ui-field-label', labelText), control);
+  if (detail) label.append(node('small', 'admin-form-help ui-field-detail', detail));
   return label;
 }
 
@@ -19177,7 +19177,7 @@ function preferenceCheckbox(name, label, checked, detail = '') {
   const copy = node('span', 'admin-toggle-copy');
   copy.append(node('strong', '', label));
   if (detail) copy.append(node('span', '', detail));
-  const control = node('div', 'admin-toggle-control');
+  const control = node('div', 'admin-toggle-control ui-field-row');
   control.append(copy, toggle);
   return { input, control };
 }
@@ -19885,7 +19885,7 @@ function renderAdminSupportReport() {
     controls.set(id, item.input);
     choiceList.append(item.control);
   });
-  const fullWarning = node('div', 'support-report-warning',
+  const fullWarning = node('div', 'support-report-warning ui-notice ui-notice-warning',
     'Full activity history may take much longer to prepare and upload, especially on a busy receiver.');
   fullWarning.hidden = true;
   choiceList.append(fullWarning);
@@ -19918,7 +19918,7 @@ function renderAdminSupportReport() {
   const submit = node('button', '', 'Submit Bug Report');
   submit.type = 'button';
   submit.hidden = true;
-  const actions = node('div', 'admin-form-actions');
+  const actions = node('div', 'admin-form-actions ui-action-row');
   actions.append(generate, stop, download, submit);
   form.append(progressWrap, outputWrap, status, actions);
 

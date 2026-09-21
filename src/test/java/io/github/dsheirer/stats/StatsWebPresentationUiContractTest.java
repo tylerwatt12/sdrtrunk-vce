@@ -46,7 +46,7 @@ class StatsWebPresentationUiContractTest
         String discover = function(source,
             "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String scanList = function(source,
-            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
         String aliases = function(source, "async function renderAliases()");
         String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
         String channelFrequencies = function(source,
@@ -109,7 +109,7 @@ class StatsWebPresentationUiContractTest
         String discover = function(source,
             "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
-        String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
+        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
         for(String label: new String[]{"'Identity'", "'System / Channel'", "'Calls'", "'Signaling'",
