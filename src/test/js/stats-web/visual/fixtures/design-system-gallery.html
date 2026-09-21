@@ -21,6 +21,8 @@
     <symbol id="visual-icon-alert" viewBox="0 0 24 24">
       <path d="M12 3 2.5 20h19zM12 9v4M12 17h.01"></path>
     </symbol>
+    <symbol id="visual-icon-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+    <symbol id="visual-icon-controls" viewBox="0 0 24 24"><path d="M4 6h5M15 6h5M12 3v6M4 12h9M19 12h1M16 9v6M4 18h2M12 18h8M9 15v6"></path></symbol>
   </svg>
 
   <main class="design-system-gallery">
@@ -494,6 +496,60 @@
       <div class="section-title"><h2>Grant · Source radios</h2></div>
       <div class="dashboard-activity-radio-body"><p class="dashboard-activity-radio-status">248 source radios found for Grant.</p><div class="dashboard-activity-radio-result"><p class="metric-meaning-note">Exact currently retained detail identifies source radios heard during grant activity.</p><div class="table-wrap"><table><thead><tr><th>System / Channel</th><th>Radio</th><th>Alias</th><th>Observations</th><th>Last Seen</th></tr></thead><tbody><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">County Public Safety</strong><small class="dashboard-identity-context">Central Simulcast</small></div></td><td>4102841</td><td>Engine 12</td><td>384</td><td>Moments ago</td></tr><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">City Services</strong><small class="dashboard-identity-context">North Site</small></div></td><td>217033</td><td>Supervisor</td><td>190</td><td>2 minutes ago</td></tr></tbody></table></div><nav class="pager dashboard-activity-radio-pager"><span class="muted">Source radios 1-100 of 248</span><button class="ui-button ui-button-secondary" type="button" disabled>Previous</button><button class="ui-button ui-button-secondary" type="button">Next</button></nav></div></div>
     </section>
+  </main>
+
+  <main class="visual-feature-example visual-identity-activity-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Directory</p><h1>Identity Activity</h1><p>Explore recently heard aliases and gaps in the selected public directory.</p></div></header>
+    <div class="identity-activity data-workspace" data-ui-density="compact">
+      <div class="identity-activity-toolbar">
+        <label class="identity-activity-field"><span>Alias List</span><span class="ui-select-frame"><select class="ui-select"><option>County Public Safety · 1,248 aliases</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+        <label class="identity-activity-field"><span>Recently active</span><span class="ui-select-frame"><select class="ui-select"><option>Last day</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+      </div>
+      <section class="identity-activity-scope"><div><span class="identity-activity-eyebrow">Listening scope</span><strong>18 correlated channels</strong><span class="muted">across 4 radio systems</span></div><button class="ui-button ui-button-secondary" type="button">View channels</button></section>
+      <div class="summary-band identity-activity-summary">
+        <div class="metric"><span>Recently active</span><strong>386</strong></div>
+        <div class="metric"><span>Unassigned identities</span><strong>27</strong></div>
+        <div class="metric"><span>Retained calls</span><strong>8,203</strong></div>
+        <div class="metric"><span>Signaling events</span><strong>31,659</strong></div>
+      </div>
+      <div class="identity-activity-chart-grid">
+        <section class="identity-activity-chart"><h3>Most active</h3><div class="identity-activity-bars"><div class="identity-activity-bar"><span class="identity-activity-bar-label">Fire Dispatch</span><span class="identity-activity-bar-track"><span class="identity-activity-bar-fill" style="width: 92%"></span></span><strong>1,840</strong></div><div class="identity-activity-bar"><span class="identity-activity-bar-label">Police East</span><span class="identity-activity-bar-track"><span class="identity-activity-bar-fill" style="width: 70%"></span></span><strong>1,397</strong></div><div class="identity-activity-bar"><span class="identity-activity-bar-label">EMS Operations</span><span class="identity-activity-bar-track"><span class="identity-activity-bar-fill" style="width: 48%"></span></span><strong>961</strong></div></div></section>
+        <section class="identity-activity-chart"><h3>Most signaling</h3><div class="identity-activity-bars"><div class="identity-activity-bar"><span class="identity-activity-bar-label">Countywide</span><span class="identity-activity-bar-track"><span class="identity-activity-bar-fill" style="width: 86%"></span></span><strong>4,918</strong></div><div class="identity-activity-bar"><span class="identity-activity-bar-label">Operations 2</span><span class="identity-activity-bar-track"><span class="identity-activity-bar-fill" style="width: 58%"></span></span><strong>3,307</strong></div></div></section>
+        <section class="identity-activity-chart identity-coverage-card"><h3>Recording coverage</h3><strong class="identity-coverage-value">82%</strong><p class="muted">317 of 386 active aliases have recording enabled</p><span class="identity-coverage-track"><span class="identity-coverage-fill" style="width: 82%"></span></span></section>
+        <section class="identity-activity-chart identity-coverage-card"><h3>Streaming coverage</h3><strong class="identity-coverage-value">64%</strong><p class="muted">247 of 386 active aliases have a streaming destination</p><span class="identity-coverage-track"><span class="identity-coverage-fill" style="width: 64%"></span></span></section>
+      </div>
+      <section class="identity-activity-table-section">
+        <div class="identity-activity-table-toolbar"><div class="ui-segmented"><button class="ui-segmented-option active" type="button">Recently active aliases</button><button class="ui-segmented-option" type="button">Unassigned</button></div><form class="identity-activity-search"><label class="ui-search"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><input class="ui-input" type="search" placeholder="Search aliases"></label><button class="ui-button ui-button-secondary" type="button">Search</button></form><div class="ui-segmented"><button class="ui-segmented-option active" type="button">All</button><button class="ui-segmented-option" type="button">Talkgroups</button><button class="ui-segmented-option" type="button">Radios</button></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Alias</th><th>Identity</th><th>Calls</th><th>Last heard</th></tr></thead><tbody><tr><td><strong>Fire Dispatch</strong></td><td>Talkgroup 3101</td><td>1,840</td><td>Moments ago</td></tr><tr><td><strong>Police East</strong></td><td>Talkgroup 4203</td><td>1,397</td><td>1 minute ago</td></tr><tr><td><strong>Engine 12</strong></td><td>Radio 4102841</td><td>384</td><td>2 minutes ago</td></tr></tbody></table></div>
+      </section>
+    </div>
+  </main>
+
+  <main class="visual-feature-example visual-tuner-spectrum-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Tuner Spectrum</h1><p>Inspect the live FFT and waterfall for a selected tuner.</p></div></header>
+    <div class="tuner-spectrum-layout">
+      <div class="tuner-spectrum-toolbar">
+        <label class="tuner-spectrum-target"><span>Tuner</span><span class="ui-select-frame"><select class="ui-select"><option>Airspy HF+ · 851.0125 MHz · 768 kHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label>
+        <span class="ui-pill ui-pill-success">Live</span>
+        <div class="tuner-spectrum-toolbar-actions">
+          <button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in">+</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out">−</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom">↺</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Pause">‖</button>
+          <details class="tuner-spectrum-options" open>
+            <summary class="ui-button ui-button-secondary tuner-spectrum-options-summary"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg><span>Display options</span></summary>
+            <div class="tuner-spectrum-options-panel">
+              <header class="tuner-spectrum-options-header"><strong>Spectrum and waterfall</strong><span>Tune the visualization without changing receiver gain or decoder behavior.</span></header>
+              <fieldset class="tuner-spectrum-display-section tuner-spectrum-range-section"><legend>Display</legend><div class="tuner-spectrum-display-control tuner-spectrum-range-control"><div class="tuner-spectrum-range-heading"><span>Display range</span><output>-120 to -20 dB</output></div><div class="tuner-spectrum-dual-range"><span class="tuner-spectrum-dual-range-track"></span><input type="range" value="30"><input type="range" value="85"></div></div><span class="tuner-spectrum-control-help">Move either handle to set display contrast. Receiver gain and decoder thresholds do not change.</span><label class="ui-toggle tuner-spectrum-toggle-control"><span class="tuner-spectrum-toggle-copy"><strong>Snap frequency</strong><small>Move the cursor to the nearest preset frequency in supported bands.</small></span><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></fieldset>
+              <fieldset class="tuner-spectrum-display-section"><legend>FFT</legend><label class="ui-toggle tuner-spectrum-toggle-control"><span class="tuner-spectrum-toggle-copy"><strong>Smooth FFT</strong><small>Average successive frames so the spectrum trace is easier to read.</small></span><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label><label class="ui-toggle tuner-spectrum-toggle-control"><span class="tuner-spectrum-toggle-copy"><strong>Idle channel markers</strong><small>Outline idle channels from the current activity feed.</small></span><input type="checkbox"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></fieldset>
+              <fieldset class="tuner-spectrum-display-section"><legend>Waterfall</legend><label class="tuner-spectrum-display-control ui-field"><span>Waterfall speed</span><input type="range" value="2"><output>1.00×</output></label></fieldset>
+              <fieldset class="tuner-spectrum-profile"><legend>Spectrum performance</legend><label class="tuner-spectrum-display-control ui-field"><span>Profile</span><span class="ui-select-frame"><select class="ui-select"><option>Balanced · 8,192 bins / 10 FPS</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label><p class="tuner-spectrum-control-help">Higher-detail profiles use more CPU and may affect decoding on lower-end systems.</p></fieldset>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div class="tuner-spectrum-display-controls"><div class="tuner-spectrum-flag-legend"><span class="tuner-spectrum-flag-legend-item"><span class="tuner-spectrum-flag-swatch status-control"></span>Control</span><span class="tuner-spectrum-flag-legend-item"><span class="tuner-spectrum-flag-swatch status-call"></span>Call</span><span class="tuner-spectrum-flag-legend-item"><span class="tuner-spectrum-flag-swatch status-encrypted"></span>Encrypted</span><span class="tuner-spectrum-flag-legend-item"><span class="tuner-spectrum-flag-swatch status-data"></span>Data</span></div></div>
+      <section class="tuner-spectrum-card tuner-spectrum-fft"><h3 class="channel-diagnostic-title">FFT</h3><div class="tuner-spectrum-plot visual-spectrum-plot"><svg class="visual-spectrum-trace" viewBox="0 0 1000 180" preserveAspectRatio="none" aria-hidden="true"><path class="visual-spectrum-grid" d="M0 45H1000M0 90H1000M0 135H1000M200 0V180M400 0V180M600 0V180M800 0V180"></path><path class="visual-spectrum-line" d="M0 145L60 138L110 142L170 126L220 134L285 118L335 125L385 73L410 130L465 121L520 137L580 119L635 126L690 56L715 128L780 116L835 132L900 121L955 136L1000 125"></path></svg></div><div class="tuner-spectrum-band-rail"><span class="tuner-spectrum-band-segment" style="left: 8%; width: 36%"><span class="tuner-spectrum-band-bound">851</span><span class="tuner-spectrum-band-label">Public safety</span><span class="tuner-spectrum-band-bound">854</span></span><span class="tuner-spectrum-band-segment palette-2" style="left: 49%; width: 42%"><span class="tuner-spectrum-band-bound">854</span><span class="tuner-spectrum-band-label">Trunking</span><span class="tuner-spectrum-band-bound">860</span></span></div></section>
+      <section class="tuner-spectrum-card tuner-spectrum-waterfall"><h3 class="channel-diagnostic-title">Waterfall</h3><div class="tuner-spectrum-plot visual-waterfall"></div></section>
+      <div class="tuner-spectrum-readouts channel-diagnostic-readouts"><span class="channel-diagnostic-readout"><small>Center</small><strong>855.0125 MHz</strong></span><span class="channel-diagnostic-readout"><small>Span</small><strong>768 kHz</strong></span><span class="channel-diagnostic-readout"><small>Peak</small><strong>-44.2 dB</strong></span><span class="channel-diagnostic-readout"><small>Frames</small><strong>10 FPS</strong></span></div>
+    </div>
   </main>
 
   <script src="/visual/design-system-gallery.js"></script>

@@ -26,9 +26,17 @@ class Element {
   constructor(tag = 'div', className = '', text = '') {
     Object.assign(this, { tag, className, textContent: text, children: [], style: {}, attributes: {},
       listeners: {}, hidden: false, checked: false });
+    this.classList = { add: (...names) => {
+      this.className = [...new Set([...(this.className || '').split(/\s+/).filter(Boolean), ...names])].join(' ');
+    } };
   }
   append(...children) { this.children.push(...children); }
+  prepend(...children) { this.children.unshift(...children); }
   replaceChildren(...children) { this.children = children; }
+  querySelector(selector) {
+    if(selector === 'input') return this.children.find((child) => child?.tag === 'input') || null;
+    return null;
+  }
   setAttribute(key, value) { this.attributes[key] = value; }
   addEventListener(type, callback) { this.listeners[type] = callback; }
   dispatch(type) { this.listeners[type]?.({ currentTarget: this }); }
@@ -42,7 +50,19 @@ function harness(liveAllowed = true) {
   let closed = 0;
   const context = {
     node: (...args) => new Element(...args),
+    uiToggle: (checked, label) => {
+      const control = new Element('label', 'ui-toggle');
+      const input = new Element('input');
+      input.type = 'checkbox';
+      input.checked = Boolean(checked);
+      input.setAttribute('aria-label', label);
+      const track = new Element('span', 'ui-toggle-track');
+      track.append(new Element('span', 'ui-toggle-thumb'));
+      control.append(input, track, new Element('span', 'ui-toggle-state', checked ? 'On' : 'Off'));
+      return control;
+    },
     speedControl: new Element('label', '', 'Waterfall speed'),
+    rangeControl: new Element('div', '', 'Display range'), rangeHelp: new Element('span'),
     ACCESS_CAPABILITIES: { LIVE: 'live' }, capabilityAllowed: () => liveAllowed,
     activeUserPreferences: () => preferences,
     settleUserPreferenceMutation: (mutate) => mutate(preferences),
@@ -85,7 +105,7 @@ function harness(liveAllowed = true) {
     'function hideActiveFlag(flag)', 'function renderActiveChannels()',
     'function connectActiveChannels()', 'function closeActiveChannels()'
   ].forEach((signature) => vm.runInContext(functionSource(signature), context));
-  vm.runInContext(source.slice(source.indexOf("  const snapControl = node('label', 'tuner-spectrum-toggle-control')"),
+  vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
     source.indexOf("  const profilePanel = node('fieldset', 'tuner-spectrum-profile')")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
     source.indexOf('  [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);

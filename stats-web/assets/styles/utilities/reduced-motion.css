@@ -7,6 +7,7 @@
   .ui-toggle-track,
   .ui-toggle-thumb,
   .ui-section-summary::after,
+  .tuner-spectrum-options-summary::after,
   .dashboard-activity-segment,
   .channel-catalog-table tbody tr {
     transition: none;

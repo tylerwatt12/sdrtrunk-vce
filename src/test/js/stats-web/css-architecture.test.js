@@ -20,6 +20,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
   '@import url("./styles/features/identity-activity.css") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css") layer(features);',
   '@import url("./styles/features/dashboard.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
@@ -51,7 +52,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 7215;
+const LEGACY_LINE_BUDGET = 6582;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
@@ -690,6 +691,24 @@ function validateSettingsFeatures(stylesheets, entry) {
     'P25 override fields must collapse on small screens');
 }
 
+function validateTunerSpectrumFeature(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const spectrum = stylesheetModule(stylesheets, entry, 'features/tuner-spectrum.css').source;
+  assert.doesNotMatch(legacy, /tuner-spectrum/,
+    'Tuner Spectrum presentation belongs in its feature stylesheet');
+  for(const selector of ['.tuner-spectrum-layout', '.tuner-spectrum-toolbar',
+    '.tuner-spectrum-options-panel', '.tuner-spectrum-card', '.tuner-spectrum-plot']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(spectrum, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
+      `Missing Tuner Spectrum rule ${selector}`);
+  }
+  assert.match(spectrum,
+    /@media \(max-width: 680px\)[\s\S]*\.tuner-spectrum-options\[open\] \.tuner-spectrum-options-panel\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Tuner Spectrum options must collapse to one column on small screens');
+  assert.doesNotMatch(spectrum, /:root\[data-theme="dark"\]/,
+    'Tuner Spectrum presentation must adapt through semantic tokens instead of feature theme overrides');
+}
+
 function validateReducedMotionCoverage(stylesheets, entry) {
   const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
   const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
@@ -839,5 +858,6 @@ validateModernControlStates(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);
+validateTunerSpectrumFeature(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

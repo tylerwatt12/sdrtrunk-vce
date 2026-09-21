@@ -11989,19 +11989,19 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
   targetLabel.append(node('span', '', 'Tuner'));
-  const targetSelect = node('select');
+  const targetSelect = node('select', 'ui-select');
   targetSelect.disabled = true;
   targetSelect.append(node('option', '', 'Loading tuners…'));
-  targetLabel.append(targetSelect);
+  targetLabel.append(uiSelectFrame(targetSelect));
   const status = badge('Loading', 'state-stale');
   const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
-  const zoomIn = iconButton('icon-zoom-in', 'Zoom in');
+  const zoomIn = iconButton('icon-zoom-in', 'Zoom in', 'ui-button ui-button-secondary ui-icon-button');
   zoomIn.disabled = true;
-  const zoomOut = iconButton('icon-zoom-out', 'Zoom out');
+  const zoomOut = iconButton('icon-zoom-out', 'Zoom out', 'ui-button ui-button-secondary ui-icon-button');
   zoomOut.disabled = true;
-  const resetZoom = iconButton('icon-replay', 'Reset zoom');
+  const resetZoom = iconButton('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button');
   resetZoom.disabled = true;
-  const pause = iconButton('icon-pause', 'Pause');
+  const pause = iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button');
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
   toolbarActions.append(zoomIn, zoomOut, resetZoom, pause);
@@ -12009,9 +12009,10 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
   const options = node('details', 'tuner-spectrum-options');
-  const optionsSummary = node('summary', 'button secondary tuner-spectrum-options-summary', 'Options');
+  const optionsSummary = node('summary', 'ui-button ui-button-secondary tuner-spectrum-options-summary');
+  optionsSummary.append(iconGlyph('icon-playback-controls'), node('span', '', 'Display options'));
   optionsSummary.setAttribute('role', 'button');
-  optionsSummary.setAttribute('aria-label', 'Options');
+  optionsSummary.setAttribute('aria-label', 'Display options');
   optionsSummary.setAttribute('aria-expanded', 'false');
   const optionsPanel = node('div', 'tuner-spectrum-options-panel');
   optionsPanel.setAttribute('role', 'group');
@@ -12053,7 +12054,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   rangeControl.append(rangeHeading, rangeSlider);
   const rangeHelp = node('span', 'tuner-spectrum-control-help',
     'Move either handle to set display contrast. Receiver gain and decoder thresholds do not change.');
-  const speedControl = node('label', 'tuner-spectrum-display-control');
+  const speedControl = node('label', 'tuner-spectrum-display-control ui-field');
   const speedInput = node('input');
   speedInput.type = 'range';
   speedInput.min = '0.25';
@@ -12064,35 +12065,38 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const speedValue = node('output', '', `${Number(speedInput.value).toFixed(2)}×`);
   speedValue.htmlFor = speedInput.id;
   speedControl.append(node('span', '', 'Waterfall speed'), speedInput, speedValue);
-  const snapControl = node('label', 'tuner-spectrum-toggle-control');
-  const snapInput = node('input');
-  snapInput.type = 'checkbox';
-  snapInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true);
-  snapControl.title = 'Snap the cursor to the nearest preset frequency in supported bands.';
-  snapControl.append(snapInput, node('span', '', 'Snap frequency'));
-  const smoothControl = node('label', 'tuner-spectrum-toggle-control');
-  const smoothInput = node('input');
-  smoothInput.type = 'checkbox';
-  smoothInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true);
-  smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
-  smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
-  const idleChannelsControl = node('label', 'tuner-spectrum-toggle-control');
-  const idleChannelsInput = node('input');
-  idleChannelsInput.type = 'checkbox';
-  idleChannelsInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false);
-  idleChannelsControl.title = 'Outline idle channels from the current activity feed on the FFT. ' +
-    'Markers do not indicate allocation to this tuner.';
-  idleChannelsControl.append(idleChannelsInput, node('span', '', 'Show idle channel markers'));
+  const optionToggle = (checked, label, detail) => {
+    const control = uiToggle(checked, label);
+    control.classList.add('tuner-spectrum-toggle-control');
+    const copy = node('span', 'tuner-spectrum-toggle-copy');
+    copy.append(node('strong', '', label), node('small', '', detail));
+    control.prepend(copy);
+    return { control, input: control.querySelector('input') };
+  };
+  const snapToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
+    'Snap frequency', 'Move the cursor to the nearest preset frequency in supported bands.');
+  const snapControl = snapToggle.control;
+  const snapInput = snapToggle.input;
+  const smoothToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true),
+    'Smooth FFT', 'Average successive frames so the spectrum trace is easier to read.');
+  const smoothControl = smoothToggle.control;
+  const smoothInput = smoothToggle.input;
+  const idleToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false),
+    'Idle channel markers', 'Outline idle channels from the activity feed without implying tuner allocation.');
+  const idleChannelsControl = idleToggle.control;
+  const idleChannelsInput = idleToggle.input;
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   idleChannelsControl.hidden = !liveActivityAllowed;
+  const displayOptions = node('fieldset', 'tuner-spectrum-display-section tuner-spectrum-range-section');
+  displayOptions.append(node('legend', '', 'Display'), rangeControl, rangeHelp, snapControl);
   const fftOptions = node('fieldset', 'tuner-spectrum-display-section');
   fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl);
   const waterfallOptions = node('fieldset', 'tuner-spectrum-display-section');
   waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl);
   const profilePanel = node('fieldset', 'tuner-spectrum-profile');
   profilePanel.append(node('legend', '', 'Spectrum performance'));
-  const profileControl = node('label', 'tuner-spectrum-display-control');
-  const profileSelect = node('select');
+  const profileControl = node('label', 'tuner-spectrum-display-control ui-field');
+  const profileSelect = node('select', 'ui-select');
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
     ['balanced', 'Balanced · 8,192 bins / 10 FPS'],
@@ -12105,11 +12109,14 @@ function tunerSpectrumPanel(snapPresetDocument) {
   });
   profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced',
     Object.keys(TUNER_SPECTRUM_PROFILES));
-  profileControl.append(node('span', '', 'Profile'), profileSelect);
+  profileControl.append(node('span', '', 'Profile'), uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
-  optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel);
+  const optionsHeader = node('header', 'tuner-spectrum-options-header');
+  optionsHeader.append(node('strong', '', 'Spectrum and waterfall'),
+    node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
+  optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions, profilePanel);
   options.append(optionsSummary, optionsPanel);
   options.addEventListener('toggle', () => {
     optionsSummary.setAttribute('aria-expanded', String(options.open));

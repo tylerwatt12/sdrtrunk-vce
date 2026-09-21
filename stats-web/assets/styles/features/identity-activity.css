@@ -20,7 +20,13 @@
   padding: var(--ui-surface-padding);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+.identity-activity-toolbar {
+  align-items: end;
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
 }
 
 .identity-activity-field {
@@ -45,6 +51,7 @@
   align-items: center;
   justify-content: space-between;
   border-inline-start: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface));
 }
 
 .identity-activity-scope > div {
@@ -80,7 +87,21 @@
   padding: var(--ui-surface-padding);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--ui-surface-radius);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+.identity-activity-summary .metric:nth-child(2) {
+  border-top-color: var(--warning);
+}
+
+.identity-activity-summary .metric:nth-child(3) {
+  border-top-color: var(--chart-recorded);
+}
+
+.identity-activity-summary .metric:nth-child(4) {
+  border-top-color: var(--chart-data);
 }
 
 .identity-activity-summary .metric > span {
@@ -110,7 +131,7 @@
 
 .identity-activity-chart h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .identity-activity-bars {
@@ -149,6 +170,18 @@
   border-radius: inherit;
 }
 
+.identity-activity-chart:nth-child(2) .identity-activity-bar-fill {
+  background: var(--chart-data);
+}
+
+.identity-activity-chart:nth-child(3) .identity-coverage-fill {
+  background: var(--chart-recorded);
+}
+
+.identity-activity-chart:nth-child(4) .identity-coverage-fill {
+  background: var(--chart-streamed);
+}
+
 .identity-coverage-card {
   grid-template-columns: 1fr auto;
   align-items: center;
@@ -163,12 +196,14 @@
 .identity-coverage-value {
   color: var(--accent);
   font-size: 24px;
+  font-variant-numeric: tabular-nums;
 }
 
 .identity-activity-table-section {
   min-width: 0;
   display: grid;
   gap: var(--ui-control-gap);
+  overflow: hidden;
 }
 
 .identity-activity-table-toolbar {

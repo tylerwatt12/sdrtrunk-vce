@@ -343,6 +343,14 @@ async function main() {
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
   assert.match(functionBinding(appSource, 'dashboardActivityRadioPager'),
     /ui-button ui-button-secondary/);
+  const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
+  assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary ui-icon-button/);
+  assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary tuner-spectrum-options-summary/);
+  assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
+  assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
+  assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
+  assert.match(functionBinding(appSource, 'renderIdentities'),
+    /identity-activity data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
   const decodeReceiverSettings = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);

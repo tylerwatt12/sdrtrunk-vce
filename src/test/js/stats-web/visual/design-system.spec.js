@@ -23,6 +23,30 @@ for(const theme of ['light', 'dark']) {
   });
 }
 
+test('identity-activity-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=identity-activity');
+  await expect(page.locator('body')).toHaveScreenshot('identity-activity-light-desktop.png', { fullPage: true });
+});
+
+test('identity-activity-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=identity-activity');
+  await expect(page.locator('body')).toHaveScreenshot('identity-activity-dark-mobile.png', { fullPage: true });
+});
+
+test('tuner-spectrum-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=dark&view=tuner-spectrum');
+  await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-dark-desktop.png', { fullPage: true });
+});
+
+test('tuner-spectrum-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=tuner-spectrum');
+  await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

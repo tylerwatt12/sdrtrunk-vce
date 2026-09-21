@@ -274,6 +274,48 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   background: var(--chart-data);
 }
 
+.visual-identity-activity-example table {
+  min-width: 680px;
+}
+
+.visual-tuner-spectrum-example {
+  width: min(1240px, calc(100% - 32px));
+}
+
+.visual-tuner-spectrum-example .tuner-spectrum-layout {
+  min-height: 730px;
+}
+
+.visual-spectrum-plot,
+.visual-waterfall {
+  min-height: 0;
+}
+
+.visual-spectrum-trace {
+  width: 100%;
+  height: 100%;
+}
+
+.visual-spectrum-grid {
+  fill: none;
+  stroke: #243849;
+  stroke-width: 1;
+}
+
+.visual-spectrum-line {
+  fill: none;
+  stroke: #69ddff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.visual-waterfall {
+  background:
+    linear-gradient(90deg, transparent 0 37%, rgb(105 221 255 / 82%) 38%, transparent 40%),
+    linear-gradient(90deg, transparent 0 66%, rgb(241 200 107 / 88%) 68%, transparent 70%),
+    repeating-linear-gradient(180deg, #07111d 0 5px, #0b2430 6px, #123846 8px, #07111d 11px);
+}
+
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
@@ -284,7 +326,9 @@ body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
 body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example,
 body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,
 body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
-body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example {
+body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example,
+body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
+body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example {
   display: none;
 }
 
@@ -334,5 +378,9 @@ body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-ex
 
   .visual-feature-header {
     display: grid;
+  }
+
+  .visual-tuner-spectrum-example {
+    width: min(100% - 20px, 1180px);
   }
 }
