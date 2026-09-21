@@ -1194,9 +1194,12 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
-        assertTrue(live.contains("const historyNotice = liveActivityHistoryNotice()"));
+        assertTrue(live.contains(
+            "const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice()"));
         assertTrue(live.contains("liveChannelsSection((selection) =>"));
-        assertTrue(live.contains("historyNotice.select(selection)"));
+        assertTrue(live.contains("historyNotice?.select(selection)"));
+        assertTrue(live.contains(
+            "beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []))"));
         assertTrue(systems.contains("node('div', 'section-title-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
@@ -1429,11 +1432,15 @@ class StatsWebInteractionUiContractTest
         assertFalse(parameters.contains("experiment_"));
         assertFalse(tuner.contains("resetExperimentMeasurement"));
         assertTrue(css.contains(".tuner-spectrum-profile,\n.tuner-spectrum-display-section {"));
-        assertTrue(tuner.contains("iconButton('icon-zoom-in', 'Zoom in')"));
-        assertTrue(tuner.contains("iconButton('icon-zoom-out', 'Zoom out')"));
-        assertTrue(tuner.contains("iconButton('icon-replay', 'Reset zoom')"));
-        assertTrue(tuner.contains("iconButton('icon-pause', 'Pause')"));
-        assertTrue(tuner.contains("node('summary', 'button secondary tuner-spectrum-options-summary', 'Options')"));
+        assertTrue(tuner.contains(
+            "iconButton('icon-zoom-in', 'Zoom in', 'ui-button ui-button-secondary ui-icon-button')"));
+        assertTrue(tuner.contains(
+            "iconButton('icon-zoom-out', 'Zoom out', 'ui-button ui-button-secondary ui-icon-button')"));
+        assertTrue(tuner.contains(
+            "iconButton('icon-replay', 'Reset zoom', 'ui-button ui-button-secondary ui-icon-button')"));
+        assertTrue(tuner.contains(
+            "iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button')"));
+        assertTrue(tuner.contains("node('summary', 'ui-button ui-button-secondary tuner-spectrum-options-summary')"));
         assertTrue(tuner.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause',"));
         assertTrue(html.contains("id=\"icon-zoom-in\""));
         assertTrue(html.contains("id=\"icon-zoom-out\""));
@@ -1479,7 +1486,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("add('Site', activityValues(rows, (row) => row.tableSiteName))"));
         assertTrue(tuner.contains("add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName))"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
-        assertTrue(tuner.contains("snapInput.type = 'checkbox'"));
+        assertTrue(tuner.contains(
+            "const snapToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true)"));
+        assertTrue(tuner.contains("const snapInput = snapToggle.input"));
         assertTrue(tuner.contains("'tuner-spectrum-floor'"));
         assertTrue(tuner.contains("'tuner-spectrum-ceiling'"));
         assertTrue(tuner.contains("'Lower display limit'"));
@@ -1494,12 +1503,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_PREFERENCE, true"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked)"));
         assertTrue(tuner.contains("'Snap frequency'"));
-        assertTrue(tuner.contains("smoothInput.type = 'checkbox'"));
+        assertTrue(tuner.contains(
+            "const smoothToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true)"));
+        assertTrue(tuner.contains("const smoothInput = smoothToggle.input"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_SMOOTH_PREFERENCE, true"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked)"));
         assertTrue(tuner.contains("'Smooth FFT'"));
         assertFalse(tuner.contains("Highlight channels on waterfall when hovered"));
-        assertTrue(tuner.contains("'Show idle channel markers'"));
+        assertTrue(tuner.contains("'Idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
         assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl)"));
@@ -1507,7 +1518,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
-        assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, snapControl, fftOptions, waterfallOptions, profilePanel)"));
+        assertTrue(tuner.contains(
+            "optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions, profilePanel)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', String(options.open))"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
@@ -1671,7 +1683,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("padding: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
         assertTrue(css.contains(".tuner-spectrum-toggle-control"));
-        assertTrue(css.contains(".tuner-spectrum-option-toggles"));
+        assertTrue(css.contains(".tuner-spectrum-toggle-copy"));
+        assertTrue(css.contains(".tuner-spectrum-display-section"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-call"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-data"));
