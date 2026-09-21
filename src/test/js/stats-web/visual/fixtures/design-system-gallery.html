@@ -366,6 +366,74 @@
     </section>
   </main>
 
+  <main class="visual-feature-example visual-admin-access-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Web accounts and page access</h1><p>Shared account controls and receiver-wide access policy.</p></div></header>
+    <section class="section">
+      <div class="section-title"><h2>User management</h2><div class="section-actions"><button class="ui-button ui-button-primary" type="button">Create User</button></div></div>
+      <div class="admin-section-body">
+        <div class="admin-operation-status ui-notice">dispatcher now has User access.</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Username</th><th>Access tier</th><th>Password changed</th><th>Actions</th></tr></thead>
+            <tbody>
+              <tr><td><div class="admin-user-identity"><strong>admin</strong><span class="ui-pill ui-pill-success"><span>Primary</span></span></div></td><td><span class="admin-tier-locked">Admin</span></td><td>Today at 8:12 AM</td><td><span class="admin-managed-note">Managed in JavaFX</span></td></tr>
+              <tr><td><div class="admin-user-identity"><strong>dispatcher</strong></div></td><td><select class="ui-select admin-tier-select" aria-label="Access tier for dispatcher"><option>User</option><option>Administrator</option></select></td><td>Yesterday at 4:38 PM</td><td><div class="admin-row-actions"><button class="ui-button ui-button-secondary" type="button">Change Password</button><button class="ui-button ui-button-danger" type="button">Delete</button></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>Access policy</h2></div>
+      <div class="admin-section-body">
+        <p class="admin-section-intro">Web access applies first. Each capability below can then require a higher tier for its page and backing APIs.</p>
+        <div class="admin-web-access-control">
+          <div class="admin-web-access-copy"><strong>Entire web interface</strong><p>Set the minimum tier for every receiver page, API, live stream, audio request, diagnostic, and export.</p></div>
+          <label class="admin-web-access-tier"><span>Minimum tier</span><select class="ui-select admin-tier-select"><option>User</option></select></label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Capability</th><th>Required tier</th><th>Default</th><th>Policy</th></tr></thead>
+            <tbody>
+              <tr><td><div class="admin-capability-identity"><strong>Call audio</strong><code>call-audio</code></div></td><td><select class="ui-select admin-tier-select"><option>User</option></select></td><td>Public</td><td>Configurable</td></tr>
+              <tr><td><div class="admin-capability-identity"><strong>Administration</strong><code>admin-settings</code></div></td><td><select class="ui-select admin-tier-select" disabled><option>Administrator</option></select></td><td>Administrator</td><td>Fixed</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <main class="visual-feature-example visual-admin-receiver-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Receiver settings</h1><p>Receiver-wide timing and spectrum frequency scopes.</p></div></header>
+    <section class="section">
+      <div class="section-title"><h2>Receiver behavior</h2></div>
+      <form class="admin-form settings-page-form receiver-settings-form">
+        <div class="settings-card-grid">
+          <section class="settings-card">
+            <header class="settings-card-header"><h3 class="settings-card-title">Live traffic-row idle delay</h3><p class="settings-card-description">This receiver-wide presentation timing affects every viewer.</p></header>
+            <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Mark a traffic row idle after (milliseconds)</span><input class="ui-input" type="number" value="1200"><small class="ui-field-detail">This does not keep the call, tuner, or traffic channel active.</small></label></div>
+          </section>
+        </div>
+        <footer class="settings-form-footer"><div class="admin-form-message" role="status">Live timing saved.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button">Save Live Timing</button></div></footer>
+      </form>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><h2>Spectrum frequency scopes</h2></div>
+      <form class="admin-form settings-page-form spectrum-snap-settings">
+        <div class="settings-card-grid">
+          <section class="settings-card">
+            <header class="settings-card-header"><h3 class="settings-card-title">Country frequency scopes</h3><p class="settings-card-description">Select the regulatory catalog used for FFT band indicators and optional cursor snapping.</p></header>
+            <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Country</span><select class="ui-select"><option>United States</option></select><small class="ui-field-detail">The selected catalog applies receiver-wide.</small></label><p class="settings-card-description">18 frequency scopes are available; 12 include snap rules.</p></div>
+          </section>
+        </div>
+        <footer class="settings-form-footer"><div class="admin-form-message" role="status">Spectrum snap country is unchanged.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button" disabled>Save Spectrum Country</button></div></footer>
+      </form>
+    </section>
+  </main>
+
   <script src="/visual/design-system-gallery.js"></script>
 </body>
 </html>

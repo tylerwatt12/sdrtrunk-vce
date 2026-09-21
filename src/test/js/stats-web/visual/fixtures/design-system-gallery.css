@@ -217,12 +217,18 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 
+.visual-admin-access-example table {
+  min-width: 760px;
+}
+
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
 body:not([data-gallery-view="settings"]) .visual-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,
-body:not([data-gallery-view="p25"]) .visual-p25-example {
+body:not([data-gallery-view="p25"]) .visual-p25-example,
+body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
+body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example {
   display: none;
 }
 

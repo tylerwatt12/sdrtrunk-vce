@@ -270,6 +270,10 @@
 
 .admin-form-message {
   min-height: 18px;
+  color: var(--muted);
+}
+
+.admin-form-message[role="alert"] {
   color: var(--danger);
 }
 

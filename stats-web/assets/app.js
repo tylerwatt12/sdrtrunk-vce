@@ -17577,13 +17577,17 @@ function adminStatusMessage(host, message, error = false) {
   if (!host) return;
   host.textContent = message || '';
   host.classList.toggle('has-error', error);
+  host.classList.toggle('ui-notice-danger', error);
 }
 
 function userIdentityCell(account) {
   const wrapper = node('div', 'admin-user-identity');
   wrapper.append(node('strong', '', account.username));
-  if (account.primaryAdmin) wrapper.append(badge('Primary', 'state-current',
-    'Primary administrator managed from the JavaFX interface'));
+  if (account.primaryAdmin) {
+    const primary = uiPill('Primary', 'success');
+    primary.title = 'Primary administrator managed from the JavaFX interface';
+    wrapper.append(primary);
+  }
   return wrapper;
 }
 
@@ -17672,7 +17676,7 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
   const actions = node('div', 'admin-form-actions');
-  const submit = node('button', '', creating ? 'Create User' : 'Change Password');
+  const submit = node('button', 'ui-button ui-button-primary', creating ? 'Create User' : 'Change Password');
   submit.type = 'submit';
   actions.append(submit);
   form.append(formField('Username', username, creating ? 'Usernames are stored in lowercase.' : ''),
@@ -17735,7 +17739,7 @@ function openDeleteUserModal(account, statusHost, returnFocusSelector) {
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
   const actions = node('div', 'admin-form-actions');
-  const remove = node('button', 'danger', 'Delete User');
+  const remove = node('button', 'ui-button ui-button-danger', 'Delete User');
   remove.type = 'button';
   actions.append(remove);
   body.append(message, actions);
@@ -17763,10 +17767,10 @@ function openDeleteUserModal(account, statusHost, returnFocusSelector) {
 function userActions(account, statusHost) {
   if (account.primaryAdmin) return node('span', 'admin-managed-note', 'Managed in JavaFX');
   const actions = node('div', 'admin-row-actions');
-  const reset = node('button', 'secondary', 'Change Password');
+  const reset = node('button', 'ui-button ui-button-secondary', 'Change Password');
   reset.type = 'button';
   reset.dataset.username = account.username;
-  const remove = node('button', 'secondary danger-outline', 'Delete');
+  const remove = node('button', 'ui-button ui-button-danger', 'Delete');
   remove.type = 'button';
   remove.dataset.username = account.username;
   reset.addEventListener('click', () => openManagedUserModal(account, statusHost,
@@ -17784,9 +17788,9 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
     .filter((account) => account.username)
     .sort((left, right) => Number(right.primaryAdmin) - Number(left.primaryAdmin) ||
       left.username.localeCompare(right.username));
-  const statusHost = node('div', 'admin-operation-status');
+  const statusHost = node('div', 'admin-operation-status ui-notice');
   statusHost.setAttribute('role', 'status');
-  const create = node('button', '', 'Create User');
+  const create = node('button', 'ui-button ui-button-primary', 'Create User');
   create.type = 'button';
   create.id = 'admin-create-user';
   const maximumUsers = Number(response?.maximum_users || 0);
@@ -17891,7 +17895,7 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
   const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
   const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.WEB_ACCESS);
-  const statusHost = node('div', 'admin-operation-status');
+  const statusHost = node('div', 'admin-operation-status ui-notice');
   statusHost.setAttribute('role', 'status');
   const titleActions = sectionActionHost();
   const body = node('div', 'admin-section-body');
@@ -18203,9 +18207,9 @@ async function renderAdminRadioReferenceSettings() {
   const remember = rememberSetting.input;
   const accountMessage = node('div', 'admin-form-message');
   accountMessage.setAttribute('role', 'status');
-  const connect = node('button', '', 'Connect RadioReference');
+  const connect = node('button', 'ui-button ui-button-primary', 'Connect RadioReference');
   connect.type = 'submit';
-  const signOut = node('button', 'secondary danger-outline', 'Disconnect RadioReference');
+  const signOut = node('button', 'ui-button ui-button-danger', 'Disconnect RadioReference');
   signOut.type = 'button';
   signOut.disabled = true;
   const accountActions = node('div', 'admin-form-actions');
@@ -18227,7 +18231,7 @@ async function renderAdminRadioReferenceSettings() {
   const regionMessage = node('div', 'admin-form-message');
   regionMessage.setAttribute('role', 'status');
   regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
-  const saveRegion = node('button', '', 'Save Lookup Region');
+  const saveRegion = node('button', 'ui-button ui-button-primary', 'Save Lookup Region');
   saveRegion.type = 'submit';
   saveRegion.disabled = true;
   const regionActions = node('div', 'admin-form-actions');
@@ -18371,7 +18375,7 @@ async function renderAdminSpectrumSnapSettings() {
   country.append(node('option', '', 'Loading countries…'));
   const message = node('div', 'admin-form-message', 'Loading spectrum snap settings…');
   message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Spectrum Country');
+  const save = node('button', 'ui-button ui-button-primary', 'Save Spectrum Country');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');
@@ -18490,7 +18494,7 @@ async function renderAdminReceiverBehaviorSettings() {
   grantAge.disabled = true;
   const message = node('div', 'admin-form-message', 'Loading receiver settings…');
   message.setAttribute('role', 'status');
-  const save = node('button', '', 'Save Live Timing');
+  const save = node('button', 'ui-button ui-button-primary', 'Save Live Timing');
   save.type = 'submit';
   save.disabled = true;
   const actions = node('div', 'admin-form-actions');

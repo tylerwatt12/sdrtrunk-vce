@@ -325,6 +325,16 @@ async function main() {
   assert.match(receiverSettingsSource, /error\?\.code === 'receiver_settings_conflict'/);
   assert.match(receiverSettingsSource, /apply\(error\.current\)/);
   assert.match(receiverSettingsSource, /Current server values were reloaded/);
+  assert.match(receiverSettingsSource, /ui-button ui-button-primary/);
+  assert.match(functionBinding(appSource, 'renderAdminSpectrumSnapSettings'), /ui-button ui-button-primary/);
+  assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
+    /ui-button ui-button-primary[\s\S]+ui-button ui-button-danger/);
+  assert.match(functionBinding(appSource, 'renderAdminUsers'),
+    /admin-operation-status ui-notice[\s\S]+ui-button ui-button-primary/);
+  assert.match(functionBinding(appSource, 'renderAdminAccess'), /admin-operation-status ui-notice/);
+  assert.match(functionBinding(appSource, 'userIdentityCell'), /uiPill\('Primary', 'success'\)/);
+  assert.match(functionBinding(appSource, 'userActions'),
+    /ui-button ui-button-secondary[\s\S]+ui-button ui-button-danger/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
   const decodeReceiverSettings = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);
@@ -393,8 +403,8 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'channelDirectoryColumns', 'identityDirectoryColumns', 'channelGroupIdentityColumns',
-    'channelRadioColumns'
+    'activityColumns', 'channelDirectoryColumns', 'identityActivityAliasesColumns',
+    'identityActivityUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
       .map((match) => match[1]);
