@@ -368,6 +368,33 @@
     </section>
   </main>
 
+  <main class="visual-feature-example visual-admin-support-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Report a problem</h1><p>Create a support report and choose the receiver information to include.</p></div></header>
+    <div class="admin-settings-shell">
+      <nav class="admin-settings-tree" aria-label="Administration settings">
+        <details class="admin-settings-branch" open><summary>Receiver status</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Current status</a><a class="admin-settings-leaf active" href="#" aria-current="page">Report a problem</a></div></details>
+        <details class="admin-settings-branch" open><summary>Accounts &amp; access</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Web accounts</a><a class="admin-settings-leaf" href="#">Page access</a></div></details>
+        <details class="admin-settings-branch"><summary>Web interface</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Preferences</a></div></details>
+        <details class="admin-settings-branch"><summary>Receiver</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Behavior</a></div></details>
+        <details class="admin-settings-branch"><summary>Data &amp; storage</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Retention</a></div></details>
+      </nav>
+      <div class="admin-settings-content">
+        <section class="section">
+          <div class="section-title"><h2>Report a problem</h2></div>
+          <form class="admin-form support-report-form">
+            <div class="support-report-fields">
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Title for your issue</span><input class="ui-input" value="Audio stops after several calls"></label>
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Email address</span><input class="ui-input" type="email" value="operator@example.com"><small class="admin-form-help ui-field-detail">Used only to follow up about this report.</small></label>
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Category</span><select class="ui-select"><option>Audio and recordings</option></select></label>
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Issue</span><select class="ui-select"><option>No audio</option></select></label>
+            </div>
+            <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Description for your issue</span><textarea class="ui-textarea support-report-textarea">Calls appear in Live activity, but playback remains silent.</textarea></label>
+          </form>
+        </section>
+      </div>
+    </div>
+  </main>
+
   <main class="visual-feature-example visual-admin-access-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Web accounts and page access</h1><p>Shared account controls and receiver-wide access policy.</p></div></header>
     <section class="section">
@@ -550,6 +577,15 @@
       <section class="tuner-spectrum-card tuner-spectrum-waterfall"><h3 class="channel-diagnostic-title">Waterfall</h3><div class="tuner-spectrum-plot visual-waterfall"></div></section>
       <div class="tuner-spectrum-readouts channel-diagnostic-readouts"><span class="channel-diagnostic-readout"><small>Center</small><strong>855.0125 MHz</strong></span><span class="channel-diagnostic-readout"><small>Span</small><strong>768 kHz</strong></span><span class="channel-diagnostic-readout"><small>Peak</small><strong>-44.2 dB</strong></span><span class="channel-diagnostic-readout"><small>Frames</small><strong>10 FPS</strong></span></div>
     </div>
+  </main>
+
+  <main class="visual-live-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Live</h1><p>Current receiver activity and channel details.</p></div><span class="ui-pill ui-pill-success">Live</span></header>
+    <div class="visual-live-workspace">
+      <section class="section"><div class="section-title"><h2>Live Channels</h2><button class="ui-button ui-button-secondary" type="button">Controls</button></div><div class="visual-live-channel-tabs"><span>Conventional</span><strong>County Simulcast</strong><span>City Services</span></div><div class="table-wrap"><table><thead><tr><th>Status</th><th>Channel</th><th>MHz</th><th>Decode</th><th>Target</th></tr></thead><tbody><tr><td><span class="ui-pill ui-pill-warning">Control</span></td><td>LCN 1-1772</td><td>773.08125</td><td>96.7%</td><td>—</td></tr></tbody></table></div></section>
+      <section class="section visual-live-detail"><div class="section-title"><h2>Events</h2><button class="ui-button ui-button-secondary" type="button">Pause</button></div><p class="visual-live-empty">New events appear here while this page is open.</p></section>
+    </div>
+    <div class="live-activity-history-notice ui-notice ui-notice-warning" role="status"><span class="live-activity-history-notice-copy">Live shows data received after this page was opened. For earlier activity, <a href="#">view saved activity for this channel</a>. Saved activity is available when Store Detailed Event History is enabled in Stats &amp; Web &gt; Stats Server.</span><button class="ui-button ui-button-secondary live-activity-history-dismiss" type="button">Dismiss</button></div>
   </main>
 
   <script src="/visual/design-system-gallery.js"></script>

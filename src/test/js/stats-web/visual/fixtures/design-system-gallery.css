@@ -291,6 +291,59 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   min-height: 0;
 }
 
+.visual-live-example {
+  width: min(1180px, calc(100% - 32px));
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0 auto;
+  padding: 28px 0 var(--space-3);
+  box-sizing: border-box;
+}
+
+.visual-live-workspace {
+  min-height: 0;
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: minmax(180px, .9fr) minmax(160px, 1.1fr);
+  gap: var(--space-3);
+}
+
+.visual-live-workspace > .section {
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+}
+
+.visual-live-channel-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.visual-live-channel-tabs strong {
+  color: var(--accent);
+}
+
+.visual-live-detail {
+  display: flex;
+  flex-direction: column;
+}
+
+.visual-live-empty {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+}
+
 .visual-spectrum-trace {
   width: 100%;
   height: 100%;
@@ -324,11 +377,13 @@ body:not([data-gallery-view="health"]) .visual-health-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,
 body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
 body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example,
+body:not([data-gallery-view="admin-support"]) .visual-admin-support-example,
 body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,
 body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
 body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example,
 body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
-body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example {
+body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
+body:not([data-gallery-view="live-notice"]) .visual-live-example {
   display: none;
 }
 

@@ -2016,8 +2016,16 @@ function liveActivityHistoryNotice() {
   const link = anchor('browse saved activity', href('radio-systems'));
   const detail = node('span', '', '. Saved activity is available when Store Detailed Event History is enabled in ' +
     'Stats & Web > Stats Server.');
-  const notice = node('div', 'logging-notice live-activity-history-notice');
-  notice.append(message, link, detail);
+  const copy = node('span', 'live-activity-history-notice-copy');
+  copy.append(message, link, detail);
+  const notice = node('div', 'live-activity-history-notice ui-notice ui-notice-warning');
+  notice.setAttribute('role', 'status');
+  const dismiss = uiActionButton('Dismiss', null, () => {
+    storeLiveUiState({ historyNoticeDismissed: true });
+    notice.remove();
+  });
+  dismiss.classList.add('live-activity-history-dismiss');
+  notice.append(copy, dismiss);
   return {
     element: notice,
     select(selection) {
@@ -14671,13 +14679,13 @@ async function renderLive() {
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
-  const historyNotice = liveActivityHistoryNotice();
+  const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice();
   const channels = liveChannelsSection((selection) => {
     eventsPanel.select(selection);
-    historyNotice.select(selection);
+    historyNotice?.select(selection);
   });
   split.append(channels, eventsPanel.element);
-  beginPage(renderContext, historyNotice.element, split);
+  beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []));
 }
 
 async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',

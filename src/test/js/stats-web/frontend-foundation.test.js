@@ -351,6 +351,14 @@ async function main() {
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
   assert.match(functionBinding(appSource, 'renderIdentities'),
     /identity-activity data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
+  const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');
+  assert.match(liveHistoryNotice, /live-activity-history-notice ui-notice ui-notice-warning/);
+  assert.match(liveHistoryNotice, /storeLiveUiState\(\{ historyNoticeDismissed: true \}\)/);
+  assert.match(liveHistoryNotice, /notice\.remove\(\)/);
+  const renderLiveSource = functionBinding(appSource, 'renderLive');
+  assert.match(renderLiveSource, /liveUiState\(\)\.historyNoticeDismissed === true \? null/);
+  assert.match(renderLiveSource,
+    /beginPage\(renderContext, split, \.\.\.\(historyNotice \? \[historyNotice\.element\] : \[\]\)\)/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
   const decodeReceiverSettings = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);

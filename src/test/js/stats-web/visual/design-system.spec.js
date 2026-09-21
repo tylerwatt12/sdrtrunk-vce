@@ -128,6 +128,30 @@ test('admin-receiver-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('admin-receiver-light-mobile.png', { fullPage: true });
 });
 
+test('admin-support-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=admin-support');
+  await expect(page.locator('body')).toHaveScreenshot('admin-support-light-desktop.png', { fullPage: true });
+});
+
+test('admin-support-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=admin-support');
+  await expect(page.locator('body')).toHaveScreenshot('admin-support-dark-mobile.png', { fullPage: true });
+});
+
+test('live-notice-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/design-system.html?theme=dark&view=live-notice');
+  await expect(page.locator('body')).toHaveScreenshot('live-notice-dark-desktop.png');
+});
+
+test('live-notice-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=live-notice');
+  await expect(page.locator('body')).toHaveScreenshot('live-notice-light-mobile.png');
+});
+
 test('dashboard-health-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=dashboard-health');

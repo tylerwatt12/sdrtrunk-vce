@@ -1,0 +1,27 @@
+.live-activity-history-notice {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.live-activity-history-notice-copy {
+  min-width: 0;
+}
+
+.live-activity-history-dismiss {
+  align-self: center;
+}
+
+@media (max-width: 680px) {
+  .live-activity-history-notice {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-activity-history-dismiss {
+    justify-self: start;
+  }
+}
