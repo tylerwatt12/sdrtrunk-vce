@@ -617,14 +617,6 @@
   stroke-width: 2;
 }
 
-.group-identity-activity-history .summary-band {
-  margin: 0 0 12px;
-}
-
-.group-identity-activity-chart {
-  min-width: 0;
-}
-
 .activity-series-legend {
   display: flex;
   flex-wrap: wrap;

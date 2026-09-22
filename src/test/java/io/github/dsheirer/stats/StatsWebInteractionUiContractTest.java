@@ -304,7 +304,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"162\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"163\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -370,7 +370,15 @@ class StatsWebInteractionUiContractTest
             .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(function(source, "async function renderRadio()")
             .contains("tableSection('Collected Signaling Observations'"));
-        assertTrue(source.contains("tableSection('Retained Signaling Totals'"));
+        String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters)");
+        assertTrue(history.contains("section('Activity History'"));
+        assertTrue(history.contains("section('Call Activity'"));
+        assertTrue(history.contains("section('Retained Signaling Totals'"));
+        assertTrue(history.indexOf("section('Activity History'") < history.indexOf("section('Call Activity'"));
+        assertTrue(history.indexOf("section('Call Activity'") <
+            history.indexOf("section('Retained Signaling Totals'"));
+        assertTrue(history.contains("panels.append(historySection, chartSection, signalingSection)"));
+        assertTrue(history.contains("groupIdentityHistoryTotals(response.totals)"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
@@ -646,7 +654,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=139"));
+        assertTrue(html.contains("/assets/app.css?v=140"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

@@ -6604,6 +6604,15 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
       return `${command} ${xFor(point.timestamp).toFixed(2)} ${yFor(point.count).toFixed(2)}`;
     }).join(' ');
     if (path) {
+      if (options.fillFirstSeries && configuration === series[0]) {
+        const first = points.find((point) => point.count !== null);
+        const last = points.findLast((point) => point.count !== null);
+        const baseline = yFor(0).toFixed(2);
+        const area = svgNode('path', { d: `${path} L ${xFor(last.timestamp).toFixed(2)} ${baseline}` +
+          ` L ${xFor(first.timestamp).toFixed(2)} ${baseline} Z`, class: 'activity-line-area' });
+        area.style.fill = configuration.color;
+        svg.append(area);
+      }
       const line = svgNode('path', { d: path, class: 'activity-line-path' });
       line.style.stroke = configuration.color;
       svg.append(line);
@@ -6618,7 +6627,7 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
     }
   });
 
-  const tickStep = Math.max(1, Math.ceil(values.length / 6));
+  const tickStep = Math.max(1, Math.ceil(values.length / (options.maxTimeTicks || 6)));
   values.forEach((value, index) => {
     if (index % tickStep !== 0 && index !== values.length - 1) return;
     const longRange = to - from > 2 * 86_400_000;
@@ -6930,7 +6939,9 @@ function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel) {
   if (!configurations.length) {
     return node('div', 'empty', 'No activity of this type is available for this range');
   }
-  const selected = new Set(configurations.filter((series) => series.visible).map((series) => series.field));
+  const selected = new Set(configurations.filter((series) => series.visible &&
+    (series.field === 'logical_call_count' || Number(totals[series.field] || 0) > 0))
+    .map((series) => series.field));
   if (!selected.size && configurations.length) {
     const largest = configurations.reduce((current, candidate) =>
       Number(totals[candidate.field] || 0) > Number(totals[current.field] || 0) ? candidate : current);
@@ -6950,18 +6961,24 @@ function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel) {
       return;
     }
 
+    const smallScreen = window.matchMedia('(max-width: 560px)').matches;
+    const compactScreen = window.matchMedia('(max-width: 1100px)').matches;
     chartHost.append(countTimeSeriesChart(values, visible, {
       from: Number(response.from_ms || values[0].time_ms),
       to: Number(response.to_ms || values.at(-1).time_ms),
-      height: 300,
-      margin: { top: 18, right: 20, bottom: 48, left: 55 },
+      width: smallScreen ? 360 : compactScreen ? 640 : 960,
+      height: smallScreen ? 220 : compactScreen ? 250 : 300,
+      margin: smallScreen ? { top: 18, right: 10, bottom: 40, left: 36 } :
+        { top: 18, right: 20, bottom: 48, left: 55 },
+      maxTimeTicks: smallScreen ? 2 : 6,
+      fillFirstSeries: true,
       ariaLabel,
       emptyMessage: 'No activity data is available for this range'
     }));
   };
 
   configurations.forEach((series) => {
-    const button = node('button', 'activity-series-button secondary');
+    const button = node('button', 'ui-button ui-button-secondary activity-series-button');
     button.type = 'button';
     const swatch = node('span', 'activity-series-swatch');
     swatch.style.backgroundColor = series.color;
@@ -7460,18 +7477,47 @@ async function channelSignalHistorySection(channel) {
   return block;
 }
 
+function groupIdentityHistoryTotals(totals) {
+  const summary = node('dl', 'group-identity-history-totals');
+  [
+    ['Logical Calls', totals?.logical_call_count],
+    ['Recorded', totals?.recorded_logical_call_count],
+    ['Submitted to Streamer', totals?.stream_submitted_logical_call_count],
+    ['Encrypted', totals?.encrypted_logical_call_count]
+  ].forEach(([label, value]) => {
+    const item = node('div', 'group-identity-history-total');
+    item.append(node('dt', '', label), node('dd', '', number(value)));
+    summary.append(item);
+  });
+  return summary;
+}
+
 async function groupIdentityActivityHistorySection(scopeParameters) {
   const renderContext = captureRenderContext();
-  const host = node('div', 'group-identity-activity-history');
-  const block = section('Activity History', host);
+  const panels = node('div', 'entity-info-column group-identity-activity-panels');
+  const historyHost = node('div', 'group-identity-activity-history');
+  const chartHost = node('div', 'group-identity-call-activity');
+  const signalingHost = node('div', 'group-identity-signaling-totals');
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
+  const tableController = {};
   const rangeControl = rangeControls(ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
     await load(buttons, true);
   });
-  block.querySelector('.section-title').append(rangeControl.controls);
+  const historySection = section('Activity History', historyHost, sectionActionHost(rangeControl.controls));
+  historySection.classList.add('group-identity-history-section');
+  const chartSection = section('Call Activity', chartHost);
+  const signalingActions = sectionActionHost();
+  const signalingSection = section('Retained Signaling Totals', signalingHost, signalingActions);
+  panels.append(historySection, chartSection, signalingSection);
+
+  const signalingColumns = [
+    { id: 'action', label: 'Action', key: 'action' },
+    { id: 'count', label: 'Count', render: (row) => number(row.count),
+      className: 'numeric', sortValue: (row) => Number(row.count || 0) }
+  ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
     if (loading && !interactive) return;
@@ -7479,30 +7525,29 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      host.replaceChildren(node('div', 'loading', 'Loading group activity history'));
+      historyHost.replaceChildren(node('div', 'loading', 'Loading activity totals'));
+      chartHost.replaceChildren(node('div', 'loading', 'Loading call activity'));
+      signalingHost.replaceChildren(node('div', 'loading', 'Loading signaling totals'));
     }
     try {
       const response = await api(groupIdentityApiPath(scopeParameters.radio_system_key,
         scopeParameters.identity_key, 'activity'), { range: selectedRange });
       if (sequence !== loadingSequence) return;
-      host.replaceChildren(metrics([
-        ['Logical Calls', response.totals?.logical_call_count],
-        ['Recorded', response.totals?.recorded_logical_call_count],
-        ['Submitted to Streamer', response.totals?.stream_submitted_logical_call_count],
-        ['Encrypted', response.totals?.encrypted_logical_call_count]
-      ], true),
-      section('Call Activity', groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
-        'Group calls and call outcomes by time')),
-      tableSection('Retained Signaling Totals',
-        signalingCounts(response.totals || {}).map(([action, count]) => ({ action, count })), [
-          { id: 'action', label: 'Action', key: 'action' },
-          { id: 'count', label: 'Count', render: (row) => number(row.count),
-            className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-        ], 'No signaling observations recorded', { type: 'action-counts' }),
-      activityMetricGuide(true));
+      historyHost.replaceChildren(groupIdentityHistoryTotals(response.totals));
+      chartHost.replaceChildren(groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
+        'Group calls and call outcomes by time'));
+      signalingHost.replaceChildren(table(
+        signalingCounts(response.totals || {}).map(([action, count]) => ({ action, count })),
+        signalingColumns, 'No signaling observations recorded', {
+          type: 'action-counts', controller: tableController, layoutMenuHost: signalingActions
+        }), activityMetricGuide(true));
     } catch (error) {
       if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
+      if (sequence === loadingSequence) {
+        historyHost.replaceChildren(node('div', 'error', error.message));
+        chartHost.replaceChildren();
+        signalingHost.replaceChildren();
+      }
     } finally {
       if (sequence === loadingSequence) {
         loading = false;
@@ -7514,12 +7559,14 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Saved group activity history is turned off.'));
+    historyHost.append(node('div', 'empty', 'Saved group activity history is turned off.'));
+    chartSection.hidden = true;
+    signalingSection.hidden = true;
   } else {
     await load(rangeControl.buttons, true, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
-  return block;
+  return panels;
 }
 
 async function channelTopGroupsSection(channel) {

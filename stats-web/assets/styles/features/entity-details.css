@@ -51,6 +51,105 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
   margin: 0 auto var(--space-4);
 }
 
+.group-identity-history-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.group-identity-history-section .section-title {
+  flex-wrap: wrap;
+}
+
+.group-identity-history-total {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-left: 1px solid var(--line);
+}
+
+.group-identity-history-total:first-child {
+  border-left: 0;
+}
+
+.group-identity-history-total dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.group-identity-history-total dd {
+  order: -1;
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(22px, 2vw, 28px);
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.group-identity-activity-chart {
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.group-identity-activity-chart .activity-series-legend {
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3);
+}
+
+.group-identity-activity-chart .activity-series-button {
+  min-height: 34px;
+  padding: 6px 10px;
+  opacity: 1;
+}
+
+.group-identity-activity-chart .activity-series-button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.group-identity-activity-chart .activity-line-chart {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.group-identity-activity-chart .activity-line-svg {
+  min-width: 0;
+}
+
+.group-identity-activity-chart .activity-line-area {
+  opacity: .13;
+}
+
+.group-identity-activity-chart .activity-line-path {
+  stroke-width: 3;
+}
+
+.group-identity-activity-chart .activity-line-point {
+  fill: var(--surface-2);
+}
+
+.entity-info-column .ui-section > .ui-metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0;
+}
+
+.entity-info-column .ui-metric-grid > .ui-metric {
+  min-height: 0;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--line);
+  border-radius: 0;
+}
+
 body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
@@ -115,6 +214,23 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 }
 
 @media (max-width: 560px) {
+  .group-identity-history-section .section-title-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .group-identity-history-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .group-identity-history-total:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .group-identity-history-total:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+
   body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -343,6 +343,33 @@ body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-exam
   background: var(--chart-streamed);
 }
 
+.visual-entity-encrypted {
+  background: var(--chart-encrypted);
+}
+
+.visual-entity-details-example .activity-line-area {
+  fill: var(--chart-call);
+}
+
+.visual-entity-chart-mobile {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .visual-entity-details-example .visual-entity-chart-desktop {
+    display: none;
+  }
+
+  .visual-entity-details-example .visual-entity-chart-mobile {
+    display: block;
+    height: 220px;
+  }
+
+  .visual-entity-details-example .activity-line-chart {
+    min-height: 220px;
+  }
+}
+
 .visual-dashboard-grant {
   stroke: var(--chart-grant);
 }
