@@ -47,16 +47,16 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
-test('tuner-frequency-modal-light-desktop', async ({ page }) => {
+test('tuner-frequency-popover-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 720 });
-  await page.goto('/design-system.html?theme=light&view=tuner-frequency-modal');
-  await expect(page.locator('body')).toHaveScreenshot('tuner-frequency-modal-light-desktop.png');
+  await page.goto('/design-system.html?theme=light&view=tuner-frequency-popover');
+  await expect(page.locator('body')).toHaveScreenshot('tuner-frequency-popover-light-desktop.png');
 });
 
-test('tuner-frequency-modal-dark-mobile', async ({ page }) => {
+test('tuner-frequency-popover-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/design-system.html?theme=dark&view=tuner-frequency-modal');
-  await expect(page.locator('body')).toHaveScreenshot('tuner-frequency-modal-dark-mobile.png');
+  await page.goto('/design-system.html?theme=dark&view=tuner-frequency-popover');
+  await expect(page.locator('body')).toHaveScreenshot('tuner-frequency-popover-dark-mobile.png');
 });
 
 test('rf-planner-dark-desktop', async ({ page }) => {

@@ -839,18 +839,17 @@
     </div>
   </div>
 
-  <div class="visual-tuner-frequency-modal-example">
-    <div class="modal-backdrop">
-      <section class="read-only-modal frequency-action-modal tuner-frequency-modal" role="dialog" aria-modal="true" aria-label="Frequency actions">
-        <header class="modal-header"><h2>Frequency actions</h2><button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button></header>
-        <div class="modal-content"><div class="tuner-frequency-action-body">
+  <div class="visual-tuner-frequency-popover-example">
+    <div class="visual-frequency-spectrum-window"><div class="visual-frequency-fft"><svg viewBox="0 0 1000 180" preserveAspectRatio="none" aria-hidden="true"><path class="visual-spectrum-grid" d="M0 45H1000M0 90H1000M0 135H1000M200 0V180M400 0V180M600 0V180M800 0V180"></path><path class="visual-spectrum-line" d="M0 145L60 138L110 142L170 126L220 134L285 118L335 125L385 73L410 130L465 121L520 137L580 119L635 126L690 56L715 128L780 116L835 132L900 121L955 136L1000 125"></path></svg></div><div class="visual-frequency-waterfall"></div></div>
+    <section class="tuner-frequency-popover" role="dialog" aria-label="Frequency actions">
+      <button class="ui-button ui-button-secondary ui-icon-button tuner-frequency-popover-close" type="button" aria-label="Close frequency actions">×</button>
+      <div class="tuner-frequency-action-body">
           <dl class="tuner-frequency-action-summary"><dt>Frequency</dt><dd>770.306250 MHz</dd><dt>Pointer</dt><dd>770.306287 MHz</dd></dl>
           <div class="tuner-frequency-action-list"><button class="tuner-frequency-action ui-icon-button" type="button" title="Look up this frequency in RadioReference" aria-label="RadioReference lookup"><svg viewBox="0 0 24 24"><path d="M12 4v16M7 20h10M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"></path></svg></button><button class="tuner-frequency-action ui-icon-button is-active" type="button" title="Stop listening" aria-label="Stop listening"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4ZM17 9a4 4 0 0 1 0 6M19.5 6a8 8 0 0 1 0 12"></path></svg></button><span class="tuner-frequency-action ui-icon-button disabled-action" role="button" aria-disabled="true" title="Add system (coming later)" aria-label="Add system"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></span></div>
           <div class="tuner-frequency-audio-options"><label for="visual-frequency-bandwidth">Bandwidth</label><select class="ui-select" id="visual-frequency-bandwidth"><option>12.5 kHz</option></select></div>
           <div class="tuner-frequency-action-message" role="status">Listening for NBFM audio…</div>
-        </div></div>
-      </section>
-    </div>
+      </div>
+    </section>
   </div>
 
   <script src="/visual/design-system-gallery.js"></script>

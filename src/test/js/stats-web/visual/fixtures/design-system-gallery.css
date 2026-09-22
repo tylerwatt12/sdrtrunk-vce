@@ -120,8 +120,47 @@ body {
   min-height: 100vh;
 }
 
-.visual-tuner-frequency-modal-example {
+.visual-tuner-frequency-popover-example {
   min-height: 100vh;
+}
+
+.visual-frequency-spectrum-window {
+  position: absolute;
+  inset: 100px 32px 80px;
+  display: grid;
+  grid-template-rows: 35% 65%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+
+.visual-frequency-fft,
+.visual-frequency-waterfall {
+  min-height: 0;
+  background: var(--spectrum-canvas);
+}
+
+.visual-frequency-fft svg {
+  width: 100%;
+  height: 100%;
+}
+
+.visual-frequency-waterfall {
+  background: repeating-linear-gradient(180deg, transparent 0, transparent 3px,
+    var(--spectrum-data) 4px, transparent 6px),
+    linear-gradient(90deg, var(--spectrum-canvas) 0 35%, var(--spectrum-data) 40%,
+      var(--spectrum-canvas) 47% 65%, var(--spectrum-control) 69%, var(--spectrum-canvas) 73%);
+  opacity: .8;
+}
+
+.visual-tuner-frequency-popover-example .tuner-frequency-popover {
+  left: 49%;
+  top: 160px;
+}
+
+@media (max-width: 560px) {
+  .visual-frequency-spectrum-window { inset: 80px 12px 48px; }
+  .visual-tuner-frequency-popover-example .tuner-frequency-popover { left: 24%; top: 135px; }
 }
 
 .visual-modal-example .modal-backdrop {
@@ -446,7 +485,7 @@ body:not([data-gallery-view="radio-directory"]) .visual-radio-directory-example,
 body:not([data-gallery-view="entity-details"]) .visual-entity-details-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example,
-body:not([data-gallery-view="tuner-frequency-modal"]) .visual-tuner-frequency-modal-example {
+body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-popover-example {
   display: none;
 }
 

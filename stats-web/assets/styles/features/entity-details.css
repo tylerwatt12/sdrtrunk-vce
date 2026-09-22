@@ -1,10 +1,10 @@
 /* Shared modern presentation for radio systems, identities, radios, and channels. */
-.frequency-action-modal:not(.tuner-frequency-modal) .tuner-frequency-action-list {
+.frequency-action-modal .tuner-frequency-action-list {
   display: grid;
   gap: var(--space-2);
 }
 
-.frequency-action-modal:not(.tuner-frequency-modal) .tuner-frequency-action {
+.frequency-action-modal .tuner-frequency-action {
   min-height: var(--control-height-comfortable);
   display: inline-flex;
   align-items: center;

@@ -6,7 +6,34 @@ body[data-view="tuner-spectrum"] {
 
 .tuner-frequency-action-body {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
+}
+
+.tuner-frequency-popover {
+  position: fixed;
+  inset: auto;
+  width: min(272px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+}
+
+.tuner-frequency-popover-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  --ui-control-height: 28px;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
 }
 
 .tuner-frequency-action-summary {
@@ -14,10 +41,8 @@ body[data-view="tuner-spectrum"] {
   grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--space-2) var(--space-3);
   margin: 0;
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  padding: 0 var(--space-5) var(--space-2) 0;
+  background: none;
 }
 
 .tuner-frequency-action-summary dt,
@@ -33,15 +58,15 @@ body[data-view="tuner-spectrum"] {
   overflow-wrap: anywhere;
 }
 
-.tuner-frequency-modal .tuner-frequency-action-list {
+.tuner-frequency-popover .tuner-frequency-action-list {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
 }
 
-.tuner-frequency-modal .tuner-frequency-action {
-  --ui-control-height: 44px;
+.tuner-frequency-popover .tuner-frequency-action {
+  --ui-control-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -52,7 +77,7 @@ body[data-view="tuner-spectrum"] {
   box-shadow: var(--shadow-control);
 }
 
-.tuner-frequency-modal .tuner-frequency-action svg {
+.tuner-frequency-popover .tuner-frequency-action svg {
   width: 19px;
   height: 19px;
   fill: none;
@@ -62,14 +87,14 @@ body[data-view="tuner-spectrum"] {
   stroke-linejoin: round;
 }
 
-.tuner-frequency-modal .tuner-frequency-action:hover:not(.disabled-action),
-.tuner-frequency-modal .tuner-frequency-action.is-active {
+.tuner-frequency-popover .tuner-frequency-action:hover:not(.disabled-action),
+.tuner-frequency-popover .tuner-frequency-action.is-active {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
 
-.tuner-frequency-modal .tuner-frequency-action.disabled-action {
+.tuner-frequency-popover .tuner-frequency-action.disabled-action {
   color: var(--muted);
   background: var(--surface-2);
   opacity: .55;
@@ -81,6 +106,10 @@ body[data-view="tuner-spectrum"] {
   margin: 0;
 }
 
+.tuner-frequency-action-message:empty {
+  display: none;
+}
+
 .tuner-frequency-audio-options:not([hidden]) {
   display: flex;
   align-items: center;
@@ -89,11 +118,22 @@ body[data-view="tuner-spectrum"] {
 }
 
 .tuner-frequency-audio-options select {
-  width: 160px;
+  width: 125px;
 }
 
 .tuner-frequency-results {
   min-width: 0;
+}
+
+.tuner-frequency-lookup-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.tuner-frequency-lookup-frequency {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 body[data-view="tuner-spectrum"] .app-shell {

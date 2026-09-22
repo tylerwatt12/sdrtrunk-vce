@@ -11841,11 +11841,85 @@ function tunerFrequencyAction(label, icon, hint, disabled = false) {
   return button;
 }
 
+let activeTunerFrequencyPopover = null;
+
+function openTunerRadioReferenceLookup(selectedHz) {
+  const detailController = new AbortController();
+  const body = node('div', 'tuner-frequency-lookup-body');
+  const frequency = node('p', 'tuner-frequency-lookup-frequency',
+    `${(selectedHz / 1_000_000).toFixed(6)} MHz`);
+  const message = node('p', 'tuner-frequency-action-message',
+    'Checking RadioReference account and lookup region…');
+  message.setAttribute('role', 'status');
+  const results = node('div', 'tuner-frequency-results');
+  body.append(frequency, message, results);
+  const modal = openReadOnlyModal('RadioReference lookup', body, {
+    id: 'tuner-radioreference-lookup', className: 'tuner-frequency-lookup-modal',
+    cleanup: () => detailController.abort()
+  });
+  if (!modal) return null;
+  void (async () => {
+    try {
+      const configuration = await requestJson('/api/v1/admin/radioreference', {
+        csrf: false, page: false, signal: detailController.signal
+      });
+      if (configuration?.account?.state !== 'VALID_PREMIUM') {
+        throw new Error('Connect a current RadioReference Premium account in Settings before searching.');
+      }
+      const stateId = Number(configuration?.state_id);
+      if (!Number.isInteger(stateId) || stateId <= 0) {
+        throw new Error('Choose a RadioReference country and state in Settings before searching.');
+      }
+      message.textContent = 'Searching RadioReference…';
+      const query = new URLSearchParams({
+        state_id: String(stateId), frequency_hz: String(Math.round(selectedHz)), limit: '100'
+      });
+      const response = await requestJson(`/api/v1/admin/radioreference/frequencies?${query}`, {
+        csrf: false, page: false, signal: detailController.signal, timeoutMs: 15_000
+      });
+      if (detailController.signal.aborted) return;
+      const matches = Array.isArray(response?.items) ? response.items : [];
+      results.replaceChildren(radioReferenceResultView(matches, selectedHz, detailController.signal));
+      const total = Number(response?.total_items || matches.length);
+      message.textContent = total > matches.length ?
+        `Showing the first ${number(matches.length)} of ${number(total)} matches.` :
+        `${number(total)} RadioReference ${total === 1 ? 'match' : 'matches'} found.`;
+    } catch (error) {
+      if (detailController.signal.aborted) return;
+      message.textContent = error.message;
+      results.append(anchor('Open RadioReference settings', href('admin', { tab: 'live-activity' }),
+        'button secondary'));
+    }
+  })();
+  return modal;
+}
+
+function tunerFrequencyPopoverPlacement(anchorRect, panelRect) {
+  const gutter = 8;
+  const gap = 12;
+  const width = panelRect.width;
+  const height = panelRect.height;
+  const right = anchorRect.right + gap;
+  const left = anchorRect.left - width - gap;
+  return {
+    left: Math.round(right + width + gutter <= window.innerWidth ? right :
+      left >= gutter ? left : Math.max(gutter, window.innerWidth - width - gutter)),
+    top: Math.round(Math.max(gutter, Math.min(anchorRect.top - height / 2,
+      window.innerHeight - height - gutter)))
+  };
+}
+
 function openTunerFrequencyActions(selection) {
   const selectedHz = Number(selection?.frequencyHz);
   const rawHz = Number(selection?.rawFrequencyHz);
   if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
-  const detailController = new AbortController();
+  if (activeTunerFrequencyPopover?.matches(':popover-open')) {
+    activeTunerFrequencyPopover.hidePopover();
+  }
+  const anchorRect = selection.anchorRect || {
+    left: window.innerWidth / 2, right: window.innerWidth / 2,
+    top: window.innerHeight / 2, bottom: window.innerHeight / 2
+  };
   const body = node('div', 'tuner-frequency-action-body');
   const summary = node('dl', 'tuner-frequency-action-summary');
   [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
@@ -11860,7 +11934,6 @@ function openTunerFrequencyActions(selection) {
   const addSystem = tunerFrequencyAction('Add system', 'icon-plus', 'Add system (coming later)', true);
   const message = node('div', 'tuner-frequency-action-message');
   message.setAttribute('role', 'status');
-  const results = node('div', 'tuner-frequency-results');
   const audioOptions = node('div', 'tuner-frequency-audio-options');
   audioOptions.hidden = true;
   const bandwidth = node('select', 'ui-select');
@@ -11889,6 +11962,7 @@ function openTunerFrequencyActions(selection) {
     stopListening();
     const epoch = audioEpoch;
     audioOptions.hidden = false;
+    position();
     try {
       await player.start();
       if (epoch !== audioEpoch) return;
@@ -11923,47 +11997,52 @@ function openTunerFrequencyActions(selection) {
     } else void startListening();
   });
   bandwidth.addEventListener('change', () => { if (audioStream) void startListening(); });
-  radioReference.addEventListener('click', async () => {
-    if (radioReference.disabled) return;
-    radioReference.disabled = true;
-    results.replaceChildren();
-    message.textContent = 'Checking RadioReference account and lookup region…';
-    try {
-      const configuration = await requestJson('/api/v1/admin/radioreference', { csrf: false, page: false });
-      if (configuration?.account?.state !== 'VALID_PREMIUM') {
-        throw new Error('Connect a current RadioReference Premium account in Settings before searching.');
-      }
-      const stateId = Number(configuration?.state_id);
-      if (!Number.isInteger(stateId) || stateId <= 0) {
-        throw new Error('Choose a RadioReference country and state in Settings before searching.');
-      }
-      message.textContent = 'Searching RadioReference…';
-      const query = new URLSearchParams({
-        state_id: String(stateId), frequency_hz: String(Math.round(selectedHz)), limit: '100'
-      });
-      const response = await requestJson(`/api/v1/admin/radioreference/frequencies?${query}`, {
-        csrf: false, page: false, timeoutMs: 15_000
-      });
-      const matches = Array.isArray(response?.items) ? response.items : [];
-      results.replaceChildren(radioReferenceResultView(matches, selectedHz, detailController.signal));
-      const total = Number(response?.total_items || matches.length);
-      message.textContent = total > matches.length ?
-        `Showing the first ${number(matches.length)} of ${number(total)} matches.` :
-        `${number(total)} RadioReference ${total === 1 ? 'match' : 'matches'} found.`;
-    } catch (error) {
-      message.textContent = error.message;
-      results.append(anchor('Open RadioReference settings', href('admin', { tab: 'live-activity' }),
-        'button secondary'));
-    } finally {
-      radioReference.disabled = false;
-    }
+  radioReference.addEventListener('click', () => {
+    panel.hidePopover();
+    openTunerRadioReferenceLookup(selectedHz);
   });
   actions.append(radioReference, listen, addSystem);
-  body.append(summary, actions, audioOptions, message, results);
-  return openReadOnlyModal('Frequency actions', body, {
-    id: 'tuner-frequency-actions', className: 'frequency-action-modal tuner-frequency-modal',
-    cleanup: () => { detailController.abort(); stopListening(); }
-  });
+  body.append(summary, actions, audioOptions, message);
+  const panel = node('div', 'tuner-frequency-popover');
+  panel.setAttribute('popover', 'auto');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Frequency actions');
+  const close = node('button', 'ui-button ui-button-secondary ui-icon-button tuner-frequency-popover-close', '×');
+  close.type = 'button';
+  close.setAttribute('aria-label', 'Close frequency actions');
+  close.addEventListener('click', () => panel.hidePopover());
+  panel.append(close, body);
+  const renderSignal = activeRenderController?.signal;
+  const position = () => {
+    const placement = tunerFrequencyPopoverPlacement(anchorRect, panel.getBoundingClientRect());
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
+  };
+  const sizeObserver = new ResizeObserver(position);
+  const onToggle = (event) => {
+    if (event.newState === 'open') return;
+    stopListening();
+    sizeObserver.disconnect();
+    renderSignal?.removeEventListener('abort', closeForRouteChange);
+    window.removeEventListener('resize', position);
+    window.removeEventListener('scroll', position, true);
+    if (activeTunerFrequencyPopover === panel) activeTunerFrequencyPopover = null;
+    panel.remove();
+  };
+  const closeForRouteChange = () => {
+    if (panel.matches(':popover-open')) panel.hidePopover();
+  };
+  panel.addEventListener('toggle', onToggle);
+  renderSignal?.addEventListener('abort', closeForRouteChange, { once: true });
+  document.body.append(panel);
+  panel.showPopover();
+  activeTunerFrequencyPopover = panel;
+  position();
+  sizeObserver.observe(panel);
+  window.addEventListener('resize', position);
+  window.addEventListener('scroll', position, true);
+  radioReference.focus();
+  return panel;
 }
 
 function tunerStoredNumber(key, fallback, minimum, maximum) {
@@ -13299,6 +13378,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
       targetLabel: String(target?.label || ''),
       rawFrequencyHz,
       frequencyHz: snap?.frequencyHz ?? rawFrequencyHz,
+      anchorRect: { left: event.clientX, right: event.clientX,
+        top: event.clientY, bottom: event.clientY },
       snap,
       canvas: event.currentTarget === waterfall.canvas ? 'waterfall' : 'spectrum'
     });
@@ -13800,7 +13881,9 @@ function tunerSpectrumPanel(snapPresetDocument) {
       flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
       flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
       flag.addEventListener('blur', () => hideActiveFlag(flag));
-      flag.addEventListener('click', () => openTunerFrequencyActions(frequencySelectionForCarrier(carrier)));
+      flag.addEventListener('click', () => openTunerFrequencyActions({
+        ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
+      }));
       return flag;
     });
     spectrumActiveFlags.replaceChildren(...createFlags());

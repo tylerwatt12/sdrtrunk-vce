@@ -62,11 +62,12 @@ class StatsWebFrequencyActionsUiContractTest
     }
 
     @Test
-    void searchesRadioReferenceServerSideFromOneFutureProofFrequencyActionModal() throws Exception
+    void opensCompactSpectrumActionsAndSeparateRadioReferenceResults() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String tuner = block(source, "function tunerSpectrumPanel(snapPresetDocument)");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
+        String lookup = block(source, "function openTunerRadioReferenceLookup(selectedHz)");
         String results = block(source, "function radioReferenceResultView(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
@@ -78,11 +79,16 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(actions.contains("bandwidth_hz: Number(bandwidth.value)"));
         assertTrue(actions.contains("binaryFrameConnection('frequency_audio'"));
         assertTrue(actions.contains("true);"));
-        assertTrue(actions.contains("openReadOnlyModal('Frequency actions'"));
-        assertTrue(actions.contains("requestJson('/api/v1/admin/radioreference'"));
-        assertTrue(actions.contains("/api/v1/admin/radioreference/frequencies?"));
-        assertTrue(actions.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
-        assertTrue(actions.contains("href('admin', { tab: 'live-activity' })"));
+        assertTrue(actions.contains("panel.setAttribute('popover', 'auto')"));
+        assertTrue(actions.contains("panel.hidePopover();"));
+        assertTrue(actions.contains("openTunerRadioReferenceLookup(selectedHz)"));
+        assertTrue(actions.contains("stopListening();"));
+        assertFalse(actions.contains("openReadOnlyModal("));
+        assertTrue(lookup.contains("openReadOnlyModal('RadioReference lookup'"));
+        assertTrue(lookup.contains("requestJson('/api/v1/admin/radioreference'"));
+        assertTrue(lookup.contains("/api/v1/admin/radioreference/frequencies?"));
+        assertTrue(lookup.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
+        assertTrue(lookup.contains("href('admin', { tab: 'live-activity' })"));
         assertFalse(results.contains("'Freq Out'"));
         assertFalse(results.contains("'Freq In'"));
         assertTrue(results.contains("row.description"));
@@ -117,6 +123,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(source.contains("Click a frequency to choose an action."));
         assertTrue(tuner.contains("rawFrequencyHz"));
         assertTrue(tuner.contains("frequencyHz: snap?.frequencyHz ?? rawFrequencyHz"));
+        assertTrue(tuner.contains("anchorRect: { left: event.clientX"));
         assertTrue(tuner.contains("activeCarrier: carrier"));
         assertTrue(tuner.contains("canvas.addEventListener('click', onPlotClick)"));
         assertTrue(tuner.contains("flag.addEventListener('click'"));
@@ -135,6 +142,8 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".admin-settings-form-stack"));
         assertTrue(css.contains("height: 36px;"));
         assertTrue(css.contains(".read-only-modal.frequency-action-modal"));
+        assertTrue(css.contains(".tuner-frequency-popover"));
+        assertTrue(css.contains(".read-only-modal.tuner-frequency-lookup-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
         assertTrue(css.contains("color: var(--muted);"));

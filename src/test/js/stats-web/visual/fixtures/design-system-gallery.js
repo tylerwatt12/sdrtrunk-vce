@@ -6,7 +6,7 @@ const view = ['gallery', 'modal', 'modal-long', 'health-alert-modal', 'focus', '
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'radio-directory-coverage',
   'scanner', 'tuner-spectrum', 'rf-planner', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
-  'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-modal'].includes(parameters.get('view')) ?
+  'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-popover'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
