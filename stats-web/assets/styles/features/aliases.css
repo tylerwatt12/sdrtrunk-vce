@@ -677,6 +677,10 @@
   padding: 0 4px;
 }
 
+.alias-stream-options > :is(.muted, .empty, .ui-notice, .logging-notice) {
+  grid-column: 1 / -1;
+}
+
 .alias-check-option,
 .alias-confirm-check {
   display: flex;

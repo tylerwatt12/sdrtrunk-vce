@@ -134,6 +134,11 @@
   opacity: .48;
 }
 
+.ui-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
 .link-button {
   min-height: 0;
   padding: 0;
@@ -403,7 +408,51 @@
   opacity: .48;
 }
 
+.ui-choice-radio {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-content: center;
+  flex: 0 0 auto;
+  margin: 0;
+  appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--interactive-border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.ui-choice-radio::before {
+  width: 8px;
+  height: 8px;
+  content: "";
+  background: var(--accent);
+  border-radius: 50%;
+  transform: scale(0);
+  transition: transform 120ms ease;
+}
+
+.ui-choice-radio:checked {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ui-choice-radio:checked::before {
+  transform: scale(1);
+}
+
+.ui-choice-radio:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-choice-radio:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
 .ui-choice-card {
+  padding: var(--ui-choice-card-padding, var(--space-3));
   color: var(--ink);
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -419,7 +468,8 @@
 }
 
 .ui-choice-card[aria-pressed="true"],
-.ui-choice-card:has(.ui-selection-check:checked) {
+.ui-choice-card:has(.ui-selection-check:checked),
+.ui-choice-card:has(.ui-choice-radio:checked) {
   background: var(--accent-soft);
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
@@ -445,6 +495,15 @@
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+}
+
+.ui-toggle-field-compact {
+  min-height: 48px;
+  padding: var(--space-2) 10px;
+}
+
+.ui-toggle-field-compact .ui-toggle {
+  flex: 0 0 auto;
 }
 
 .ui-toggle-copy {

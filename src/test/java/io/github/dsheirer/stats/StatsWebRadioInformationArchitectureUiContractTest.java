@@ -63,7 +63,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
         assertTrue(css.contains(".admin-settings-shell {"));
         assertTrue(css.contains(".admin-settings-nested-branch"));
-        assertTrue(css.contains(".identity-activity-chart-grid {"));
+        assertTrue(css.contains(".identity-activity-insights {"));
+        assertTrue(css.contains(".identity-activity-ranking-grid {"));
+        assertTrue(css.contains(".identity-activity-table-header {"));
         assertTrue(css.contains(".identity-activity-scope {"));
     }
 

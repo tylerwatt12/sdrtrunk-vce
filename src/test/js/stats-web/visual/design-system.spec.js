@@ -107,6 +107,18 @@ test('alias-modal-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('alias-modal-dark-mobile.png');
 });
 
+test('alias-export-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=alias-export');
+  await expect(page.locator('body')).toHaveScreenshot('alias-export-light-desktop.png');
+});
+
+test('alias-export-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=alias-export');
+  await expect(page.locator('body')).toHaveScreenshot('alias-export-dark-mobile.png');
+});
+
 test('channels-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=channels');

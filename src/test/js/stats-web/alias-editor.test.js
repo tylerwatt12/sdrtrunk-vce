@@ -216,6 +216,8 @@ assert.match(aliasDiscoverToolbar, /ui-button ui-button-primary/,
   'Alias Editor discovery actions must use the shared primary button styling.');
 assert.match(aliasExportLink, /options\.loading/,
   'Alias table exports must support an explicit loading state.');
+assert.match(aliasExportLink, /ui-button ui-button-secondary export-csv-action/,
+  'Alias table exports must use the shared secondary button treatment.');
 assert.match(aliasExportLink, /new AbortController\(\)/,
   'Report downloads must have a cancellable request lifecycle.');
 assert.match(aliasExportLink, /await fetch\(target/,
@@ -333,6 +335,8 @@ assert.match(transferModal, /Download CSV/);
 assert.match(transferModal, /All aliases in this Alias List/);
 assert.match(transferModal, /Current filtered results/);
 assert.match(transferModal, /not only the visible page/);
+assert.match(transferModal, /node\('input', 'ui-choice-radio'\)/,
+  'Export scope must use the shared single-choice radio treatment.');
 assert.match(transferModal, /destinationSummary\.append\(/);
 assert.match(transferModal, /step\.append\(node\('span'/);
 assert.match(transferModal, /exportSummary\.append\(/);

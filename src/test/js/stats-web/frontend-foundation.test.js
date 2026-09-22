@@ -180,6 +180,13 @@ async function main() {
   assert.doesNotMatch(playerSource, /row\?\.scan_list_id|value\?\.maximumSelectedScanLists/);
   assert.doesNotMatch(appSource, /defaultSelected|scanList\?\.scan_list_id/);
   assert.match(functionBinding(appSource, 'aliasScanListChoices'), /Number\(scanList\?\.id\)/);
+  assert.match(functionBinding(appSource, 'aliasScanListChoices'), /aliasAssignmentToggle\(/);
+  assert.match(functionBinding(appSource, 'aliasAssignmentToggle'), /uiToggleField\(/);
+  assert.match(functionBinding(appSource, 'aliasAssignmentToggle'), /ui-toggle-field-compact/);
+  assert.match(appCssSource, /\.ui-choice-card:has\(\.ui-choice-radio:checked\)/);
+  assert.match(appCssSource, /\.ui-toggle-field-compact \{/);
+  assert.match(appSource,
+    /ui-button ui-button-secondary ui-icon-button table-layout-trigger/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
   assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(\)/);
@@ -361,8 +368,12 @@ async function main() {
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
-  assert.match(functionBinding(appSource, 'renderIdentities'),
-    /identity-activity data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
+  const identitiesSource = functionBinding(appSource, 'renderIdentities');
+  assert.match(identitiesSource, /identity-activity data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
+  assert.match(identitiesSource, /identity-activity-overview/);
+  assert.match(identitiesSource, /identity-activity-insights/);
+  assert.match(identitiesSource, /identity-activity-table-header/);
+  assert.match(identitiesSource, /bare: true/);
   const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');
   assert.match(liveHistoryNotice, /live-activity-history-notice ui-notice ui-notice-warning/);
   assert.match(liveHistoryNotice, /storeLiveUiState\(\{ historyNoticeDismissed: true \}\)/);

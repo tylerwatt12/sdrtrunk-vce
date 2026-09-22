@@ -1551,13 +1551,13 @@ function exportCsvFileName(response, fallback = 'export.csv') {
 
 function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {}) {
   if (!capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) {
-    const disabled = node('span', 'button secondary disabled export-csv-action', label);
+    const disabled = node('span', 'ui-button ui-button-secondary export-csv-action', label);
     disabled.setAttribute('aria-disabled', 'true');
     disabled.title = accessSession.authenticated ? 'CSV export is not available to this account.' :
       'Sign in to use CSV export.';
     return disabled;
   }
-  const link = anchor(label, exportCsvHref(dataset, context), 'button secondary export-csv-action');
+  const link = anchor(label, exportCsvHref(dataset, context), 'ui-button ui-button-secondary export-csv-action');
   link.setAttribute('download', '');
   link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
   if (options.loading) {
@@ -2629,7 +2629,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
     const trigger = iconButton('icon-columns', 'Choose table columns',
-      'button secondary icon-button section-title-icon table-layout-trigger');
+      'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
@@ -3546,6 +3546,15 @@ function aliasCheckOption(labelText, control) {
   return label;
 }
 
+function aliasAssignmentToggle(labelText, checked, inputName, value, detail = '') {
+  const option = uiToggleField(labelText, checked, labelText, detail);
+  option.classList.add('ui-toggle-field-compact', 'alias-assignment-toggle');
+  const input = option.querySelector('input');
+  input.name = inputName;
+  input.value = String(value);
+  return option;
+}
+
 function aliasScanListChoices(options, selectedValues = []) {
   const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options');
   fieldset.append(node('legend', '', 'Scan list membership'));
@@ -3559,19 +3568,12 @@ function aliasScanListChoices(options, selectedValues = []) {
   scanLists.forEach((scanList) => {
     const id = Number(scanList?.id);
     if (!Number.isInteger(id) || id <= 0) return;
-    const label = node('label', 'alias-check-option alias-scan-list-option ui-choice-card');
-    const checkbox = node('input', 'ui-selection-check');
-    checkbox.type = 'checkbox';
-    checkbox.name = 'scanListId';
-    checkbox.value = String(id);
-    checkbox.checked = selected.has(id);
-    const copy = node('span');
-    copy.append(node('strong', '', scanList.name || `Scan list ${id}`));
     const detail = [scanList.description, scanList.published === false ? 'Not published to listeners' : null]
       .filter(Boolean).join(' · ');
-    if (detail) copy.append(node('small', '', detail));
-    label.append(checkbox, copy);
-    fieldset.append(label);
+    const option = aliasAssignmentToggle(scanList.name || `Scan list ${id}`, selected.has(id),
+      'scanListId', id, detail);
+    option.classList.add('alias-scan-list-option');
+    fieldset.append(option);
   });
   return fieldset;
 }
@@ -4261,34 +4263,27 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
     if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
     streamIds.forEach((configurationId) => {
-      const label = node('label', 'alias-check-option ui-choice-card');
-      const checkbox = node('input');
-      checkbox.classList.add('ui-selection-check');
-      checkbox.type = 'checkbox';
-      checkbox.name = 'broadcastChannel';
-      checkbox.value = configurationId;
-      checkbox.checked = aliasStreamOptionSelected(selectedStreams.has(configurationId),
+      const selected = aliasStreamOptionSelected(selectedStreams.has(configurationId),
         configuredStreams.has(configurationId), editing, options.streams_truncated === true);
       const missing = !configuredStreams.has(configurationId);
-      if (missing) label.classList.add('missing');
       const missingLabel = options.streams_truncated === true ?
         `Current destination outside display limit (${configurationId})` :
         `Missing destination (${configurationId})`;
-      label.append(checkbox, node('span', '', missing ? missingLabel : configuredStreams.get(configurationId)));
-      streams.append(label);
+      const option = aliasAssignmentToggle(missing ? missingLabel : configuredStreams.get(configurationId), selected,
+        'broadcastChannel', configurationId, missing ? 'This saved destination is not currently available.' : '');
+      if (missing) option.classList.add('missing');
+      streams.append(option);
     });
     updateCreationRoutingDefaults = () => {
       if (editing || cloning) return;
       const defaults = options?.alias_list?.new_alias_behavior || {};
       setUiToggle(record, Boolean(defaults.recordable));
       const selectedScanLists = new Set((defaults.scan_list_ids || []).map(Number));
-      scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
-        checkbox.checked = selectedScanLists.has(Number(checkbox.value));
-      });
+      scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) =>
+        setUiToggle(checkbox, selectedScanLists.has(Number(checkbox.value))));
       const selectedDestinations = new Set(defaults.broadcast_configuration_ids || []);
-      streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) => {
-        checkbox.checked = selectedDestinations.has(checkbox.value);
-      });
+      streams.querySelectorAll('[name="broadcastChannel"]').forEach((checkbox) =>
+        setUiToggle(checkbox, selectedDestinations.has(checkbox.value)));
     };
     const streamAs = aliasTextInput('streamAsTalkgroup', source.stream_as_talkgroup ?? '', 'number');
     streamAs.min = '1';
@@ -5194,7 +5189,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
    ['filtered', 'Current filtered results',
     'Export every matching alias in the current search and filters, not only the visible page.']]
     .forEach(([value, title, description]) => {
-      const input = node('input', 'ui-selection-check'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
+      const input = node('input', 'ui-choice-radio'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
       input.value = value; input.checked = value === 'all';
       if (value === 'filtered' && !capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) input.disabled = true;
       const copy = node('span', 'alias-transfer-choice-copy');
@@ -5532,17 +5527,13 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
     if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
     streamIds.forEach((configurationId) => {
-      const label = node('label', 'alias-check-option ui-choice-card');
-      const checkbox = node('input', 'ui-selection-check');
-      checkbox.type = 'checkbox';
-      checkbox.name = `${kind}BroadcastChannel`;
-      checkbox.value = configurationId;
-      checkbox.checked = selectedStreams.has(configurationId);
       const missing = !configuredStreams.has(configurationId);
-      if (missing) label.classList.add('missing');
-      label.append(checkbox, node('span', '', missing ? `Missing destination (${configurationId})` :
-        configuredStreams.get(configurationId)));
-      streams.append(label);
+      const option = aliasAssignmentToggle(missing ? `Missing destination (${configurationId})` :
+        configuredStreams.get(configurationId), selectedStreams.has(configurationId),
+        `${kind}BroadcastChannel`, configurationId,
+        missing ? 'This saved destination is not currently available.' : '');
+      if (missing) option.classList.add('missing');
+      streams.append(option);
     });
     const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved in these defaults remain visible.');
@@ -8022,7 +8013,7 @@ function createAsyncSection(title, options = {}) {
   host.setAttribute('aria-label', title);
   const titleActions = sectionActionHost(options.action || null);
   const tableController = {};
-  const element = section(title, host, titleActions);
+  const element = options.bare === true ? host : section(title, host, titleActions);
   let loadSequence = 0;
   let focusAfterAttempt = false;
 
@@ -17304,8 +17295,10 @@ function identityActivitySearch(placeholder) {
 }
 
 function identityActivityBarChart(title, rows, label, value, emptyText = 'No activity in this range') {
-  const card = node('section', 'identity-activity-chart');
-  card.append(node('h3', '', title));
+  const card = node('section', 'identity-activity-ranking');
+  const heading = node('header', 'identity-activity-card-heading');
+  heading.append(node('h3', '', title), node('span', '', title === 'Most active' ? 'Calls' : 'Events'));
+  card.append(heading);
   const values = rows.map((row) => Number(value(row) || 0));
   const maximum = Math.max(1, ...values);
   const plot = node('div', 'identity-activity-bars');
@@ -17324,7 +17317,7 @@ function identityActivityBarChart(title, rows, label, value, emptyText = 'No act
 }
 
 function identityCoverageCard(title, enabled, total, enabledLabel) {
-  const card = node('section', 'identity-activity-chart identity-coverage-card');
+  const card = node('section', 'identity-coverage-item');
   const safeTotal = Math.max(0, Number(total || 0));
   const safeEnabled = Math.min(safeTotal, Math.max(0, Number(enabled || 0)));
   const percent = safeTotal ? Math.round(safeEnabled / safeTotal * 100) : 0;
@@ -17336,6 +17329,21 @@ function identityCoverageCard(title, enabled, total, enabledLabel) {
   track.append(fill);
   card.append(track);
   return card;
+}
+
+function identityActivitySummaryCards(totals, unassigned) {
+  const summary = node('div', 'identity-activity-summary');
+  [
+    ['Recently active', totals.active_alias_count || 0, 'icon-identities', 'active'],
+    ['Unassigned identities', unassigned.total_count || 0, 'icon-warning', 'unassigned'],
+    ['Retained calls', totals.retained_logical_call_count || 0, 'icon-recording', 'calls'],
+    ['Signaling events', totals.retained_signaling_observation_count || 0, 'icon-spectrum', 'signals']
+  ].forEach(([label, value, icon, tone]) => {
+    const card = node('div', `ui-summary-card identity-activity-summary-card identity-summary-${tone}`);
+    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
+    summary.append(card);
+  });
+  return summary;
 }
 
 function identityChannelScope(overview) {
@@ -17367,9 +17375,11 @@ async function renderIdentities() {
   const selectedRange = route.get('range') || '24h';
   const activeTab = route.get('identity_tab') === 'unassigned' ? 'unassigned' : 'activity';
   const directory = createAsyncSection('Identity activity', {
+    bare: true,
     loadingMessage: 'Loading Alias Lists and activity…',
     errorMessage: 'The identity activity directory could not be loaded.'
   });
+  directory.host.classList.add('identity-activity-loader');
   if (!beginPage(renderContext, pageHeader('Identity Activity',
     'Explore recently heard aliases and gaps in the selected public directory'), directory.element)) return;
 
@@ -17386,18 +17396,19 @@ async function renderIdentities() {
       api(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`, { range: selectedRange }),
       activeTab === 'activity' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
         { ...common, type: route.get('type') }) : Promise.resolve(emptyPage),
-      activeTab === 'unassigned' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
-        { q: route.get('q'), limit: activeTab === 'unassigned' ? 100 : 1,
+      apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
+        { q: activeTab === 'unassigned' ? route.get('q') : null, limit: activeTab === 'unassigned' ? 100 : 1,
           offset: activeTab === 'unassigned' ? route.get('offset') || 0 : 0,
           sort: activeTab === 'unassigned' ? route.get('sort') : null,
-          direction: activeTab === 'unassigned' ? route.get('direction') : null }) : Promise.resolve(emptyPage)
+          direction: activeTab === 'unassigned' ? route.get('direction') : null })
     ]);
-    return { lists, selectedListId, overview, aliases, unassigned };
+    return { lists, selectedListId, selectedList: selected, overview, aliases, unassigned };
   }, (model) => {
     if (!model.selectedListId) return node('div', 'empty', 'No Alias Lists are configured.');
-    const { lists, selectedListId, overview, aliases, unassigned } = model;
+    const { lists, selectedListId, selectedList, overview, aliases, unassigned } = model;
     const wrapper = node('div', 'identity-activity data-workspace');
     wrapper.dataset.uiDensity = 'compact';
+    const overviewPanel = node('section', 'identity-activity-overview');
     const toolbar = node('div', 'identity-activity-toolbar');
     const listControl = node('label', 'identity-activity-field');
     listControl.append(node('span', '', 'Alias List'));
@@ -17417,25 +17428,36 @@ async function renderIdentities() {
     toolbar.append(listControl, rangeControl);
 
     const totals = overview.totals || {};
-    const summary = metrics([
-      ['Recently active', totals.active_alias_count || 0],
-      ['Unassigned identities', unassigned.total_count || 0,
-        activeTab === 'unassigned' ? number(unassigned.total_count || 0) : 'View'],
-      ['Retained calls', totals.retained_logical_call_count || 0],
-      ['Signaling events', totals.retained_signaling_observation_count || 0]
-    ]);
-    summary.classList.add('identity-activity-summary');
+    overviewPanel.append(toolbar, identityChannelScope(overview));
+    const summary = identityActivitySummaryCards(totals, unassigned);
 
-    const charts = node('div', 'identity-activity-chart-grid');
-    charts.append(identityActivityBarChart('Most active', overview.top_active || [],
-      (row) => row.name || identityActivityValue(row), (row) => row.logical_call_count));
-    charts.append(identityActivityBarChart('Most signaling', overview.top_signaling || [],
+    const insights = node('div', 'identity-activity-insights');
+    const rankings = node('section', 'identity-activity-insight-card identity-activity-rankings');
+    const rankingHeader = node('header', 'identity-activity-insight-header');
+    const rankingHeading = node('div');
+    rankingHeading.append(node('span', 'identity-activity-eyebrow', 'Activity leaders'),
+      node('h2', '', 'What is busiest right now'));
+    rankingHeader.append(rankingHeading, node('p', 'muted', 'Aliases ranked within the selected time range.'));
+    const rankingGrid = node('div', 'identity-activity-ranking-grid');
+    rankingGrid.append(identityActivityBarChart('Most active', overview.top_active || [],
+      (row) => row.name || identityActivityValue(row), (row) => row.logical_call_count),
+    identityActivityBarChart('Most signaling', overview.top_signaling || [],
       (row) => row.name || identityActivityValue(row), (row) => row.signaling_observation_count,
       'No signaling aliases in this range'));
-    charts.append(identityCoverageCard('Recording coverage', totals.recording_enabled_active_count,
-      totals.active_alias_count, 'have recording enabled'));
-    charts.append(identityCoverageCard('Streaming coverage', totals.streaming_enabled_active_count,
-      totals.active_alias_count, 'have a streaming destination'));
+    rankings.append(rankingHeader, rankingGrid);
+
+    const coverage = node('section', 'identity-activity-insight-card identity-activity-coverage');
+    const coverageHeader = node('header', 'identity-activity-insight-header');
+    const coverageHeading = node('div');
+    coverageHeading.append(node('span', 'identity-activity-eyebrow', 'Call handling'),
+      node('h2', '', 'Coverage for active aliases'));
+    coverageHeader.append(coverageHeading);
+    coverage.append(coverageHeader,
+      identityCoverageCard('Recording enabled', totals.recording_enabled_active_count,
+        totals.active_alias_count, 'have recording enabled'),
+      identityCoverageCard('Streaming configured', totals.streaming_enabled_active_count,
+        totals.active_alias_count, 'have a streaming destination'));
+    insights.append(rankings, coverage);
 
     const tabs = uiSegmentedControl([
       { value: 'activity', label: 'Recently active aliases' },
@@ -17445,8 +17467,16 @@ async function renderIdentities() {
       offset: null, sort: null, direction: null })));
     tabs.setAttribute('aria-label', 'Identity activity view');
     const tableSection = node('section', 'identity-activity-table-section');
+    const tableHeader = node('header', 'identity-activity-table-header');
+    const tableHeading = node('div');
+    const rangeLabel = new Map([['1h', 'last hour'], ['24h', 'last day'], ['7d', 'last week'],
+      ['30d', 'last 30 days']]).get(selectedRange) || 'selected range';
+    tableHeading.append(node('span', 'identity-activity-eyebrow', 'Directory'),
+      node('h2', '', activeTab === 'unassigned' ? 'Unassigned identities' : 'Recently active aliases'),
+      node('p', 'muted', `${selectedList?.name || 'Alias List'} · ${rangeLabel}`));
+    tableHeader.append(tableHeading, tabs);
     const tableToolbar = node('div', 'identity-activity-table-toolbar');
-    tableToolbar.append(tabs, identityActivitySearch(activeTab === 'unassigned' ?
+    tableToolbar.append(identityActivitySearch(activeTab === 'unassigned' ?
       'Search unassigned identities' : 'Search aliases'));
     if (activeTab === 'activity') {
       const kind = uiSegmentedControl([
@@ -17457,13 +17487,13 @@ async function renderIdentities() {
       kind.setAttribute('aria-label', 'Alias type');
       tableToolbar.append(kind);
     }
-    tableSection.append(tableToolbar, activeTab === 'unassigned' ?
+    tableSection.append(tableHeader, tableToolbar, activeTab === 'unassigned' ?
       pagedTableContent(unassigned, identityActivityUnassignedColumns(), 'identity-unassigned-v1', {
         itemLabel: 'Identities', emptyText: 'Every heard identity is assigned in this Alias List' }) :
       pagedTableContent(aliases, identityActivityAliasesColumns(), 'identity-activity-v2', {
         itemLabel: 'Aliases', emptyText: 'No aliases were active in this time range' }));
 
-    wrapper.append(toolbar, identityChannelScope(overview), summary, charts, tableSection);
+    wrapper.append(overviewPanel, summary, insights, tableSection);
     return wrapper;
   }, renderContext);
 }

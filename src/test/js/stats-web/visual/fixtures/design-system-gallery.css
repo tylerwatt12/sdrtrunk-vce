@@ -71,6 +71,28 @@ body {
   gap: var(--space-3);
 }
 
+.visual-choice-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.visual-choice-cards .ui-choice-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.visual-choice-cards .ui-choice-card > span {
+  display: grid;
+  gap: 3px;
+}
+
+.visual-choice-cards small {
+  color: var(--muted);
+}
+
 .visual-form-grid .ui-field:last-child {
   grid-column: 1 / -1;
 }
@@ -299,7 +321,8 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1320px, calc(100% - 32px));
 }
 
-.visual-alias-modal-example {
+.visual-alias-modal-example,
+.visual-alias-export-example {
   min-height: 100vh;
 }
 
@@ -411,6 +434,7 @@ body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
 body:not([data-gallery-view="aliases"]) .visual-aliases-example,
 body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
+body:not([data-gallery-view="alias-export"]) .visual-alias-export-example,
 body:not([data-gallery-view="scan-list-members"]) .visual-scan-list-members-example,
 body:not([data-gallery-view="channels"]) .visual-channels-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
@@ -427,6 +451,7 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   .visual-gallery-header,
   .visual-grid,
   .visual-form-grid,
+  .visual-choice-cards,
   .visual-summary-grid {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -15,6 +15,7 @@
   .ui-button,
   .ui-selection-check,
   .ui-selection-check::before,
+  .ui-choice-radio::before,
   .ui-choice-card,
   .ui-toggle-track,
   .ui-toggle-thumb,
