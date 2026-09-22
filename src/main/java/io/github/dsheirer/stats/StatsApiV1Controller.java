@@ -171,7 +171,7 @@ final class StatsApiV1Controller
                     yield mDatabase.publicIdentityOverview(aliasListId, request);
                 }
                 case "aliases" -> {
-                    request.requireOnly("range", "type", "q", "sort", "direction", "limit", "offset");
+                    request.requireOnly("range", "status", "type", "q", "sort", "direction", "limit", "offset");
                     yield page(mDatabase.publicIdentityAliases(aliasListId, request));
                 }
                 case "unassigned" -> {

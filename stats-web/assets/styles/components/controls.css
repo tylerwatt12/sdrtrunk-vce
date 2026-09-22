@@ -157,6 +157,29 @@
   text-decoration: underline;
 }
 
+.ui-time-pair {
+  min-width: 132px;
+  display: grid;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.ui-time-pair strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.ui-time-pair-exact {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-time-pair.is-empty {
+  min-width: 0;
+  color: var(--muted);
+}
+
 .ui-button-primary {
   color: var(--primary-control-ink);
   background: var(--primary-control);

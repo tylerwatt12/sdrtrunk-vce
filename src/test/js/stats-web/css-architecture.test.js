@@ -20,7 +20,6 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/channels.css") layer(features);',
   '@import url("./styles/features/live.css?v=2") layer(features);',
   '@import url("./styles/features/radio-directory.css") layer(features);',
-  '@import url("./styles/features/identity-activity.css") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=2") layer(features);',
   '@import url("./styles/features/scanner.css?v=1") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=1") layer(features);',

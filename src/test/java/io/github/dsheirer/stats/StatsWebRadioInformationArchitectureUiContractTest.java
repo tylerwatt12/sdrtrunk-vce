@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
-/** Protects the public radio directories and the separate administrator workspaces. */
+/** Protects the unified public Radio Directory and the separate administrator workspaces. */
 class StatsWebRadioInformationArchitectureUiContractTest
 {
     private static final Path APP = Path.of("stats-web", "assets", "app.js");
@@ -27,22 +27,24 @@ class StatsWebRadioInformationArchitectureUiContractTest
         String index = readText(INDEX);
 
         assertTrue(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
-        assertTrue(routes.contains("id: 'identities', label: 'Identities'"));
+        assertFalse(routes.contains("id: 'identities', label: 'Identities'"));
         assertTrue(routes.contains("id: 'channel-setup', label: 'Channel Setup'"));
         assertTrue(routes.contains("access: 'admin-channels'"));
         assertTrue(index.contains("data-view=\"radio-systems\""));
-        assertTrue(index.contains("data-view=\"identities\""));
+        assertFalse(index.contains("data-view=\"identities\""));
         assertTrue(index.contains("data-view=\"channel-setup\""));
         assertTrue(index.contains("<summary>Manage</summary>"));
         assertFalse(index.contains("data-view=\"channels\""));
         assertTrue(app.contains("if (view === 'channels')"));
+        assertTrue(app.contains("if (view === 'identities')"));
+        assertTrue(app.contains("route.set('directory_view', 'coverage')"));
         assertTrue(app.contains("route.set('view', 'radio-systems')"));
         assertTrue(app.contains("editable ? 'Channel Setup' : 'Radio Directory'"));
         assertTrue(app.contains("if (editable) columns.push"));
     }
 
     @Test
-    void exposesReadOnlyIdentitiesAndNestedReceiverSettings() throws Exception
+    void exposesAliasCoverageInsideTheDirectoryAndNestedReceiverSettings() throws Exception
     {
         String app = readText(APP);
         String css = StatsWebStylesheetTestSupport.readAll();
@@ -50,6 +52,11 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("apiPage('/api/v1/identities/lists'"));
         assertTrue(app.contains("/overview`"));
         assertTrue(app.contains("/unassigned`"));
+        assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext)"));
+        assertTrue(app.contains("See aliases that activity-only views cannot show"));
+        assertTrue(app.contains("Where this Alias List is used"));
+        assertTrue(app.contains("value: 'zero_calls'"));
+        assertTrue(app.contains("value: 'never_heard'"));
         assertTrue(app.contains("value: 'talkgroup', label: 'Talkgroups'"));
         assertTrue(app.contains("value: 'radio', label: 'Radios'"));
         assertTrue(app.contains("function adminSettingsTree(groups, active)"));
@@ -63,10 +70,10 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
         assertTrue(css.contains(".admin-settings-shell {"));
         assertTrue(css.contains(".admin-settings-nested-branch"));
-        assertTrue(css.contains(".identity-activity-insights {"));
-        assertTrue(css.contains(".identity-activity-ranking-grid {"));
-        assertTrue(css.contains(".identity-activity-table-header {"));
-        assertTrue(css.contains(".identity-activity-scope {"));
+        assertTrue(css.contains(".alias-coverage-guidance"));
+        assertTrue(css.contains(".alias-coverage-scope-list"));
+        assertTrue(css.contains(".alias-coverage-table-header"));
+        assertTrue(css.contains(".ui-time-pair"));
     }
 
     private static String readText(Path path) throws Exception

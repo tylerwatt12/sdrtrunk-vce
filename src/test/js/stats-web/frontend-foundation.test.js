@@ -372,14 +372,15 @@ async function main() {
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
-  const identitiesSource = functionBinding(appSource, 'renderIdentities');
-  assert.match(identitiesSource, /identity-activity data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
-  assert.match(identitiesSource, /identity-activity-overview/);
-  assert.match(identitiesSource, /identity-activity-insights/);
-  assert.match(identitiesSource, /identity-activity-table-header/);
-  assert.match(identitiesSource, /bare: true/);
+  const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
+  assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
+  assert.match(coverageSource, /aliasCoverageGuidance\(\)/);
+  assert.match(coverageSource, /aliasCoverageScope\(overview\)/);
+  assert.match(coverageSource, /alias-coverage-table-header/);
+  assert.match(coverageSource, /bare: true/);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /bare: true/);
+  assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext\)/);
   assert.match(radioDirectorySource,
     /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);
   assert.match(radioDirectorySource,
@@ -455,7 +456,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 18, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -472,8 +473,8 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'channelDirectoryColumns', 'identityActivityAliasesColumns',
-    'identityActivityUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
+    'activityColumns', 'channelDirectoryColumns', 'aliasCoverageAliasesColumns',
+    'aliasCoverageUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
       .map((match) => match[1]);

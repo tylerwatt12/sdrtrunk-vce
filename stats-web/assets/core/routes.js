@@ -9,7 +9,6 @@
     { id: 'radio-system', label: 'Radio System Details', title: 'Radio System Details', parent: 'radio-systems', capability: 'radio', databaseNotice: true },
     { id: 'group-identity', label: 'Group Identity Details', title: 'Group Identity Details', parent: 'radio-systems', capability: 'radio', databaseNotice: true },
     { id: 'radio', label: 'Radio Details', title: 'Radio Details', parent: 'radio-systems', capability: 'radio', databaseNotice: true },
-    { id: 'identities', label: 'Identities', title: 'Identities', parent: 'identities', capability: 'radio', databaseNotice: true },
     { id: 'channels', label: 'Radio Directory', title: 'Radio Directory', parent: 'radio-systems', capability: 'radio', databaseNotice: false },
     { id: 'channel-setup', label: 'Channel Setup', title: 'Channel Setup', parent: 'channel-setup', access: 'admin-channels', databaseNotice: false },
     { id: 'channel', label: 'Channel Details', title: 'Channel Details', parent: 'radio-systems', capability: 'radio', databaseNotice: true },

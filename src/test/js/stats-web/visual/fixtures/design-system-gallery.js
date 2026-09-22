@@ -3,7 +3,8 @@
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['gallery', 'modal', 'modal-long', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
-  'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity', 'identity-activity',
+  'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
+  'radio-directory-coverage',
   'scanner', 'tuner-spectrum', 'rf-planner', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'live-notice', 'live-filter'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';

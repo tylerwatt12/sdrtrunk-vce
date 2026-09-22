@@ -536,6 +536,7 @@ class StatsWebDatabase
         Map.entry("group", "lower(coalesce(alias.group_name, ''))"),
         Map.entry("logical_call_count", "coalesce(summary.logical_call_count, 0)"),
         Map.entry("signaling_observation_count", "coalesce(summary.signaling_observation_count, 0)"),
+        Map.entry("first_evidence", "summary.first_evidence_ms"),
         Map.entry("last_evidence", "summary.last_evidence_ms")
     );
     private static final Map<String,String> DMR_CONVENTIONAL_GROUP_IDENTITY_SORT_COLUMNS = Map.ofEntries(
@@ -832,7 +833,7 @@ class StatsWebDatabase
         return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
     }
 
-    /** Public Alias List choices used by the read-only identity activity directory. */
+    /** Public Alias List choices used by the read-only Alias coverage directory. */
     Map<String,Object> publicIdentityLists(StatsRequest request)
     {
         int limit = request.limit();
@@ -855,8 +856,8 @@ class StatsWebDatabase
     }
 
     /**
-     * Returns bounded, read-only analytics for one Alias List from the durable Alias Activity summary. The selected
-     * range defines which aliases are considered recently active; retained counters remain explicitly cumulative.
+     * Returns bounded, read-only coverage for one Alias List. The selected range defines which aliases are considered
+     * recently heard; zero-call and never-heard counts remain lifetime inventory facts.
      */
     Map<String,Object> publicIdentityOverview(int aliasListId, StatsRequest request)
     {
@@ -888,71 +889,31 @@ class StatsWebDatabase
                     "Alias List is assigned to too many channels");
             }
 
+            for(Map<String,Object> channel: channels)
+            {
+                String configurationId = textValue(channel.get("configuration_id"));
+                String radioSystemKey = textValue(channel.get("radio_system_key"));
+                if(!configurationId.isBlank())
+                {
+                    WebEntityRef.put(channel, "channel_entity_ref", WebEntityRef.channel(configurationId));
+                }
+                if(!radioSystemKey.isBlank())
+                {
+                    WebEntityRef.put(channel, "radio_system_entity_ref", WebEntityRef.radioSystem(radioSystemKey));
+                }
+            }
+
             Map<String,Object> totals = first(queryRows(connection, """
                 SELECT count(*) AS configured_alias_count,
                     sum(CASE WHEN summary.last_evidence_ms >= ? THEN 1 ELSE 0 END) AS active_alias_count,
-                    coalesce(sum(summary.logical_call_count), 0) AS retained_logical_call_count,
-                    coalesce(sum(summary.signaling_observation_count), 0) AS retained_signaling_observation_count,
-                    coalesce(sum(summary.grant_observation_count), 0) AS grant_observation_count,
-                    coalesce(sum(summary.join_observation_count), 0) AS join_observation_count,
-                    coalesce(sum(summary.register_observation_count), 0) AS register_observation_count,
-                    coalesce(sum(summary.emergency_observation_count), 0) AS emergency_observation_count,
-                    coalesce(sum(summary.denial_observation_count), 0) AS denial_observation_count,
-                    coalesce(sum(summary.data_observation_count), 0) AS data_observation_count,
-                    sum(CASE WHEN summary.last_evidence_ms >= ? AND alias.record_enabled = 1 THEN 1 ELSE 0 END)
-                        AS recording_enabled_active_count,
-                    sum(CASE WHEN summary.last_evidence_ms >= ? AND EXISTS (
-                        SELECT 1 FROM alias_broadcast_channel route WHERE route.alias_id = alias.id)
-                        THEN 1 ELSE 0 END) AS streaming_enabled_active_count
+                    sum(CASE WHEN coalesce(summary.logical_call_count, 0) = 0 THEN 1 ELSE 0 END)
+                        AS zero_call_alias_count,
+                    sum(CASE WHEN summary.last_evidence_ms IS NULL THEN 1 ELSE 0 END) AS never_heard_alias_count
                 FROM alias
                 LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
                 WHERE alias.alias_list_id = ?
                   AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
-                """, activeAfter, activeAfter, activeAfter, aliasListId), "Alias List was not found");
-
-            List<Map<String,Object>> topActive = queryRows(connection, """
-                SELECT alias.id AS alias_id, alias.name,
-                    CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
-                        ELSE 'talkgroup' END AS identity_type,
-                    alias.value, alias.min_value, alias.max_value,
-                    summary.logical_call_count, summary.last_evidence_ms
-                FROM alias_activity_summary summary INDEXED BY idx_alias_activity_calls
-                JOIN alias ON alias.id = summary.alias_id
-                WHERE summary.alias_list_id = ? AND summary.last_evidence_ms >= ?
-                ORDER BY summary.logical_call_count DESC, summary.alias_id
-                LIMIT 5
-                """, aliasListId, activeAfter);
-
-            List<Map<String,Object>> topSignaling = queryRows(connection, """
-                SELECT alias.id AS alias_id, alias.name,
-                    CASE WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
-                        ELSE 'talkgroup' END AS identity_type,
-                    alias.value, alias.min_value, alias.max_value,
-                    summary.signaling_observation_count, summary.last_evidence_ms
-                FROM alias_activity_summary summary INDEXED BY idx_alias_activity_signaling
-                JOIN alias ON alias.id = summary.alias_id
-                WHERE summary.alias_list_id = ? AND summary.last_evidence_ms >= ?
-                  AND summary.signaling_observation_count > 0
-                ORDER BY summary.signaling_observation_count DESC, summary.alias_id
-                LIMIT 5
-                """, aliasListId, activeAfter);
-
-            List<Map<String,Object>> lastHeard = queryRows(connection, """
-                SELECT CASE
-                        WHEN summary.last_evidence_ms IS NULL THEN 'never'
-                        WHEN summary.last_evidence_ms >= ? THEN 'hour'
-                        WHEN summary.last_evidence_ms >= ? THEN 'day'
-                        WHEN summary.last_evidence_ms >= ? THEN 'week'
-                        ELSE 'older' END AS bucket,
-                    count(*) AS alias_count
-                FROM alias
-                LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
-                WHERE alias.alias_list_id = ?
-                  AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
-                GROUP BY bucket
-                """, System.currentTimeMillis() - HOUR_MILLISECONDS,
-                System.currentTimeMillis() - DAY_MILLISECONDS,
-                System.currentTimeMillis() - 7L * DAY_MILLISECONDS, aliasListId);
+                """, activeAfter, aliasListId), "Alias List was not found");
 
             long systems = channels.stream().map(row -> row.get("radio_system_key"))
                 .filter(java.util.Objects::nonNull).distinct().count();
@@ -961,9 +922,6 @@ class StatsWebDatabase
             response.put("range", identityActivityRange(request));
             response.put("active_after_ms", activeAfter);
             response.put("totals", totals);
-            response.put("top_active", topActive);
-            response.put("top_signaling", topSignaling);
-            response.put("last_heard_distribution", lastHeard);
             response.put("channels", channels);
             response.put("correlated_channel_count", channels.size());
             response.put("correlated_radio_system_count", systems);
@@ -971,14 +929,21 @@ class StatsWebDatabase
         });
     }
 
-    /** Public, configuration-safe Alias activity page for one selected list. */
+    /** Public, configuration-safe Alias inventory for one selected list. */
     Map<String,Object> publicIdentityAliases(int aliasListId, StatsRequest request)
     {
         long activeAfter = identityActivityCutoff(request);
         String type = request.text("type");
+        String requestedStatus = request.text("status");
+        String status = requestedStatus == null ? "all" : requestedStatus;
         if(type != null && !Set.of("talkgroup", "radio").contains(type))
         {
             throw new StatsApiException(400, "invalid_parameter", "type must be talkgroup or radio", "type");
+        }
+        if(!Set.of("all", "recent", "zero_calls", "never_heard").contains(status))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "status must be all, recent, zero_calls, or never_heard", "status");
         }
         int limit = request.limit();
         int offset = request.offset();
@@ -989,14 +954,24 @@ class StatsWebDatabase
                     ELSE 'talkgroup' END AS identity_type,
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
                 summary.logical_call_count, summary.signaling_observation_count,
-                summary.last_evidence_ms
+                summary.first_evidence_ms, summary.last_evidence_ms
             FROM alias
             LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
             WHERE alias.alias_list_id = ?
               AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', 'RADIO_ID', 'RADIO_ID_RANGE')
-              AND summary.last_evidence_ms >= ?
             """);
-        List<Object> parameters = new ArrayList<>(List.of(aliasListId, activeAfter));
+        List<Object> parameters = new ArrayList<>(List.of(aliasListId));
+        switch(status)
+        {
+            case "recent" ->
+            {
+                sql.append(" AND summary.last_evidence_ms >= ?");
+                parameters.add(activeAfter);
+            }
+            case "zero_calls" -> sql.append(" AND coalesce(summary.logical_call_count, 0) = 0");
+            case "never_heard" -> sql.append(" AND summary.last_evidence_ms IS NULL");
+            default -> { }
+        }
         if(type != null)
         {
             sql.append(type.equals("radio") ?
@@ -1020,6 +995,7 @@ class StatsWebDatabase
             Map<String,Object> response = page(queryRows(connection, sql.toString(), parameters.toArray()),
                 limit, offset);
             response.put("range", identityActivityRange(request));
+            response.put("status", status);
             return response;
         });
     }
@@ -1433,7 +1409,7 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, OBSERVED_GROUP_IDENTITY_SORT_COLUMNS, "last_seen"))
-                .append(", topology, protocol_code, coalesce(radio_system_key, configuration_id), ")
+                .append(", last_seen_ms DESC, topology, protocol_code, coalesce(radio_system_key, configuration_id), ")
                 .append("group_identity_kind_code, group_identity_id, identity_key, ")
                 .append("coalesce(frequency_hz, 0), coalesce(timeslot, 0) LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
@@ -1449,6 +1425,23 @@ class StatsWebDatabase
             {
                 row.remove("has_exact_definition");
                 row.remove("result_total_count");
+                String radioSystemKey = textValue(row.get("radio_system_key"));
+                String configurationId = textValue(row.get("configuration_id"));
+                if(!radioSystemKey.isBlank())
+                {
+                    WebEntityRef.put(row, "radio_system_entity_ref", WebEntityRef.radioSystem(radioSystemKey));
+                    WebEntityRef.put(row, identityReference(row,
+                        (int)number(row.get("group_identity_kind_code")), textValue(row.get("identity_key"))));
+                }
+                if(!configurationId.isBlank())
+                {
+                    WebEntityRef channelReference = WebEntityRef.channel(configurationId);
+                    WebEntityRef.put(row, "channel_entity_ref", channelReference);
+                    if(row.get(WebEntityRef.FIELD) == null)
+                    {
+                        WebEntityRef.put(row, channelReference);
+                    }
+                }
             }
 
             Map<String,Object> response = page(rows, request);

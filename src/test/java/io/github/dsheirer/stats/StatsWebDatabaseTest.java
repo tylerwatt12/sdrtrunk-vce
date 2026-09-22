@@ -410,6 +410,7 @@ class StatsWebDatabaseTest
                 INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
                 VALUES (8111, 81, 'Shared Dispatch', 'TALKGROUP', 'DMR', 101),
                        (8112, 81, 'Shared Unit', 'RADIO_ID', 'DMR', 202),
+                       (8113, 81, 'Silent Dispatch', 'TALKGROUP', 'DMR', 303),
                        (8211, 82, 'Shared Dispatch', 'TALKGROUP', 'DMR', 101),
                        (8212, 82, 'Shared Unit', 'RADIO_ID', 'DMR', 202),
                        (7402, 74, 'Conventional Unit', 'RADIO_ID', 'DMR', 303)
@@ -483,11 +484,24 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("alias_list_id")) == 81).findFirst().orElseThrow().get("name"));
         Map<String,Object> publicOverview = mDatabase.publicIdentityOverview(81, request("/?range=24h"));
         assertEquals(1, number(publicOverview.get("correlated_channel_count")));
+        assertEquals(3, number(map(publicOverview, "totals").get("configured_alias_count")));
         assertEquals(2, number(map(publicOverview, "totals").get("active_alias_count")));
-        assertEquals("Shared Dispatch", rowsFrom(publicOverview, "top_active").getFirst().get("name"));
-        Map<String,Object> publicAliases = mDatabase.publicIdentityAliases(81,
+        assertEquals(1, number(map(publicOverview, "totals").get("zero_call_alias_count")));
+        assertEquals(1, number(map(publicOverview, "totals").get("never_heard_alias_count")));
+        assertTrue(rowsFrom(publicOverview, "channels").getFirst().containsKey("channel_entity_ref"));
+        assertTrue(rowsFrom(publicOverview, "channels").getFirst().containsKey("radio_system_entity_ref"));
+        Map<String,Object> allPublicAliases = mDatabase.publicIdentityAliases(81,
             request("/?range=24h&type=talkgroup&limit=100"));
-        assertEquals(List.of("Shared Dispatch"), rows(publicAliases).stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of("Shared Dispatch", "Silent Dispatch"), rows(allPublicAliases).stream()
+            .map(row -> row.get("name")).toList());
+        Map<String,Object> recentPublicAliases = mDatabase.publicIdentityAliases(81,
+            request("/?range=24h&type=talkgroup&status=recent&limit=100"));
+        assertEquals(List.of("Shared Dispatch"), rows(recentPublicAliases).stream()
+            .map(row -> row.get("name")).toList());
+        Map<String,Object> zeroCallPublicAliases = mDatabase.publicIdentityAliases(81,
+            request("/?range=24h&status=zero_calls&limit=100"));
+        assertEquals(List.of("Silent Dispatch"), rows(zeroCallPublicAliases).stream()
+            .map(row -> row.get("name")).toList());
 
         Map<String,Object> activity = mDatabase.dashboardActivityRadios(
             request("/?range=1h&action=UNKNOWN&limit=20"));

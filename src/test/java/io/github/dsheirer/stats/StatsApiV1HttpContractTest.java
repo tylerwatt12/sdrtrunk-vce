@@ -277,7 +277,7 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void publicIdentityActivityRoutesStayReadOnlyAndListScoped() throws Exception
+    void publicAliasCoverageRoutesStayReadOnlyAndListScoped() throws Exception
     {
         HttpResponse<String> listsResponse = get(StatsApiV1.IDENTITIES + "/lists?limit=100");
         assertEquals(200, listsResponse.statusCode(), listsResponse.body());
@@ -293,7 +293,7 @@ class StatsApiV1HttpContractTest
         assertTrue(overview.path("channels").isArray(), overviewResponse.body());
 
         HttpResponse<String> aliasesResponse = get(StatsApiV1.IDENTITIES +
-            "/lists/71/aliases?range=24h&limit=25");
+            "/lists/71/aliases?range=24h&status=all&limit=25");
         assertEquals(200, aliasesResponse.statusCode(), aliasesResponse.body());
         assertTrue(OBJECT_MAPPER.readTree(aliasesResponse.body()).path("data").isArray(), aliasesResponse.body());
 

@@ -106,7 +106,6 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         String html = readText(INDEX_HTML);
         int radioGroup = html.indexOf("data-nav-group=\"radio\"");
         int directory = html.indexOf("data-view=\"radio-systems\"", radioGroup);
-        int identities = html.indexOf("data-view=\"identities\"", directory);
         int radioGroupEnd = html.indexOf("</details>", radioGroup);
         int manageGroup = html.indexOf("data-nav-group=\"configuration\"");
         int channelSetup = html.indexOf("data-view=\"channel-setup\"", manageGroup);
@@ -114,12 +113,12 @@ class StatsWebRadioSystemsDirectoryUiContractTest
 
         assertTrue(radioGroup >= 0);
         assertTrue(directory > radioGroup);
-        assertTrue(identities > directory);
-        assertTrue(radioGroupEnd > identities);
+        assertTrue(radioGroupEnd > directory);
         assertTrue(manageGroup > radioGroupEnd);
         assertTrue(channelSetup > manageGroup);
         assertTrue(manageGroupEnd > channelSetup);
         assertFalse(html.contains("data-view=\"channels\""));
+        assertFalse(html.contains("data-view=\"identities\""));
         assertFalse(html.contains("data-view=\"conventional\""));
         assertFalse(html.contains("data-view=\"sites\""));
     }

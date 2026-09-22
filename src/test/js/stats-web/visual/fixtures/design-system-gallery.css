@@ -300,7 +300,7 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   background: var(--chart-data);
 }
 
-.visual-identity-activity-example table {
+.visual-radio-directory-coverage-example table {
   min-width: 680px;
 }
 
@@ -429,7 +429,7 @@ body:not([data-gallery-view="admin-support"]) .visual-admin-support-example,
 body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,
 body:not([data-gallery-view="dashboard-calls"]) .visual-dashboard-calls-example,
 body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-example,
-body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
+body:not([data-gallery-view="radio-directory-coverage"]) .visual-radio-directory-coverage-example,
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
