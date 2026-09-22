@@ -15,6 +15,11 @@ public interface IAnalogSquelch extends INoiseSquelchController
 {
     boolean isSquelched();
 
+    /**
+     * Returns a lock-free snapshot for diagnostic displays.  Reading this value must not affect squelch behavior.
+     */
+    NoiseSquelchState getNoiseSquelchState();
+
     void setSampleRate(double sampleRate);
 
     void setAudioListener(Listener<float[]> listener);

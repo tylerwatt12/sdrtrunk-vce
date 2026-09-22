@@ -19,6 +19,7 @@ import io.github.dsheirer.spectrum.DFTSize;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -645,6 +646,25 @@ class DiagnosticTransportTest
     }
 
     @Test
+    void encodesBoundedLittleEndianPcm16Audio()
+    {
+        DiagnosticStreamFrame frame = DiagnosticStreamFrame.pcm16(2, 3, 100, 8_000,
+            new float[]{-2.0f, -0.5f, 0.5f, 2.0f, Float.NaN});
+        ByteBuffer encoded = ByteBuffer.wrap(frame.encoded()).order(ByteOrder.LITTLE_ENDIAN);
+
+        assertEquals(DiagnosticStreamFrame.TYPE_AUDIO_PCM16, Byte.toUnsignedInt(encoded.get(5)));
+        assertEquals(10, encoded.getInt(8));
+        assertEquals(5, encoded.getInt(12));
+        assertEquals(8_000, encoded.getInt(56));
+        encoded.position(DiagnosticStreamFrame.HEADER_BYTES);
+        assertEquals(Short.MIN_VALUE, encoded.getShort());
+        assertEquals(-16_384, encoded.getShort());
+        assertEquals(16_384, encoded.getShort());
+        assertEquals(Short.MAX_VALUE, encoded.getShort());
+        assertEquals(0, encoded.getShort());
+    }
+
+    @Test
     void quantizesTunerFftValuesIntoSmallerPayloads()
     {
         float[] values = {-196.0f, -88.0f, 20.0f};
@@ -686,6 +706,21 @@ class DiagnosticTransportTest
         assertNull(queue.poll(Duration.ZERO));
         queue.close();
         assertNull(queue.poll(Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void retainsSquelchAndAudioFramesIndependently() throws Exception
+    {
+        DiagnosticFrameQueue queue = new DiagnosticFrameQueue();
+        DiagnosticStreamFrame squelch = DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_SQUELCH,
+            1, 1, 10, 851_012_500L, 8_000L, 0, new float[]{0.12f});
+        DiagnosticStreamFrame audio = DiagnosticStreamFrame.pcm16(1, 1, 10, 8_000, new float[]{0.25f});
+
+        queue.offer(squelch);
+        queue.offer(audio);
+
+        assertEquals(Set.of(squelch, audio), Set.of(queue.poll(Duration.ZERO), queue.poll(Duration.ZERO)));
+        assertNull(queue.poll(Duration.ZERO));
     }
 
     private static DiagnosticStreamFrame signal(long sequence)

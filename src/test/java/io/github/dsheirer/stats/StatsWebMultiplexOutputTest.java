@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
@@ -28,6 +29,17 @@ import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
 {
+    @Test
+    void liveAnalogAudioRequiresTheExistingAudioListeningCapability() throws Exception
+    {
+        String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
+            "StatsWebServerService.java"));
+
+        assertTrue(source.contains("frame.type() != DiagnosticStreamFrame.TYPE_AUDIO_PCM16 || " +
+            "mChannelAudioAllowed"));
+        assertTrue(source.contains("WebCapability.WEB_AUDIO_LISTEN"));
+    }
+
     @Test
     void echoesTheChannelDiagnosticSubscriptionInEachAuthoritativeState() throws Exception
     {
@@ -162,6 +174,23 @@ class StatsWebMultiplexOutputTest
         assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 3));
         assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 2));
         assertTrue(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 4));
+    }
+
+    @Test
+    void keepsSignalSymbolsSquelchAndAudioInIndependentLatestLanes() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(4);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, new byte[]{1});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, new byte[]{2});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_SQUELCH, new byte[]{3});
+        output.offerLatest(4, DiagnosticStreamFrame.TYPE_AUDIO_PCM16, new byte[]{4});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertEquals(Set.of((byte)1, (byte)2, (byte)3, (byte)4),
+            recording.mEnvelopes.stream().map(envelope -> envelope[0]).collect(java.util.stream.Collectors.toSet()));
     }
 
     @Test

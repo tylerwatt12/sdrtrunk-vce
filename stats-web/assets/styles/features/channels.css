@@ -234,7 +234,7 @@
   font-size: 16px;
 }
 
-.channel-editor-hero span:not(.ui-pill span) {
+.channel-editor-hero > div span {
   color: var(--muted);
   font-size: 12px;
 }
@@ -390,7 +390,7 @@
   display: block;
 }
 
-.channel-map-field > .ui-input {
+.channel-map-field > input {
   width: 100%;
 }
 
@@ -469,8 +469,8 @@
 :root[data-theme="dark"] .channel-admin-catalog .ui-catalog-toolbar,
 :root[data-theme="dark"] .channel-admin-catalog .channel-catalog-table tbody tr,
 :root[data-theme="dark"] .channel-catalog-table-wrap,
-:root[data-theme="dark"] .channel-editor-form .ui-form-section,
-:root[data-theme="dark"] .channel-editor-form .ui-section-disclosure,
+:root[data-theme="dark"] .channel-editor-form .channel-editor-panel,
+:root[data-theme="dark"] .channel-editor-form .channel-editor-section-disclosure,
 :root[data-theme="dark"] .channel-editor-form .channel-output-option,
 :root[data-theme="dark"] .channel-editor-form .channel-map-row,
 :root[data-theme="dark"] .channel-editor-form .channel-read-only,
@@ -680,5 +680,138 @@
   .channel-editor-footer .ui-button-primary {
     width: 100%;
     flex: 1 0 100%;
+  }
+}
+
+.channel-squelch-tuner {
+  display: grid;
+  gap: var(--space-4);
+  grid-column: 1 / -1;
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+
+.channel-squelch-heading,
+.channel-squelch-quality-line,
+.channel-squelch-slider-label,
+.channel-squelch-audio {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.channel-squelch-heading h4,
+.channel-squelch-heading p {
+  margin: 0;
+}
+
+.channel-squelch-quality,
+.channel-squelch-recent,
+.channel-squelch-slider {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.channel-squelch-quality-value {
+  color: var(--accent);
+  font-size: 1.25rem;
+}
+
+.channel-squelch-quality-meter {
+  width: 100%;
+  height: 18px;
+  accent-color: var(--success);
+}
+
+.channel-squelch-history {
+  display: grid;
+  grid-template-columns: repeat(40, minmax(2px, 1fr));
+  gap: 2px;
+  min-height: 34px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.channel-squelch-history-cell {
+  background: var(--line);
+  border-radius: 2px;
+}
+
+.channel-squelch-history-cell[data-quality="poor"] { background: var(--danger); }
+.channel-squelch-history-cell[data-quality="weak"] { background: var(--warning); }
+.channel-squelch-history-cell[data-quality="fair"] { background: var(--accent); }
+.channel-squelch-history-cell[data-quality="good"] { background: var(--success); }
+.channel-squelch-history-cell[data-quality="excellent"] {
+  background: color-mix(in srgb, var(--success) 72%, var(--accent));
+}
+
+.channel-squelch-sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.channel-squelch-slider output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-squelch-save-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+}
+
+.channel-squelch-audio {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.channel-squelch-audio input[type="range"] {
+  width: min(180px, 40vw);
+}
+
+.channel-squelch-advanced-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.channel-squelch-advanced-body > p,
+.channel-squelch-diagnostics {
+  grid-column: 1 / -1;
+}
+
+.channel-squelch-diagnostics {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.channel-squelch-diagnostics dt { color: var(--muted); }
+.channel-squelch-diagnostics dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .channel-squelch-sliders,
+  .channel-squelch-advanced-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-squelch-advanced-body > p,
+  .channel-squelch-diagnostics {
+    grid-column: 1;
   }
 }

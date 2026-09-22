@@ -35,7 +35,7 @@ public final class CarrierSquelch implements IAnalogSquelch
     private int mWindowSize;
     private volatile int mHysteresisCount;
     private int mStateBroadcastCount;
-    private float mNoise = NoiseSquelch.MAXIMUM_NOISE_THRESHOLD;
+    private volatile float mNoise = NoiseSquelch.MAXIMUM_NOISE_THRESHOLD;
     private Listener<float[]> mAudioListener;
     private Listener<SquelchState> mSquelchStateListener;
     private volatile Listener<NoiseSquelchState> mNoiseStateListener;
@@ -50,6 +50,13 @@ public final class CarrierSquelch implements IAnalogSquelch
     public boolean isSquelched()
     {
         return !mOverride && mSquelch;
+    }
+
+    @Override
+    public NoiseSquelchState getNoiseSquelchState()
+    {
+        return new NoiseSquelchState(mSquelch, mOverride, mNoise, mOpenThreshold, mCloseThreshold,
+            mHysteresisCount, mOpenHysteresis, mCloseHysteresis);
     }
 
     @Override
@@ -254,8 +261,7 @@ public final class CarrierSquelch implements IAnalogSquelch
 
             if(listener != null)
             {
-                listener.receive(new NoiseSquelchState(mSquelch, mOverride, mNoise, mOpenThreshold, mCloseThreshold,
-                    mHysteresisCount, mOpenHysteresis, mCloseHysteresis));
+                listener.receive(getNoiseSquelchState());
             }
         }
     }

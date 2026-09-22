@@ -58,6 +58,7 @@ public class NoiseSquelch implements IAnalogSquelch
     private volatile int mHysteresisOpenThreshold = DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
     private volatile int mHysteresisCloseThreshold = DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
     private volatile int mHysteresisCount = 0;
+    private volatile float mNoise = MAXIMUM_NOISE_THRESHOLD;
     private int mSquelchStateBroadcastCounter = 0;
     private int mSquelchOpenIndex = 0;
     private int mAudioBufferFilterDelay;
@@ -91,6 +92,13 @@ public class NoiseSquelch implements IAnalogSquelch
         }
 
         return mSquelch;
+    }
+
+    @Override
+    public NoiseSquelchState getNoiseSquelchState()
+    {
+        return new NoiseSquelchState(mSquelch, mSquelchOverride, mNoise, mNoiseOpenThreshold,
+            mNoiseCloseThreshold, mHysteresisCount, mHysteresisOpenThreshold, mHysteresisCloseThreshold);
     }
 
     /**
@@ -183,17 +191,14 @@ public class NoiseSquelch implements IAnalogSquelch
     /**
      * Broadcasts the current noise squelch state to an optionally registered listener.  This can be use used in the
      * user interface to display the state of the channel and noise squelch activity.
-     * @param noise variance from the current 10-millisecond audio buffer.
      */
-    private void broadcastNoiseSquelchState(float noise)
+    private void broadcastNoiseSquelchState()
     {
         Listener<NoiseSquelchState> listener = mNoiseSquelchStateListener;
 
         if(listener != null)
         {
-            listener.receive(new NoiseSquelchState(mSquelch, mSquelchOverride, noise,
-                    mNoiseOpenThreshold, mNoiseCloseThreshold, mHysteresisCount, mHysteresisOpenThreshold,
-                    mHysteresisCloseThreshold));
+            listener.receive(getNoiseSquelchState());
         }
     }
 
@@ -303,6 +308,7 @@ public class NoiseSquelch implements IAnalogSquelch
 
                 //Formula from Apache Commons Math - Variance class.
                 float noiseVariance = (varianceAccumulator1 - (varianceAccumulator2 * varianceAccumulator2 / mVarianceWindowSize)) / mVarianceWindowSize;
+                mNoise = noiseVariance;
                 boolean below = mSquelch ? (noiseVariance < mNoiseOpenThreshold) : (noiseVariance < mNoiseCloseThreshold);
                 mHysteresisCount += (below ? 1 : -1);
 
@@ -353,7 +359,7 @@ public class NoiseSquelch implements IAnalogSquelch
                 mSquelchStateBroadcastCounter++;
                 if(mSquelchStateBroadcastCounter >= 5)
                 {
-                    broadcastNoiseSquelchState(noiseVariance);
+                    broadcastNoiseSquelchState();
                     mSquelchStateBroadcastCounter -= 5;
                 }
             }

@@ -29,6 +29,8 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
     static final int TYPE_CHANNEL_SIGNAL = 2;
     static final int TYPE_CHANNEL_SYMBOLS = 3;
     static final int TYPE_TUNER_FFT = 4;
+    static final int TYPE_SQUELCH = 5;
+    static final int TYPE_AUDIO_PCM16 = 6;
     static final int TYPE_HEARTBEAT = 127;
 
     DiagnosticStreamFrame
@@ -54,7 +56,8 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
                                          long centerFrequencyHz, long sampleRateHz, int fftSize, int firstBin,
                                          int sourceBinCount, float[] values)
     {
-        if(type != TYPE_CHANNEL_SIGNAL && type != TYPE_CHANNEL_SYMBOLS && type != TYPE_TUNER_FFT)
+        if(type != TYPE_CHANNEL_SIGNAL && type != TYPE_CHANNEL_SYMBOLS && type != TYPE_TUNER_FFT &&
+            type != TYPE_SQUELCH)
         {
             throw new IllegalArgumentException("Diagnostic float frame type is invalid");
         }
@@ -84,7 +87,7 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
             {
                 value = Math.max(-(float)Math.PI, Math.min((float)Math.PI, value));
             }
-            else
+            else if(type != TYPE_SQUELCH)
             {
                 value = Math.max(-196.0f, Math.min(20.0f, value));
             }
@@ -97,6 +100,31 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
 
         return new DiagnosticStreamFrame(type, generation, sequence, observedAtEpochMs, encodedAt,
             centerFrequencyHz, (int)sampleRateHz, fftSize, firstBin, sourceBinCount, values.length, buffer.array());
+    }
+
+    static DiagnosticStreamFrame pcm16(long generation, long sequence, long observedAtEpochMs, int sampleRateHz,
+                                       float[] samples)
+    {
+        Objects.requireNonNull(samples, "Audio samples cannot be null");
+
+        if(sampleRateHz <= 0 || samples.length == 0)
+        {
+            throw new IllegalArgumentException("Diagnostic audio metadata is invalid");
+        }
+
+        ByteBuffer buffer = header(TYPE_AUDIO_PCM16, Math.multiplyExact(samples.length, Short.BYTES),
+            samples.length, generation, sequence, observedAtEpochMs, 0, 0, sampleRateHz, 0, 0, 0);
+
+        for(float raw: samples)
+        {
+            float sample = Float.isFinite(raw) ? Math.max(-1.0f, Math.min(1.0f, raw)) : 0.0f;
+            buffer.putShort((short)Math.round(sample * (sample < 0.0f ? 32768.0f : 32767.0f)));
+        }
+
+        long encodedAt = System.currentTimeMillis();
+        buffer.putLong(40, encodedAt);
+        return new DiagnosticStreamFrame(TYPE_AUDIO_PCM16, generation, sequence, observedAtEpochMs, encodedAt,
+            0, sampleRateHz, 0, 0, 0, samples.length, buffer.array());
     }
 
     static DiagnosticStreamFrame tunerFft(long generation, long sequence, long observedAtEpochMs,

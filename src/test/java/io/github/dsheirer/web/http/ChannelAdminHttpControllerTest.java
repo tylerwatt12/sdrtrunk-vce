@@ -105,6 +105,13 @@ class ChannelAdminHttpControllerTest
             assertTrue(MAPPER.readTree(readOnlyCatalog.body()).path("data").path("channels")
                 .get(0).path("editable").booleanValue());
 
+            HttpResponse<String> stoppedPreview = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.PATH + "/" + channelId + "/squelch-preview"), "POST",
+                "{\"action\":\"APPLY\",\"noise_open\":0.1,\"noise_close\":0.19," +
+                    "\"hysteresis_open\":4,\"hysteresis_close\":6}");
+            assertEquals(409, stoppedPreview.statusCode(), stoppedPreview.body());
+            assertTrue(stoppedPreview.body().contains("not currently running"));
+
             HttpResponse<String> move = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH + "/" +
                 channelId + "/auto-start/move"), "POST",
                 "{\"revision\":" + revision + ",\"direction\":\"EARLIER\"}");

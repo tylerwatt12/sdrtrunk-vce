@@ -189,6 +189,29 @@ public final class ChannelAdminHttpController
 
     private void handleItem(HttpExchange exchange, String path) throws Exception
     {
+        String squelchPreviewSuffix = "/squelch-preview";
+        if(path.endsWith(squelchPreviewSuffix))
+        {
+            String id = itemId(path.substring(0, path.length() - squelchPreviewSuffix.length()));
+            requireMethod(exchange, "POST");
+            requireNoQuery(exchange);
+            SquelchPreviewRequest request = readJson(exchange, SquelchPreviewRequest.class);
+
+            if(required(request.action(), "action") == PreviewAction.RESTORE)
+            {
+                mService.restoreSquelchPreview(id, required(request.leaseId(), "lease_id"));
+                sendData(exchange, 200, Map.of("restored", true));
+            }
+            else
+            {
+                sendData(exchange, 200, mService.previewSquelch(id, request.leaseId(),
+                    required(request.noiseOpen(), "noise_open"), required(request.noiseClose(), "noise_close"),
+                    required(request.hysteresisOpen(), "hysteresis_open"),
+                    required(request.hysteresisClose(), "hysteresis_close")));
+            }
+            return;
+        }
+
         String statisticsSuffix = "/statistics/clear";
         if(path.endsWith(statisticsSuffix))
         {
@@ -398,7 +421,10 @@ public final class ChannelAdminHttpController
 
     private record RevisionRequest(Long revision) {}
     private record MoveRequest(Long revision, ChannelAdministrationService.Direction direction) {}
+    private record SquelchPreviewRequest(PreviewAction action, String leaseId, Float noiseOpen, Float noiseClose,
+                                         Integer hysteresisOpen, Integer hysteresisClose) {}
     private record ActionRequest(Long revision, Action action, List<String> configurationIds) {}
+    private enum PreviewAction { APPLY, RESTORE }
     private enum Action { START, STOP, ENABLE_AUTO_START, DISABLE_AUTO_START, CLONE, DELETE }
     private static final class RequestException extends Exception
     {
