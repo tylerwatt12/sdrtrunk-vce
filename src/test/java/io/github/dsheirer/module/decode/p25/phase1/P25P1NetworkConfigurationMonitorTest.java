@@ -18,6 +18,7 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSecondaryControlChannelBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSecondaryControlChannelBroadcastExplicit;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.motorola.osp.MotorolaBaseStationId;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SNDCPDataChannelAnnouncementExplicit;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.SecondaryControlChannelBroadcastExplicit;
@@ -28,6 +29,24 @@ import org.junit.jupiter.api.Test;
 
 class P25P1NetworkConfigurationMonitorTest
 {
+    @Test
+    void ignoresProtectedMotorolaBaseStationIdCiphertext()
+    {
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.set(1); //Protected TSBK flag
+        message.setInt(183, IntField.length12(68));
+        MotorolaBaseStationId baseStationId = new MotorolaBaseStationId(
+            P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x346, 1_000L);
+        ((APCO25Channel)baseStationId.getChannel()).setFrequencyBand(new P25FrequencyBand(0, 851_006_250L,
+            -45_000_000L, 6_250L, 12_500, 1));
+
+        P25P1NetworkConfigurationMonitor monitor = new P25P1NetworkConfigurationMonitor(Modulation.C4FM);
+
+        assertTrue(baseStationId.isEncrypted());
+        assertNull(monitor.process(baseStationId));
+        assertTrue(monitor.getSnapshot().channels().isEmpty());
+    }
+
     @Test
     void acceptsSecondaryControlOnlyForTheStabilizedSite()
     {

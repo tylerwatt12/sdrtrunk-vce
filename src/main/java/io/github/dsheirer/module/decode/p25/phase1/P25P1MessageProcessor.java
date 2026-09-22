@@ -44,6 +44,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.lc.standard.LCSourceI
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.ldu.LDU2Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.tdu.TDULCMessage;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
 import io.github.dsheirer.sample.Listener;
 import java.util.List;
 import java.util.Map;
@@ -317,7 +318,10 @@ public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateE
             return;
         }
 
-        if(message.isValid())
+        //A protected TSBK has a valid CRC over encrypted opcode and argument fields.  Keep publishing the message so
+        //that downstream consumers can account for valid control-channel activity, but never use ciphertext to seed
+        //or enrich the frequency plan.
+        if(message.isValid() && (!(message instanceof TSBKMessage tsbk) || !tsbk.isEncrypted()))
         {
             processForFrequencyBands(message);
         }

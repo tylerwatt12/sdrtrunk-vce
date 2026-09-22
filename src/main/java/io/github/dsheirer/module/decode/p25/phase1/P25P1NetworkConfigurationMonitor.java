@@ -148,6 +148,11 @@ public class P25P1NetworkConfigurationMonitor
      */
     public P25NetworkConfigurationSnapshot process(TSBKMessage tsbk)
     {
+        if(tsbk.isEncrypted())
+        {
+            return null;
+        }
+
         switch(tsbk.getOpcode())
         {
             case OSP_IDENTIFIER_UPDATE:

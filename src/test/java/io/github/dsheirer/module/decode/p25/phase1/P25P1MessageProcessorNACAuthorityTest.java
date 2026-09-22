@@ -41,6 +41,25 @@ class P25P1MessageProcessorNACAuthorityTest
     private static final long BASE_FREQUENCY = 851_006_250L;
 
     @Test
+    void protectedFrequencyBandCiphertextDoesNotSeedTheFrequencyPlan()
+    {
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(false);
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(received::add);
+
+        Band protectedBand = new Band(NAC, 1_000L, BASE_FREQUENCY, true);
+        APCO25Channel channel = APCO25Channel.create(0, 1);
+        Grant grant = new Grant(channel, NAC, 1_001L);
+
+        processor.receive(protectedBand);
+        processor.receive(grant);
+
+        assertEquals(2, received.size(), "protected messages remain visible to control-channel observers");
+        assertEquals(0L, channel.getDownlinkFrequency(),
+            "encrypted frequency-band fields must not affect later channel resolution");
+    }
+
+    @Test
     void candidatesStayOffSharedStreamAndEstablishingThirdMessageIsProcessedExactlyOnce()
     {
         P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
@@ -237,8 +256,18 @@ class P25P1MessageProcessorNACAuthorityTest
 
         private Band(int nac, long timestamp, long baseFrequency)
         {
+            this(nac, timestamp, baseFrequency, false);
+        }
+
+        private Band(int nac, long timestamp, long baseFrequency, boolean encrypted)
+        {
             super(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, new CorrectedBinaryMessage(96), nac, timestamp);
             mBaseFrequency = baseFrequency;
+
+            if(encrypted)
+            {
+                getMessage().set(1);
+            }
         }
 
         @Override
