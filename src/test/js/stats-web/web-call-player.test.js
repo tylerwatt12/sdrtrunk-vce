@@ -247,6 +247,42 @@ async function main() {
     assert.equal(resetPoll.feedCursor, '20');
     assert.equal(resetPoll.ui.status.textContent, 'Waiting');
 
+    const failedPoll = Object.assign(Object.create(WebCallPlayer.prototype), {
+      feedActive: true,
+      stopped: false,
+      feedGeneration: 8,
+      feedController: null,
+      feedCursor: '20',
+      statusValue: '',
+      ui: { status: { textContent: '' } },
+      stateObservers: new Set(),
+      requestFeed: async () => { throw new Error('offline'); },
+      scheduleFeedPoll(generation, delay) { this.retry = { generation, delay }; }
+    });
+    await failedPoll.pollFeed(8);
+    assert.equal(failedPoll.feedCursor, null,
+      'A failed live-feed request must discard its stale cursor and resume at the live edge');
+    assert.equal(failedPoll.ui.status.textContent, 'Reconnecting');
+    assert.deepEqual(failedPoll.retry, {
+      generation: 8,
+      delay: WebCallPlayer.FEED_RETRY_INTERVAL_MS
+    });
+
+    const recovering = Object.assign(Object.create(WebCallPlayer.prototype), {
+      feedActive: true,
+      stopped: false,
+      statusValue: 'Reconnecting',
+      stopFeed() { this.feedActive = false; this.stopCount = (this.stopCount || 0) + 1; },
+      ensureConnected() { this.feedActive = true; this.connectCount = (this.connectCount || 0) + 1; return true; }
+    });
+    assert.equal(recovering.recoverFeed(), true);
+    assert.equal(recovering.stopCount, 1);
+    assert.equal(recovering.connectCount, 1);
+    recovering.statusValue = 'Waiting';
+    assert.equal(recovering.recoverFeed(), false,
+      'Page focus must leave a healthy audio feed alone');
+    assert.equal(recovering.stopCount, 1);
+
     const stopped = Object.assign(Object.create(WebCallPlayer.prototype), {
       stopped: false,
       transportToken: 0,

@@ -674,7 +674,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js';"));
+        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=1';"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertFalse(source.contains("VOLUME_KEY"));
         assertFalse(source.contains("localStorage"));
@@ -1764,6 +1764,25 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("/api/v1/live/channel-diagnostics"));
         assertFalse(source.contains("/api/v1/live/tuner-diagnostics"));
         assertTrue(source.contains("stream.update(diagnosticParameters())"));
+    }
+
+    @Test
+    void refreshesBrowserLiveDeliveryAfterThePageReturns() throws Exception
+    {
+        String source = source();
+        String recovery = function(source, "function recoverBrowserLiveDelivery()");
+        String player = readText(WEB_CALL_PLAYER);
+        String recoverFeed = function(player, "  recoverFeed()");
+
+        assertTrue(source.contains("window.addEventListener('focus', recoverBrowserLiveDelivery)"));
+        assertTrue(source.contains("window.addEventListener('online', recoverBrowserLiveDelivery)"));
+        assertTrue(source.contains("document.addEventListener('visibilitychange', recoverBrowserLiveDelivery)"));
+        assertTrue(recovery.contains("if (document.hidden) return"));
+        assertTrue(recovery.contains("liveMultiplexer.restart()"));
+        assertTrue(recovery.contains("webCallPlayer?.recoverFeed()"));
+        assertTrue(recoverFeed.contains("this.statusValue !== 'Reconnecting'"));
+        assertTrue(recoverFeed.contains("this.stopFeed()"));
+        assertTrue(recoverFeed.contains("this.ensureConnected()"));
     }
 
     @Test

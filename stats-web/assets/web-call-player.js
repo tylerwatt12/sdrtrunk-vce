@@ -234,6 +234,7 @@ export class WebCallPlayer {
       this.scheduleFeedPoll(generation, WebCallPlayer.FEED_POLL_INTERVAL_MS);
     } catch (error) {
       if (controller.signal.aborted || !this.feedActive || this.stopped || generation !== this.feedGeneration) return;
+      this.feedCursor = null;
       this.setStatus('Reconnecting');
       this.scheduleFeedPoll(generation, WebCallPlayer.FEED_RETRY_INTERVAL_MS);
     } finally {
@@ -249,6 +250,12 @@ export class WebCallPlayer {
     this.feedController = null;
     if (this.feedTimer !== null) window.clearTimeout(this.feedTimer);
     this.feedTimer = null;
+  }
+
+  recoverFeed() {
+    if (!this.feedActive || this.stopped || this.statusValue !== 'Reconnecting') return false;
+    this.stopFeed();
+    return this.ensureConnected();
   }
 
   synchronizeSubscription() {

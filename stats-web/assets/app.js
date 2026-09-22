@@ -12,7 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { WebCallPlayer } from './web-call-player.js';
+import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -8458,6 +8458,21 @@ class LiveMultiplexer {
 
 const liveMultiplexer = new LiveMultiplexer();
 notifyConfirmedAccessRefresh = () => liveMultiplexer.confirmedAccessRefresh();
+
+let browserLiveRecoveryTimer = null;
+function recoverBrowserLiveDelivery() {
+  if (document.hidden) return;
+  if (browserLiveRecoveryTimer !== null) window.clearTimeout(browserLiveRecoveryTimer);
+  browserLiveRecoveryTimer = window.setTimeout(() => {
+    browserLiveRecoveryTimer = null;
+    if (document.hidden) return;
+    liveMultiplexer.restart();
+    webCallPlayer?.recoverFeed();
+  }, 100);
+}
+window.addEventListener('focus', recoverBrowserLiveDelivery);
+window.addEventListener('online', recoverBrowserLiveDelivery);
+document.addEventListener('visibilitychange', recoverBrowserLiveDelivery);
 
 function liveConnection(topic, parameters = {}, pageScoped = true) {
   const listeners = new Map();
