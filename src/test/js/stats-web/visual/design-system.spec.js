@@ -15,6 +15,33 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+test('app-chrome-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/design-system.html?theme=light&view=app-chrome');
+  await expect(page.locator('body')).toHaveScreenshot('app-chrome-light-desktop.png');
+});
+
+test('app-chrome-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=app-chrome');
+  await expect(page.locator('body')).toHaveScreenshot('app-chrome-dark-mobile.png');
+});
+
+test('app chrome keeps desktop navigation and mobile playback controls distinct', async ({ page }) => {
+  const navigation = page.locator('.visual-app-chrome-example .navigation-toggle');
+  const playbackMenu = page.locator('.visual-app-chrome-example .playback-control-menu');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/design-system.html?theme=light&view=app-chrome');
+  await expect(navigation).toBeHidden();
+  await expect(playbackMenu).toHaveAttribute('open', '');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(navigation).toBeVisible();
+  await expect(playbackMenu).not.toHaveAttribute('open', '');
+  await expect(page.locator('.visual-app-chrome-example .playback-control-menu > summary')).toBeVisible();
+});
+
 for(const theme of ['light', 'dark']) {
   test(`modal-${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 720 });

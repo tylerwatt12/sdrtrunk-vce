@@ -11,6 +11,15 @@
   --header-ink: #e8eef3;
   --header-muted: #d3dce4;
   --header-line: #5b6873;
+  --header-control: #2c3944;
+  --header-control-hover: #384957;
+  --header-nav-active: #35b8a9;
+  --transport-surface: #20292c;
+  --transport-control: #354044;
+  --transport-control-active: #354b32;
+  --transport-ink: #dce5e2;
+  --transport-muted: #aab9b4;
+  --transport-accent: #b8ef61;
   --accent: #0b7168;
   --accent-soft: #d9efec;
   --warning: #a35c00;

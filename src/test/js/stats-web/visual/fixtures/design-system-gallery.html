@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sdrtrunk-vce design system</title>
   <link rel="stylesheet" href="/assets/app.css">
+  <style>@import url("/assets/styles/compositions/app-chrome.css") layer(compositions);</style>
   <link rel="stylesheet" href="/visual/design-system-gallery.css">
 </head>
 <body data-gallery-view="gallery">
@@ -27,6 +28,35 @@
     <symbol id="visual-icon-channel" viewBox="0 0 24 24"><path d="M12 5v14M8 19h8M9 9a4.25 4.25 0 0 0 0 6M15 9a4.25 4.25 0 0 1 0 6M6 6a8.5 8.5 0 0 0 0 12M18 6a8.5 8.5 0 0 1 0 12"></path></symbol>
     <symbol id="visual-icon-conventional" viewBox="0 0 24 24"><path d="M12 5v14M8 19h8M9 9a4.25 4.25 0 0 0 0 6M15 9a4.25 4.25 0 0 1 0 6M6 6a8.5 8.5 0 0 0 0 12M18 6a8.5 8.5 0 0 1 0 12"></path></symbol>
   </svg>
+
+  <div class="visual-app-chrome-example">
+    <div class="app-header">
+      <header class="topbar">
+        <button class="navigation-toggle icon-button ui-button ui-button-header" type="button" aria-label="Open navigation"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></button>
+        <a class="brand" href="#">sdrtrunk-vce</a>
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <details class="nav-group"><summary>Listen</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Dashboard</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Live</span></a></div></details>
+          <a class="nav-direct active" href="#">Radio</a>
+          <details class="nav-group"><summary>Manage</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Scan Lists</span></a></div></details>
+        </nav>
+        <div class="header-controls">
+          <button class="auth-action ui-button ui-button-header" type="button">Signed in</button>
+          <button class="theme-toggle icon-button ui-button ui-button-header" type="button" aria-label="Use dark theme"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg></button>
+        </div>
+      </header>
+      <button class="navigation-backdrop" type="button" aria-label="Close navigation" hidden></button>
+      <div id="desktop-playback-slot">
+        <section class="playback-bar" aria-label="Web call playback">
+          <details class="playback-control-menu" open><summary aria-label="Playback controls"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button class="playback-command playback-icon-command active" type="button" aria-label="Playing" aria-pressed="true">▶</button><button class="playback-command playback-icon-command" type="button" aria-label="Pause">Ⅱ</button><button class="playback-command playback-icon-command" type="button" aria-label="Skip">»</button><button class="playback-command playback-letter-command" type="button" aria-label="Hold">H</button><button class="playback-command playback-letter-command" type="button" disabled aria-label="Avoid">A</button></div><label class="playback-volume"><span class="playback-volume-label">VOL</span><input type="range" value="75" aria-label="Browser playback volume"></label></div></details>
+          <div class="playback-now"><div class="playback-current"><strong class="playback-current-primary">County Fire · Dispatch</strong><span class="playback-current-secondary">Engine 4 → Fire Dispatch</span></div></div>
+          <details class="playback-subscriptions"><summary><span class="playback-scan-list-label">Scan Lists:</span> <strong>2 selected</strong></summary><div class="playback-subscription-panel">Fire and EMS</div></details>
+          <details class="playback-queue"><summary><span class="playback-field">Queued</span> <strong>3</strong></summary><div class="playback-queue-list">3 calls</div></details>
+          <div class="playback-status">Playing</div>
+        </section>
+      </div>
+    </div>
+    <div class="visual-app-chrome-context"><h1>Radio</h1><p>The application chrome remains consistent above page content.</p></div>
+  </div>
 
   <main class="design-system-gallery">
     <header class="visual-gallery-header">

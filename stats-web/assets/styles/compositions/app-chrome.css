@@ -1,0 +1,132 @@
+/* Shared application chrome: a restrained inverse header and compact audio transport. */
+.app-header {
+  box-shadow: var(--shadow-control);
+}
+
+.topbar {
+  color: var(--header-ink);
+  background: var(--header);
+  border-bottom: 1px solid var(--header-line);
+}
+
+.brand {
+  color: var(--header-ink);
+}
+
+.navigation-toggle.ui-button {
+  display: none;
+}
+
+.header-controls .ui-button-header {
+  --ui-control-height: 34px;
+  --ui-control-radius: var(--radius-compact);
+}
+
+.header-controls .icon-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 6px;
+}
+
+.header-controls .auth-action {
+  max-width: 190px;
+  overflow: hidden;
+  padding-inline: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-controls .auth-session-button {
+  padding-inline: 8px;
+}
+
+.playback-bar {
+  position: relative;
+  min-height: 53px;
+  display: grid;
+  grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  color: var(--transport-accent);
+  background: var(--transport-surface);
+  border-bottom: 1px solid var(--transport-control);
+}
+
+.playback-bar.access-unavailable {
+  color: var(--transport-muted);
+}
+
+.playback-command,
+.playback-subscriptions summary,
+.playback-queue summary,
+#desktop-playback-slot .playback-control-menu > summary {
+  min-height: var(--control-height-compact);
+  color: var(--transport-ink);
+  background: var(--transport-control);
+  border: 1px solid var(--transport-surface);
+  border-radius: var(--radius-compact);
+  box-shadow: none;
+}
+
+.playback-command {
+  min-width: 48px;
+  padding: 3px 8px;
+  font-weight: 780;
+}
+
+.playback-command:hover:not(:disabled),
+.playback-command.active,
+.playback-subscriptions[open] summary,
+.playback-queue[open] summary,
+#desktop-playback-slot .playback-control-menu[open] > summary {
+  color: var(--transport-accent);
+  background: var(--transport-control-active);
+  border-color: color-mix(in srgb, var(--transport-accent) 45%, var(--transport-control-active));
+}
+
+.playback-command:focus-visible,
+.playback-subscriptions summary:focus-visible,
+.playback-queue summary:focus-visible,
+#desktop-playback-slot .playback-control-menu > summary:focus-visible {
+  outline: 2px solid var(--transport-accent);
+  outline-offset: 2px;
+}
+
+.playback-command:disabled {
+  color: var(--transport-muted);
+  background: var(--transport-surface);
+  border-color: var(--transport-control);
+  cursor: default;
+}
+
+@media (min-width: 1181px) and (max-width: 1250px) {
+  .playback-bar {
+    grid-template-columns: max-content max-content minmax(160px, 1fr) max-content max-content max-content max-content;
+  }
+}
+
+@media (max-width: 1180px) {
+  .navigation-toggle.ui-button {
+    display: inline-grid;
+  }
+
+  .header-controls .auth-action {
+    max-width: 88px;
+  }
+
+  #desktop-playback-slot .playback-bar {
+    min-width: 0;
+    min-height: 50px;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: 7px;
+    padding: 3px 7px;
+  }
+}
+
+@media (max-width: 560px) {
+  .header-controls .auth-action {
+    max-width: 72px;
+    padding-inline: 6px;
+  }
+}

@@ -135,6 +135,25 @@
   opacity: .48;
 }
 
+.ui-button-header {
+  color: var(--header-ink);
+  background: var(--header-control);
+  border-color: var(--header-line);
+}
+
+.ui-button-header:hover:not(:disabled),
+.ui-button-header:focus-visible {
+  color: var(--header-ink);
+  background: var(--header-control-hover);
+  border-color: var(--header-muted);
+}
+
+.ui-button-header[aria-pressed="true"] {
+  color: var(--header-ink);
+  background: var(--header-control-hover);
+  border-color: var(--header-nav-active);
+}
+
 .ui-button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: .48;

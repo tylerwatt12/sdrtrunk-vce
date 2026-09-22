@@ -29,12 +29,10 @@
   min-height: 100vh;
 }
 
-
 .app-header {
   position: sticky;
   top: 0;
   z-index: 20;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
 }
 
 .topbar {
@@ -44,13 +42,9 @@
   align-items: center;
   gap: 22px;
   padding: 0 16px;
-  background: var(--header);
-  color: #fff;
-  border-bottom: 1px solid #111820;
 }
 
 .brand {
-  color: #fff;
   font-size: 17px;
   font-weight: 700;
 }
@@ -69,15 +63,15 @@
   display: flex;
   align-items: center;
   padding: 0 13px;
-  color: #dce4eb;
+  color: var(--header-muted);
   border-bottom: 3px solid transparent;
 }
 
 .primary-nav a:hover,
 .primary-nav a.active {
-  color: #fff;
-  background: #2c3944;
-  border-bottom-color: #35b8a9;
+  color: var(--header-ink);
+  background: var(--header-control);
+  border-bottom-color: var(--header-nav-active);
   text-decoration: none;
 }
 
@@ -94,82 +88,16 @@
   align-items: center;
   gap: 7px;
   padding-left: 9px;
-  border-left: 1px solid #4b5863;
+  border-left: 1px solid var(--header-line);
 }
 
 .auth-session-label {
   max-width: 190px;
   overflow: hidden;
-  color: #d3dce4;
+  color: var(--header-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.auth-session-button {
-  min-height: 27px;
-  padding: 3px 8px;
-  color: #dce4eb;
-  background: transparent;
-  border-color: #5b6873;
-}
-
-.auth-session-button:hover,
-.auth-session-button:focus-visible {
-  color: #fff;
-  background: #384957;
-  border-color: #7f909d;
-}
-
-.auth-action {
-  min-height: 27px;
-  padding: 3px 8px;
-  color: #dce4eb;
-  background: #2c3944;
-  border-color: #5b6873;
-}
-
-.auth-action:hover:not(:disabled),
-.auth-action:focus-visible {
-  color: #fff;
-  background: #384957;
-  border-color: #7f909d;
-}
-
-.theme-toggle {
-  min-width: 48px;
-  min-height: 27px;
-  padding: 3px 8px;
-  color: #dce4eb;
-  background: #2c3944;
-  border-color: #5b6873;
-}
-
-.theme-toggle:hover,
-.theme-toggle:focus-visible {
-  color: #fff;
-  background: #384957;
-  border-color: #7f909d;
-}
-
-.playback-bar {
-  position: relative;
-  min-height: 53px;
-  display: grid;
-  grid-template-columns: max-content minmax(220px, 1fr) max-content max-content max-content;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  color: #b8ff3d;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.045), transparent 16%),
-    linear-gradient(180deg, #2c3235 0%, #202528 52%, #171b1d 100%);
-  border-bottom: 1px solid #090c0d;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), inset 0 -5px 12px rgba(0,0,0,.2);
-}
-
-.playback-bar.access-unavailable {
-  color: #77838b;
 }
 
 .playback-bar.access-unavailable .playback-now,
@@ -197,33 +125,6 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-}
-
-.playback-command {
-  min-width: 48px;
-  min-height: 32px;
-  padding: 3px 8px;
-  color: #cbd1d3;
-  background: linear-gradient(180deg, #3a4144 0%, #242a2d 100%);
-  border-color: #090b0c;
-  border-top-color: #5a6266;
-  border-radius: 4px;
-  box-shadow: 0 1px 0 #101315, inset 0 1px rgba(255,255,255,.06);
-  font-weight: 780;
-}
-
-.playback-command:hover:not(:disabled),
-.playback-command.active {
-  color: #e8ffd0;
-  background: linear-gradient(180deg, #52683d 0%, #303d27 100%);
-  border-color: #6a8c36;
-}
-
-.playback-command:disabled {
-  color: #69747b;
-  background: #171c20;
-  border-color: #343d43;
-  cursor: default;
 }
 
 .playback-icon-command,
@@ -413,17 +314,10 @@
 
 .playback-subscriptions summary,
 .playback-queue summary {
-  min-height: 32px;
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 3px 7px;
-  color: #cbd1d3;
-  background: linear-gradient(180deg, #3a4144 0%, #242a2d 100%);
-  border: 1px solid #090b0c;
-  border-top-color: #5a6266;
-  border-radius: 4px;
-  box-shadow: 0 1px 0 #101315, inset 0 1px rgba(255,255,255,.06);
   cursor: pointer;
   list-style-position: inside;
 }
@@ -431,13 +325,6 @@
 .playback-subscriptions summary::marker,
 .playback-queue summary::marker {
   color: #aab3b9;
-}
-
-.playback-subscriptions[open] summary,
-.playback-queue[open] summary {
-  color: #e8ffd0;
-  background: linear-gradient(180deg, #52683d 0%, #303d27 100%);
-  border-color: #6a8c36;
 }
 
 .playback-scan-list-label {
@@ -2014,12 +1901,6 @@ th.numeric {
 
 }
 
-@media (min-width: 1181px) and (max-width: 1250px) {
-  .playback-bar {
-    grid-template-columns: max-content max-content minmax(160px, 1fr) max-content max-content max-content max-content;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .activity-row-new > td {
     background: var(--accent-soft);
@@ -2117,11 +1998,11 @@ th.numeric {
 }
 
 .primary-nav a.access-locked {
-  color: #77848d;
+  color: color-mix(in srgb, var(--header-muted) 60%, var(--header));
 }
 
 .primary-nav a.access-locked:hover {
-  color: #a7b2b9;
+  color: var(--header-muted);
 }
 
 .icon-button {
@@ -2140,9 +2021,6 @@ th.numeric {
 
 .navigation-toggle {
   display: none;
-  color: #dce4eb;
-  background: transparent;
-  border-color: #586773;
 }
 
 .topbar {
@@ -2171,7 +2049,7 @@ th.numeric {
   align-items: center;
   gap: 5px;
   padding: 0 11px;
-  color: #dce4eb;
+  color: var(--header-muted);
   border: 0;
   border-bottom: 3px solid transparent;
   cursor: pointer;
@@ -2198,9 +2076,9 @@ th.numeric {
 .nav-group.active > summary,
 .primary-nav .nav-direct:hover,
 .primary-nav .nav-direct.active {
-  color: #fff;
-  background: #2c3944;
-  border-bottom-color: #35b8a9;
+  color: var(--header-ink);
+  background: var(--header-control);
+  border-bottom-color: var(--header-nav-active);
   text-decoration: none;
 }
 
@@ -2213,7 +2091,7 @@ th.numeric {
   display: grid;
   padding: 6px;
   background: var(--header);
-  border: 1px solid #4d5c67;
+  border: 1px solid var(--header-line);
   border-radius: 0 0 5px 5px;
   box-shadow: 0 8px 22px rgb(0 0 0 / 32%);
 }
@@ -2230,50 +2108,32 @@ th.numeric {
   align-items: center;
   gap: 7px;
   padding: 7px 9px;
-  color: #dce4eb;
+  color: var(--header-muted);
   border: 0;
   border-radius: 3px;
 }
 
 .primary-nav .nav-group-links a:hover,
 .primary-nav .nav-group-links a.active {
-  color: #fff;
-  background: #34444f;
+  color: var(--header-ink);
+  background: var(--header-control-hover);
   border: 0;
 }
 
 .nav-placeholder {
-  color: #95a2ad;
+  color: var(--header-muted);
   cursor: default;
 }
 
 .nav-placeholder small,
 .nav-group-links a small {
-  color: #94a3ae;
+  color: var(--header-muted);
   font-size: 10px;
   white-space: nowrap;
 }
 
 .navigation-backdrop[hidden] {
   display: none;
-}
-
-.theme-toggle {
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  min-height: 34px;
-  padding: 6px;
-}
-
-.auth-action {
-  height: 34px;
-  min-height: 34px;
-  padding: 4px 9px;
-}
-
-.playback-bar {
-  grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content;
 }
 
 .placeholder-page {
@@ -2321,13 +2181,6 @@ th.numeric {
   .auth-controls {
     padding-left: 0;
     border-left: 0;
-  }
-
-  .auth-action {
-    max-width: 88px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .primary-nav {
@@ -2400,14 +2253,6 @@ th.numeric {
     overflow: visible;
   }
 
-  #desktop-playback-slot .playback-bar {
-    min-width: 0;
-    min-height: 50px;
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
-    gap: 7px;
-    padding: 3px 7px;
-  }
-
   #desktop-playback-slot .playback-control-menu {
     position: relative;
     display: block;
@@ -2416,16 +2261,9 @@ th.numeric {
   #desktop-playback-slot .playback-control-menu > summary {
     width: 32px;
     height: 32px;
-    min-height: 32px;
     display: grid;
     place-items: center;
     padding: 4px;
-    color: #cbd1d3;
-    background: linear-gradient(180deg, #3a4144 0%, #242a2d 100%);
-    border: 1px solid #090b0c;
-    border-top-color: #5a6266;
-    border-radius: 4px;
-    box-shadow: 0 1px 0 #101315, inset 0 1px rgba(255,255,255,.06);
     cursor: pointer;
     list-style: none;
   }
@@ -2442,12 +2280,6 @@ th.numeric {
     stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
-  }
-
-  #desktop-playback-slot .playback-control-menu[open] > summary {
-    color: #e8ffd0;
-    background: linear-gradient(180deg, #52683d 0%, #303d27 100%);
-    border-color: #6a8c36;
   }
 
   #desktop-playback-slot .playback-control-menu:not([open]) > .playback-control-menu-panel {
@@ -2514,11 +2346,6 @@ th.numeric {
 
   .header-controls {
     gap: 5px;
-  }
-
-  .auth-action {
-    max-width: 72px;
-    padding-inline: 6px;
   }
 
 }
