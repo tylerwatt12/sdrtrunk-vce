@@ -111,6 +111,13 @@ assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
   'The Receiver status page must keep the canonical current issue list.');
 assert.match(renderHealth, /receiverHealthAccountSettingNotice\(snapshot\)/);
 
+const healthAccountSettingNotice = functionSource('function receiverHealthAccountSettingNotice(snapshot)');
+assert.match(healthAccountSettingNotice,
+  /href\('settings', \{ section: 'status-icon' \}\)/,
+  'The Receiver status link must open the current personal status-icon settings route.');
+assert.doesNotMatch(healthAccountSettingNotice, /href\('admin', \{ tab: 'alerts' \}\)/,
+  'The Receiver status link must not use the retired Administration alerts route.');
+
 const updateIndicator = functionSource('  updateIndicator() {');
 assert.match(updateIndicator, /if \(this\.stale\)/,
   'Stale health must take precedence over personal alert switches.');

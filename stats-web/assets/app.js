@@ -19263,7 +19263,8 @@ function receiverHealthAccountSettingNotice(snapshot) {
       `${settings.active_count === 1 ? 'appears' : 'appear'} in your status icon. ` +
       'Every issue remains monitored and clears automatically when the condition stops. This feature does not send email or push notifications.';
   }
-  const settingsLink = anchor('Choose what appears in my status icon', href('admin', { tab: 'alerts' }));
+  const settingsLink = anchor('Choose what appears in my status icon',
+    href('settings', { section: 'status-icon' }));
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
   notice.append(node('span', '', message), settingsLink);
   return notice;
