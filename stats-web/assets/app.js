@@ -14589,7 +14589,7 @@ function liveChannelsSection(onSelectionChange) {
     if (currentControl) selectRow(displayed, currentControl);
     tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
   };
-  const requestedChannel = route.get('channel');
+  let requestedChannel = route.get('channel');
 
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
@@ -14706,8 +14706,11 @@ function liveChannelsSection(onSelectionChange) {
     close.hidden = !stopped;
     close.title = stopped ? `Close stopped channel ${label}` : '';
     close.setAttribute('aria-label', `Close stopped channel ${label}`);
-    if (requestedChannel && value.configuration_id === requestedChannel && activeTableId !== value.table_id) {
-      showTable(value.table_id);
+    if (requestedChannel && value.configuration_id === requestedChannel) {
+      if (activeTableId !== value.table_id) showTable(value.table_id);
+      requestedChannel = null;
+      route.delete('channel');
+      window.history.replaceState({}, '', currentHref());
     } else if (!applyingSnapshot && !activeTableId && (!liveChannelActivityActiveTableId ||
       liveChannelActivityActiveTableId === value.table_id)) {
       showTable(tables.has('conventional') ? 'conventional' : value.table_id);

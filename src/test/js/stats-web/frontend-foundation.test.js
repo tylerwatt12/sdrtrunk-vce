@@ -255,6 +255,10 @@ async function main() {
   assert.match(liveChannelsSource,
     /iconButton\('icon-live-presentation', 'Live presentation settings'/);
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
+  assert.match(liveChannelsSource, /let requestedChannel = route\.get\('channel'\)/);
+  assert.match(liveChannelsSource,
+    /if \(activeTableId !== value\.table_id\) showTable\(value\.table_id\);\s+requestedChannel = null;\s+route\.delete\('channel'\);\s+window\.history\.replaceState/,
+    'A Live channel deep link must be consumed after its initial table selection');
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
   assert.match(appSource, /layoutMenuOpen: reopenLayoutMenu/);
