@@ -111,10 +111,10 @@ class StatsWebChannelsUiContractTest
         assertTrue(css.contains(".channel-catalog-table tbody tr.selected"));
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".channel-catalog-table-host {\n  width: 100%;\n  min-width: 0;\n" +
-            "  max-width: 100%;\n  overflow: hidden;"));
+            "  max-width: 100%;\n  overflow: visible;"));
         assertTrue(css.contains(".channel-catalog-table-wrap {\n  width: 100%;\n  min-width: 0;\n" +
-            "  max-width: 100%;\n  max-height:"));
-        assertTrue(css.contains("overflow: auto;"));
+            "  max-width: 100%;\n  overflow-x: auto;\n  overflow-y: visible;"));
+        assertFalse(css.contains("max-height: min(70dvh, 720px);"));
         assertTrue(css.contains("@media (max-width: 720px)"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-admin-catalog .link-button"));
         assertTrue(css.contains(":not(.ui-button):not(.ui-segmented-option)"));

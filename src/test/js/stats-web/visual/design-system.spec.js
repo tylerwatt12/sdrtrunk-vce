@@ -143,6 +143,18 @@ test('radio-directory-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-dark-mobile.png', { fullPage: true });
 });
 
+test('entity-details-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=entity-details');
+  await expect(page.locator('body')).toHaveScreenshot('entity-details-light-desktop.png', { fullPage: true });
+});
+
+test('entity-details-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=entity-details');
+  await expect(page.locator('body')).toHaveScreenshot('entity-details-dark-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

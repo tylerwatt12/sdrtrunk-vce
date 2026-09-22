@@ -494,6 +494,10 @@ class StatsWebDatabaseTest
             request("/?range=24h&type=talkgroup&limit=100"));
         assertEquals(List.of("Shared Dispatch", "Silent Dispatch"), rows(allPublicAliases).stream()
             .map(row -> row.get("name")).toList());
+        Map<String,Object> linkedPublicAlias = rowWith(rows(allPublicAliases), "name", "Shared Dispatch");
+        assertEquals("talkgroup", map(linkedPublicAlias, "entity_ref").get("kind"));
+        assertEquals("dmr:tier3:small:42", map(linkedPublicAlias, "entity_ref").get("radio_system_key"));
+        assertFalse(rowWith(rows(allPublicAliases), "name", "Silent Dispatch").containsKey("entity_ref"));
         Map<String,Object> recentPublicAliases = mDatabase.publicIdentityAliases(81,
             request("/?range=24h&type=talkgroup&status=recent&limit=100"));
         assertEquals(List.of("Shared Dispatch"), rows(recentPublicAliases).stream()

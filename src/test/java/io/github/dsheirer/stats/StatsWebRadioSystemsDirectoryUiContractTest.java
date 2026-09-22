@@ -68,7 +68,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(systemCard.contains("ui-surface radio-directory-system-card"));
         assertTrue(systemCard.contains("uiIconTile('icon-trunked')"));
         assertTrue(channelCard.contains("ui-surface radio-directory-channel-card"));
-        assertTrue(channelCard.contains("uiIconTile('icon-channel', 'blue')"));
+        assertTrue(channelCard.contains("uiIconTile('icon-conventional', 'blue')"));
         assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
     }
 
@@ -104,17 +104,14 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     void separatesTheReadOnlyDirectoryFromAdministrativeChannelSetup() throws Exception
     {
         String html = readText(INDEX_HTML);
-        int radioGroup = html.indexOf("data-nav-group=\"radio\"");
-        int directory = html.indexOf("data-view=\"radio-systems\"", radioGroup);
-        int radioGroupEnd = html.indexOf("</details>", radioGroup);
+        int directory = html.indexOf("data-view=\"radio-systems\" class=\"nav-direct\"");
         int manageGroup = html.indexOf("data-nav-group=\"configuration\"");
         int channelSetup = html.indexOf("data-view=\"channel-setup\"", manageGroup);
         int manageGroupEnd = html.indexOf("</details>", manageGroup);
 
-        assertTrue(radioGroup >= 0);
-        assertTrue(directory > radioGroup);
-        assertTrue(radioGroupEnd > directory);
-        assertTrue(manageGroup > radioGroupEnd);
+        assertTrue(directory >= 0);
+        assertFalse(html.contains("data-nav-group=\"radio\""));
+        assertTrue(manageGroup > directory);
         assertTrue(channelSetup > manageGroup);
         assertTrue(manageGroupEnd > channelSetup);
         assertFalse(html.contains("data-view=\"channels\""));

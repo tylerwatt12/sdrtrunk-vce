@@ -992,12 +992,84 @@ class StatsWebDatabase
 
         return readSnapshot(connection -> {
             requirePublicAliasList(connection, aliasListId);
-            Map<String,Object> response = page(queryRows(connection, sql.toString(), parameters.toArray()),
-                limit, offset);
+            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            decoratePublicAliasEntityReferences(connection, aliasListId, rows);
+            Map<String,Object> response = page(rows, limit, offset);
             response.put("range", identityActivityRange(request));
             response.put("status", status);
             return response;
         });
+    }
+
+    /**
+     * Adds a canonical destination only when one exact configured identity resolves to one unambiguous page.
+     * Range aliases, never-observed aliases, and identifiers shared by multiple systems deliberately remain plain
+     * text instead of linking to an arbitrary owner.
+     */
+    private void decoratePublicAliasEntityReferences(Connection connection, int aliasListId,
+                                                       List<Map<String,Object>> aliases) throws SQLException
+    {
+        if(aliases.isEmpty())
+        {
+            return;
+        }
+
+        List<WebConfiguredEntityRepository.ConfiguredChannel> channels = mConfiguredEntities.channels(connection)
+            .stream().filter(channel -> channel.aliasListId() != null && channel.aliasListId() == aliasListId)
+            .toList();
+
+        for(Map<String,Object> alias: aliases)
+        {
+            if(!(alias.get("value") instanceof Number value) ||
+                number(alias.get("logical_call_count")) + number(alias.get("signaling_observation_count")) <= 0)
+            {
+                continue;
+            }
+
+            StatsApiProtocol aliasProtocol = StatsApiProtocol.fromName(textValue(alias.get("protocol")));
+            Form form = "radio".equals(alias.get("identity_type")) ? Form.RADIO : Form.TALKGROUP;
+            Map<String,WebEntityRef> destinations = new LinkedHashMap<>();
+
+            for(WebConfiguredEntityRepository.ConfiguredChannel channel: channels)
+            {
+                if(channel.protocol() != aliasProtocol)
+                {
+                    continue;
+                }
+
+                WebEntityRef destination;
+                if(channel.channelKind() == WebConfiguredEntityRepository.ChannelKind.CONVENTIONAL)
+                {
+                    destination = WebEntityRef.channel(channel.configurationId());
+                }
+                else
+                {
+                    WebEntityNavigationCatalog.Channel navigation = new WebEntityNavigationCatalog.Channel(
+                        channel.configurationId(), WebEntityRef.channel(channel.configurationId()),
+                        channel.radioSystemKey() != null ? WebEntityRef.radioSystem(channel.radioSystemKey()) : null,
+                        channel.protocolCode(), channel.addressDomainCode() != null ? channel.addressDomainCode() : 0,
+                        channel.p25Wacn(), channel.p25SystemId());
+                    Protocol protocol = switch(aliasProtocol)
+                    {
+                        case P25 -> Protocol.APCO25;
+                        case DMR -> Protocol.DMR;
+                        case NXDN -> Protocol.NXDN;
+                        default -> Protocol.UNKNOWN;
+                    };
+                    destination = navigation.identity(form, protocol, value.intValue());
+                }
+
+                if(destination != null)
+                {
+                    destinations.put(destination.toMap().toString(), destination);
+                }
+            }
+
+            if(destinations.size() == 1)
+            {
+                WebEntityRef.put(alias, destinations.values().iterator().next());
+            }
+        }
     }
 
     Map<String,Object> unassignedGroupIdentities(int aliasListId, StatsRequest request)

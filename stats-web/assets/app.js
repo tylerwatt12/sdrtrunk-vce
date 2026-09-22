@@ -12063,8 +12063,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
-  targetLabel.append(node('span', 'tuner-spectrum-field-label', 'Receiver window'));
   const targetSelect = node('select', 'ui-select');
+  targetSelect.setAttribute('aria-label', 'Receiver window');
   targetSelect.disabled = true;
   targetSelect.append(node('option', '', 'Loading tuners…'));
   targetLabel.append(uiSelectFrame(targetSelect));
@@ -12233,14 +12233,8 @@ function tunerSpectrumPanel(snapPresetDocument) {
     'Drag or use the arrow keys to pan. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
 
-  const plot = (kicker, title, description, ariaLabel, extraClass = '') => {
+  const plot = (ariaLabel, extraClass = '') => {
     const card = node('section', `tuner-spectrum-card ${extraClass}`.trim());
-    const header = node('header', 'tuner-spectrum-card-header');
-    const copy = node('div', 'tuner-spectrum-card-copy');
-    copy.append(node('span', 'tuner-spectrum-card-kicker', kicker),
-      node('h3', 'channel-diagnostic-title', title),
-      node('p', 'tuner-spectrum-card-description', description));
-    header.append(copy);
     const host = node('div', 'tuner-spectrum-plot');
     const canvas = node('canvas', 'channel-diagnostic-canvas tuner-spectrum-canvas');
     canvas.setAttribute('role', 'img');
@@ -12252,12 +12246,11 @@ function tunerSpectrumPanel(snapPresetDocument) {
     guide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
     host.append(canvas, guide, overlay);
-    card.append(header, host);
+    card.append(host);
     return { card, host, canvas, guide, overlay };
   };
-  const spectrum = plot('FFT', 'Live spectrum', 'Signal power across the selected receiver window.',
-    'Tuner frequency spectrum', 'tuner-spectrum-fft');
-  const waterfall = plot('History', 'Waterfall', 'Recent signal intensity across the same receiver window.',
+  const spectrum = plot('Tuner frequency spectrum', 'tuner-spectrum-fft');
+  const waterfall = plot(
     'Tuner spectrum history. Each row keeps the receiver window that created it. Gold dividers mark tuner retunes.',
     'tuner-spectrum-waterfall');
   const fftBandRail = node('div', 'tuner-spectrum-band-rail');
@@ -12638,10 +12631,11 @@ function tunerSpectrumPanel(snapPresetDocument) {
   }
 
   const renderWaterfallRow = (values, metadata, observedAtEpochMs, rowCount = 1, retune = null) => {
-    if (!values.length || !metadata || !waterfallRowImage) return;
+    if (!values.length || !metadata || !waterfallRowImage || !viewport) return;
     const domain = tunerFrameDomain(metadata, values.length);
     const domainSpan = domain.endHz - domain.startHz;
-    if (!(domainSpan > 0)) return;
+    const viewportSpan = viewport.endHz - viewport.startHz;
+    if (!(domainSpan > 0) || !(viewportSpan > 0)) return;
     const row = waterfallRowImage;
     for (let x = 0; x < waterfallBuffer.width; x += 1) {
       row.data[x * 4] = palette[0];
@@ -12650,10 +12644,15 @@ function tunerSpectrumPanel(snapPresetDocument) {
       row.data[x * 4 + 3] = 255;
     }
     for (let x = 0; x < waterfallBuffer.width; x += 1) {
+      const cellStartHz = viewport.startHz + x / waterfallBuffer.width * viewportSpan;
+      const cellEndHz = viewport.startHz + (x + 1) / waterfallBuffer.width * viewportSpan;
+      const overlapStartHz = Math.max(cellStartHz, domain.startHz);
+      const overlapEndHz = Math.min(cellEndHz, domain.endHz);
+      if (overlapEndHz <= overlapStartHz) continue;
       const firstBin = Math.max(0, Math.min(values.length - 1,
-        Math.floor(x * values.length / waterfallBuffer.width)));
+        Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.length)));
       const lastBin = Math.min(values.length, Math.max(firstBin + 1,
-        Math.ceil((x + 1) * values.length / waterfallBuffer.width)));
+        Math.ceil((overlapEndHz - domain.startHz) / domainSpan * values.length)));
       let raw = -Infinity;
       for (let bin = firstBin; bin < lastBin; bin += 1) {
         if (Number.isFinite(values[bin])) raw = Math.max(raw, values[bin]);
@@ -13131,6 +13130,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const previous = viewport;
     transformPlots(previous, nextViewport);
     viewport = nextViewport;
+    restoreWaterfallHistory();
     renderFrequencyBands();
     setRefining(true);
     setReadouts(true);
@@ -13220,8 +13220,9 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   function waterfallFrequencyAt(row, ratio) {
     const domain = tunerFrameDomain(row?.metadata, Number(row?.metadata?.valueCount || 0));
-    const spanHz = domain.endHz - domain.startHz;
-    return spanHz > 0 ? domain.startHz + ratio * spanHz : null;
+    if (!viewport || !(domain.endHz > domain.startHz)) return null;
+    const frequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
+    return frequencyHz >= domain.startHz && frequencyHz <= domain.endHz ? frequencyHz : null;
   }
 
   function setSpectrumCursorGuide(frequencyHz) {
@@ -16147,8 +16148,8 @@ function channelSummaryCards(catalog, editable) {
   const channels = catalog.channels || [];
   const wrapper = node('div', 'channel-summary-grid');
   const cards = [
-    ['Configured channels', channels.length, 'icon-channel', 'accent'],
-    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-live', 'success']
+    ['Configured channels', channels.length, 'icon-conventional', 'accent'],
+    ['Running now', channels.filter((row) => row.processing_state === 'RUNNING').length, 'icon-play', 'success']
   ];
   cards.push(editable ?
     ['Auto-start enabled', channels.filter((row) => row.auto_start_order != null).length, 'icon-play', 'blue'] :
@@ -16248,7 +16249,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') }
+      row.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') }
   );
   if (editable) columns.push(
     { id: 'auto-start', label: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
@@ -16426,7 +16427,7 @@ function radioDirectoryConventionalCard(row) {
   aliases.append('Alias List: ', aliasListLink(row.alias_list_name, row.alias_list_id) || '—');
   identity.append(aliases);
   const identityGroup = node('div', 'radio-directory-channel-identity');
-  identityGroup.append(uiIconTile('icon-channel', 'blue'), identity);
+  identityGroup.append(uiIconTile('icon-conventional', 'blue'), identity);
   const technical = node('span', 'radio-directory-channel-technical');
   technical.append(node('span', 'radio-directory-frequency-list',
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequency'),
@@ -16581,8 +16582,9 @@ async function renderModernChannelCatalog(renderContext, editable) {
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
     const state = { revision: Number(catalog.revision), catalog, visibleRows: [] };
-    const wrapper = node('div', 'channel-admin-catalog ui-catalog data-workspace');
-    wrapper.dataset.uiDensity = 'compact';
+    const wrapper = node('div', `channel-admin-catalog ui-catalog ${editable ? 'editor-workspace' :
+      'data-workspace'}`);
+    wrapper.dataset.uiDensity = editable ? 'comfortable' : 'compact';
     const summaryHost = node('div');
     summaryHost.append(channelSummaryCards(catalog, editable));
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
@@ -16969,13 +16971,13 @@ function channelEditorSectionNavigation(panels, plan) {
   const icons = {
     general: 'icon-edit',
     source: 'icon-tuner',
-    protocol: 'icon-channel',
+    protocol: 'icon-conventional',
     output: 'icon-recording'
   };
   plan.forEach(({ definition, id, advanced }) => {
     const link = anchor(definition.label, `#${id}`,
       'channel-section-navigation-link ui-section-navigation-link');
-    link.prepend(iconGlyph(icons[definition.id] || 'icon-channel'));
+    link.prepend(iconGlyph(icons[definition.id] || 'icon-conventional'));
     link.setAttribute('aria-controls', id);
     if (advanced) link.append(node('small', 'muted', 'Optional'));
     link.addEventListener('click', (event) => {
@@ -17450,10 +17452,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const identity = node('div');
       identity.append(node('strong', '', channel.name || 'New channel'),
         node('span', '', `${profile.label} · ${semanticLabel(profile.channel_kind || 'Dynamic')}`));
-      hero.append(iconGlyph('icon-channel'), identity);
+      hero.append(iconGlyph('icon-conventional'), identity);
       if (editing) hero.append(uiPill(entry.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
         entry.processing_state === 'RUNNING' ? 'success' : 'neutral',
-        entry.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop'));
+        entry.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop'));
       form.append(hero);
       if (editing && entry.processing_state === 'RUNNING') {
         const notice = node('div', 'channel-restart-notice');
@@ -17679,7 +17681,8 @@ function aliasCoverageAliasCell(row, aliasListId) {
 
 function aliasCoverageIdentityCell(row) {
   const type = row.identity_type === 'radio' ? 'Radio' : 'Talkgroup';
-  return identitySummaryValue(identityActivityValue(row), type);
+  const target = entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' });
+  return identitySummaryValue(identityActivityValue(row), type, target);
 }
 
 function aliasCoverageAliasesColumns(aliasListId) {
@@ -17720,7 +17723,7 @@ function aliasCoverageOwnerCell(row) {
 
 function aliasCoverageUnassignedIdentity(row) {
   const label = `${groupIdentityLabel(row, null, false)} ${identityNumber(row, row.group_identity_id)}`;
-  return identitySummaryValue(label, row.identity_key || '', entityTarget(row.entity_ref, { channel: 'groups' }));
+  return identitySummaryValue(label, '', entityTarget(row.entity_ref, { channel: 'groups' }));
 }
 
 function aliasCoverageUnassignedColumns() {
@@ -17770,7 +17773,7 @@ function aliasCoverageSummaryCards(totals, unassigned) {
   [
     ['Configured aliases', configured, 'icon-identities', 'configured'],
     ['Heard in period', recent, 'icon-live', 'recent'],
-    ['Not heard in period', Math.max(0, configured - recent), 'icon-channel', 'quiet'],
+    ['Not heard in period', Math.max(0, configured - recent), 'icon-pause', 'quiet'],
     ['Unassigned observed', unassigned.total_count || 0, 'icon-warning', 'unassigned']
   ].forEach(([label, value, icon, tone]) => {
     const card = node('div', `ui-summary-card alias-coverage-summary-card alias-summary-${tone}`);
@@ -20443,7 +20446,7 @@ function renderAdminSystem() {
 
 function adminProtocolEmptyState(protocolName) {
   const body = node('div', 'settings-empty-state');
-  body.append(iconGlyph('icon-channel'), node('h2', '', `${protocolName} receiver-wide settings`),
+  body.append(iconGlyph('icon-conventional'), node('h2', '', `${protocolName} receiver-wide settings`),
     node('p', '', `There are no shared ${protocolName} settings yet. Settings that belong to one channel remain ` +
       'in Channel Setup.'),
     anchor('Open Channel Setup', href('channel-setup'), 'ui-button ui-button-secondary'));

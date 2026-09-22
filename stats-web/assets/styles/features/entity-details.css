@@ -1,0 +1,212 @@
+/* Shared modern presentation for radio systems, identities, radios, and channels. */
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-header {
+  align-items: center;
+  margin-bottom: var(--space-3);
+  padding: var(--space-4);
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-title {
+  font-size: clamp(22px, 2.2vw, 30px);
+  font-weight: 800;
+  letter-spacing: -.025em;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-subtitle {
+  margin-top: var(--space-1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs {
+  width: fit-content;
+  max-width: 100%;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  padding: 4px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs a,
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs span.disabled {
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-control) - 2px);
+  text-decoration: none;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs a.active,
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs span.disabled.active {
+  margin: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-dark);
+  box-shadow: var(--shadow-control);
+}
+
+.entity-info-layout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, .9fr) minmax(0, 1.5fr);
+  align-items: start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.entity-info-column {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.entity-info-layout .section,
+.entity-info-column > .section {
+  margin-bottom: 0;
+}
+
+.entity-info-standalone {
+  max-width: 1120px;
+  margin: 0 auto var(--space-4);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .section {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .section-title {
+  min-height: 46px;
+  padding: 11px var(--space-4);
+  background: var(--surface);
+  border-bottom-color: var(--line);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .summary-band {
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: transparent;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .metric {
+  min-height: 76px;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-color: var(--line);
+  border-radius: var(--radius-control);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .metric span {
+  min-height: 0;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .045em;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .metric strong {
+  font-size: 24px;
+  letter-spacing: -.02em;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values {
+  grid-template-columns: minmax(145px, .7fr) minmax(0, 1.3fr);
+  padding: 0 var(--space-4);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dt,
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dd {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 9px 0;
+  border-color: var(--line);
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dt {
+  padding-right: var(--space-3);
+  color: var(--muted);
+  background: transparent;
+  border-right: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dd {
+  padding-left: var(--space-3);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dt:nth-last-of-type(1),
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dd:last-child {
+  border-bottom: 0;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-scroll {
+  border: 0;
+  border-radius: 0;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-wrap th {
+  height: 42px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .table-wrap td {
+  min-height: 44px;
+  padding-block: 9px;
+}
+
+@media (max-width: 900px) {
+  .entity-info-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-header {
+    padding: var(--space-3);
+  }
+
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .tabs {
+    width: 100%;
+  }
+
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dt,
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dd {
+    min-height: 0;
+    padding: 6px 0;
+    border-bottom: 0;
+  }
+
+  body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .key-values dt:not(:first-child) {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--line);
+  }
+}

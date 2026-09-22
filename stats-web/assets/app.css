@@ -13,10 +13,11 @@
 @import url("./styles/compositions/workspaces.css") layer(compositions);
 @import url("./styles/compositions/modals.css") layer(compositions);
 @import url("./styles/compositions/settings.css") layer(compositions);
-@import url("./styles/features/channels.css") layer(features);
+@import url("./styles/features/channels.css?v=2") layer(features);
+@import url("./styles/features/entity-details.css") layer(features);
 @import url("./styles/features/live.css?v=2") layer(features);
 @import url("./styles/features/radio-directory.css") layer(features);
-@import url("./styles/features/tuner-spectrum.css?v=2") layer(features);
+@import url("./styles/features/tuner-spectrum.css?v=3") layer(features);
 @import url("./styles/features/scanner.css?v=1") layer(features);
 @import url("./styles/features/rf-planner.css?v=1") layer(features);
 @import url("./styles/features/aliases.css?v=1") layer(features);

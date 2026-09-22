@@ -390,7 +390,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
     /ui-surface radio-directory-system-card[\s\S]+uiIconTile\('icon-trunked'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalCard'),
-    /ui-surface radio-directory-channel-card[\s\S]+uiIconTile\('icon-channel', 'blue'\)/);
+    /ui-surface radio-directory-channel-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryStatus'), /uiStatus\(/);
   assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);

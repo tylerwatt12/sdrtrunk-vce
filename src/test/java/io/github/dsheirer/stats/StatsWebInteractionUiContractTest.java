@@ -204,10 +204,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
         assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
         assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
-        assertTrue(tuner.contains("plot('FFT', 'Live spectrum', 'Signal power across the selected receiver window.'"));
-        assertTrue(tuner.contains("'Tuner frequency spectrum', 'tuner-spectrum-fft'"));
+        assertTrue(tuner.contains("plot('Tuner frequency spectrum', 'tuner-spectrum-fft')"));
         assertTrue(tuner.contains("'Tuner spectrum history. Each row keeps the receiver window that created it."));
         assertTrue(tuner.contains("Gold dividers mark tuner retunes.'"));
+        assertFalse(tuner.contains("Live spectrum"));
+        assertFalse(tuner.contains("node('span', 'tuner-spectrum-field-label', 'Receiver window')"));
         assertFalse(live.contains("java-ui"));
         assertFalse(channel.contains("java-ui"));
         assertFalse(tuner.contains("java-ui"));
@@ -303,7 +304,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"155\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"157\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -370,7 +371,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
-        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".entity-info-standalone > .section"));
+        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".entity-info-column > .section"));
         assertFalse(source.contains("function talkgroupEvidence"));
         assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
@@ -642,7 +643,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=133"));
+        assertTrue(html.contains("/assets/app.css?v=134"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1604,9 +1605,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("const TUNER_WATERFALL_HISTORY_ROWS = 256"));
         assertTrue(tuner.contains("const waterfallHistoryRows = []"));
         assertTrue(tuner.contains("waterfallHistoryRows.push(cached)"));
-        assertTrue(tuner.contains("Math.floor(x * values.length / waterfallBuffer.width)"));
+        assertTrue(tuner.contains("const cellStartHz = viewport.startHz"));
+        assertTrue(tuner.contains("Math.floor((overlapStartHz - domain.startHz) / domainSpan * values.length)"));
         assertTrue(tuner.contains("function waterfallHistoryRow(yRatio)"));
         assertTrue(tuner.contains("function waterfallFrequencyAt(row, ratio)"));
+        assertTrue(tuner.contains("const frequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz)"));
         assertTrue(tuner.contains("const historyRow = event.currentTarget === waterfall.canvas ? waterfallHistoryRow(yRatio) : null"));
         assertTrue(tuner.contains("if (viewingHistory) setWaterfallCursorGuide(ratio)"));
         assertTrue(tuner.contains("waterfallRetuneRows.forEach((retune, physicalRow) =>"));
@@ -1616,6 +1619,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(acceptState.contains("resetWaterfallBuffer(1, 1)"));
         assertFalse(function(tuner, "function transformPlots(fromViewport, toViewport)")
             .contains("waterfall"));
+        assertTrue(function(tuner, "function applyViewport(nextViewport, requestMode = 'debounced')")
+            .contains("restoreWaterfallHistory()"));
         assertFalse(acceptFrame.contains("restoreWaterfallHistory()"));
         assertTrue(tuner.contains("restoreWaterfallHistory()"));
         assertFalse(tuner.contains("' (digital)'"));
@@ -1641,7 +1646,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("waterfall.host.insertBefore(fftBandRail"));
         assertFalse(tuner.contains("tuner-spectrum-scope-layer"));
         assertTrue(tuner.contains("function renderFrequencyBands()"));
-        assertTrue(tuner.contains("viewport = nextViewport;\n    renderFrequencyBands();"));
+        assertTrue(tuner.contains("viewport = nextViewport;\n    restoreWaterfallHistory();\n    renderFrequencyBands();"));
         assertTrue(tuner.contains("scope.minHz < viewport.startHz) ? '←' : start"));
         assertTrue(tuner.contains("scope.maxHz > viewport.endHz) ? '→' : end"));
         assertFalse(updateCursor.contains("renderFrequencyBands"));

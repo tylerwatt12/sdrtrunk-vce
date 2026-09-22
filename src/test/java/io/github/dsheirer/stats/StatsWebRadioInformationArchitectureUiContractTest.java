@@ -31,6 +31,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(routes.contains("id: 'channel-setup', label: 'Channel Setup'"));
         assertTrue(routes.contains("access: 'admin-channels'"));
         assertTrue(index.contains("data-view=\"radio-systems\""));
+        assertTrue(index.contains("data-view=\"radio-systems\" class=\"nav-direct\""));
+        assertFalse(index.contains("data-nav-group=\"radio\""));
         assertFalse(index.contains("data-view=\"identities\""));
         assertTrue(index.contains("data-view=\"channel-setup\""));
         assertTrue(index.contains("<summary>Manage</summary>"));
@@ -59,6 +61,8 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("value: 'never_heard'"));
         assertTrue(app.contains("value: 'talkgroup', label: 'Talkgroups'"));
         assertTrue(app.contains("value: 'radio', label: 'Radios'"));
+        assertTrue(app.contains("entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' })"));
+        assertFalse(app.contains("identitySummaryValue(label, row.identity_key || ''"));
         assertTrue(app.contains("function adminSettingsTree(groups, active)"));
         assertTrue(app.contains("{ label: 'Protocols', items: ["));
         assertTrue(app.contains("id: 'protocol-p25'"));

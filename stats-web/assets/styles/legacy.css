@@ -861,32 +861,6 @@
   opacity: .72;
 }
 
-.entity-info-layout {
-  display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
-  align-items: start;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.entity-info-column {
-  display: grid;
-  min-width: 0;
-  gap: 12px;
-}
-
-.entity-info-layout .section {
-  margin-bottom: 0;
-}
-
-.entity-info-standalone {
-  margin-bottom: 12px;
-}
-
-.entity-info-standalone > .section {
-  margin-bottom: 0;
-}
-
 .system-summary-band {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 0;
@@ -2511,10 +2485,6 @@ th.numeric {
   .summary-band,
   .split {
     grid-template-columns: 1fr 1fr;
-  }
-
-  .entity-info-layout {
-    grid-template-columns: 1fr;
   }
 
   .signal-current-grid {
