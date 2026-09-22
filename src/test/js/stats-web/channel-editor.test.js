@@ -61,6 +61,10 @@ assert.match(squelchTunerSource, /detail\.append\(value\)/,
   'Diagnostic readouts must retain their live output elements');
 assert.match(application, /action: 'RESTORE'/,
   'Closing the editor must restore runtime-only squelch preview settings');
+const channelColumns = functionSource('function channelAdminColumns(');
+assert.match(channelColumns, /event\.shiftKey/);
+assert.match(channelColumns, /visibleIds\.slice\(Math\.min\(first, last\), Math\.max\(first, last\) \+ 1\)/);
+assert.match(channelColumns, /state\.selectionAnchor = id/);
 
 const plan = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'general', label: 'General', fields: [{ path: 'name', required: true }] },

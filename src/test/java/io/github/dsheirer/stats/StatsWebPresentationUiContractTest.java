@@ -125,7 +125,7 @@ class StatsWebPresentationUiContractTest
         assertTrue(detail.contains("recorded_logical_call_count"));
         assertTrue(detail.contains("stream_submitted_logical_call_count"));
         assertTrue(detail.contains("encrypted_logical_call_count"));
-        assertTrue(filters.contains("'alias-filter alias-date-filter'"));
+        assertTrue(filters.contains("'alias-filter alias-date-filter ui-field'"));
         assertTrue(filters.contains("filterGroup('Find aliases', 'alias-filter-group-identity'"));
         assertTrue(filters.contains("filterGroup('Call handling', 'alias-filter-group-behavior'"));
         assertTrue(filters.contains("filterGroup('Observed activity', 'alias-filter-group-observed'"));

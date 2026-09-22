@@ -31,7 +31,25 @@ body.modal-open {
 }
 
 .read-only-modal.frequency-action-modal {
-  width: min(1040px, 96vw);
+  width: min(560px, 96vw);
+}
+
+.read-only-modal.tuner-frequency-modal {
+  width: min(360px, 96vw);
+}
+
+@media (max-width: 560px) {
+  .modal-backdrop:has(.tuner-frequency-modal) {
+    padding: var(--space-3);
+  }
+
+  .read-only-modal.tuner-frequency-modal {
+    width: min(360px, calc(100vw - 24px));
+    height: auto;
+    max-height: calc(100dvh - 24px);
+    margin: auto;
+    border-radius: var(--radius-modal);
+  }
 }
 
 .modal-header {

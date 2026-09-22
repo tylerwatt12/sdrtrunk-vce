@@ -99,10 +99,12 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
     {
         BW_3_0("3.0 kHz", 3000.0),
         BW_5_0("5.0 kHz", 5000.0),
+        BW_6_25("6.25 kHz", 6250.0),
         BW_7_5("7.5 kHz", 7500.0),
         BW_8_33("8.33 kHz", 10000.0),
         BW_12_5("12.5 kHz", 12500.0),
         BW_15_0("15.0 kHz", 15000.0),
+        BW_20_0("20.0 kHz", 20000.0),
         BW_25_0("25.0 kHz", 25000.0);
 
         private String mLabel;
@@ -120,7 +122,9 @@ public abstract class DecodeConfigAnalog extends DecodeConfiguration
         }
 
         //FM demodulator channel bandwidth options
-        public static final Set<Bandwidth> FM_BANDWIDTHS = Collections.unmodifiableSet(EnumSet.of(BW_7_5, BW_12_5, BW_25_0));
+        //The additional values are for the transient spectrum listener; channel configuration choices stay unchanged.
+        public static final Set<Bandwidth> FM_BANDWIDTHS = Collections.unmodifiableSet(
+            EnumSet.of(BW_7_5, BW_12_5, BW_25_0));
         public static final Set<Bandwidth> AM_BANDWIDTHS =
             Collections.unmodifiableSet(EnumSet.of(BW_3_0, BW_5_0, BW_8_33, BW_15_0, BW_25_0));
 

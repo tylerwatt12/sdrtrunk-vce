@@ -2827,10 +2827,12 @@ function tableSection(title, rows, columns, emptyText = 'No rows', options = {},
 function keyValues(entries) {
   const list = node('dl', 'key-values');
   entries.forEach(([label, value]) => {
-    list.append(node('dt', '', label));
+    const item = node('div', 'key-value-item');
+    item.append(node('dt', '', label));
     const detail = node('dd');
     detail.append(valueNode(value));
-    list.append(detail);
+    item.append(detail);
+    list.append(item);
   });
   return list;
 }
@@ -7270,10 +7272,12 @@ function signalOverview(channel, includeName = true) {
 }
 
 function rangeControls(ranges, selectedRange, onChange) {
-  const controls = node('div', 'signal-range-controls');
+  const controls = node('div', 'signal-range-controls ui-segmented');
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', 'Time range');
   const buttons = new Map();
   ranges.forEach(([value, label]) => {
-    const button = node('button', 'signal-range-button secondary', label);
+    const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
     button.setAttribute('aria-pressed', String(value === selectedRange));
     button.classList.toggle('active', value === selectedRange);
@@ -8091,7 +8095,8 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   2: 'decode_events',
   3: 'decode_messages',
   4: 'channel_diagnostics',
-  5: 'tuner_diagnostics'
+  5: 'tuner_diagnostics',
+  6: 'frequency_audio'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -11779,12 +11784,60 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
   return grouped;
 }
 
-function tunerFrequencyAction(label, detail, disabled = false) {
-  const button = node('button', `tuner-frequency-action${disabled ? ' disabled-action' : ''}`);
-  button.type = 'button';
-  button.disabled = disabled;
-  button.append(node('strong', '', label), node('small', '', detail));
-  if (disabled) button.setAttribute('aria-disabled', 'true');
+function diagnosticAudioPlayer(initialVolume = 0.7) {
+  let context = null;
+  let gain = null;
+  let nextTime = 0;
+  return {
+    async start() {
+      const Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) throw new Error('Live audio is not supported by this browser.');
+      const current = new Context();
+      context = current;
+      gain = current.createGain();
+      gain.gain.value = initialVolume;
+      gain.connect(current.destination);
+      await current.resume();
+      if (context !== current) return;
+      nextTime = current.currentTime + 0.05;
+    },
+    volume(value) { if (gain) gain.gain.value = Number(value); },
+    play(frame) {
+      if (!context || !gain) return false;
+      const samples = diagnosticPcm16Payload(frame);
+      if (!samples.length) return false;
+      const buffer = context.createBuffer(1, samples.length, frame.sampleRateHz || 8000);
+      buffer.copyToChannel(samples, 0);
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gain);
+      if (nextTime < context.currentTime || nextTime > context.currentTime + 0.5) {
+        nextTime = context.currentTime + 0.05;
+      }
+      source.start(nextTime);
+      nextTime += buffer.duration;
+      return true;
+    },
+    stop() {
+      if (context) void context.close();
+      context = null;
+      gain = null;
+      nextTime = 0;
+    }
+  };
+}
+
+function tunerFrequencyAction(label, icon, hint, disabled = false) {
+  const button = node(disabled ? 'span' : 'button',
+    `tuner-frequency-action ui-icon-button${disabled ? ' disabled-action' : ''}`);
+  if (!disabled) button.type = 'button';
+  button.title = hint;
+  button.setAttribute('aria-label', label);
+  button.append(iconGlyph(icon));
+  if (disabled) {
+    button.setAttribute('role', 'button');
+    button.setAttribute('aria-disabled', 'true');
+  }
   return button;
 }
 
@@ -11795,24 +11848,81 @@ function openTunerFrequencyActions(selection) {
   const detailController = new AbortController();
   const body = node('div', 'tuner-frequency-action-body');
   const summary = node('dl', 'tuner-frequency-action-summary');
-  const facts = [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`]];
-  if (Number.isFinite(rawHz) && Math.abs(rawHz - selectedHz) >= 0.5) {
-    facts.push(['Pointer', `${(rawHz / 1_000_000).toFixed(6)} MHz`]);
-    if (selection.snap?.label) facts.push(['Snap raster', selection.snap.label]);
-  }
-  if (selection.targetLabel) facts.push(['Tuner', selection.targetLabel]);
-  facts.forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', value)));
+  [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`],
+    ['Pointer', `${((Number.isFinite(rawHz) ? rawHz : selectedHz) / 1_000_000).toFixed(6)} MHz`]]
+    .forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', value)));
 
   const actions = node('div', 'tuner-frequency-action-list');
-  const radioReference = tunerFrequencyAction('RadioReference Lookup',
-    'Search conventional and trunked-site records in the configured RadioReference state.');
-  const listen = tunerFrequencyAction('Listen',
-    'Live arbitrary-frequency browser listening is planned for a later phase.', true);
-  const addSystem = tunerFrequencyAction('Add System',
-    'Guided system, site, channel, alias-list, and scan-list creation is planned for a later phase.', true);
+  const radioReference = tunerFrequencyAction('RadioReference lookup', 'icon-radioreference',
+    'Look up this frequency in RadioReference');
+  const listen = tunerFrequencyAction('Listen to NBFM', 'icon-speaker', 'Listen to this frequency in NBFM',
+    !selection.targetId || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO));
+  const addSystem = tunerFrequencyAction('Add system', 'icon-plus', 'Add system (coming later)', true);
   const message = node('div', 'tuner-frequency-action-message');
   message.setAttribute('role', 'status');
   const results = node('div', 'tuner-frequency-results');
+  const audioOptions = node('div', 'tuner-frequency-audio-options');
+  audioOptions.hidden = true;
+  const bandwidth = node('select', 'ui-select');
+  bandwidth.setAttribute('aria-label', 'NBFM bandwidth');
+  [[6250, '6.25 kHz'], [12500, '12.5 kHz'], [20000, '20 kHz'], [25000, '25 kHz']]
+    .forEach(([value, label]) => {
+      const option = node('option', '', label);
+      option.value = String(value);
+      if (value === 12500) option.selected = true;
+      bandwidth.append(option);
+    });
+  audioOptions.append(node('label', '', 'Bandwidth'), bandwidth);
+  const player = diagnosticAudioPlayer();
+  let audioStream = null;
+  let audioEpoch = 0;
+  const stopListening = () => {
+    audioEpoch += 1;
+    audioStream?.close();
+    audioStream = null;
+    player.stop();
+    listen.classList.remove('is-active');
+    listen.title = 'Listen to this frequency in NBFM';
+    listen.setAttribute('aria-label', 'Listen to NBFM');
+  };
+  const startListening = async () => {
+    stopListening();
+    const epoch = audioEpoch;
+    audioOptions.hidden = false;
+    try {
+      await player.start();
+      if (epoch !== audioEpoch) return;
+      audioStream = binaryFrameConnection('frequency_audio', {
+        target_id: selection.targetId,
+        frequency_hz: Math.round(selectedHz),
+        bandwidth_hz: Number(bandwidth.value)
+      }, {
+        onFrame: (frame) => {
+          if (frame.type === DIAGNOSTIC_FRAME_TYPES.AUDIO_PCM16 && player.play(frame)) {
+            message.textContent = 'Playing live NBFM audio.';
+          }
+        },
+        onError: (error) => { message.textContent = error.message || 'Frequency listening is unavailable.'; }
+      });
+      listen.classList.add('is-active');
+      listen.title = 'Stop listening';
+      listen.setAttribute('aria-label', 'Stop listening');
+      message.textContent = 'Listening for NBFM audio…';
+    } catch (error) {
+      if (epoch === audioEpoch) {
+        stopListening();
+        message.textContent = error.message;
+      }
+    }
+  };
+  listen.addEventListener('click', () => {
+    if (listen.getAttribute('aria-disabled') === 'true') return;
+    if (audioStream) {
+      stopListening();
+      message.textContent = 'Listening stopped.';
+    } else void startListening();
+  });
+  bandwidth.addEventListener('change', () => { if (audioStream) void startListening(); });
   radioReference.addEventListener('click', async () => {
     if (radioReference.disabled) return;
     radioReference.disabled = true;
@@ -11849,11 +11959,10 @@ function openTunerFrequencyActions(selection) {
     }
   });
   actions.append(radioReference, listen, addSystem);
-  body.append(node('p', 'tuner-frequency-action-intro',
-    'Choose what to do with this selected frequency.'), summary, actions, message, results);
+  body.append(summary, actions, audioOptions, message, results);
   return openReadOnlyModal('Frequency actions', body, {
-    id: 'tuner-frequency-actions', className: 'frequency-action-modal',
-    cleanup: () => detailController.abort()
+    id: 'tuner-frequency-actions', className: 'frequency-action-modal tuner-frequency-modal',
+    cleanup: () => { detailController.abort(); stopListening(); }
   });
 }
 
@@ -12271,7 +12380,14 @@ function tunerSpectrumPanel(snapPresetDocument) {
   cursorPopup.append(cursorFrequency, cursorSnap, cursorPower, cursorChannel);
   const readouts = node('div', 'tuner-spectrum-readouts channel-diagnostic-readouts');
   readouts.setAttribute('aria-label', 'Spectrum measurements');
-  layout.append(instructions, toolbar, readouts, displayControls, spectrum.card, waterfall.card, cursorPopup);
+  const moreMeasurements = node('details', 'tuner-spectrum-more-measurements');
+  const moreReadouts = node('div', 'tuner-spectrum-more-readouts channel-diagnostic-readouts');
+  moreMeasurements.append(node('summary', '', 'More measurements'), moreReadouts);
+  const readoutPanel = node('div', 'tuner-spectrum-measurement-panel');
+  readoutPanel.append(readouts, moreMeasurements);
+  const visualWindow = node('div', 'tuner-spectrum-visual-window');
+  visualWindow.append(spectrum.card, waterfall.card);
+  layout.append(instructions, toolbar, readoutPanel, displayControls, visualWindow, cursorPopup);
 
   let disposed = false;
   let paused = false;
@@ -12497,7 +12613,9 @@ function tunerSpectrumPanel(snapPresetDocument) {
       ['Generation', generation >= 0 ? number(generation) : '—'],
       ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—']
     ];
-    updateDiagnosticReadouts(readouts, values);
+    updateDiagnosticReadouts(readouts, [values[0], values[2], values[4], values[8]]);
+    updateDiagnosticReadouts(moreReadouts,
+      values.filter((_, index) => ![0, 2, 4, 8].includes(index)));
     zoomIn.disabled = !shouldRun() || !fullViewport || !viewport || zoom >= TUNER_SPECTRUM_MAXIMUM_ZOOM - 0.0001;
     zoomOut.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
     resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
@@ -16200,8 +16318,23 @@ async function channelAdminMutation(path, options, statusHost) {
 }
 
 function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader) {
-  const selectedChanged = (id, checked) => {
-    if (checked) selected.add(id); else selected.delete(id);
+  const selectedChanged = (id, checked, shiftKey, checkbox) => {
+    const rows = [...checkbox.closest('tbody').querySelectorAll('tr[data-id]')];
+    const visibleIds = rows.map((row) => row.dataset.id);
+    const rowById = new Map(rows.map((row) => [row.dataset.id, row]));
+    const previous = state.selectionAnchor;
+    const first = visibleIds.indexOf(previous);
+    const last = visibleIds.indexOf(id);
+    const affected = shiftKey && first >= 0 && last >= 0 ?
+      visibleIds.slice(Math.min(first, last), Math.max(first, last) + 1) : [id];
+    affected.forEach((selectedId) => {
+      if (checked) selected.add(selectedId); else selected.delete(selectedId);
+      const row = rowById.get(selectedId);
+      const input = row?.querySelector('.ui-selection-check');
+      if (input) input.checked = checked;
+      row?.classList.toggle('selected', checked);
+    });
+    state.selectionAnchor = id;
     selectionChanged?.();
   };
   const columns = [];
@@ -16213,10 +16346,10 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       checkbox.className = 'ui-selection-check';
       checkbox.checked = selected.has(row.configuration_id);
       checkbox.setAttribute('aria-label', `Select ${row.name || 'channel'}`);
-      checkbox.addEventListener('change', () => {
-        selectedChanged(row.configuration_id, checkbox.checked);
-        checkbox.closest('tr')?.classList.toggle('selected', checkbox.checked);
-      });
+      let shiftPressed = false;
+      checkbox.addEventListener('click', (event) => { shiftPressed = event.shiftKey; });
+      checkbox.addEventListener('change', () => selectedChanged(row.configuration_id,
+        checkbox.checked, shiftPressed, checkbox));
       return checkbox;
     } });
   columns.push(
@@ -16581,7 +16714,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     return { catalog, protocols, options };
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
-    const state = { revision: Number(catalog.revision), catalog, visibleRows: [] };
+    const state = { revision: Number(catalog.revision), catalog, visibleRows: [], selectionAnchor: null };
     const wrapper = node('div', `channel-admin-catalog ui-catalog ${editable ? 'editor-workspace' :
       'data-workspace'}`);
     wrapper.dataset.uiDensity = editable ? 'comfortable' : 'compact';
@@ -16654,6 +16787,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
       checkbox.type = 'checkbox';
       checkbox.setAttribute('aria-label', 'Select all visible channels');
       checkbox.addEventListener('change', () => {
+        state.selectionAnchor = null;
         state.visibleRows.forEach((row) => checkbox.checked ? selected.add(row.configuration_id) :
           selected.delete(row.configuration_id));
         tableHost.querySelectorAll('tbody .ui-selection-check').forEach((rowCheckbox) => {
@@ -16668,6 +16802,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     };
     const clearSelection = uiActionButton('Clear', null, () => {
       selected.clear();
+      state.selectionAnchor = null;
       tableHost.querySelectorAll('.ui-selection-check').forEach((checkbox) => { checkbox.checked = false; });
       tableHost.querySelectorAll('tr.selected').forEach((row) => row.classList.remove('selected'));
       updateSelection();
@@ -17289,9 +17424,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   let stream = null;
   let generation = -1;
   let listening = false;
-  let audioContext = null;
-  let gain = null;
-  let nextAudioTime = 0;
+  const audioPlayer = diagnosticAudioPlayer(Number(volume.value));
   const historyValues = [];
   const setState = (label, tone = 'neutral') => {
     statePill.className = `ui-pill ui-pill-${tone}`;
@@ -17311,50 +17444,25 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   const stopAudio = () => {
     listening = false;
     listen.replaceChildren(iconGlyph('icon-play'), document.createTextNode('Listen live'));
-    if (audioContext) void audioContext.close();
-    audioContext = null;
-    gain = null;
-    nextAudioTime = 0;
+    audioPlayer.stop();
   };
   listen.addEventListener('click', async () => {
     if (listening) {
       stopAudio();
       return;
     }
-    const Context = window.AudioContext || window.webkitAudioContext;
-    if (!Context) {
-      audioStatus.textContent = 'Live audio is not supported by this browser.';
-      return;
-    }
-    audioContext = new Context();
-    gain = audioContext.createGain();
-    gain.gain.value = Number(volume.value);
-    gain.connect(audioContext.destination);
-    await audioContext.resume();
+    try { await audioPlayer.start(); }
+    catch (error) { audioStatus.textContent = error.message; return; }
     listening = true;
-    nextAudioTime = audioContext.currentTime + 0.05;
     listen.replaceChildren(iconGlyph('icon-stop'), document.createTextNode('Stop listening'));
     audioStatus.textContent = 'Listening for open-squelch audio…';
   });
   volume.addEventListener('input', () => {
     volumeValue.textContent = `${Math.round(Number(volume.value) * 100)}%`;
-    if (gain) gain.gain.value = Number(volume.value);
+    audioPlayer.volume(volume.value);
   });
   const playAudio = (frame) => {
-    if (!listening || !audioContext || !gain) return;
-    const samples = diagnosticPcm16Payload(frame);
-    if (!samples.length) return;
-    const buffer = audioContext.createBuffer(1, samples.length, frame.sampleRateHz || 8000);
-    buffer.copyToChannel(samples, 0);
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gain);
-    if (nextAudioTime < audioContext.currentTime || nextAudioTime > audioContext.currentTime + 0.5) {
-      nextAudioTime = audioContext.currentTime + 0.05;
-    }
-    source.start(nextAudioTime);
-    nextAudioTime += buffer.duration;
-    audioStatus.textContent = 'Playing live channel audio.';
+    if (listening && audioPlayer.play(frame)) audioStatus.textContent = 'Playing live channel audio.';
   };
 
   const start = () => {
@@ -17673,9 +17781,10 @@ function aliasCoverageTime(value, emptyLabel = 'Never heard') {
   return pair;
 }
 
-function aliasCoverageAliasCell(row, aliasListId) {
+function aliasCoverageAliasCell(row) {
   const details = [row.description, row.group].filter(Boolean).join(' · ');
-  const target = aliasAdminAllowed() ? href('aliases', { list: aliasListId, alias: row.alias_id }) : '';
+  const target = entityTarget(row.entity_ref,
+    { channel: row.identity_type === 'radio' ? 'radios' : 'groups' });
   return identitySummaryValue(row.name || `Alias ${row.alias_id}`, details, target);
 }
 
@@ -17685,9 +17794,9 @@ function aliasCoverageIdentityCell(row) {
   return identitySummaryValue(identityActivityValue(row), type, target);
 }
 
-function aliasCoverageAliasesColumns(aliasListId) {
+function aliasCoverageAliasesColumns() {
   return [
-    { id: 'name', label: 'Alias', render: (row) => aliasCoverageAliasCell(row, aliasListId),
+    { id: 'name', label: 'Alias', render: aliasCoverageAliasCell,
       className: 'alias-cell', sort: 'name' },
     { id: 'identity', label: 'Identity', render: aliasCoverageIdentityCell, className: 'numeric', sort: 'identity' },
     { id: 'calls', label: 'Calls', render: (row) => number(row.logical_call_count || 0), className: 'numeric',
@@ -17936,7 +18045,7 @@ async function renderAliasCoverageDirectory(renderContext) {
       pagedTableContent(unassigned, aliasCoverageUnassignedColumns(), 'alias-coverage-unassigned-v1', {
         itemLabel: 'Observations', emptyText: 'Every observed identity is assigned in this Alias List',
         tableOptions: { defaultSort: 'logical_call_count', defaultDirection: 'desc' } }) :
-      pagedTableContent(aliases, aliasCoverageAliasesColumns(selectedListId), 'alias-coverage-configured-v1', {
+      pagedTableContent(aliases, aliasCoverageAliasesColumns(), 'alias-coverage-configured-v1', {
         itemLabel: 'Aliases', emptyText: 'No configured aliases match these filters',
         tableOptions: { defaultSort: aliasStatus === 'recent' ? 'last_evidence' : 'name',
           defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc' } }));

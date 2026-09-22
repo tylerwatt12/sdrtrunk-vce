@@ -1003,8 +1003,8 @@ class StatsWebDatabase
 
     /**
      * Adds a canonical destination only when one exact configured identity resolves to one unambiguous page.
-     * Range aliases, never-observed aliases, and identifiers shared by multiple systems deliberately remain plain
-     * text instead of linking to an arbitrary owner.
+     * Range aliases and identifiers shared by multiple systems deliberately remain plain text instead of linking
+     * to an arbitrary owner.  A zero-call exact alias can still resolve from its configured channel ownership.
      */
     private void decoratePublicAliasEntityReferences(Connection connection, int aliasListId,
                                                        List<Map<String,Object>> aliases) throws SQLException
@@ -1020,8 +1020,7 @@ class StatsWebDatabase
 
         for(Map<String,Object> alias: aliases)
         {
-            if(!(alias.get("value") instanceof Number value) ||
-                number(alias.get("logical_call_count")) + number(alias.get("signaling_observation_count")) <= 0)
+            if(!(alias.get("value") instanceof Number value))
             {
                 continue;
             }
@@ -2751,7 +2750,8 @@ class StatsWebDatabase
             nestRadioPresence(rows);
             if(rows.isEmpty())
             {
-                throw new StatsApiException(404, "Radio not found");
+                rows = List.of(unobservedRadio(radioSystem, identityKey, identity));
+                enrichRadioSystemRadios(connection, rows, "native_id", "alias_");
             }
             Map<String,Object> row = rows.getFirst();
 
@@ -2763,6 +2763,39 @@ class StatsWebDatabase
                 IDENTITY_KIND_TALKGROUP, textValue(row.get("affiliated_talkgroup_identity_key"))));
             return Map.of("radio", row);
         });
+    }
+
+    /** A configured radio Alias can have a destination before that radio has any retained activity. */
+    private static Map<String,Object> unobservedRadio(Map<String,Object> radioSystem, String identityKey,
+                                                      RadioSystemIdentityKey.Identity identity)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+        for(String field: List.of("radio_system_id", "radio_system_key", "protocol_code", "address_domain_code",
+            "protocol", "wacn", "system_id", "network_id", "dmr_model_code",
+            "nxdn_location_category_code", "variant", "system_name"))
+        {
+            if(radioSystem.get(field) != null)
+            {
+                row.put(field, radioSystem.get(field));
+            }
+        }
+        row.put("identity_key", identityKey);
+        row.put("native_id", identity.identityId());
+        row.put("logical_call_count", 0L);
+        row.put("source_logical_call_count", 0L);
+        row.put("target_logical_call_count", 0L);
+        row.put("encrypted_logical_call_count", 0L);
+        row.put("recorded_logical_call_count", 0L);
+        row.put("stream_submitted_logical_call_count", 0L);
+        row.put("signaling_observation_count", 0L);
+        row.put("groups", 0L);
+        row.put("currently_affiliated", 0);
+        row.put("presence", null);
+        for(String field: GROUP_IDENTITY_SIGNALING_FIELDS)
+        {
+            row.put(observationCountField(field), 0L);
+        }
+        return row;
     }
 
     Map<String,Object> radioSystemRelationships(String radioSystemKey, StatsRequest request)

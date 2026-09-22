@@ -514,6 +514,16 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
     }
 
     /**
+     * Allocates a diagnostic channel only when the existing tuner center already covers it.  This must never
+     * retune a receiver that is decoding other channels.
+     */
+    public TunerChannelSource getSourceAtCurrentCenter(TunerChannel tunerChannel,
+                                                        ChannelSpecification channelSpecification, String threadName)
+    {
+        return getSource(tunerChannel, channelSpecification, threadName, null, AllocationMode.CURRENT_CENTER);
+    }
+
+    /**
      * Allocates a tuner channel source for the tuner channel, optionally using a broader channel set to choose a
      * center frequency that is better suited to the overall site/channel envelope than the single requested channel.
      *

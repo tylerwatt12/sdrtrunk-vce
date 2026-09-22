@@ -1022,24 +1022,6 @@
   margin-left: auto;
 }
 
-.signal-range-button {
-  min-height: 28px;
-  padding: 3px 8px;
-  color: var(--ink);
-  background: var(--surface-2);
-  border-color: var(--line-dark);
-}
-
-.signal-range-button.active {
-  color: #fff;
-  background: var(--accent);
-  border-color: #07554f;
-}
-
-.signal-range-button:disabled {
-  cursor: wait;
-  opacity: .65;
-}
 
 .signal-history-overview {
   display: grid;
@@ -1712,78 +1694,6 @@ table {
   border-left: 2px solid var(--line-dark);
 }
 
-.tuner-frequency-action-body {
-  display: grid;
-  gap: 12px;
-}
-
-.tuner-frequency-action-intro,
-.tuner-frequency-action-message {
-  margin: 0;
-}
-
-.tuner-frequency-action-summary {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 5px 12px;
-  margin: 0;
-  padding: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.tuner-frequency-action-summary dt {
-  color: var(--muted);
-}
-
-.tuner-frequency-action-summary dd {
-  min-width: 0;
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.tuner-frequency-action-list {
-  display: grid;
-  gap: 8px;
-}
-
-.tuner-frequency-action {
-  min-height: 58px;
-  display: grid;
-  gap: 3px;
-  padding: 9px 11px;
-  text-align: left;
-}
-
-.tuner-frequency-action strong,
-.tuner-frequency-action small {
-  display: block;
-}
-
-.tuner-frequency-action small {
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-.tuner-frequency-action.disabled-action {
-  color: var(--muted);
-  background: var(--surface-2);
-  border-color: var(--line-dark);
-  opacity: .82;
-}
-
-.tuner-frequency-action-message {
-  min-height: 18px;
-  color: var(--muted);
-}
-
-.tuner-frequency-results {
-  min-width: 0;
-}
-
 .radioreference-frequency-groups {
   display: grid;
   gap: 14px;
@@ -2319,18 +2229,10 @@ th.numeric {
 }
 
 :root[data-theme="dark"] .activity-series-button.active,
-:root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled):not(.danger),
 :root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.danger):not(.ui-button):not(.ui-segmented-option):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab):not(.channels-tab-select):not(.channels-tab-title-button):not(.channels-tab-close):not(.receiver-health-section-toggle) {
   color: #071a18;
   border-color: #69cec2;
-}
-
-:root[data-theme="dark"] .tuner-frequency-action.disabled-action {
-  color: var(--muted);
-  background: var(--surface-2);
-  border-color: var(--line-dark);
-  opacity: 1;
 }
 
 :root[data-theme="dark"] .signal-state.healthy,

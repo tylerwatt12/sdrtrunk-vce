@@ -147,11 +147,12 @@ public class StatsWebServerService implements AutoCloseable
     private static final int TOPIC_DECODE_MESSAGES = 3;
     private static final int TOPIC_CHANNEL_DIAGNOSTICS = 4;
     private static final int TOPIC_TUNER_DIAGNOSTICS = 5;
-    private static final int TOPIC_MAXIMUM = TOPIC_TUNER_DIAGNOSTICS;
+    private static final int TOPIC_FREQUENCY_AUDIO = 6;
+    private static final int TOPIC_MAXIMUM = TOPIC_FREQUENCY_AUDIO;
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
-        "decode_messages", "channel_diagnostics", "tuner_diagnostics");
+        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
         WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
 
@@ -163,6 +164,7 @@ public class StatsWebServerService implements AutoCloseable
     private final DiagnosticFftScheduler mDiagnosticFftScheduler;
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
+    private final FrequencyListenService mFrequencyListenService;
     private final ReceiverHealthService mReceiverHealthService;
     private final SupportBundleService mSupportBundleService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
@@ -274,6 +276,8 @@ public class StatsWebServerService implements AutoCloseable
             new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
         mTunerDiagnosticService = tunerManager != null ?
             new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
+        mFrequencyListenService = mTunerDiagnosticService != null ?
+            new FrequencyListenService(mTunerDiagnosticService) : null;
         mLiveService = new StatsLiveService(channelProcessingManager, entityCatalog);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
         mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
@@ -848,6 +852,7 @@ public class StatsWebServerService implements AutoCloseable
 
         if(mTunerDiagnosticService != null)
         {
+            mFrequencyListenService.close();
             mTunerDiagnosticService.closeActiveSessions();
         }
 
@@ -1415,6 +1420,7 @@ public class StatsWebServerService implements AutoCloseable
             case "decode_messages" -> decodeMessageScope(uri);
             case "channel_diagnostics" -> channelDiagnosticScope(uri);
             case "tuner_diagnostics" -> tunerDiagnosticRequest(uri);
+            case "frequency_audio" -> frequencyListenRequest(uri);
             default -> throw new StatsApiException(400, "Unknown live subscription");
         }
     }
@@ -1509,6 +1515,27 @@ public class StatsWebServerService implements AutoCloseable
 
         request.requireFullyConsumed();
         return new TunerDiagnosticRequest(targetId, viewport, profile);
+    }
+
+    private static FrequencyListenRequest frequencyListenRequest(URI uri)
+    {
+        StatsRequest request = StatsRequest.from(uri);
+        String targetId = request.requiredText("target_id");
+        Long frequencyHz = request.optionalLong("frequency_hz");
+        Long bandwidthHz = request.optionalLong("bandwidth_hz");
+        request.requireFullyConsumed();
+
+        if(frequencyHz == null || frequencyHz <= 0 || bandwidthHz == null ||
+            (bandwidthHz != 6250 && bandwidthHz != 12500 && bandwidthHz != 20000 && bandwidthHz != 25000))
+        {
+            throw new StatsApiException(400, "Frequency or NBFM bandwidth is invalid");
+        }
+
+        return new FrequencyListenRequest(targetId, frequencyHz, bandwidthHz.intValue());
+    }
+
+    private record FrequencyListenRequest(String targetId, long frequencyHz, int bandwidthHz)
+    {
     }
 
     private static void writeMultiplexJson(MultiplexOutput output, int topic, String event, Object data)
@@ -2291,6 +2318,7 @@ public class StatsWebServerService implements AutoCloseable
         }
         if(mTunerDiagnosticService != null)
         {
+            mFrequencyListenService.close();
             mTunerDiagnosticService.close();
         }
         mDiagnosticFftScheduler.close();
@@ -2843,6 +2871,7 @@ public class StatsWebServerService implements AutoCloseable
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
         private TunerDiagnosticService.Session mTunerDiagnostics;
+        private FrequencyListenService.Session mFrequencyAudio;
         private String mDecodeMessageSubscriptionId;
         private String mChannelDiagnosticSubscriptionId;
         private long mDecodeMessageGeneration = -1;
@@ -2891,6 +2920,11 @@ public class StatsWebServerService implements AutoCloseable
             for(String topic: MULTIPLEX_TOPICS)
             {
                 if(!mWebRequestSecurity.isRequestStillAuthorized(mExchange, capabilityForTopic(topic)))
+                {
+                    denied.add(topic);
+                }
+                else if("frequency_audio".equals(topic) && !mWebRequestSecurity.isRequestStillAuthorized(mExchange,
+                    WebCapability.TUNER_SPECTRUM_VIEW))
                 {
                     denied.add(topic);
                 }
@@ -2980,6 +3014,17 @@ public class StatsWebServerService implements AutoCloseable
                 if(frame != null)
                 {
                     writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS, frame);
+                    wrote = true;
+                }
+            }
+
+            if(mFrequencyAudio != null)
+            {
+                DiagnosticStreamFrame frame = mFrequencyAudio.poll(Duration.ZERO);
+
+                if(frame != null)
+                {
+                    writeMultiplexDiagnostic(output, TOPIC_FREQUENCY_AUDIO, frame);
                     wrote = true;
                 }
             }
@@ -3228,6 +3273,7 @@ public class StatsWebServerService implements AutoCloseable
                 }
                 case "channel_diagnostics" -> openChannelDiagnostics(uri, output);
                 case "tuner_diagnostics" -> openTunerDiagnostics(uri, output);
+                case "frequency_audio" -> openFrequencyAudio(uri);
                 default -> throw new IllegalArgumentException("Unknown multiplex topic");
             }
         }
@@ -3283,6 +3329,20 @@ public class StatsWebServerService implements AutoCloseable
             mLastTunerStatePoll = System.nanoTime();
         }
 
+        private void openFrequencyAudio(URI uri)
+        {
+            if(mFrequencyListenService == null ||
+                !mWebRequestSecurity.isRequestStillAuthorized(mExchange, WebCapability.WEB_AUDIO_LISTEN) ||
+                !mWebRequestSecurity.isRequestStillAuthorized(mExchange, WebCapability.TUNER_SPECTRUM_VIEW))
+            {
+                throw new IllegalStateException("Frequency listening is unavailable");
+            }
+
+            FrequencyListenRequest request = frequencyListenRequest(uri);
+            mFrequencyAudio = mFrequencyListenService.open(request.targetId(), request.frequencyHz(),
+                request.bandwidthHz());
+        }
+
         private StatsLiveEventHub.Subscription requiredSubscription(StatsLiveEventHub.Subscription subscription,
                                                                     String topic)
         {
@@ -3333,6 +3393,7 @@ public class StatsWebServerService implements AutoCloseable
                 case "decode_messages" -> closeDecodeMessages();
                 case "channel_diagnostics" -> closeChannelDiagnostics();
                 case "tuner_diagnostics" -> closeTunerDiagnostics();
+                case "frequency_audio" -> closeFrequencyAudio();
                 default -> { }
             }
         }
@@ -3415,6 +3476,15 @@ public class StatsWebServerService implements AutoCloseable
                 mDiagnosticClients.release();
             }
 
+        }
+
+        private void closeFrequencyAudio()
+        {
+            if(mFrequencyAudio != null)
+            {
+                mFrequencyAudio.close();
+                mFrequencyAudio = null;
+            }
         }
 
         @Override
@@ -3535,6 +3605,7 @@ public class StatsWebServerService implements AutoCloseable
         return switch(topic)
         {
             case "tuner_diagnostics" -> WebCapability.TUNER_SPECTRUM_VIEW;
+            case "frequency_audio" -> WebCapability.WEB_AUDIO_LISTEN;
             default -> WebCapability.LIVE_VIEW;
         };
     }
@@ -3548,6 +3619,7 @@ public class StatsWebServerService implements AutoCloseable
             case "decode_messages" -> TOPIC_DECODE_MESSAGES;
             case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;
             case "tuner_diagnostics" -> TOPIC_TUNER_DIAGNOSTICS;
+            case "frequency_audio" -> TOPIC_FREQUENCY_AUDIO;
             default -> TOPIC_CONTROL;
         };
     }

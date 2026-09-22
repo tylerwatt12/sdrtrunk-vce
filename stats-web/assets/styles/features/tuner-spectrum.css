@@ -4,6 +4,98 @@ body[data-view="tuner-spectrum"] {
   overflow: hidden;
 }
 
+.tuner-frequency-action-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.tuner-frequency-action-summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.tuner-frequency-action-summary dt,
+.tuner-frequency-action-message {
+  color: var(--muted);
+}
+
+.tuner-frequency-action-summary dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.tuner-frequency-modal .tuner-frequency-action-list {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.tuner-frequency-modal .tuner-frequency-action {
+  --ui-control-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-control);
+}
+
+.tuner-frequency-modal .tuner-frequency-action svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tuner-frequency-modal .tuner-frequency-action:hover:not(.disabled-action),
+.tuner-frequency-modal .tuner-frequency-action.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tuner-frequency-modal .tuner-frequency-action.disabled-action {
+  color: var(--muted);
+  background: var(--surface-2);
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.tuner-frequency-action-message,
+.tuner-frequency-action-intro {
+  margin: 0;
+}
+
+.tuner-frequency-audio-options:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tuner-frequency-audio-options select {
+  width: 160px;
+}
+
+.tuner-frequency-results {
+  min-width: 0;
+}
+
 body[data-view="tuner-spectrum"] .app-shell {
   height: 100vh;
   height: 100dvh;
@@ -36,8 +128,19 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   position: relative;
   display: grid;
   flex: 1 1 auto;
-  grid-template-rows: auto auto auto minmax(170px, .38fr) minmax(240px, .62fr);
+  grid-template-rows: auto auto auto minmax(430px, 1fr);
   gap: var(--space-3);
+}
+
+.tuner-spectrum-visual-window {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(170px, .38fr) minmax(240px, .62fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface);
 }
 
 .tuner-spectrum-toolbar {
@@ -434,9 +537,13 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   flex-direction: column;
   overflow: hidden;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.tuner-spectrum-fft {
+  border-bottom: 1px solid var(--spectrum-canvas-line);
 }
 
 .tuner-spectrum-plot {
@@ -666,24 +773,78 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-readouts {
-  min-height: 58px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   padding: 0;
-  overflow-x: auto;
+  overflow: visible;
+  background: var(--surface);
+}
+
+.tuner-spectrum-measurement-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
-  background: var(--surface);
   box-shadow: var(--shadow-surface-soft);
-  scrollbar-width: thin;
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout {
-  min-width: 104px;
+  min-width: 0;
   align-self: stretch;
   justify-content: center;
   gap: 3px;
   padding: var(--space-2) var(--space-4);
   border-right: 1px solid var(--line);
+}
+
+.tuner-spectrum-more-measurements {
+  position: relative;
+  align-self: center;
+  padding: var(--space-2);
+}
+
+.tuner-spectrum-more-measurements summary {
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tuner-spectrum-more-readouts {
+  width: min(420px, calc(100vw - 40px));
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+}
+
+.tuner-spectrum-more-measurements:not([open]) .tuner-spectrum-more-readouts {
+  display: none;
+}
+
+.tuner-spectrum-more-readouts .channel-diagnostic-readout {
+  min-width: 0;
+  display: grid;
+  padding: var(--space-2);
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout small {
@@ -699,7 +860,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 @media (max-width: 900px) {
   .tuner-spectrum-layout {
-    grid-template-rows: auto auto auto minmax(140px, .34fr) minmax(220px, .66fr);
+    grid-template-rows: auto auto auto minmax(380px, 1fr);
   }
 
   .tuner-spectrum-toolbar {
@@ -768,7 +929,19 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   .tuner-spectrum-layout {
     min-height: 720px;
     flex: 0 0 auto;
-    grid-template-rows: auto auto auto minmax(150px, .34fr) minmax(220px, .66fr);
+    grid-template-rows: auto auto auto minmax(380px, 1fr);
+  }
+
+  .tuner-spectrum-measurement-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuner-spectrum-readouts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tuner-spectrum-more-measurements {
+    justify-self: end;
   }
 
   .tuner-spectrum-display-controls {

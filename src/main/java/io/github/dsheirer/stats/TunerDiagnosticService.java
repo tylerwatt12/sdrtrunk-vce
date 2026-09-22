@@ -114,6 +114,23 @@ public final class TunerDiagnosticService implements AutoCloseable
         }
     }
 
+    /** Resolves an opaque browser target to its currently available tuner without initializing hardware. */
+    Tuner tunerForTarget(String targetId)
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mClosed || targetId == null)
+            {
+                return null;
+            }
+
+            return snapshotsLocked().stream()
+                .filter(snapshot -> targetId.equals(snapshot.target().targetId()))
+                .map(TargetSnapshot::identity).filter(Tuner.class::isInstance).map(Tuner.class::cast)
+                .findFirst().orElse(null);
+        }
+    }
+
     public OpenResult tryOpen(String targetId)
     {
         return tryOpen(targetId, null);

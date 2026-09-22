@@ -127,8 +127,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(radio.contains("entityReferenceAllowed(reference)"));
         assertTrue(radio.contains("entityTarget(reference, { channel: 'radios' })"));
         assertFalse(radio.contains("radioLink(row"));
-        assertTrue(pager.contains("node('button', 'secondary', 'Previous')"));
-        assertTrue(pager.contains("node('button', 'secondary', 'Next')"));
+        assertTrue(pager.contains("node('button', 'ui-button ui-button-secondary', 'Previous')"));
+        assertTrue(pager.contains("node('button', 'ui-button ui-button-secondary', 'Next')"));
         assertTrue(pager.contains("page.has_more"));
         assertTrue(pager.contains("page.next_offset"));
         assertTrue(pager.contains("page.total_count"));

@@ -497,7 +497,8 @@ class StatsWebDatabaseTest
         Map<String,Object> linkedPublicAlias = rowWith(rows(allPublicAliases), "name", "Shared Dispatch");
         assertEquals("talkgroup", map(linkedPublicAlias, "entity_ref").get("kind"));
         assertEquals("dmr:tier3:small:42", map(linkedPublicAlias, "entity_ref").get("radio_system_key"));
-        assertFalse(rowWith(rows(allPublicAliases), "name", "Silent Dispatch").containsKey("entity_ref"));
+        assertEquals("talkgroup", map(rowWith(rows(allPublicAliases), "name", "Silent Dispatch"),
+            "entity_ref").get("kind"));
         Map<String,Object> recentPublicAliases = mDatabase.publicIdentityAliases(81,
             request("/?range=24h&type=talkgroup&status=recent&limit=100"));
         assertEquals(List.of("Shared Dispatch"), rows(recentPublicAliases).stream()
@@ -770,6 +771,30 @@ class StatsWebDatabaseTest
         assertEquals(Map.of("kind", "radio", "radio_system_key", RADIO_SYSTEM_KEY,
             "identity_key", identityKey),
             radio.get("entity_ref"));
+    }
+
+    @Test
+    void zeroCallRadioAliasOpensItsRadioPage() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (7102, 71, 'Quiet Unit', 'RADIO_ID', 'APCO25', 303),
+                       (7202, 72, 'Quiet Unit', 'RADIO_ID', 'APCO25', 303)
+                """);
+        }
+
+        Map<String,Object> alias = rowWith(rows(mDatabase.publicIdentityAliases(71,
+            request("/?type=radio&status=zero_calls&limit=100"))), "name", "Quiet Unit");
+        Map<String,Object> destination = map(alias, "entity_ref");
+        assertEquals("radio", destination.get("kind"));
+        Map<String,Object> radio = map(mDatabase.radio((String)destination.get("radio_system_key"),
+            (String)destination.get("identity_key")), "radio");
+        assertEquals("Quiet Unit", radio.get("alias_name"));
+        assertEquals(0L, radio.get("logical_call_count"));
+        assertNull(radio.get("presence"));
     }
 
     @Test

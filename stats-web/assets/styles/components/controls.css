@@ -164,6 +164,10 @@
   white-space: nowrap;
 }
 
+.key-value-item {
+  display: contents;
+}
+
 .ui-time-pair strong {
   color: var(--ink);
   font-size: 11px;

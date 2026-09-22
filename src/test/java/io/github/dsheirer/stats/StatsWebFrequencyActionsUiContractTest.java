@@ -72,9 +72,11 @@ class StatsWebFrequencyActionsUiContractTest
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
 
-        assertTrue(actions.contains("'RadioReference Lookup'"));
-        assertTrue(actions.contains("'Listen'"));
-        assertTrue(actions.contains("'Add System'"));
+        assertTrue(actions.contains("'RadioReference lookup'"));
+        assertTrue(actions.contains("'Listen to NBFM'"));
+        assertTrue(actions.contains("'Add system'"));
+        assertTrue(actions.contains("bandwidth_hz: Number(bandwidth.value)"));
+        assertTrue(actions.contains("binaryFrameConnection('frequency_audio'"));
         assertTrue(actions.contains("true);"));
         assertTrue(actions.contains("openReadOnlyModal('Frequency actions'"));
         assertTrue(actions.contains("requestJson('/api/v1/admin/radioreference'"));
@@ -135,7 +137,6 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".read-only-modal.frequency-action-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .tuner-frequency-action.disabled-action"));
         assertTrue(css.contains("color: var(--muted);"));
         assertTrue(css.contains(".radioreference-result-grid"));
         assertTrue(css.contains("minmax(min(100%, 360px), 1fr)"));

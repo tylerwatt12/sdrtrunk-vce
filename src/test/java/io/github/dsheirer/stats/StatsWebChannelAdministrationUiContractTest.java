@@ -37,7 +37,7 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(javascript.contains("control instanceof HTMLSelectElement ? uiSelectFrame(control) : control"));
         assertTrue(javascript.contains("function channelEditorSectionPlan(sections)"));
         assertTrue(javascript.contains("function channelEditorSectionNavigation(panels, plan)"));
-        assertTrue(javascript.contains("alias-editor-panel channel-editor-panel ui-form-section"));
+        assertTrue(javascript.contains("channel-editor-panel ui-form-section"));
         assertTrue(javascript.contains("channel-editor-section-disclosure ui-section-disclosure"));
         assertTrue(javascript.contains("channel-editor-section-layout ui-editor-layout"));
         assertTrue(javascript.contains("node('label', 'channel-map-field')"));
@@ -51,7 +51,7 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(stylesheet.contains(".channel-restart-notice svg"));
         assertTrue(stylesheet.contains(".channel-map-mobile-label"));
         assertTrue(stylesheet.contains(".channel-catalog-table td.empty"));
-        assertTrue(stylesheet.contains("max-height: min(70dvh, 720px)"));
+        assertFalse(stylesheet.contains("max-height: min(70dvh, 720px)"));
         assertTrue(stylesheet.contains(".data-workspace"));
         assertTrue(stylesheet.contains(".editor-workspace"));
         assertTrue(Files.readString(Path.of("src/main/resources/channel-protocols.json"))

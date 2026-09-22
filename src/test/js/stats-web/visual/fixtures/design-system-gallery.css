@@ -120,6 +120,10 @@ body {
   min-height: 100vh;
 }
 
+.visual-tuner-frequency-modal-example {
+  min-height: 100vh;
+}
+
 .visual-modal-example .modal-backdrop {
   display: flex;
 }
@@ -441,7 +445,8 @@ body:not([data-gallery-view="channels"]) .visual-channels-example,
 body:not([data-gallery-view="radio-directory"]) .visual-radio-directory-example,
 body:not([data-gallery-view="entity-details"]) .visual-entity-details-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
-body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
+body:not([data-gallery-view="live-filter"]) .visual-live-filter-example,
+body:not([data-gallery-view="tuner-frequency-modal"]) .visual-tuner-frequency-modal-example {
   display: none;
 }
 
