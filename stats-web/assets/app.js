@@ -17267,7 +17267,11 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   const timing = node('output', '', '—');
   const diagnosticReadouts = node('dl', 'channel-squelch-diagnostics');
   [['Current detector value', rawNoise], ['Current evidence', evidence], ['Configured timing', timing]]
-    .forEach(([label, value]) => diagnosticReadouts.append(node('dt', '', label), node('dd', '', value)));
+    .forEach(([label, value]) => {
+      const detail = node('dd');
+      detail.append(value);
+      diagnosticReadouts.append(node('dt', '', label), detail);
+    });
   const advanced = node('details', 'channel-squelch-advanced ui-section-disclosure');
   const advancedSummary = node('summary', 'ui-section-summary');
   advancedSummary.append(node('span', '', 'Advanced diagnostics'), node('small', 'muted', 'Exact values'));

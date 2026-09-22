@@ -54,6 +54,10 @@ assert.match(application, /Advanced diagnostics/);
 assert.match(application, /Audio plays only while squelch is open/);
 assert.match(application, /binaryFrameConnection\('channel_diagnostics'/);
 assert.match(application, /\/squelch-preview/);
+assert.doesNotMatch(application, /node\('dd', '', value\)/,
+  'Diagnostic output elements must be appended as nodes instead of stringified');
+assert.match(application, /detail\.append\(value\)/,
+  'Diagnostic readouts must retain their live output elements');
 assert.match(application, /action: 'RESTORE'/,
   'Closing the editor must restore runtime-only squelch preview settings');
 

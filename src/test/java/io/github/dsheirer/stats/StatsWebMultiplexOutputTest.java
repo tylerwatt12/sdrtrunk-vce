@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -38,6 +39,8 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("frame.type() != DiagnosticStreamFrame.TYPE_AUDIO_PCM16 || " +
             "mChannelAudioAllowed"));
         assertTrue(source.contains("WebCapability.WEB_AUDIO_LISTEN"));
+        assertTrue(StatsWebServerService.MULTIPLEX_CAPABILITIES.contains(WebCapability.WEB_AUDIO_LISTEN),
+            "the shared transport authorization must retain the capability used to admit PCM frames");
     }
 
     @Test

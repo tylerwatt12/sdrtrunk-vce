@@ -153,7 +153,7 @@ public class StatsWebServerService implements AutoCloseable
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
         "decode_messages", "channel_diagnostics", "tuner_diagnostics");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
-        WebCapability.TUNER_SPECTRUM_VIEW);
+        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
