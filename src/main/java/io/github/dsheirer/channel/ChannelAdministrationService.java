@@ -17,9 +17,13 @@ import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
+import io.github.dsheirer.dsp.squelch.NoiseSquelch;
+import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
+import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -37,6 +41,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -52,12 +57,14 @@ public final class ChannelAdministrationService
     public static final int MAXIMUM_BULK_CHANNELS = 100;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
+    private static final long SQUELCH_PREVIEW_LEASE_SECONDS = 10L;
     private final ConfigurationManager mConfigurationManager;
     private final ChannelProtocolRegistry mProtocolRegistry;
     private final ChannelDefinitionCodec mCodec;
     private final boolean mUseDesktopThread;
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
+    private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
 
     public ChannelAdministrationService(ConfigurationManager configurationManager)
     {
@@ -114,6 +121,86 @@ public final class ChannelAdministrationService
                     definition.getFamily().name())).toList(),
             mConfigurationManager.getTunerManager() != null ?
                 mConfigurationManager.getTunerManager().getPreferredTunerNames() : List.of()));
+    }
+
+    /**
+     * Applies a short-lived runtime-only squelch preview.  The saved channel is never changed, and the original
+     * settings are restored explicitly by the browser or automatically when its lease expires.
+     */
+    public synchronized SquelchPreviewResult previewSquelch(String configurationId, String leaseId,
+                                                            float open, float close,
+                                                            int hysteresisOpen, int hysteresisClose)
+    {
+        String id = requireConfigurationId(configurationId);
+
+        if(!Float.isFinite(open) || !Float.isFinite(close) || open < NoiseSquelch.MINIMUM_NOISE_THRESHOLD ||
+            close > NoiseSquelch.MAXIMUM_NOISE_THRESHOLD || open > close ||
+            hysteresisOpen < NoiseSquelch.MINIMUM_HYSTERESIS_THRESHOLD ||
+            hysteresisClose > NoiseSquelch.MAXIMUM_HYSTERESIS_THRESHOLD || hysteresisOpen > hysteresisClose)
+        {
+            throw new IllegalArgumentException("Squelch preview settings are invalid");
+        }
+
+        NBFMDecoder decoder = findAnalogDecoder(id);
+        SquelchPreviewLease lease = mSquelchPreviews.get(id);
+
+        if(lease == null)
+        {
+            if(leaseId != null && !leaseId.isBlank())
+            {
+                throw new IllegalStateException("The squelch preview expired; adjust the control again");
+            }
+
+            NoiseSquelchState original = decoder.getNoiseSquelchState();
+            lease = new SquelchPreviewLease(UUID.randomUUID().toString(), decoder, original);
+            mSquelchPreviews.put(id, lease);
+        }
+        else if(!lease.id().equals(leaseId) || lease.decoder() != decoder)
+        {
+            throw new IllegalStateException("Another squelch preview is already active for this channel");
+        }
+
+        decoder.previewSquelch(open, close, hysteresisOpen, hysteresisClose);
+        SquelchPreviewLease activeLease = lease;
+        lease.renew(ThreadPool.SCHEDULED.schedule(() -> expireSquelchPreview(id, activeLease.id()),
+            SQUELCH_PREVIEW_LEASE_SECONDS, TimeUnit.SECONDS));
+        return new SquelchPreviewResult(lease.id(),
+            System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(SQUELCH_PREVIEW_LEASE_SECONDS));
+    }
+
+    public synchronized void restoreSquelchPreview(String configurationId, String leaseId)
+    {
+        String id = requireConfigurationId(configurationId);
+        SquelchPreviewLease lease = mSquelchPreviews.get(id);
+
+        if(lease != null && lease.id().equals(leaseId))
+        {
+            mSquelchPreviews.remove(id);
+            lease.restore();
+        }
+    }
+
+    private synchronized void expireSquelchPreview(String configurationId, String leaseId)
+    {
+        SquelchPreviewLease lease = mSquelchPreviews.get(configurationId);
+
+        if(lease != null && lease.id().equals(leaseId))
+        {
+            mSquelchPreviews.remove(configurationId);
+            lease.restore();
+        }
+    }
+
+    private NBFMDecoder findAnalogDecoder(String configurationId)
+    {
+        return mConfigurationManager.getChannelProcessingManager()
+            .getProcessingChainsByConfiguration(configurationId, null).stream()
+            .filter(chain -> chain.isProcessing())
+            .flatMap(chain -> chain.getModules().stream())
+            .filter(NBFMDecoder.class::isInstance)
+            .map(NBFMDecoder.class::cast)
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException("The analog channel is not currently running"));
     }
 
     public ChannelDefinition template(String protocolId)
@@ -752,6 +839,55 @@ public final class ChannelAdministrationService
         public BatchResult { results = List.copyOf(results); }
     }
     public record StatisticsResult(String configurationId, int rowsDeleted, String summary) {}
+    public record SquelchPreviewResult(String leaseId, long expiresAtEpochMs) {}
+
+    private static final class SquelchPreviewLease
+    {
+        private final String mId;
+        private final NBFMDecoder mDecoder;
+        private final NoiseSquelchState mOriginal;
+        private ScheduledFuture<?> mExpiry;
+
+        private SquelchPreviewLease(String id, NBFMDecoder decoder, NoiseSquelchState original)
+        {
+            mId = id;
+            mDecoder = decoder;
+            mOriginal = original;
+        }
+
+        private String id()
+        {
+            return mId;
+        }
+
+        private NBFMDecoder decoder()
+        {
+            return mDecoder;
+        }
+
+        private void renew(ScheduledFuture<?> expiry)
+        {
+            if(mExpiry != null)
+            {
+                mExpiry.cancel(false);
+            }
+
+            mExpiry = expiry;
+        }
+
+        private void restore()
+        {
+            if(mExpiry != null)
+            {
+                mExpiry.cancel(false);
+                mExpiry = null;
+            }
+
+            mDecoder.previewSquelch(mOriginal.noiseOpenThreshold(), mOriginal.noiseCloseThreshold(),
+                mOriginal.hysteresisOpenThreshold(), mOriginal.hysteresisCloseThreshold());
+        }
+    }
+
     private record MutationTarget(Set<String> changedIds, List<String> resultIds)
     {
         private MutationTarget

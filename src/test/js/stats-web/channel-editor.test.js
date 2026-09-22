@@ -41,7 +41,21 @@ vm.createContext(context);
 vm.runInContext(`
   ${functionSource('function channelEditorSectionId(value)')}
   ${functionSource('function channelEditorSectionPlan(sections)')}
+  ${functionSource('function channelSquelchQuality(noise)')}
+  ${functionSource('function channelSquelchNoise(quality)')}
 `, context);
+
+assert.equal(vm.runInContext('channelSquelchQuality(0.1)', context), 100);
+assert.equal(vm.runInContext('channelSquelchQuality(0.5)', context), 0);
+assert.equal(vm.runInContext('channelSquelchNoise(100)', context), 0.1);
+assert.equal(vm.runInContext('channelSquelchNoise(0)', context), 0.5);
+assert.match(application, /CHANNEL_SQUELCH_PATHS/);
+assert.match(application, /Advanced diagnostics/);
+assert.match(application, /Audio plays only while squelch is open/);
+assert.match(application, /binaryFrameConnection\('channel_diagnostics'/);
+assert.match(application, /\/squelch-preview/);
+assert.match(application, /action: 'RESTORE'/,
+  'Closing the editor must restore runtime-only squelch preview settings');
 
 const plan = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'general', label: 'General', fields: [{ path: 'name', required: true }] },

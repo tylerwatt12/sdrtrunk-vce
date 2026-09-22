@@ -236,6 +236,23 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     }
 
     /**
+     * Lock-free diagnostic snapshot of the current squelch decision.
+     */
+    public NoiseSquelchState getNoiseSquelchState()
+    {
+        return mSquelch.getNoiseSquelchState();
+    }
+
+    /**
+     * Applies temporary diagnostic settings without changing the persisted channel configuration.
+     */
+    public void previewSquelch(float open, float close, int hysteresisOpen, int hysteresisClose)
+    {
+        mSquelch.setNoiseThreshold(open, close);
+        mSquelch.setHysteresisThreshold(hysteresisOpen, hysteresisClose);
+    }
+
+    /**
      * Applies new open and close noise threshold values for the noise squelch.
      * @param open for the open noise variance calculation in range 0.1 - 0.5 where open <= close value.
      * @param close for the close noise variance calculation. in range 0.1 - 0.5 where close >= open.

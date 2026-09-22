@@ -8678,6 +8678,8 @@ const DIAGNOSTIC_FRAME_TYPES = Object.freeze({
   CHANNEL_SIGNAL: 2,
   CHANNEL_SYMBOLS: 3,
   TUNER_FFT: 4,
+  SQUELCH: 5,
+  AUDIO_PCM16: 6,
   HEARTBEAT: 127
 });
 
@@ -8763,6 +8765,20 @@ function diagnosticFloatPayload(frame) {
     }
   }
   return values;
+}
+
+function diagnosticPcm16Payload(frame) {
+  const count = Math.max(0, Number(frame.valueCount || 0));
+  if (frame.payload.byteLength !== count * 2) {
+    throw new Error('The diagnostic stream returned invalid audio.');
+  }
+  const data = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+  const samples = new Float32Array(count);
+  for (let index = 0; index < count; index += 1) {
+    const value = data.getInt16(index * 2, true);
+    samples[index] = value < 0 ? value / 32768 : value / 32767;
+  }
+  return samples;
 }
 
 function diagnosticFrameLatency(frame, clock) {
@@ -17015,12 +17031,318 @@ function channelRestoreProtocolDefaults(form, profile) {
   channelEditorDependencies(form);
 }
 
+const CHANNEL_SQUELCH_PATHS = new Set([
+  'settings.squelch_noise_open',
+  'settings.squelch_noise_close',
+  'settings.squelch_hysteresis_open',
+  'settings.squelch_hysteresis_close'
+]);
+
+function channelSquelchQuality(noise) {
+  return Math.max(0, Math.min(100, Math.round((0.5 - Number(noise || 0)) * 250)));
+}
+
+function channelSquelchNoise(quality) {
+  return Math.max(0.1, Math.min(0.5, 0.5 - Number(quality || 0) / 250));
+}
+
+function channelSquelchTuner(profile, channel, entry, advancedFields) {
+  const panel = node('section', 'channel-squelch-tuner');
+  const heading = node('div', 'channel-squelch-heading');
+  const headingCopy = node('div');
+  headingCopy.append(node('h4', '', 'Squelch tuning'), node('p', 'muted',
+    profile.id === 'am' ? 'Higher quality means the AM carrier is more stable.' :
+      'Higher quality means the FM audio contains less high-frequency noise.'));
+  const statePill = uiPill(entry?.processing_state === 'RUNNING' ? 'Connecting' : 'Channel stopped', 'neutral');
+  heading.append(headingCopy, statePill);
+
+  const qualityValue = node('strong', 'channel-squelch-quality-value', '—');
+  const qualityMeter = node('progress', 'channel-squelch-quality-meter');
+  qualityMeter.max = 100;
+  qualityMeter.value = 0;
+  qualityMeter.setAttribute('aria-label', 'Current signal quality');
+  const qualityLine = node('div', 'channel-squelch-quality-line');
+  qualityLine.append(node('span', '', 'Signal quality'), qualityValue);
+  const quality = node('div', 'channel-squelch-quality');
+  quality.append(qualityLine, qualityMeter);
+
+  const history = node('div', 'channel-squelch-history');
+  history.setAttribute('role', 'img');
+  history.setAttribute('aria-label', 'Recent signal quality, newest at the right');
+  const historyCells = Array.from({ length: 40 }, () => node('span', 'channel-squelch-history-cell'));
+  history.append(...historyCells);
+  const recent = node('div', 'channel-squelch-recent');
+  recent.append(node('span', 'ui-field-label', 'Recent quality'), history,
+    node('small', 'ui-field-detail', 'About the last two seconds · newest at right'));
+
+  const advancedControl = (path) => advancedFields.map((wrapper) =>
+    wrapper.querySelector(`[data-channel-path="${path}"]`)).find(Boolean);
+  const openControl = advancedControl('settings.squelch_noise_open');
+  const closeControl = advancedControl('settings.squelch_noise_close');
+  const openTimingControl = advancedControl('settings.squelch_hysteresis_open');
+  const closeTimingControl = advancedControl('settings.squelch_hysteresis_close');
+  const startSlider = node('input', 'ui-range');
+  const keepSlider = node('input', 'ui-range');
+  [startSlider, keepSlider].forEach((slider) => {
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '100';
+    slider.step = '1';
+  });
+  const startValue = node('output');
+  const keepValue = node('output');
+  const sliders = node('div', 'channel-squelch-sliders');
+  const sliderField = (label, control, output, help) => {
+    const field = node('label', 'ui-field channel-squelch-slider');
+    const line = node('span', 'channel-squelch-slider-label');
+    line.append(node('span', 'ui-field-label', label), output);
+    field.append(line, control, node('small', 'ui-field-detail', help));
+    return field;
+  };
+  sliders.append(
+    sliderField('Start listening at', startSlider, startValue,
+      'Raise this to require a cleaner signal before the channel opens.'),
+    sliderField('Keep listening down to', keepSlider, keepValue,
+      'Lower this to avoid cutting out as a signal fades.'));
+
+  const syncSimpleControls = () => {
+    const start = channelSquelchQuality(Number(openControl?.value));
+    const keep = channelSquelchQuality(Number(closeControl?.value));
+    startSlider.value = String(start);
+    keepSlider.value = String(keep);
+    startValue.textContent = `${start}% quality`;
+    keepValue.textContent = `${keep}% quality`;
+  };
+  const writeThresholds = (changed) => {
+    let start = Number(startSlider.value);
+    let keep = Number(keepSlider.value);
+    if (start < keep) {
+      if (changed === startSlider) keep = start;
+      else start = keep;
+    }
+    startSlider.value = String(start);
+    keepSlider.value = String(keep);
+    if (openControl) openControl.value = channelSquelchNoise(start).toFixed(2);
+    if (closeControl) closeControl.value = channelSquelchNoise(keep).toFixed(2);
+    openControl?.dispatchEvent(new Event('input', { bubbles: true }));
+    closeControl?.dispatchEvent(new Event('input', { bubbles: true }));
+    syncSimpleControls();
+  };
+  const previewNote = node('p', 'channel-squelch-save-note',
+    entry?.processing_state === 'RUNNING' ?
+      'Adjustments preview live. Save & restart makes them permanent; closing restores the saved settings.' :
+      'Save the channel, then start it to see live feedback.');
+  let previewLeaseId = null;
+  let previewTimer = null;
+  let previewHeartbeat = null;
+  let previewClosed = false;
+  let previewQueue = Promise.resolve();
+  const previewPath = channel?.configuration_id ?
+    `/api/v1/admin/channels/${encodeURIComponent(channel.configuration_id)}/squelch-preview` : null;
+  const applyPreview = () => {
+    if (previewClosed || entry?.processing_state !== 'RUNNING' || !previewPath) return;
+    previewQueue = previewQueue.then(async () => {
+      if (previewClosed) return;
+      const result = await requestJson(previewPath, { method: 'POST', body: {
+        action: 'APPLY',
+        lease_id: previewLeaseId,
+        noise_open: Number(openControl?.value),
+        noise_close: Number(closeControl?.value),
+        hysteresis_open: Number(openTimingControl?.value),
+        hysteresis_close: Number(closeTimingControl?.value)
+      } });
+      previewLeaseId = result.lease_id;
+      previewNote.textContent = 'Previewing these settings live. Save & restart makes them permanent.';
+      if (!previewHeartbeat) previewHeartbeat = window.setInterval(applyPreview, 4_000);
+    }).catch((error) => {
+      previewNote.textContent = error.message || 'Live preview is temporarily unavailable.';
+    });
+  };
+  const schedulePreview = () => {
+    if (previewTimer) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(applyPreview, 180);
+  };
+  startSlider.addEventListener('input', () => { writeThresholds(startSlider); schedulePreview(); });
+  keepSlider.addEventListener('input', () => { writeThresholds(keepSlider); schedulePreview(); });
+  [openControl, closeControl, openTimingControl, closeTimingControl].filter(Boolean).forEach((control) =>
+    ['input', 'change'].forEach((eventName) => control.addEventListener(eventName, () => {
+      syncSimpleControls();
+      schedulePreview();
+    })));
+  syncSimpleControls();
+
+  const listen = uiActionButton('Listen live', 'icon-play', () => {}, 'ui-button ui-button-secondary');
+  const volume = node('input', 'ui-range');
+  volume.type = 'range';
+  volume.min = '0';
+  volume.max = '1';
+  volume.step = '0.05';
+  volume.value = '0.7';
+  volume.setAttribute('aria-label', 'Live channel volume');
+  const volumeValue = node('output', '', '70%');
+  const audioStatus = node('span', 'muted', 'Audio plays only while squelch is open.');
+  const audioAllowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
+  if (!audioAllowed) {
+    listen.disabled = true;
+    audioStatus.textContent = 'This account does not have audio-listening access.';
+  }
+  const audioControls = node('div', 'channel-squelch-audio');
+  audioControls.append(listen, node('span', '', 'Volume'), volume, volumeValue, audioStatus);
+
+  const rawNoise = node('output', '', '—');
+  const evidence = node('output', '', '—');
+  const timing = node('output', '', '—');
+  const diagnosticReadouts = node('dl', 'channel-squelch-diagnostics');
+  [['Current detector value', rawNoise], ['Current evidence', evidence], ['Configured timing', timing]]
+    .forEach(([label, value]) => diagnosticReadouts.append(node('dt', '', label), node('dd', '', value)));
+  const advanced = node('details', 'channel-squelch-advanced ui-section-disclosure');
+  const advancedSummary = node('summary', 'ui-section-summary');
+  advancedSummary.append(node('span', '', 'Advanced diagnostics'), node('small', 'muted', 'Exact values'));
+  const advancedBody = node('div', 'channel-squelch-advanced-body');
+  advancedBody.append(node('p', 'muted',
+    'These are the exact manual thresholds used by the decoder. Timing values are 10 ms evidence steps; ' +
+    'nothing is learned automatically.'), diagnosticReadouts);
+  advancedFields.forEach((wrapper) => advancedBody.append(wrapper));
+  advanced.append(advancedSummary, advancedBody);
+
+  panel.append(heading, quality, recent, sliders, previewNote, audioControls, advanced);
+
+  let stream = null;
+  let generation = -1;
+  let listening = false;
+  let audioContext = null;
+  let gain = null;
+  let nextAudioTime = 0;
+  const historyValues = [];
+  const setState = (label, tone = 'neutral') => {
+    statePill.className = `ui-pill ui-pill-${tone}`;
+    statePill.replaceChildren(node('span', '', label));
+  };
+  const updateHistory = (value) => {
+    historyValues.push(value);
+    if (historyValues.length > historyCells.length) historyValues.shift();
+    const offset = historyCells.length - historyValues.length;
+    historyCells.forEach((cell, index) => {
+      const item = historyValues[index - offset];
+      cell.dataset.quality = item == null ? '' : item >= 80 ? 'excellent' : item >= 60 ? 'good' :
+        item >= 40 ? 'fair' : item >= 20 ? 'weak' : 'poor';
+      cell.title = item == null ? '' : `${item}% quality`;
+    });
+  };
+  const stopAudio = () => {
+    listening = false;
+    listen.replaceChildren(iconGlyph('icon-play'), document.createTextNode('Listen live'));
+    if (audioContext) void audioContext.close();
+    audioContext = null;
+    gain = null;
+    nextAudioTime = 0;
+  };
+  listen.addEventListener('click', async () => {
+    if (listening) {
+      stopAudio();
+      return;
+    }
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) {
+      audioStatus.textContent = 'Live audio is not supported by this browser.';
+      return;
+    }
+    audioContext = new Context();
+    gain = audioContext.createGain();
+    gain.gain.value = Number(volume.value);
+    gain.connect(audioContext.destination);
+    await audioContext.resume();
+    listening = true;
+    nextAudioTime = audioContext.currentTime + 0.05;
+    listen.replaceChildren(iconGlyph('icon-stop'), document.createTextNode('Stop listening'));
+    audioStatus.textContent = 'Listening for open-squelch audio…';
+  });
+  volume.addEventListener('input', () => {
+    volumeValue.textContent = `${Math.round(Number(volume.value) * 100)}%`;
+    if (gain) gain.gain.value = Number(volume.value);
+  });
+  const playAudio = (frame) => {
+    if (!listening || !audioContext || !gain) return;
+    const samples = diagnosticPcm16Payload(frame);
+    if (!samples.length) return;
+    const buffer = audioContext.createBuffer(1, samples.length, frame.sampleRateHz || 8000);
+    buffer.copyToChannel(samples, 0);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gain);
+    if (nextAudioTime < audioContext.currentTime || nextAudioTime > audioContext.currentTime + 0.5) {
+      nextAudioTime = audioContext.currentTime + 0.05;
+    }
+    source.start(nextAudioTime);
+    nextAudioTime += buffer.duration;
+    audioStatus.textContent = 'Playing live channel audio.';
+  };
+
+  const start = () => {
+    const frequencyHz = Number(channel?.source?.preferred_frequency_hz || channel?.source?.frequencies_hz?.[0]);
+    if (entry?.processing_state !== 'RUNNING' || !frequencyHz || !channel?.configuration_id) {
+      listen.disabled = true;
+      return;
+    }
+    const subscriptionId = randomLiveClientId();
+    stream = binaryFrameConnection('channel_diagnostics', {
+      configuration_id: channel.configuration_id,
+      frequency_hz: frequencyHz,
+      subscription_id: subscriptionId
+    }, {
+      onFrame: (frame) => {
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
+          const state = diagnosticJsonPayload(frame);
+          if (state?.subscription_id !== subscriptionId) return;
+          generation = frame.generation;
+          if (state.squelch_state !== 'live') setState(state.squelch_state === 'waiting' ? 'Waiting' : 'Unavailable');
+          return;
+        }
+        if (generation >= 0 && frame.generation !== generation) return;
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.AUDIO_PCM16) {
+          playAudio(frame);
+          return;
+        }
+        if (frame.type !== DIAGNOSTIC_FRAME_TYPES.SQUELCH) return;
+        const values = diagnosticFloatPayload(frame);
+        if (values.length < 8) return;
+        const currentQuality = channelSquelchQuality(values[0]);
+        const closed = values[6] >= 0.5 && values[7] < 0.5;
+        qualityMeter.value = currentQuality;
+        qualityValue.textContent = `${currentQuality}%`;
+        updateHistory(currentQuality);
+        setState(closed ? 'Closed' : 'Open', closed ? 'neutral' : 'success');
+        rawNoise.textContent = Number(values[0]).toFixed(4);
+        evidence.textContent = `${Math.round(values[3])} of ${Math.round(closed ? values[4] : values[5])}`;
+        timing.textContent = `open ${Math.round(values[4]) * 10} ms · close ${Math.round(values[5]) * 10} ms`;
+      },
+      onError: () => setState('Reconnecting', 'warning')
+    });
+  };
+  const close = () => {
+    previewClosed = true;
+    if (previewTimer) window.clearTimeout(previewTimer);
+    if (previewHeartbeat) window.clearInterval(previewHeartbeat);
+    void previewQueue.finally(() => {
+      if (previewLeaseId && previewPath) void requestJson(previewPath, {
+        method: 'POST', body: { action: 'RESTORE', lease_id: previewLeaseId }
+      }).catch(() => {});
+    });
+    stream?.close();
+    stream = null;
+    stopAudio();
+  };
+  return { element: panel, start, close };
+}
+
 async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null) {
   const editing = mode === 'edit';
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
+  let squelchTuner = null;
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
     id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
-    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary'
+    returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary',
+    cleanup: () => squelchTuner?.close()
   });
   if (!modal) return;
   try {
@@ -17043,6 +17365,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     const host = node('div');
 
     const draw = () => {
+      squelchTuner?.close();
+      squelchTuner = null;
       const form = node('form', 'channel-editor-form editor-workspace');
       form.dataset.uiDensity = 'comfortable';
       const hero = node('div', 'channel-editor-hero');
@@ -17107,6 +17431,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           panel.append(panelHeader);
         }
         const grid = node('div', 'channel-editor-grid');
+        const squelchFields = [];
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
           let presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
@@ -17134,9 +17459,15 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             wrapper.dataset.visiblePath = field.visible_when.path;
             wrapper.dataset.visibleEquals = JSON.stringify(field.visible_when.equals);
           }
-          grid.append(wrapper);
+          if (sectionDefinition.id === 'protocol' && CHANNEL_SQUELCH_PATHS.has(field.path) &&
+              (profile.id === 'am' || profile.id === 'nbfm')) squelchFields.push(wrapper);
+          else grid.append(wrapper);
         });
         panel.append(grid);
+        if (sectionDefinition.id === 'protocol' && squelchFields.length) {
+          squelchTuner = channelSquelchTuner(profile, channel, entry, squelchFields);
+          panel.append(squelchTuner.element);
+        }
         panels.set(sectionDefinition.id, panel);
         if (advanced) {
           const disclosure = node('details',
@@ -17231,6 +17562,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       modal.dialog.querySelector('.modal-header h2').textContent = editing ?
         `Edit ${channel.name || 'Channel'}` : 'Create Channel';
       modal.setDirty(false);
+      squelchTuner?.start();
     };
     draw();
   } catch (error) {

@@ -12,14 +12,17 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
+import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.SampleType;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.IComplexSamplesListener;
+import io.github.dsheirer.sample.real.IRealBufferListener;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.spectrum.DFTSize;
 import io.github.dsheirer.util.concurrent.BoundedSpscFloatBatchQueue;
@@ -35,6 +38,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,6 +57,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
     public static final int SIGNAL_FRAMES_PER_SECOND = 10;
     public static final int SYMBOL_BATCH_SIZE = 240;
     public static final int MAXIMUM_VISIBLE_SYMBOLS = 4_800;
+    public static final int ANALOG_AUDIO_SAMPLE_RATE = 8_000;
     private static final long BINDING_REFRESH_NANOS = TimeUnit.MILLISECONDS.toNanos(250);
     private static final float MAXIMUM_SYMBOL_PHASE = (float)Math.PI;
 
@@ -319,9 +324,11 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
     public record State(long revision, long generation, String state, String reason,
                         String signalState, String signalReason, String symbolsState, String symbolsReason,
+                        String squelchState, String squelchReason, String audioState, String audioReason,
                         String configurationId, long frequencyHz, long sampleRateHz, Integer timeslot, String protocol,
                         String decoderProfile,
-                        int fftSize, int signalFramesPerSecond, int symbolBatchSize, int maximumVisibleSymbols)
+                        int fftSize, int signalFramesPerSecond, int symbolBatchSize, int maximumVisibleSymbols,
+                        int audioSampleRateHz)
     {
     }
 
@@ -398,6 +405,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mScope = scope;
             mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                 "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
+                "waiting", "Waiting for squelch data.", "waiting", "Waiting for channel audio.",
                 scope.frequencyHz(), 0, "", "", 0);
         }
 
@@ -495,17 +503,20 @@ public final class ChannelDiagnosticService implements AutoCloseable
             {
                 mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                     "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
+                    "waiting", "Waiting for squelch data.", "waiting", "Waiting for channel audio.",
                     mScope.frequencyHz(), 0, "", "", 0);
                 return;
             }
 
-            if(!info.signalSupported() && !info.symbolsSupported())
+            if(!info.signalSupported() && !info.symbolsSupported() && !info.analogSupported())
             {
                 mRetryProducer = false;
                 mState = state(0, "unsupported", "Channel diagnostics are not available for this channel.",
                     "unsupported", "Signal is not available for this channel.",
-                    "unsupported", "Symbols are not available for this decoder.", info.frequencyHz(),
-                    info.sampleRateHz(), info.protocol(), info.decoderProfile(), 0);
+                    "unsupported", "Symbols are not available for this decoder.",
+                    "unsupported", "Squelch is not available for this decoder.",
+                    "unsupported", "Live audio is not available for this decoder.",
+                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), 0);
                 return;
             }
 
@@ -526,6 +537,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
                     info.symbolsSupported() ? "unavailable" : "unsupported",
                     info.symbolsSupported() ? "Symbol diagnostics could not be started." :
                         "Symbols are not available for this decoder.",
+                    info.analogSupported() ? "unavailable" : "unsupported",
+                    info.analogSupported() ? "Squelch diagnostics could not be started." :
+                        "Squelch is not available for this decoder.",
+                    info.analogSupported() ? "unavailable" : "unsupported",
+                    info.analogSupported() ? "Live audio could not be started." :
+                        "Live audio is not available for this decoder.",
                     info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
                 return;
             }
@@ -534,6 +551,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             {
                 mRetryProducer = true;
                 mState = state(0, "capacity", "Too many different channels are already being viewed.",
+                    "waiting", "Waiting for diagnostic capacity.", "waiting", "Waiting for diagnostic capacity.",
                     "waiting", "Waiting for diagnostic capacity.", "waiting", "Waiting for diagnostic capacity.",
                     info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
                 return;
@@ -554,17 +572,20 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mState = state(producer.generation(), producer.isLive() ? "live" : "unavailable",
                 producer.isLive() ? "" : "Channel diagnostics could not be started.",
                 producer.signalState(), producer.signalReason(), producer.symbolsState(), producer.symbolsReason(),
+                producer.squelchState(), producer.squelchReason(), producer.audioState(), producer.audioReason(),
                 info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
         }
 
         private State state(long generation, String state, String reason, String signalState, String signalReason,
-                            String symbolsState, String symbolsReason, long frequency, long sampleRate,
+                            String symbolsState, String symbolsReason, String squelchState, String squelchReason,
+                            String audioState, String audioReason, long frequency, long sampleRate,
                             String protocol, String decoderProfile, int fftSize)
         {
             return new State(++mStateRevision, generation, state, reason, signalState, signalReason, symbolsState,
-                symbolsReason, mScope.configurationId(), frequency, sampleRate, mScope.timeslot(), protocol,
+                symbolsReason, squelchState, squelchReason, audioState, audioReason,
+                mScope.configurationId(), frequency, sampleRate, mScope.timeslot(), protocol,
                 decoderProfile, fftSize,
-                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS);
+                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS, ANALOG_AUDIO_SAMPLE_RATE);
         }
 
         private void detach()
@@ -598,6 +619,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             Math.round(source.getSampleRate()) : 0;
         boolean signalSupported = source != null && source.getSampleType() == SampleType.COMPLEX && sampleRate > 0;
         boolean symbolsSupported = decoder instanceof FeedbackDecoder;
+        boolean analogSupported = decoder instanceof NBFMDecoder;
         String protocol = decoder != null && decoder.getDecoderType() != null ?
             decoder.getDecoderType().getDisplayString() : "";
         String decoderProfile = protocol;
@@ -609,7 +631,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
         int fftSize = signalSupported ? fftSize(sampleRate) : 0;
         return new BindingInfo(source, decoder, frequency > 0 ? frequency : fallbackFrequencyHz, sampleRate,
-            protocol, decoderProfile, fftSize, signalSupported, symbolsSupported);
+            protocol, decoderProfile, fftSize, signalSupported, symbolsSupported, analogSupported);
     }
 
     private static int fftSize(long sampleRate)
@@ -620,7 +642,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
     private record BindingInfo(Source source, PrimaryDecoder decoder, long frequencyHz, long sampleRateHz,
                                String protocol, String decoderProfile, int fftSize, boolean signalSupported,
-                               boolean symbolsSupported)
+                               boolean symbolsSupported, boolean analogSupported)
     {
     }
 
@@ -633,10 +655,15 @@ public final class ChannelDiagnosticService implements AutoCloseable
         private volatile BindingInfo mInfo;
         private final SignalSource mSignalSource;
         private final SymbolSource mSymbolSource;
+        private final AnalogSource mAnalogSource;
         private final String mSignalState;
         private final String mSignalReason;
         private final String mSymbolsState;
         private final String mSymbolsReason;
+        private final String mSquelchState;
+        private final String mSquelchReason;
+        private final String mAudioState;
+        private final String mAudioReason;
 
         private Producer(ProcessingChain processingChain, BindingInfo info, long generation)
         {
@@ -645,10 +672,15 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mInfo = info;
             SignalSource signalSource = null;
             SymbolSource symbolSource = null;
+            AnalogSource analogSource = null;
             String signalState;
             String signalReason;
             String symbolsState;
             String symbolsReason;
+            String squelchState;
+            String squelchReason;
+            String audioState;
+            String audioReason;
 
             if(info.signalSupported())
             {
@@ -693,12 +725,45 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 symbolsReason = "Symbols are not available for this decoder.";
             }
 
+            if(info.decoder() instanceof NBFMDecoder analogDecoder)
+            {
+                try
+                {
+                    analogSource = new AnalogSource(this, processingChain, analogDecoder);
+                    squelchState = "live";
+                    squelchReason = "";
+                    audioState = "live";
+                    audioReason = "";
+                }
+                catch(RuntimeException exception)
+                {
+                    mLog.warn("Unable to attach selected-channel analog diagnostics", exception);
+                    analogSource = null;
+                    squelchState = "unavailable";
+                    squelchReason = "Squelch diagnostics could not be started.";
+                    audioState = "unavailable";
+                    audioReason = "Live audio could not be started.";
+                }
+            }
+            else
+            {
+                squelchState = "unsupported";
+                squelchReason = "Squelch is not available for this decoder.";
+                audioState = "unsupported";
+                audioReason = "Live audio is not available for this decoder.";
+            }
+
             mSignalSource = signalSource;
             mSymbolSource = symbolSource;
+            mAnalogSource = analogSource;
             mSignalState = signalState;
             mSignalReason = signalReason;
             mSymbolsState = symbolsState;
             mSymbolsReason = symbolsReason;
+            mSquelchState = squelchState;
+            mSquelchReason = squelchReason;
+            mAudioState = audioState;
+            mAudioReason = audioReason;
         }
 
         private ProcessingChain processingChain()
@@ -722,7 +787,8 @@ public final class ChannelDiagnosticService implements AutoCloseable
             return current.source() == info.source() && current.decoder() == info.decoder() &&
                 current.sampleRateHz() == info.sampleRateHz() && current.fftSize() == info.fftSize() &&
                 current.signalSupported() == info.signalSupported() &&
-                current.symbolsSupported() == info.symbolsSupported();
+                current.symbolsSupported() == info.symbolsSupported() &&
+                current.analogSupported() == info.analogSupported();
         }
 
         private void updateInfo(BindingInfo info)
@@ -750,15 +816,36 @@ public final class ChannelDiagnosticService implements AutoCloseable
             return mSymbolsReason;
         }
 
+        private String squelchState()
+        {
+            return mSquelchState;
+        }
+
+        private String squelchReason()
+        {
+            return mSquelchReason;
+        }
+
+        private String audioState()
+        {
+            return mAudioState;
+        }
+
+        private String audioReason()
+        {
+            return mAudioReason;
+        }
+
         private boolean isLive()
         {
-            return "live".equals(mSignalState) || "live".equals(mSymbolsState);
+            return "live".equals(mSignalState) || "live".equals(mSymbolsState) || "live".equals(mSquelchState);
         }
 
         private boolean hasTransientAttachmentFailure()
         {
             return (mInfo.signalSupported() && mSignalSource == null) ||
-                (mInfo.symbolsSupported() && mSymbolSource == null);
+                (mInfo.symbolsSupported() && mSymbolSource == null) ||
+                (mInfo.analogSupported() && mAnalogSource == null);
         }
 
         private boolean isClosed()
@@ -815,6 +902,11 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 if(mSymbolSource != null)
                 {
                     mSymbolSource.close();
+                }
+
+                if(mAnalogSource != null)
+                {
+                    mAnalogSource.close();
                 }
 
                 mSubscribers.clear();
@@ -1031,6 +1123,173 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 mDecoder.removeSymbolObserver(this);
                 mDrainTask.close();
             }
+        }
+    }
+
+    /**
+     * Samples analog squelch state and post-squelch 8 kHz audio on the diagnostic worker.  The receiver callback only
+     * replaces one reference, so a slow browser can drop stale audio but can never delay live decoding.
+     */
+    private static final class AnalogSource implements AutoCloseable
+    {
+        private static final long SQUELCH_FRAME_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
+        private final Producer mProducer;
+        private final ProcessingChain mProcessingChain;
+        private final NBFMDecoder mDecoder;
+        private final AtomicLong mSquelchSequence = new AtomicLong();
+        private final AtomicLong mAudioSequence = new AtomicLong();
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+        private final AtomicReference<float[]> mLatestAudio = new AtomicReference<>();
+        private final AudioTap mTap = new AudioTap(mLatestAudio);
+        private final DiagnosticFftScheduler.Task mDrainTask;
+        private long mLastSquelchFrameNanos;
+
+        private AnalogSource(Producer producer, ProcessingChain processingChain, NBFMDecoder decoder)
+        {
+            mProducer = producer;
+            mProcessingChain = processingChain;
+            mDecoder = decoder;
+            boolean moduleAdded = false;
+            DiagnosticFftScheduler.Task drainTask = null;
+
+            try
+            {
+                mProcessingChain.addModule(mTap);
+                moduleAdded = true;
+                drainTask = producer.scheduler().scheduleWithFixedDelay(this::drain, 20);
+            }
+            catch(RuntimeException exception)
+            {
+                mTap.close();
+
+                if(moduleAdded || mProcessingChain.getModules().contains(mTap))
+                {
+                    try
+                    {
+                        mProcessingChain.removeModule(mTap);
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                if(drainTask != null)
+                {
+                    drainTask.close();
+                }
+
+                throw exception;
+            }
+
+            mDrainTask = drainTask;
+        }
+
+        private void drain()
+        {
+            if(mClosed.get())
+            {
+                return;
+            }
+
+            long now = System.nanoTime();
+
+            if(now - mLastSquelchFrameNanos >= SQUELCH_FRAME_INTERVAL_NANOS)
+            {
+                mLastSquelchFrameNanos = now;
+                NoiseSquelchState state = mDecoder.getNoiseSquelchState();
+                mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_SQUELCH,
+                    mProducer.generation(), mSquelchSequence.incrementAndGet(), System.currentTimeMillis(),
+                    mProducer.info().frequencyHz(), ANALOG_AUDIO_SAMPLE_RATE, 0, new float[]{
+                        state.noise(), state.noiseOpenThreshold(), state.noiseCloseThreshold(), state.hysteresis(),
+                        state.hysteresisOpenThreshold(), state.hysteresisCloseThreshold(),
+                        state.squelch() ? 1.0f : 0.0f, state.squelchOverride() ? 1.0f : 0.0f
+                    }));
+            }
+
+            float[] audio = mLatestAudio.getAndSet(null);
+
+            if(audio != null && audio.length > 0)
+            {
+                mProducer.publish(DiagnosticStreamFrame.pcm16(mProducer.generation(),
+                    mAudioSequence.incrementAndGet(), System.currentTimeMillis(), ANALOG_AUDIO_SAMPLE_RATE, audio));
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            if(!mClosed.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            mTap.close();
+            mLatestAudio.set(null);
+
+            try
+            {
+                if(mProcessingChain.getModules().contains(mTap))
+                {
+                    mProcessingChain.removeModule(mTap);
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.debug("Selected-channel audio tap was already detached", exception);
+            }
+            finally
+            {
+                mDrainTask.close();
+            }
+        }
+    }
+
+    private static final class AudioTap extends Module implements IRealBufferListener, AutoCloseable
+    {
+        private final AtomicReference<float[]> mLatestAudio;
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+        private final Listener<float[]> mListener = this::receive;
+
+        private AudioTap(AtomicReference<float[]> latestAudio)
+        {
+            mLatestAudio = latestAudio;
+        }
+
+        @Override
+        public Listener<float[]> getBufferListener()
+        {
+            return mListener;
+        }
+
+        private void receive(float[] samples)
+        {
+            if(!mClosed.get())
+            {
+                mLatestAudio.set(samples);
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            mClosed.set(true);
+            mLatestAudio.set(null);
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+
+        @Override
+        public void start()
+        {
+        }
+
+        @Override
+        public void stop()
+        {
         }
     }
 

@@ -2310,9 +2310,11 @@ public class StatsWebServerService implements AutoCloseable
         private static final int EVENT_CAPACITY_PER_TOPIC = 64;
         static final int EVENT_BYTE_CAPACITY_PER_TOPIC = 256 * 1024;
         private static final long MAXIMUM_EVENT_DROPS = 64;
-        private static final int LATEST_LANES_PER_TOPIC = 2;
+        private static final int LATEST_LANES_PER_TOPIC = 4;
         private static final int LATEST_PRIMARY_LANE = 0;
         private static final int LATEST_CHANNEL_SYMBOL_LANE = 1;
+        private static final int LATEST_SQUELCH_LANE = 2;
+        private static final int LATEST_AUDIO_LANE = 3;
         private final OutputStream mOutputStream;
         private final long mWriteStallNanos;
         private final boolean mCloseStreamOnClose;
@@ -2487,7 +2489,7 @@ public class StatsWebServerService implements AutoCloseable
         {
             if(!mOutputClosed.get() && validTopic(topic) &&
                 frameType >= DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL &&
-                frameType <= DiagnosticStreamFrame.TYPE_TUNER_FFT)
+                frameType <= DiagnosticStreamFrame.TYPE_AUDIO_PCM16)
             {
                 synchronized(mPendingLock)
                 {
@@ -2761,8 +2763,13 @@ public class StatsWebServerService implements AutoCloseable
 
         private static int latestLane(int frameType)
         {
-            return frameType == DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS ?
-                LATEST_CHANNEL_SYMBOL_LANE : LATEST_PRIMARY_LANE;
+            return switch(frameType)
+            {
+                case DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS -> LATEST_CHANNEL_SYMBOL_LANE;
+                case DiagnosticStreamFrame.TYPE_SQUELCH -> LATEST_SQUELCH_LANE;
+                case DiagnosticStreamFrame.TYPE_AUDIO_PCM16 -> LATEST_AUDIO_LANE;
+                default -> LATEST_PRIMARY_LANE;
+            };
         }
 
         private void clearLatestLocked(int topic)
@@ -2849,6 +2856,7 @@ public class StatsWebServerService implements AutoCloseable
         private boolean mMessagePermit;
         private boolean mChannelDiagnosticPermit;
         private boolean mTunerDiagnosticPermit;
+        private volatile boolean mChannelAudioAllowed;
 
         private MultiplexClient(String clientId, HttpExchange exchange)
         {
@@ -2889,6 +2897,8 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mUnauthorizedTopics = Set.copyOf(denied);
+            mChannelAudioAllowed = mWebRequestSecurity.isRequestStillAuthorized(mExchange,
+                WebCapability.WEB_AUDIO_LISTEN);
         }
 
         private boolean pump(MultiplexOutput output) throws IOException, InterruptedException
@@ -2946,8 +2956,11 @@ public class StatsWebServerService implements AutoCloseable
 
                 if(frame != null)
                 {
-                    writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS, frame);
-                    wrote = true;
+                    if(frame.type() != DiagnosticStreamFrame.TYPE_AUDIO_PCM16 || mChannelAudioAllowed)
+                    {
+                        writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS, frame);
+                        wrote = true;
+                    }
                 }
             }
 
@@ -3236,6 +3249,8 @@ public class StatsWebServerService implements AutoCloseable
             }
 
             mChannelDiagnostics = result.session();
+            mChannelAudioAllowed = mWebRequestSecurity.isRequestStillAuthorized(mExchange,
+                WebCapability.WEB_AUDIO_LISTEN);
             mChannelDiagnosticSubscriptionId = request.subscriptionId();
             ChannelDiagnosticService.State state = mChannelDiagnostics.state();
             writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS,
@@ -3383,6 +3398,7 @@ public class StatsWebServerService implements AutoCloseable
 
             mChannelStateRevision = -1;
             mChannelDiagnosticSubscriptionId = null;
+            mChannelAudioAllowed = false;
         }
 
         private void closeTunerDiagnostics()

@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  */
 final class DiagnosticFrameQueue implements AutoCloseable
 {
-    private static final int SLOT_COUNT = DiagnosticStreamFrame.TYPE_TUNER_FFT + 1;
+    private static final int SLOT_COUNT = DiagnosticStreamFrame.TYPE_AUDIO_PCM16 + 1;
     private final AtomicReferenceArray<DiagnosticStreamFrame> mFrames = new AtomicReferenceArray<>(SLOT_COUNT);
     private final Semaphore mAvailable = new Semaphore(0);
     private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -35,7 +35,7 @@ final class DiagnosticFrameQueue implements AutoCloseable
         Objects.requireNonNull(frame, "Diagnostic frame cannot be null");
         int type = frame.type();
 
-        if(type < DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL || type > DiagnosticStreamFrame.TYPE_TUNER_FFT)
+        if(type < DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL || type > DiagnosticStreamFrame.TYPE_AUDIO_PCM16)
         {
             throw new IllegalArgumentException("Diagnostic frame is not a queued data type");
         }
