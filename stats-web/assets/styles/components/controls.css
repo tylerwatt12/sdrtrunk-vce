@@ -296,6 +296,29 @@
   border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
 }
 
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ui-status::before {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  content: "";
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.ui-status-success { color: var(--success); }
+.ui-status-warning { color: var(--warning); }
+.ui-status-danger { color: var(--danger); }
+
 .ui-segmented {
   display: inline-flex;
   align-items: center;

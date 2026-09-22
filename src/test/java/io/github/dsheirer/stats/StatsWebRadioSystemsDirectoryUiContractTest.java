@@ -54,6 +54,23 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     }
 
     @Test
+    void rendersEqualWidthSystemAndConventionalCardsFromSharedComponents() throws Exception
+    {
+        String app = readText(APP_JAVASCRIPT);
+        String directory = function(app, "function renderNestedRadioDirectory(renderContext)");
+        String systemCard = function(app, "function radioDirectorySystemCard(row)");
+        String channelCard = function(app, "function radioDirectoryConventionalCard(row)");
+
+        assertTrue(directory.contains("bare: true"));
+        assertTrue(directory.contains("radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system'"));
+        assertTrue(directory.contains("radioDirectoryCardSection('Conventional Channels', conventionalRows, 'channel'"));
+        assertFalse(directory.contains("table("));
+        assertTrue(systemCard.contains("ui-surface radio-directory-system-card"));
+        assertTrue(channelCard.contains("ui-surface radio-directory-channel-card"));
+        assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
+    }
+
+    @Test
     void distinguishesProvenNativeSystemsFromSavedChannelFallbacks() throws Exception
     {
         String app = readText(APP_JAVASCRIPT);

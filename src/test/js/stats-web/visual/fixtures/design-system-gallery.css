@@ -326,7 +326,8 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   min-height: 100vh;
 }
 
-.visual-channels-example {
+.visual-channels-example,
+.visual-radio-directory-example {
   width: min(1320px, calc(100% - 32px));
 }
 
@@ -437,6 +438,7 @@ body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
 body:not([data-gallery-view="alias-export"]) .visual-alias-export-example,
 body:not([data-gallery-view="scan-list-members"]) .visual-scan-list-members-example,
 body:not([data-gallery-view="channels"]) .visual-channels-example,
+body:not([data-gallery-view="radio-directory"]) .visual-radio-directory-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   display: none;
@@ -505,7 +507,8 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
 
   .visual-aliases-example,
   .visual-scan-list-members-example,
-  .visual-channels-example {
+  .visual-channels-example,
+  .visual-radio-directory-example {
     width: min(100% - 20px, 1180px);
   }
 }

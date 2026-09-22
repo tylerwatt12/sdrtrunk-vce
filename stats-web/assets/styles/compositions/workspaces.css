@@ -40,6 +40,15 @@
   max-width: 100%;
 }
 
+.ui-surface {
+  min-width: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-surface-radius, var(--radius-card));
+  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
+}
+
 .ui-summary-card {
   min-height: var(--ui-summary-height, 76px);
   display: grid;

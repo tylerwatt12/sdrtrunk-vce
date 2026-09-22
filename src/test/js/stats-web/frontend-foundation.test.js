@@ -374,6 +374,23 @@ async function main() {
   assert.match(identitiesSource, /identity-activity-insights/);
   assert.match(identitiesSource, /identity-activity-table-header/);
   assert.match(identitiesSource, /bare: true/);
+  const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
+  assert.match(radioDirectorySource, /bare: true/);
+  assert.match(radioDirectorySource,
+    /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);
+  assert.match(radioDirectorySource,
+    /radioDirectoryCardSection\('Conventional Channels', conventionalRows, 'channel'/);
+  assert.doesNotMatch(radioDirectorySource, /\btable\s*\(/,
+    'The read-only Radio Directory must render quiet cards instead of a data table');
+  assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
+    /ui-surface radio-directory-system-card/);
+  assert.match(functionBinding(appSource, 'radioDirectoryConventionalCard'),
+    /ui-surface radio-directory-channel-card/);
+  assert.match(functionBinding(appSource, 'radioDirectoryStatus'), /uiStatus\(/);
+  assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
+  assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
+  assert.match(appCssSource,
+    /\.radio-directory-system-grid,[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');
   assert.match(liveHistoryNotice, /live-activity-history-notice ui-notice ui-notice-warning/);
   assert.match(liveHistoryNotice, /storeLiveUiState\(\{ historyNoticeDismissed: true \}\)/);
@@ -433,7 +450,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 21, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 19, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');

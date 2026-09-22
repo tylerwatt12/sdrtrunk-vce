@@ -1,39 +1,204 @@
-.radio-directory-local-table-host {
-  display: grid;
-  gap: var(--ui-layout-gap);
-}
-
-.radio-directory-local-table-host > .section {
-  min-width: 0;
-}
-
-.radio-directory-local .channel-catalog-table-wrap {
-  max-height: none;
-  overflow: visible;
-}
-
-.radio-directory-local .directory-system-row td {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  background: var(--surface-2);
-  border-top: 2px solid var(--line-dark);
-  font-weight: 650;
-}
-
-.radio-directory-local .directory-channel-row .directory-entity {
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.radio-directory-channel-name {
+.radio-directory-content,
+.radio-directory-section {
   min-width: 0;
   display: grid;
-  gap: 2px;
 }
 
-.radio-directory-local .directory-branch {
+.radio-directory-content {
+  gap: var(--space-5);
+}
+
+.radio-directory-section {
+  gap: var(--space-3);
+}
+
+.radio-directory-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.radio-directory-section-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.radio-directory-section-header > span {
+  font-size: 11px;
+}
+
+.radio-directory-system-grid,
+.radio-directory-channel-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.radio-directory-empty {
+  grid-column: 1 / -1;
+}
+
+.radio-directory-system-card {
+  overflow: hidden;
+}
+
+.radio-directory-system-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.radio-directory-system-identity,
+.radio-directory-item-identity {
+  min-width: 0;
+  display: grid;
+}
+
+.radio-directory-system-identity {
+  gap: 5px;
+}
+
+.radio-directory-system-identity h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.radio-directory-system-meta,
+.radio-directory-channel-technical {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 7px;
   color: var(--muted);
+  font-size: 10px;
 }
 
-.radio-directory-alias-lists {
-  display: inline;
+.radio-directory-system-aliases,
+.radio-directory-channel-alias {
+  min-width: 0;
+}
+
+.radio-directory-meta-separator {
+  color: var(--line-dark);
+}
+
+.radio-directory-site-list {
+  min-width: 0;
+  display: grid;
+}
+
+.radio-directory-site-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(118px, 1fr) minmax(150px, 1.3fr) max-content max-content;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+}
+
+.radio-directory-site-row + .radio-directory-site-row {
+  border-top: 1px solid var(--line);
+}
+
+.radio-directory-item-identity {
+  gap: 3px;
+}
+
+.radio-directory-frequency-list {
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.radio-directory-live-action {
+  white-space: nowrap;
+}
+
+.radio-directory-channel-card {
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: minmax(155px, 1.25fr) minmax(145px, 1fr) max-content max-content;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.radio-directory-channel-alias {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 1180px) {
+  .radio-directory-site-row,
+  .radio-directory-channel-card {
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
+  }
+
+  .radio-directory-site-row .radio-directory-frequency-list,
+  .radio-directory-channel-technical {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .radio-directory-site-row > .radio-directory-item-status,
+  .radio-directory-channel-card > .radio-directory-item-status,
+  .radio-directory-site-row > .radio-directory-live-action,
+  .radio-directory-channel-card > .radio-directory-live-action {
+    grid-row: 1 / 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .radio-directory-system-grid,
+  .radio-directory-channel-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .radio-directory-section-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+@media (max-width: 520px) {
+  .radio-directory-system-header {
+    flex-direction: column;
+  }
+
+  .radio-directory-site-row,
+  .radio-directory-channel-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .radio-directory-site-row .radio-directory-frequency-list,
+  .radio-directory-channel-technical {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .radio-directory-site-row > .radio-directory-item-status,
+  .radio-directory-channel-card > .radio-directory-item-status {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .radio-directory-site-row > .radio-directory-live-action,
+  .radio-directory-channel-card > .radio-directory-live-action {
+    grid-column: 2;
+    grid-row: 1;
+  }
 }

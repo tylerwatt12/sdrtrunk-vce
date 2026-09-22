@@ -131,6 +131,18 @@ test('channels-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('channels-light-mobile.png', { fullPage: true });
 });
 
+test('radio-directory-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=radio-directory');
+  await expect(page.locator('body')).toHaveScreenshot('radio-directory-light-desktop.png', { fullPage: true });
+});
+
+test('radio-directory-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=radio-directory');
+  await expect(page.locator('body')).toHaveScreenshot('radio-directory-dark-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

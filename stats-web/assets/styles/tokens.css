@@ -106,6 +106,7 @@
   --control-height-comfortable: 40px;
   --radius-compact: 4px;
   --radius-comfortable: 12px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-family: "Segoe UI", Arial, Helvetica, sans-serif;
 }
 
