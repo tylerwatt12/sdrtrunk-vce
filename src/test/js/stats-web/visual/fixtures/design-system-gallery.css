@@ -299,6 +299,14 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1320px, calc(100% - 32px));
 }
 
+.visual-alias-modal-example {
+  min-height: 100vh;
+}
+
+.visual-channels-example {
+  width: min(1320px, calc(100% - 32px));
+}
+
 .visual-aliases-example table,
 .visual-scan-list-members-example table {
   min-width: 760px;
@@ -402,7 +410,9 @@ body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
 body:not([data-gallery-view="aliases"]) .visual-aliases-example,
+body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
 body:not([data-gallery-view="scan-list-members"]) .visual-scan-list-members-example,
+body:not([data-gallery-view="channels"]) .visual-channels-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   display: none;
@@ -469,7 +479,8 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   }
 
   .visual-aliases-example,
-  .visual-scan-list-members-example {
+  .visual-scan-list-members-example,
+  .visual-channels-example {
     width: min(100% - 20px, 1180px);
   }
 }

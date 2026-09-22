@@ -50,6 +50,9 @@ class StatsWebChannelsUiContractTest
         assertTrue(columns.contains("label: 'Startup order'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
+        assertTrue(columns.contains("channelInlineNavigation(row"));
+        assertFalse(columns.contains("id: 'live'"));
+        assertFalse(columns.contains("id: 'channel'"));
         assertTrue(columns.contains("id: 'select'"));
         assertTrue(columns.contains("essential: true, fixed: true, renderHeader: renderSelectionHeader"));
         assertTrue(catalog.contains("const renderSelectionHeader = () =>"));
@@ -91,7 +94,8 @@ class StatsWebChannelsUiContractTest
             "async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null)");
         String css = StatsWebStylesheetTestSupport.readAll();
 
-        for(String helper: new String[]{"uiActionButton", "uiSelect", "uiToggle", "uiPill", "uiSegmentedControl"})
+        for(String helper: new String[]{"uiActionButton", "uiSelect", "uiToggle", "uiToggleField", "uiPill",
+            "uiSegmentedControl"})
         {
             assertTrue(source.contains("function " + helper + "("), () -> "Missing reusable " + helper);
         }

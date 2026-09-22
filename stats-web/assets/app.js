@@ -4246,12 +4246,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     identifier.append(aliasFormField('Identifier type', matcherType), matcherNotice, matcherHost);
 
     const scanLists = aliasScanListChoices(options, source.scan_list_ids || []);
-    const record = node('input');
-    record.type = 'checkbox';
+    const recordField = uiToggleField('Record calls', Boolean(source.recordable), 'Record calls',
+      'Save completed calls for playback and retained activity.');
+    recordField.classList.add('alias-record-toggle');
+    const record = recordField.querySelector('input');
     record.name = 'recordable';
-    record.checked = Boolean(source.recordable);
     const audioGrid = node('div', 'alias-editor-grid');
-    audioGrid.append(aliasCheckOption('Record calls', record));
+    audioGrid.append(recordField);
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
     const selectedStreams = new Set(source.broadcast_configuration_ids || []);
@@ -4279,7 +4280,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     updateCreationRoutingDefaults = () => {
       if (editing || cloning) return;
       const defaults = options?.alias_list?.new_alias_behavior || {};
-      record.checked = Boolean(defaults.recordable);
+      setUiToggle(record, Boolean(defaults.recordable));
       const selectedScanLists = new Set((defaults.scan_list_ids || []).map(Number));
       scanLists.querySelectorAll('[name="scanListId"]').forEach((checkbox) => {
         checkbox.checked = selectedScanLists.has(Number(checkbox.value));
@@ -5071,8 +5072,11 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   let busy = false;
   const assignmentOverride = (title, choices, defaultNames, id, allowExactNames = false) => {
     const wrapper = node('fieldset', 'alias-stream-options alias-transfer-assignment-override');
-    const enabled = node('input'); enabled.type = 'checkbox';
-    wrapper.append(node('legend', '', title), aliasCheckOption(`Override ${title.toLowerCase()}`, enabled));
+    const overrideField = uiToggleField(`Override ${title.toLowerCase()}`, false,
+      `Override ${title.toLowerCase()}`, 'Use different destinations for new aliases in this import.');
+    overrideField.classList.add('alias-transfer-override-toggle');
+    const enabled = overrideField.querySelector('input');
+    wrapper.append(node('legend', '', title), overrideField);
     const choicesHost = node('div', 'alias-transfer-assignment-choices');
     const exactNames = new Set();
     const nameCounts = new Map();
@@ -5508,13 +5512,12 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     const panel = node('section', 'alias-defaults-tab-panel');
     panel.dataset.behavior = kind;
     panel.append(node('p', 'muted', description));
-    const record = node('input');
-    record.type = 'checkbox';
+    const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
+    recordField.classList.add('alias-record-toggle');
+    const record = recordField.querySelector('input');
     record.name = `${kind}Recordable`;
-    record.checked = Boolean(policy?.recordable);
     const recording = node('fieldset', 'alias-stream-options alias-defaults-section');
-    recording.append(node('legend', '', 'Recording'), node('p', 'muted', recordCopy),
-      aliasCheckOption('Record calls', record));
+    recording.append(node('legend', '', 'Recording'), recordField);
 
     const scanLists = aliasScanListChoices(options, policy?.scan_list_ids || []);
     const scanListLegend = scanLists.querySelector('legend');
@@ -16063,6 +16066,15 @@ function uiToggle(checked, accessibleLabel = '') {
   return wrapper;
 }
 
+function uiToggleField(labelText, checked, accessibleLabel = labelText, detail = '') {
+  const wrapper = node('div', 'ui-toggle-field');
+  const copy = node('span', 'ui-toggle-copy');
+  copy.append(node('strong', '', labelText));
+  if (detail) copy.append(node('small', '', detail));
+  wrapper.append(copy, uiToggle(checked, accessibleLabel));
+  return wrapper;
+}
+
 function setUiToggle(input, checked) {
   input.checked = Boolean(checked);
   const state = input.closest('.ui-toggle')?.querySelector('.ui-toggle-state');
@@ -16118,14 +16130,25 @@ function channelSummaryCards(catalog, editable) {
   return wrapper;
 }
 
-function channelNavigationButton(label, target) {
-  return anchor(label, target, 'ui-button ui-button-secondary channel-navigation-button');
-}
-
 function channelViewLabel(row, context = '') {
   if (context === 'system') return 'View System';
   if (context === 'site' || String(row?.channel_kind || '').toUpperCase() === 'TRUNKED') return 'View Site';
   return 'View Channel';
+}
+
+function channelInlineNavigation(row, nameLinksToDetails = false) {
+  const links = node('span', 'channel-row-links');
+  if (!nameLinksToDetails) {
+    const details = anchor('Details', href('channel', { configuration_id: row.configuration_id }),
+      'channel-row-link');
+    details.title = channelViewLabel(row);
+    links.append(details);
+  }
+  const live = anchor('Live', href('live', { channel: row.configuration_id }),
+    'channel-row-link channel-row-link-live');
+  live.title = `Open ${row.name || 'channel'} in Live`;
+  links.append(live);
+  return links;
 }
 
 async function channelAdminMutation(path, options, statusHost) {
@@ -16183,6 +16206,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
         locked.title = row.restriction_message || 'This configuration is read-only on the web';
         actions.append(locked);
       }
+      actions.append(channelInlineNavigation(row, !(editable && row.editable !== false)));
       return actions;
     }, sortValue: (row) => row.name || '' },
     { id: 'frequency', label: 'Frequencies (MHz)', render: (row) =>
@@ -16193,11 +16217,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') },
-    { id: 'live', label: 'Live', render: (row) => channelNavigationButton('Live',
-      href('live', { channel: row.configuration_id })) },
-    { id: 'channel', label: 'View', render: (row) => channelNavigationButton(channelViewLabel(row),
-      href('channel', { configuration_id: row.configuration_id })) }
+      row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') }
   );
   if (editable) columns.push(
     { id: 'auto-start', label: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
@@ -16367,7 +16387,8 @@ function renderNestedRadioDirectory(renderContext) {
         detail.append(anchor(row.name || 'Unnamed channel', href('channel', {
           configuration_id: row.configuration_id
         }), 'channel-name-link'));
-        detail.append(node('span', 'channel-row-context', row.site || row.site_name || 'Site not identified'));
+        detail.append(node('span', 'channel-row-context', row.site || row.site_name || 'Site not identified'),
+          channelInlineNavigation(row, true));
         entity.append(detail);
       }
       return entity;
@@ -16384,13 +16405,10 @@ function renderNestedRadioDirectory(renderContext) {
           row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
           row.processing_state === 'RUNNING' ? 'success' : 'neutral',
           row.processing_state === 'RUNNING' ? 'icon-live' : 'icon-stop') : '' },
-      { id: 'live', label: 'Live', render: (row) => row.directory_type === 'channel' ?
-        channelNavigationButton('Live', href('live', { channel: row.configuration_id })) : '' },
       { id: 'alias-list', label: 'Alias List', render: radioDirectoryAliasLists,
         sortValue: (row) => row.alias_list_name || (row.alias_lists || []).map((entry) => entry.name).join(' ') }
     ];
-    const conventionalColumns = channelAdminColumns(new Set(), {}, null, false)
-      .filter((column) => column.id !== 'channel');
+    const conventionalColumns = channelAdminColumns(new Set(), {}, null, false);
 
     const draw = () => {
       const term = search.value.trim().toLowerCase();
@@ -18033,19 +18051,20 @@ function openScanListAdminModal(scanList, revision) {
   sortOrder.step = '1';
   sortOrder.required = true;
   sortOrder.value = String(scanList?.sort_order ?? 0);
-  const published = node('input');
-  published.type = 'checkbox';
-  published.checked = scanList?.published !== false;
-  const defaultScanList = node('input');
-  defaultScanList.type = 'checkbox';
-  defaultScanList.checked = scanList?.default === true;
+  const publishedField = uiToggleField('Available to listeners', scanList?.published !== false,
+    'Available to listeners', 'Unpublished lists remain configurable but cannot be selected in the listener.');
+  const published = publishedField.querySelector('input');
+  const defaultField = uiToggleField('Default scan list', scanList?.default === true, 'Default scan list',
+    scanList?.default === true ? 'Choose another list as the default before changing or deleting this one.' :
+      'Making this the default replaces the current default.');
+  const defaultScanList = defaultField.querySelector('input');
   if (scanList?.default === true) {
     defaultScanList.disabled = true;
     published.disabled = true;
   }
   const syncDefault = () => {
     if (defaultScanList.checked) {
-      published.checked = true;
+      setUiToggle(published, true);
       published.disabled = true;
     } else if (scanList?.default !== true) published.disabled = false;
   };
@@ -18061,11 +18080,7 @@ function openScanListAdminModal(scanList, revision) {
   form.append(formField('Name', name, 'Shown to listeners; up to 100 characters.'),
     formField('Description', description, 'Optional context for listeners.'),
     formField('Display order', sortOrder, 'Lower numbers appear first.'),
-    formField('Available to listeners', published,
-      'Unpublished lists remain configurable but cannot be selected in the listener.'),
-    formField('Default scan list', defaultScanList, scanList?.default === true ?
-      'Choose another list as the default before changing or deleting this one.' :
-      'Making this the default replaces the current default.'), message, actions);
+    publishedField, defaultField, message, actions);
   const modal = openReadOnlyModal(editing ? `Edit scan list · ${scanList.name}` : 'Create scan list', form, {
     id: editing ? `edit-scan-list-${scanList.id}` : 'create-scan-list',
     className: 'admin-modal scan-list-admin-modal',

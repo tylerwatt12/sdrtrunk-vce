@@ -95,6 +95,30 @@ test('scan-list-members-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('scan-list-members-light-mobile.png', { fullPage: true });
 });
 
+test('alias-modal-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=alias-modal');
+  await expect(page.locator('body')).toHaveScreenshot('alias-modal-light-desktop.png');
+});
+
+test('alias-modal-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=alias-modal');
+  await expect(page.locator('body')).toHaveScreenshot('alias-modal-dark-mobile.png');
+});
+
+test('channels-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/design-system.html?theme=dark&view=channels');
+  await expect(page.locator('body')).toHaveScreenshot('channels-dark-desktop.png', { fullPage: true });
+});
+
+test('channels-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=channels');
+  await expect(page.locator('body')).toHaveScreenshot('channels-light-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

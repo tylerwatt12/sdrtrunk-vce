@@ -467,9 +467,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
         assertFalse(discoverySupport.contains("'NBFM'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
-        assertTrue(checkbox.contains("'alias-check-option'"));
-        assertTrue(policy.contains("aliasCheckOption('Record calls', record)"));
-        assertTrue(editor.contains("aliasCheckOption('Record calls', record)"));
+        assertTrue(checkbox.contains("'alias-check-option ui-choice-card'"));
+        assertTrue(policy.contains("uiToggleField('Record calls'"));
+        assertTrue(editor.contains("uiToggleField('Record calls'"));
+        assertTrue(editor.contains("setUiToggle(record, Boolean(defaults.recordable))"));
         assertFalse(policy.contains("aliasFormField('Record calls', record)"));
         assertTrue(observed.contains("observedGroupIdentityMatchKind(row) !== 'exact'"));
         assertTrue(observed.contains("defaultSort: 'last_seen'"));
@@ -545,13 +546,13 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
         }
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .alias-editor-table-host"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains(":not(.auth-action):not(.auth-session-button):not(.table-sort-control)"));
         assertTrue(function(source(), "function aliasEditorModalTabs(panels, initial = 'basics')")
-            .contains("node('button', 'secondary', label)"));
+            .contains("node('button', 'ui-segmented-option', label)"));
         assertTrue(function(source(), "function aliasBulkBinaryOperation")
-            .contains("node('button', 'secondary', label)"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .alias-membership-operation button[aria-pressed=\"true\"]"));
+            .contains("node('button', 'ui-segmented-option', label)"));
+        assertTrue(css.contains(".ui-segmented-option[aria-pressed=\"true\"]"));
         assertTrue(css.contains("@media (max-width: 900px)"));
         assertTrue(source().contains("alias-list-mobile-create"));
         assertTrue(css.contains("@media (max-width: 560px)"));

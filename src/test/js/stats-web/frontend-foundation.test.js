@@ -309,6 +309,14 @@ async function main() {
   const aliasMembershipOperation = functionBinding(appSource, 'aliasBulkBinaryOperation');
   assert.match(aliasMembershipOperation, /node\('button', 'ui-segmented-option', label\)/);
   assert.match(aliasMembershipOperation, /alias-membership-operation ui-segmented/);
+  const toggleField = functionBinding(appSource, 'uiToggleField');
+  assert.match(toggleField, /node\('div', 'ui-toggle-field'\)/);
+  assert.match(toggleField, /uiToggle\(checked, accessibleLabel\)/);
+  assert.match(appCssSource, /\.ui-segmented-option \{[^}]*display: inline-flex[^}]*margin: 0/s);
+  assert.match(appCssSource, /\.ui-selection-check \{[^}]*appearance: none/s);
+  assert.match(appCssSource, /\.ui-selection-check:checked::before/);
+  assert.match(appCssSource, /\.ui-selection-check:indeterminate::before/);
+  assert.match(appCssSource, /\.ui-toggle-field \{[^}]*display: flex[^}]*justify-content: space-between/s);
   const settingsCardGrid = vm.runInNewContext(
     `(function(...cards) ${functionBinding(appSource, 'settingsCardGrid')})`, {
       node: (tag, className) => ({

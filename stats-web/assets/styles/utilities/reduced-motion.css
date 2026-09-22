@@ -13,6 +13,8 @@
   .ui-input,
   .ui-textarea,
   .ui-button,
+  .ui-selection-check,
+  .ui-selection-check::before,
   .ui-choice-card,
   .ui-toggle-track,
   .ui-toggle-thumb,

@@ -303,7 +303,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"150\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"151\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -639,7 +639,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=128"));
+        assertTrue(html.contains("/assets/app.css?v=129"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1022,6 +1022,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(deleteScanList.contains("Call Handling Defaults"));
         assertTrue(source.contains("/api/v1/admin/scan-lists/${scanList.id}"));
         assertTrue(editScanList.contains("await refreshPlaybackScanLists(true)"));
+        assertTrue(editScanList.contains("uiToggleField('Available to listeners'"));
+        assertTrue(editScanList.contains("uiToggleField('Default scan list'"));
+        assertTrue(editScanList.contains("setUiToggle(published, true)"));
         assertTrue(deleteScanList.contains("await refreshPlaybackScanLists(true)"));
         assertFalse(editScanList.contains("location.reload"));
         assertFalse(deleteScanList.contains("location.reload"));

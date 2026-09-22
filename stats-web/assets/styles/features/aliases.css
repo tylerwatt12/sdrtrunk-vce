@@ -593,6 +593,14 @@
   gap: var(--ui-field-gap, var(--space-3));
 }
 
+.alias-record-toggle {
+  grid-column: 1 / -1;
+}
+
+.alias-transfer-override-toggle {
+  margin-bottom: var(--space-2);
+}
+
 .alias-editor-field {
   min-width: 0;
   display: grid;
@@ -943,6 +951,32 @@
 }
 
 @media (max-width: 560px) {
+  .alias-modal-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    box-sizing: border-box;
+  }
+
+  .alias-modal-tabs button,
+  .alias-defaults-tabs button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .alias-modal-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .alias-modal-footer .ui-button {
+    width: 100%;
+  }
+
+  .alias-modal-footer-spacer {
+    display: none;
+  }
+
   .alias-catalog-toolbar {
     align-items: stretch;
   }

@@ -239,6 +239,11 @@
   outline-offset: 2px;
 }
 
+.ui-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
 .ui-toggle-state {
   min-width: 22px;
   color: var(--muted);
@@ -288,6 +293,7 @@
 
 .ui-segmented {
   display: inline-flex;
+  align-items: center;
   padding: 3px;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -296,6 +302,10 @@
 
 .ui-segmented-option {
   min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
   padding: 6px 12px;
   color: var(--muted);
   background: transparent;
@@ -340,8 +350,57 @@
 .ui-selection-check {
   width: 18px;
   height: 18px;
+  display: grid;
+  place-content: center;
+  margin: 0;
+  appearance: none;
+  color: var(--primary-control-ink);
+  background: var(--surface);
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--radius-compact);
   accent-color: var(--accent);
   cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ui-selection-check::before {
+  width: 9px;
+  height: 5px;
+  content: "";
+  border-bottom: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  transform: rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.ui-selection-check:checked,
+.ui-selection-check:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-selected);
+}
+
+.ui-selection-check:checked::before {
+  transform: rotate(-45deg) scale(1);
+}
+
+.ui-selection-check:indeterminate::before {
+  width: 8px;
+  height: 0;
+  border: 0;
+  border-top: 2px solid currentColor;
+  transform: none;
+}
+
+.ui-selection-check:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-selection-check:disabled {
+  cursor: not-allowed;
+  opacity: .48;
 }
 
 .ui-choice-card {
@@ -374,6 +433,35 @@
 .ui-choice-card:disabled {
   cursor: not-allowed;
   opacity: .48;
+}
+
+.ui-toggle-field {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.ui-toggle-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ui-toggle-copy strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.ui-toggle-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .ui-range {
