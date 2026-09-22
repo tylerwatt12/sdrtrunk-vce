@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"161\">"));
-        assertTrue(html.contains("/assets/app.css?v=138"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"162\">"));
+        assertTrue(html.contains("/assets/app.css?v=139"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=192\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=193\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertFalse(html.contains("data-nav-tab=\"recording\""));
@@ -169,8 +169,10 @@ class StatsWebNavigationHeaderUiContractTest
         assertFalse(indicator.contains("indicator.className"));
         assertTrue(css.contains(".receiver-health-indicator {\n  width: 34px;\n  height: 34px;"));
         assertTrue(css.contains("border-radius: 4px;"));
-        assertTrue(css.contains(".theme-toggle {\n  width: 34px;\n  height: 34px;"));
-        assertTrue(css.contains(".auth-action {\n  height: 34px;\n  min-height: 34px;"));
+        assertTrue(html.contains("theme-toggle icon-button ui-button ui-button-header"));
+        assertTrue(html.contains("auth-action ui-button ui-button-header"));
+        assertTrue(css.contains(".header-controls .ui-button-header {"));
+        assertTrue(css.contains(".header-controls .icon-button {"));
         assertFalse(css.contains(".receiver-health-indicator {\n    display: none;"));
     }
 

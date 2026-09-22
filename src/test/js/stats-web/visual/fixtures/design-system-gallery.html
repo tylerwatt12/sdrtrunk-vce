@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sdrtrunk-vce design system</title>
   <link rel="stylesheet" href="/assets/app.css">
-  <style>@import url("/assets/styles/compositions/app-chrome.css") layer(compositions);</style>
   <link rel="stylesheet" href="/visual/design-system-gallery.css">
 </head>
 <body data-gallery-view="gallery">
@@ -45,7 +44,7 @@
         </div>
       </header>
       <button class="navigation-backdrop" type="button" aria-label="Close navigation" hidden></button>
-      <div id="desktop-playback-slot">
+      <div id="desktop-playback-slot" class="desktop-playback-slot">
         <section class="playback-bar" aria-label="Web call playback">
           <details class="playback-control-menu" open><summary aria-label="Playback controls"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button class="playback-command playback-icon-command active" type="button" aria-label="Playing" aria-pressed="true">▶</button><button class="playback-command playback-icon-command" type="button" aria-label="Pause">Ⅱ</button><button class="playback-command playback-icon-command" type="button" aria-label="Skip">»</button><button class="playback-command playback-letter-command" type="button" aria-label="Hold">H</button><button class="playback-command playback-letter-command" type="button" disabled aria-label="Avoid">A</button></div><label class="playback-volume"><span class="playback-volume-label">VOL</span><input type="range" value="75" aria-label="Browser playback volume"></label></div></details>
           <div class="playback-now"><div class="playback-current"><strong class="playback-current-primary">County Fire · Dispatch</strong><span class="playback-current-secondary">Engine 4 → Fire Dispatch</span></div></div>

@@ -162,7 +162,7 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(controller.contains("this.openHealthSections = new Set(['resolved'])"));
         assertTrue(controller.contains("if (this.pageHost !== host)"));
         assertTrue(controller.contains("this.resolvedPage = 0"));
-        assertTrue(section.contains("node('section', 'section receiver-health-section')"));
+        assertTrue(section.contains("node('section', 'section ui-section receiver-health-section')"));
         assertTrue(section.contains("node('button', 'receiver-health-section-toggle', title)"));
         assertTrue(section.contains("toggle.setAttribute('aria-controls', body.id)"));
         assertTrue(section.contains("toggle.setAttribute('aria-expanded', String(expanded))"));

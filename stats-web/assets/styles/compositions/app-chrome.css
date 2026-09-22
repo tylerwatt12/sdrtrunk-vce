@@ -60,7 +60,7 @@
 .playback-command,
 .playback-subscriptions summary,
 .playback-queue summary,
-#desktop-playback-slot .playback-control-menu > summary {
+.desktop-playback-slot .playback-control-menu > summary {
   min-height: var(--control-height-compact);
   color: var(--transport-ink);
   background: var(--transport-control);
@@ -79,7 +79,7 @@
 .playback-command.active,
 .playback-subscriptions[open] summary,
 .playback-queue[open] summary,
-#desktop-playback-slot .playback-control-menu[open] > summary {
+.desktop-playback-slot .playback-control-menu[open] > summary {
   color: var(--transport-accent);
   background: var(--transport-control-active);
   border-color: color-mix(in srgb, var(--transport-accent) 45%, var(--transport-control-active));
@@ -88,7 +88,7 @@
 .playback-command:focus-visible,
 .playback-subscriptions summary:focus-visible,
 .playback-queue summary:focus-visible,
-#desktop-playback-slot .playback-control-menu > summary:focus-visible {
+.desktop-playback-slot .playback-control-menu > summary:focus-visible {
   outline: 2px solid var(--transport-accent);
   outline-offset: 2px;
 }
@@ -115,7 +115,7 @@
     max-width: 88px;
   }
 
-  #desktop-playback-slot .playback-bar {
+  .desktop-playback-slot .playback-bar {
     min-width: 0;
     min-height: 50px;
     grid-template-columns: max-content minmax(0, 1fr) max-content;
