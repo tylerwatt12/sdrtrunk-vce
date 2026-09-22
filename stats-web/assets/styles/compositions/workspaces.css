@@ -49,6 +49,22 @@
   box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
+.ui-icon-tile {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--ui-control-radius, var(--radius-control));
+}
+
+.ui-icon-tile-blue {
+  color: var(--link);
+  background: var(--blue-soft);
+}
+
 .ui-summary-card {
   min-height: var(--ui-summary-height, 76px);
   display: grid;

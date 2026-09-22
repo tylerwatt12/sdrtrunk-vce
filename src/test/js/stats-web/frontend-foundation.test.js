@@ -383,12 +383,13 @@ async function main() {
   assert.doesNotMatch(radioDirectorySource, /\btable\s*\(/,
     'The read-only Radio Directory must render quiet cards instead of a data table');
   assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
-    /ui-surface radio-directory-system-card/);
+    /ui-surface radio-directory-system-card[\s\S]+uiIconTile\('icon-trunked'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalCard'),
-    /ui-surface radio-directory-channel-card/);
+    /ui-surface radio-directory-channel-card[\s\S]+uiIconTile\('icon-channel', 'blue'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryStatus'), /uiStatus\(/);
   assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
+  assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
   assert.match(appCssSource,
     /\.radio-directory-system-grid,[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');

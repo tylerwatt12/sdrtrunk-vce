@@ -61,6 +61,14 @@
   display: grid;
 }
 
+.radio-directory-system-heading,
+.radio-directory-channel-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .radio-directory-system-identity {
   gap: 5px;
 }

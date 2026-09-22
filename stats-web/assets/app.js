@@ -16114,6 +16114,12 @@ function uiStatus(label, tone = 'neutral') {
   return node('span', `ui-status ui-status-${tone}`, label);
 }
 
+function uiIconTile(iconId, tone = 'accent') {
+  const tile = node('span', `ui-icon-tile ui-icon-tile-${tone}`);
+  tile.append(iconGlyph(iconId));
+  return tile;
+}
+
 function uiSegmentedControl(entries, initialValue, onChange) {
   const group = node('div', 'ui-segmented');
   group.setAttribute('role', 'group');
@@ -16397,11 +16403,13 @@ function radioDirectorySystemCard(row) {
   const heading = node('h3');
   heading.append(radioSystemLink(row.entity_ref, row.system_name || radioSystemLabel(row) || 'Trunked system'));
   identity.append(heading, radioDirectorySystemMetadata(row));
+  const headingGroup = node('div', 'radio-directory-system-heading');
+  headingGroup.append(uiIconTile('icon-trunked'), identity);
   const total = Number(row.child_count || row.children?.length || 0);
   const running = Number(row.running_count || 0);
   const statusLabel = running === total && total > 0 ? `${number(running)} running` :
     running > 0 ? `${number(running)} of ${number(total)} running` : 'Stopped';
-  header.append(identity, uiStatus(statusLabel, running > 0 ? 'success' : 'neutral'));
+  header.append(headingGroup, uiStatus(statusLabel, running > 0 ? 'success' : 'neutral'));
   const sites = node('div', 'radio-directory-site-list');
   (row.children || []).forEach((channel) => sites.append(radioDirectorySiteRow(channel)));
   card.append(header, sites);
@@ -16418,12 +16426,14 @@ function radioDirectoryConventionalCard(row) {
   const aliases = node('span', 'radio-directory-channel-alias');
   aliases.append('Alias List: ', aliasListLink(row.alias_list_name, row.alias_list_id) || '—');
   identity.append(aliases);
+  const identityGroup = node('div', 'radio-directory-channel-identity');
+  identityGroup.append(uiIconTile('icon-channel', 'blue'), identity);
   const technical = node('span', 'radio-directory-channel-technical');
   technical.append(node('span', 'radio-directory-frequency-list',
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequency'),
     node('span', 'radio-directory-meta-separator', '·'),
     node('span', '', row.protocol_label || protocolFamily(row) || 'Unknown protocol'));
-  card.append(identity, technical, radioDirectoryStatus(row), radioDirectoryLiveLink(row));
+  card.append(identityGroup, technical, radioDirectoryStatus(row), radioDirectoryLiveLink(row));
   return card;
 }
 

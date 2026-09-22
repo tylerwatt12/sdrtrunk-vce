@@ -66,7 +66,9 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(directory.contains("radioDirectoryCardSection('Conventional Channels', conventionalRows, 'channel'"));
         assertFalse(directory.contains("table("));
         assertTrue(systemCard.contains("ui-surface radio-directory-system-card"));
+        assertTrue(systemCard.contains("uiIconTile('icon-trunked')"));
         assertTrue(channelCard.contains("ui-surface radio-directory-channel-card"));
+        assertTrue(channelCard.contains("uiIconTile('icon-channel', 'blue')"));
         assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
     }
 
