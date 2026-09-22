@@ -1,3 +1,29 @@
+.preference-status {
+  position: fixed;
+  top: 58px;
+  right: var(--space-3);
+  z-index: 120;
+  width: min(480px, calc(100vw - 2 * var(--space-3)));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  box-shadow: var(--shadow-raised);
+  font-size: 13px;
+  text-align: left;
+}
+
+.preference-status-message {
+  min-width: 0;
+}
+
+.preference-status-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--space-2);
+  --ui-control-height: var(--control-height-compact);
+}
+
 .admin-form {
   display: grid;
   gap: 13px;

@@ -208,9 +208,13 @@ async function main() {
     /return settleUserPreferenceMutation[\s\S]*\}, false\)/);
   assert.doesNotMatch(appSource, /void updateUserPreferences\(/);
   assert.match(indexSource,
-    /id="preference-status" class="preference-status" role="status" aria-live="polite" hidden/);
+    /id="preference-status" class="preference-status ui-notice" role="status" aria-live="polite" hidden/);
   assert.match(indexSource, /id="global-status" class="visually-hidden"/);
   assert.match(appCssSource, /\.preference-status \{/);
+  assert.match(functionBinding(appSource, 'showUserPreferenceError'),
+    /preference-status ui-notice ui-notice-danger/);
+  assert.doesNotMatch(appSource, /logging-notice/);
+  assert.doesNotMatch(appCssSource, /\.logging-notice\b|\.preference-status\.preference-error/);
   const settingsSource = functionBinding(appSource, 'renderSettings');
   assert.match(settingsSource, /A read-only overview of every personal preference/);
   assert.match(settingsSource, /userPreferenceSummaryCards\(current\)/);

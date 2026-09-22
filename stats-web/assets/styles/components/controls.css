@@ -670,6 +670,10 @@
   border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
 }
 
+.ui-notice-spaced {
+  margin-block: 0 var(--space-3);
+}
+
 .ui-feedback {
   min-width: 0;
   padding: var(--space-4);

@@ -320,7 +320,7 @@ function clearUserPreferenceError() {
   const status = document.getElementById('preference-status');
   if (!status) return;
   status.hidden = true;
-  status.className = 'preference-status';
+  status.className = 'preference-status ui-notice';
   status.setAttribute('role', 'status');
   status.replaceChildren();
 }
@@ -336,7 +336,7 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
     (saveFailed ? 'My Settings could not be saved. Your previous values are still active.' :
       'My Settings are unavailable.');
   status.hidden = false;
-  status.className = 'preference-status preference-error';
+  status.className = 'preference-status ui-notice ui-notice-danger';
   status.setAttribute('role', 'alert');
   const actions = node('span', 'preference-status-actions');
   if (retryable) {
@@ -1993,21 +1993,21 @@ function detailedHistoryAvailable() {
 function detailedHistoryNotice() {
   const logging = statsLoggingState();
   if (!logging.available) {
-    return node('div', 'logging-notice warning',
+    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       'Saved activity status could not be checked. Previously saved activity may still be available.');
   }
   if (logging.historyActive) return null;
   if (logging.historyRetained) {
     const lastSaved = logging.lastHistoryMs ?
       ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
-    return node('div', 'logging-notice',
+    return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
       `New activity is not being saved.${lastSaved} Enable Store Detailed Event History in Stats & Web > Stats Server to save new activity.`);
   }
   if (logging.historyConfigured && !logging.summaryActive) {
-    return node('div', 'logging-notice warning',
+    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       'Saved activity is unavailable because Collect Summary Statistics is turned off. Turn it on in Stats & Web > Stats Server to begin saving activity.');
   }
-  return node('div', 'logging-notice warning',
+  return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
     'No saved activity is available because Store Detailed Event History is turned off. Enable it in Stats & Web > Stats Server. Activity begins saving from that point forward; earlier activity cannot be recovered.');
 }
 
@@ -2047,13 +2047,13 @@ function databaseLoggingNotice(view) {
   if (applicationRoutes?.[view]?.databaseNotice !== true) return null;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
-  if (serviceStatusWarningRequired()) return node('div', 'logging-notice warning',
+  if (serviceStatusWarningRequired()) return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
     'Saved statistics couldn’t be checked. This page may show older information.');
   if (!logging.available) return null;
   if (!logging.summaryActive) {
     const lastWrite = logging.lastSuccessfulWriteMs ?
       ` Last update: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
-    return node('div', 'logging-notice warning',
+    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       `Saved statistics are not updating. This page may show older information.${lastWrite}`);
   }
   return null;
@@ -3223,7 +3223,7 @@ function aliasStreamOptionSelected(selected, configured, editing, optionsTruncat
 function aliasOptionLimitNotice(options, name, label, guidance = '') {
   const limit = aliasOptionLimit(options, name);
   if (!limit.truncated) return null;
-  return node('p', 'logging-notice warning alias-option-limit-notice',
+  return node('p', 'ui-notice ui-notice-danger ui-notice-spaced alias-option-limit-notice',
     `Showing ${number(limit.shown)} of ${number(limit.total)} ${label}.${guidance ? ` ${guidance}` : ''}`);
 }
 
@@ -3679,7 +3679,7 @@ function aliasConflictDetail(response, aliasId, aliasName = '') {
     list.append(...conflicts.map(aliasConflictSummary));
     body.append(list);
     if (response?.conflicts_truncated === true || total > conflicts.length) {
-      body.append(node('p', 'logging-notice warning',
+      body.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
         `Showing the first ${number(conflicts.length)} of ${number(total)} conflicts.`));
     }
   }
@@ -3796,7 +3796,7 @@ async function openAliasListDeleteModal(selectedList) {
     body.append(node('p', '', `This permanently deletes ${number(impact.alias_count || 0)} aliases.`));
     const assignedChannels = Number(impact.channel_count || 0);
     if (assignedChannels > 0) {
-      body.append(node('div', 'logging-notice warning',
+      body.append(node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
         `${number(assignedChannels)} configured channels use this list. Reassign them before deleting the list.`));
     }
     const confirm = node('label', 'alias-confirm-check');
@@ -4226,7 +4226,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     matcherType.dataset.originalVariant = String(source.matcher?.variant || '');
     const matcherNotice = node('div', 'alias-identifier-notice');
     if (source.overlap) {
-      const warning = node('div', 'logging-notice warning',
+      const warning = node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
         'This identifier overlaps another alias in the list.');
       const conflictDetails = node('div', 'alias-conflict-inline');
       warning.append(' ', aliasConflictButton({ ...source, alias_id: source.alias_id || id },
@@ -4241,7 +4241,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
       aliasMatcherFields(matcherHost, activeDescriptor, aliasMatcherDefault(activeDescriptor, options), options);
       updateCreationRoutingDefaults(activeDescriptor);
-      matcherNotice.replaceChildren(node('div', 'logging-notice warning',
+      matcherNotice.replaceChildren(node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
         'Changing the identifier type resets the old identifier values.'));
       modal.setDirty(true);
     });
@@ -4690,7 +4690,7 @@ function openAliasBulkModal(kind) {
     checkbox.type = 'checkbox';
     confirm.append(checkbox, node('span', '',
       `I understand this permanently deletes exactly ${number(ids.length)} selected aliases.`));
-    form.append(node('div', 'logging-notice warning',
+    form.append(node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       'Deleting an alias also removes its identifier, scan-list membership, recording, and streaming settings.'),
       confirm);
     readChange = () => {
@@ -5549,7 +5549,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     'Records completed calls whose talkgroup identity is not covered by an Alias.',
     'Routes unmatched calls to the selected Scan Lists for browser playback.',
     'Sends unknown calls to the selected external streaming destinations.',
-    node('div', 'logging-notice warning',
+    node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
       'individually reviewed, including sensitive traffic. If a selected streaming destination sends to ' +
       'Broadcastify or another third-party provider, leave catch-all Streaming disabled and configure approved ' +
@@ -15801,7 +15801,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
       has_more: Boolean(data.has_more), next_offset: data.next_offset };
     const trailing = fragment();
-    if (data.members_truncated) trailing.append(node('p', 'logging-notice warning',
+    if (data.members_truncated) trailing.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
       `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
       `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
     trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
@@ -17724,7 +17724,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           const result = await requestJson(
             `/api/v1/admin/channels/${encodeURIComponent(configurationId)}/statistics/clear`,
             { method: 'POST', timeoutMs: 35_000 });
-          errors.replaceChildren(node('div', 'logging-notice', result.summary || 'Channel statistics cleared.'));
+          errors.replaceChildren(node('div', 'ui-notice', result.summary || 'Channel statistics cleared.'));
         } catch (error) {
           errors.replaceChildren(node('div', 'error', error.message));
         } finally { clearStatistics.disabled = false; }
