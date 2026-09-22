@@ -100,11 +100,18 @@ assert.deepEqual(plain(context.disabledCodesForSave({
 }, controls)), ['future-disabled-alert', 'gc-pause'],
 'Saving known switches must preserve an unknown disabled code while replacing known choices.');
 
-const renderAlerts = functionSource('async function renderAdminAlerts()');
-assert.match(renderAlerts, /receiverHealthAlertGroups\.map/);
-assert.match(renderAlerts, /receiverHealthDisabledCodesForSave\(preferences, controls\)/);
-assert.match(renderAlerts, /Save status icon choices/);
-assert.match(renderAlerts, /sdrtrunk-vce still monitors it/);
+const openAlerts = functionSource('function openStatusIconSettings(returnFocusSelector = null)');
+assert.match(openAlerts, /receiverHealthAlertGroups\.map/);
+assert.match(openAlerts, /receiverHealthDisabledCodesForSave\(preferences, controls\)/);
+assert.match(openAlerts, /openReadOnlyModal\('Status icon choices'/);
+assert.match(openAlerts, /className: 'health-alert-settings-modal'/);
+assert.match(openAlerts, /modal\.setDirty\(true\)/);
+assert.match(openAlerts, /modal\.setBusy\(true\)/);
+assert.match(openAlerts, /if \(modal\.close\(\)\) void render\(\)/);
+assert.match(openAlerts, /Save status icon choices/);
+assert.match(openAlerts, /sdrtrunk-vce still monitors it/);
+assert.doesNotMatch(openAlerts, /content\.append/,
+  'Status icon choices must open in the shared modal instead of rendering as a page.');
 
 const renderHealth = functionSource('function renderReceiverHealthPage(host, snapshot, stale, lastError)');
 assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
@@ -112,11 +119,12 @@ assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,
 assert.match(renderHealth, /receiverHealthAccountSettingNotice\(snapshot\)/);
 
 const healthAccountSettingNotice = functionSource('function receiverHealthAccountSettingNotice(snapshot)');
+assert.match(healthAccountSettingNotice, /node\('button', 'link-button'/);
 assert.match(healthAccountSettingNotice,
-  /href\('settings', \{ section: 'status-icon' \}\)/,
-  'The Receiver status link must open the current personal status-icon settings route.');
-assert.doesNotMatch(healthAccountSettingNotice, /href\('admin', \{ tab: 'alerts' \}\)/,
-  'The Receiver status link must not use the retired Administration alerts route.');
+  /openStatusIconSettings\('#receiver-health-alert-settings'\)/,
+  'The Receiver status control must open the shared status-icon settings modal.');
+assert.doesNotMatch(healthAccountSettingNotice, /href\(/,
+  'The Receiver status control must not navigate away from the status page.');
 
 const updateIndicator = functionSource('  updateIndicator() {');
 assert.match(updateIndicator, /if \(this\.stale\)/,
@@ -132,6 +140,8 @@ assert.ok(updateIndicator.indexOf('accountAlerts.active_count > 0') <
 
 assert.match(stylesheet, /\.receiver-health-indicator\.receiver-health-neutral\s*\{/);
 assert.match(stylesheet, /\.receiver-health-account-setting\s*\{/);
+assert.match(stylesheet, /\.receiver-health-account-setting \.link-button\s*\{/);
+assert.match(stylesheet, /\.read-only-modal\.health-alert-settings-modal\s*\{/);
 assert.match(stylesheet, /\.settings-card-grid\s*\{[^}]*align-items: stretch/s);
 assert.match(stylesheet, /\.settings-card\s*\{[^}]*height: 100%/s,
   'Alert group cards must align to the height of their grid row.');

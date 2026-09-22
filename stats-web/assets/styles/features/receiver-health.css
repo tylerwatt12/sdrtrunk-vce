@@ -116,10 +116,13 @@
   line-height: 1.45;
 }
 
-.receiver-health-account-setting a {
+.receiver-health-account-setting .link-button {
   flex: 0 0 auto;
-  font-weight: 650;
   white-space: nowrap;
+}
+
+.read-only-modal.health-alert-settings-modal {
+  width: min(960px, 96vw);
 }
 
 .health-alert-settings-intro {

@@ -170,6 +170,45 @@
     </div>
   </div>
 
+  <div class="visual-health-alert-modal-example">
+    <div class="modal-backdrop">
+      <section class="read-only-modal health-alert-settings-modal" role="dialog" aria-modal="true" aria-labelledby="visual-health-alert-modal-title">
+        <header class="modal-header">
+          <h2 id="visual-health-alert-modal-title">Status icon choices</h2>
+          <button class="ui-button ui-button-secondary modal-close" type="button">Close</button>
+        </header>
+        <div class="modal-content">
+          <form class="admin-form health-alert-settings-form">
+            <p class="health-alert-settings-intro">Choose which issues appear in the status icon at the top of the page. Hidden issues are still monitored and remain visible on Receiver status.</p>
+            <div class="settings-card-grid">
+              <section class="settings-card health-alert-settings-card">
+                <header class="settings-card-header"><h3 class="settings-card-title">Tuners and radio data</h3><p class="settings-card-description">Problems receiving data from a tuner or assigning a tuner to a channel.</p></header>
+                <div class="settings-card-body">
+                  <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Tuner stopped working</strong><span>This tuner cannot receive its assigned channels.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                  <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Radio data was lost before decoding</strong><span>The app could not process all data from this tuner.</span></span><label class="ui-toggle"><input type="checkbox"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></div>
+                </div>
+              </section>
+              <section class="settings-card health-alert-settings-card">
+                <header class="settings-card-header"><h3 class="settings-card-title">Computer resources</h3><p class="settings-card-description">Processor, memory, and storage problems that can interrupt receiving.</p></header>
+                <div class="settings-card-body">
+                  <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Computer is overloaded</strong><span>Processor use has stayed high enough that radio processing may fall behind.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                  <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Storage space is low</strong><span>The application data drive has little free space remaining.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                </div>
+              </section>
+              <section class="settings-card health-alert-settings-card">
+                <header class="settings-card-header"><h3 class="settings-card-title">Recordings and listening</h3><p class="settings-card-description">Problems saving calls, streaming, or preparing browser audio.</p></header>
+                <div class="settings-card-body">
+                  <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>A call recording was not saved</strong><span>A completed call could not be written to disk.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                </div>
+              </section>
+            </div>
+            <div class="settings-form-footer"><div class="admin-form-message" role="status"></div><div class="admin-form-actions"><button class="ui-button ui-button-primary" type="button">Save status icon choices</button></div></div>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <section class="visual-focus-example">
     <h1>Keyboard focus</h1>
     <p class="visual-section-copy">Every interactive primitive must retain a visible focus indicator.</p>

@@ -19263,9 +19263,12 @@ function receiverHealthAccountSettingNotice(snapshot) {
       `${settings.active_count === 1 ? 'appears' : 'appear'} in your status icon. ` +
       'Every issue remains monitored and clears automatically when the condition stops. This feature does not send email or push notifications.';
   }
-  const settingsLink = anchor('Choose what appears in my status icon',
-    href('settings', { section: 'status-icon' }));
+  const settingsLink = node('button', 'link-button', 'Choose what appears in my status icon');
+  settingsLink.type = 'button';
+  settingsLink.id = 'receiver-health-alert-settings';
   settingsLink.dataset.receiverHealthFocus = 'alert-settings';
+  settingsLink.addEventListener('click', () =>
+    openStatusIconSettings('#receiver-health-alert-settings'));
   notice.append(node('span', '', message), settingsLink);
   return notice;
 }
@@ -19477,23 +19480,11 @@ function userPreferenceSummaryCards(preferences) {
   );
 }
 
-async function renderAdminAlerts() {
+function openStatusIconSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded) {
-    const unavailable = node('div', 'error', userPreferenceError?.message ||
-      'Your status icon choices could not be loaded.');
-    const retry = node('button', 'button secondary', 'Retry');
-    retry.type = 'button';
-    retry.addEventListener('click', async () => {
-      retry.disabled = true;
-      await synchronizeUserPreferences();
-      void render();
-    });
-    content.append(section('Status icon choices unavailable', unavailable, retry));
-    return;
-  }
+  if (!snapshot.loaded) return;
 
-  const form = node('form', 'admin-form settings-page-form health-alert-settings-form');
+  const form = node('form', 'admin-form health-alert-settings-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
   const controls = new Map();
@@ -19527,32 +19518,48 @@ async function renderAdminAlerts() {
     'Hiding an issue here changes only your icon. sdrtrunk-vce still monitors it, and current or recently cleared ' +
     'issues still appear on Receiver status.'),
     settingsCardGrid(...cards), footer);
+  const modal = openReadOnlyModal('Status icon choices', form, {
+    id: 'status-icon-settings', className: 'health-alert-settings-modal', returnFocusSelector
+  });
+  if (!modal) return;
+  form.addEventListener('input', () => modal.setDirty(true));
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (save.disabled) return;
     controls.forEach((input) => { input.disabled = true; });
     save.disabled = true;
+    modal.setBusy(true);
     message.textContent = 'Saving status icon choices…';
     try {
       await updateUserPreferences((preferences) => {
         preferences.health_alerts.disabled_codes = receiverHealthDisabledCodesForSave(preferences, controls);
       }, false);
-      message.textContent = 'Status icon choices saved.';
+      modal.setDirty(false);
+      modal.setBusy(false);
+      if (modal.close()) void render();
     } catch (error) {
-      if (error?.code === 'preference_conflict' && !error.reloadError) {
-        const current = userPreferenceController.snapshot();
-        if (current.loaded) apply(current.preferences);
-        message.textContent = 'Your status icon choices changed in another browser or tab, so the latest saved choices are shown.';
+      if (error?.code === 'preference_session_changed') {
+        modal.setDirty(false);
+        modal.setBusy(false);
+        if (modal.close()) void render();
       } else if (error?.code === 'preference_conflict') {
-        message.textContent = 'Your status icon choices changed elsewhere, but the latest choices could not be ' +
-          'loaded. Reload the page before saving again.';
+        if (error.reloadError) {
+          modal.setDirty(true);
+          message.textContent = 'These choices changed in another session, but the current values could not be ' +
+            'reloaded. Try saving again or reopen this panel.';
+        } else {
+          const latest = userPreferenceController.snapshot();
+          if (latest.loaded) apply(latest.preferences);
+          modal.setDirty(false);
+          message.textContent = 'These choices changed in another session. The current saved values were loaded.';
+        }
       } else message.textContent = error.message;
     } finally {
+      modal.setBusy(false);
       controls.forEach((input) => { input.disabled = false; });
       save.disabled = false;
     }
   });
-  content.append(section('Issues shown in the status icon', form));
 }
 
 function openLivePresentationSettings(returnFocusSelector = null) {
@@ -19814,12 +19821,10 @@ function openResetUserPreferences(returnFocusSelector = null) {
 
 async function renderSettings() {
   const renderContext = captureRenderContext();
-  if (route.get('section') === 'status-icon') {
-    if (!beginPage(renderContext, pageHeader('Status icon',
-      'Choose which monitored receiver issues appear in your personal status icon'),
-      anchor('Back to My Settings', href('settings'), 'button secondary'))) return;
-    await renderAdminAlerts();
-    return;
+  const statusIconRequested = route.get('section') === 'status-icon';
+  if (statusIconRequested) {
+    route.delete('section');
+    window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('My Settings',
     'A read-only overview of every personal preference for this account'))) return;
@@ -19843,13 +19848,17 @@ async function renderSettings() {
   reset.type = 'button';
   reset.id = 'reset-user-preferences';
   reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
+  const statusIcon = node('button', 'button secondary', 'Change Status Icon');
+  statusIcon.type = 'button';
+  statusIcon.id = 'status-icon-settings';
+  statusIcon.addEventListener('click', () => openStatusIconSettings('#status-icon-settings'));
   const footer = node('div', 'settings-summary-footer');
   const actions = node('div', 'admin-form-actions');
-  actions.append(anchor('Change Status Icon', href('settings', { section: 'status-icon' }),
-    'button secondary'), reset);
+  actions.append(statusIcon, reset);
   footer.append(node('p', '', 'Reset affects only this account’s personal choices.'), actions);
   overview.append(userPreferenceSummaryCards(current), footer);
   content.append(section('Personal preferences', overview));
+  if (statusIconRequested && renderIsCurrent(renderContext)) openStatusIconSettings('#status-icon-settings');
 }
 
 function renderStreaming() {

@@ -94,6 +94,10 @@ body {
   min-height: 100vh;
 }
 
+.visual-health-alert-modal-example {
+  min-height: 100vh;
+}
+
 .visual-modal-example .modal-backdrop {
   display: flex;
 }
@@ -372,6 +376,7 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
 
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
+body:not([data-gallery-view="health-alert-modal"]) .visual-health-alert-modal-example,
 body:not([data-gallery-view="focus"]) .visual-focus-example,
 body:not([data-gallery-view="settings"]) .visual-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,

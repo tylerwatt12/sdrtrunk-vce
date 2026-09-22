@@ -203,6 +203,9 @@ async function main() {
   assert.match(settingsSource, /userPreferenceSummaryCards\(current\)/);
   assert.match(settingsSource, /Reset All Personal Preferences/);
   assert.match(settingsSource, /openResetUserPreferences/);
+  assert.match(settingsSource, /openStatusIconSettings\('#status-icon-settings'\)/);
+  assert.match(settingsSource, /statusIconRequested/);
+  assert.doesNotMatch(settingsSource, /href\('settings', \{ section: 'status-icon' \}\)/);
   assert.doesNotMatch(settingsSource, /preferenceCheckbox\(|updateUserPreferences\(/);
   const summarySource = functionBinding(appSource, 'userPreferenceSummaryCards');
   assert.match(summarySource,

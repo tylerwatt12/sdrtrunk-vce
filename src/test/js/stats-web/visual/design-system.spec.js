@@ -85,6 +85,18 @@ test('modal-long-dark', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('modal-long-dark.png');
 });
 
+test('health-alert-modal-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto('/design-system.html?theme=dark&view=health-alert-modal');
+  await expect(page.locator('body')).toHaveScreenshot('health-alert-modal-dark-desktop.png');
+});
+
+test('health-alert-modal-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=health-alert-modal');
+  await expect(page.locator('body')).toHaveScreenshot('health-alert-modal-light-mobile.png');
+});
+
 test('keyboard-focus', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 500 });
   await page.goto('/design-system.html?theme=light&view=focus');
