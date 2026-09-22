@@ -3107,7 +3107,7 @@ function aliasMatcherSummary(matcher) {
 function aliasConflictButton(row, label = 'Conflict', detailsHost = null) {
   const id = Number(row?.alias_id);
   if (!row?.overlap || !Number.isInteger(id) || id <= 0) return '—';
-  const button = node('button', 'button secondary alias-conflict-button', label);
+  const button = node('button', 'ui-button ui-button-secondary alias-conflict-button', label);
   button.type = 'button';
   button.dataset.aliasId = String(id);
   button.title = 'Show aliases with overlapping identifiers';
@@ -3220,11 +3220,11 @@ function aliasListRail(lists, selectedList) {
   const rail = node('aside', 'alias-list-rail');
   const header = node('div', 'alias-list-rail-header');
   header.append(node('strong', '', 'Alias Lists'));
-  const create = node('button', 'button alias-list-create', 'New');
+  const create = node('button', 'ui-button ui-button-primary alias-list-create', 'New');
   create.type = 'button';
   create.addEventListener('click', () => openAliasListCreateModal());
   header.append(create);
-  const search = node('input', 'alias-list-search');
+  const search = node('input', 'ui-input alias-list-search');
   search.type = 'search';
   search.placeholder = 'Find a list';
   search.setAttribute('aria-label', 'Find an alias list');
@@ -3274,7 +3274,7 @@ function aliasListRail(lists, selectedList) {
     if (select.value) window.location.assign(href('aliases', { list: select.value, aliasTab: 'configure' }));
   });
   mobile.append(select);
-  const mobileCreate = node('button', 'button secondary alias-list-mobile-create', 'New Alias List');
+  const mobileCreate = node('button', 'ui-button ui-button-secondary alias-list-mobile-create', 'New Alias List');
   mobileCreate.type = 'button';
   mobileCreate.addEventListener('click', () => openAliasListCreateModal());
   mobile.append(mobileCreate);
@@ -3309,7 +3309,10 @@ function aliasEditorViewTabs(selectedList) {
     { id: 'activity', label: 'Activity', href: href('aliases', { list: id, aliasTab: 'activity' }) },
     { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
   );
-  return tabs(entries, active);
+  const navigation = tabs(entries, active);
+  navigation.classList.add('ui-segmented', 'alias-editor-view-tabs');
+  [...navigation.children].forEach((item) => item.classList.add('ui-segmented-option'));
+  return navigation;
 }
 
 function aliasLocalDateTimeValue(epoch) {
@@ -3321,7 +3324,7 @@ function aliasLocalDateTimeValue(epoch) {
 
 function aliasEditorFilterToolbar(aliasPage, options = null) {
   const scanListScope = options?.scan_list_scope === true;
-  const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar');
+  const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace');
   form.method = 'get';
   [['view', 'aliases'], ['list', route.get('list')], ['aliasTab', route.get('aliasTab') || 'configure'],
     ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
@@ -3333,8 +3336,8 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     form.append(hidden);
   });
   const selectFilter = (label, name, values) => {
-    const wrapper = node('label', 'alias-filter');
-    wrapper.append(node('span', '', label));
+    const wrapper = node('label', 'alias-filter ui-field');
+    wrapper.append(node('span', 'ui-field-label', label));
     const select = node('select');
     select.name = name;
     values.forEach(([value, text]) => {
@@ -3346,8 +3349,8 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     wrapper.append(select);
     return wrapper;
   };
-  const search = node('label', 'alias-filter alias-search-filter');
-  search.append(node('span', '', 'Search'));
+  const search = node('label', 'alias-filter alias-search-filter ui-field');
+  search.append(node('span', 'ui-field-label', 'Search'));
   const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Alias, description, group, or identifier';
   search.append(input);
@@ -3365,8 +3368,8 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     option.value = value;
     groupList.append(option);
   });
-  const groupFilterWrapper = node('label', 'alias-filter');
-  groupFilterWrapper.append(node('span', '', 'Group'), groupFilter);
+  const groupFilterWrapper = node('label', 'alias-filter ui-field');
+  groupFilterWrapper.append(node('span', 'ui-field-label', 'Group'), groupFilter);
   const lastAfter = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityAfter')),
     'datetime-local');
   const lastBefore = aliasEditorFilterInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
@@ -3397,10 +3400,10 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     selectFilter('Calls', 'use', [['', 'Any'], ['used', 'Has calls'],
       ['unused', 'No calls observed']])
   ]);
-  const seenAfter = node('label', 'alias-filter alias-date-filter');
-  seenAfter.append(node('span', '', 'Seen after'), lastAfter);
-  const seenBefore = node('label', 'alias-filter alias-date-filter');
-  seenBefore.append(node('span', '', 'Seen before'), lastBefore);
+  const seenAfter = node('label', 'alias-filter alias-date-filter ui-field');
+  seenAfter.append(node('span', 'ui-field-label', 'Seen after'), lastAfter);
+  const seenBefore = node('label', 'alias-filter alias-date-filter ui-field');
+  seenBefore.append(node('span', 'ui-field-label', 'Seen before'), lastBefore);
   const evidenceFilter = selectFilter('Evidence', 'evidence', [
     ['', 'Any activity state'],
     ['observed', 'Observed'],
@@ -3416,7 +3419,7 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
     actions.append(anchor('Clear', href('aliases', {
       list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure',
       scanListId: scanListScope ? route.get('scanListId') : null
-    }), 'button secondary'));
+    }), 'ui-button ui-button-secondary'));
   }
   form.append(identityGroup, behaviorGroup,
     filterGroup('Observed activity', 'alias-filter-group-observed', [
@@ -3443,7 +3446,7 @@ function aliasEditorBaseColumns(rows, onSelectionChange) {
   const columns = [{ id: 'select', label: 'Select', group: 'Selection', className: 'alias-select-cell',
     render: (row) => {
       const id = Number(row.alias_id);
-      const checkbox = node('input', 'alias-row-select');
+      const checkbox = node('input', 'alias-row-select ui-selection-check');
       checkbox.type = 'checkbox';
       checkbox.checked = aliasEditorSelection.has(id);
       checkbox.setAttribute('aria-label', `Select ${row.name || `alias ${id}`}`);
@@ -3513,12 +3516,12 @@ function scanListMemberColumns(rows, onSelectionChange) {
 }
 
 function aliasEditorEmptyState(lists) {
-  const wrapper = node('section', 'alias-editor-welcome');
+  const wrapper = node('section', 'alias-editor-welcome ui-empty-state');
   wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'),
     node('p', '', lists.length ?
       'Aliases load only after you select a list. This keeps large radio systems responsive.' :
       'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
-  const create = node('button', 'button', 'Create Alias List');
+  const create = node('button', 'ui-button ui-button-primary', 'Create Alias List');
   create.type = 'button';
   create.addEventListener('click', () => openAliasListCreateModal());
   wrapper.append(create);
@@ -3526,14 +3529,19 @@ function aliasEditorEmptyState(lists) {
 }
 
 function aliasFormField(label, control, help = '') {
-  const wrapper = node('label', 'alias-editor-field');
-  wrapper.append(node('span', 'alias-editor-field-label', label), control);
-  if (help) wrapper.append(node('small', '', help));
+  if (control?.matches?.('input:not([type="checkbox"]):not([type="radio"])')) control.classList.add('ui-input');
+  else if (control?.matches?.('textarea')) control.classList.add('ui-textarea');
+  else if (control?.matches?.('select')) control.classList.add('ui-select');
+  control?.classList?.add('alias-editor-control');
+  const wrapper = node('label', 'alias-editor-field ui-field');
+  wrapper.append(node('span', 'alias-editor-field-label ui-field-label', label), control);
+  if (help) wrapper.append(node('small', 'ui-field-detail', help));
   return wrapper;
 }
 
 function aliasCheckOption(labelText, control) {
-  const label = node('label', 'alias-check-option');
+  control?.classList?.add('ui-selection-check');
+  const label = node('label', 'alias-check-option ui-choice-card');
   label.append(control, node('span', '', labelText));
   return label;
 }
@@ -3551,8 +3559,8 @@ function aliasScanListChoices(options, selectedValues = []) {
   scanLists.forEach((scanList) => {
     const id = Number(scanList?.id);
     if (!Number.isInteger(id) || id <= 0) return;
-    const label = node('label', 'alias-check-option alias-scan-list-option');
-    const checkbox = node('input');
+    const label = node('label', 'alias-check-option alias-scan-list-option ui-choice-card');
+    const checkbox = node('input', 'ui-selection-check');
     checkbox.type = 'checkbox';
     checkbox.name = 'scanListId';
     checkbox.value = String(id);
@@ -3593,7 +3601,7 @@ function aliasSelect(name, values, selectedValue = '', includeBlank = false) {
 }
 
 function aliasTextInput(name, value = '', type = 'text') {
-  const input = node('input');
+  const input = node('input', 'ui-input');
   input.type = type;
   input.name = name;
   input.value = value ?? '';
@@ -3607,7 +3615,15 @@ function aliasEditorFilterInput(name, value = '', type = 'text') {
 }
 
 function aliasModalFooter(...controls) {
-  const footer = node('footer', 'alias-modal-footer');
+  controls.filter(Boolean).forEach((control) => {
+    if (!control.matches?.('button, a.button')) return;
+    control.classList.add('ui-button');
+    if (control.classList.contains('danger-outline')) control.classList.add('ui-button-danger-quiet');
+    else if (control.classList.contains('danger')) control.classList.add('ui-button-danger');
+    else if (control.classList.contains('secondary')) control.classList.add('ui-button-secondary');
+    else control.classList.add('ui-button-primary');
+  });
+  const footer = node('footer', 'alias-modal-footer ui-action-row');
   footer.append(...controls.filter(Boolean));
   return footer;
 }
@@ -3619,7 +3635,7 @@ function aliasMutationError(host, error, retry = null) {
   if (error?.status === 409 && error?.code === 'stale_revision') {
     message.append(document.createTextNode(' No changes were saved.'));
     if (retry) {
-      const reload = node('button', 'button secondary alias-conflict-reload', 'Reload current values');
+      const reload = node('button', 'ui-button ui-button-secondary alias-conflict-reload', 'Reload current values');
       reload.type = 'button';
       reload.addEventListener('click', retry);
       host.append(reload);
@@ -3724,7 +3740,7 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
 }
 
 function openAliasListCreateModal() {
-  const form = node('form', 'alias-editor-form alias-list-form');
+  const form = node('form', 'alias-editor-form alias-list-form editor-workspace');
   const name = aliasTextInput('name');
   name.required = true;
   name.maxLength = 25;
@@ -3734,9 +3750,9 @@ function openAliasListCreateModal() {
   form.append(node('p', 'modal-introduction',
     'A list owns one protocol family. Channels can share the list when their protocol matches.'),
     aliasFormField('List name', name, 'Up to 25 characters'), aliasFormField('Protocol', family), errorHost);
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const submit = node('button', 'button', 'Create Alias List');
+  const submit = node('button', 'ui-button ui-button-primary', 'Create Alias List');
   submit.type = 'submit';
   form.append(aliasModalFooter(cancel, submit));
   const modal = openReadOnlyModal('Create Alias List', form, { id: 'create-alias-list', className: 'alias-editor-modal' });
@@ -3786,9 +3802,9 @@ async function openAliasListDeleteModal(selectedList) {
     checkbox.type = 'checkbox';
     confirm.append(checkbox, node('span', '', 'I understand this cannot be undone.'));
     const errorHost = node('div', 'alias-form-message');
-    const cancel = node('button', 'button secondary', 'Cancel');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
-    const remove = node('button', 'danger', 'Delete Alias List');
+    const remove = node('button', 'ui-button ui-button-danger', 'Delete Alias List');
     remove.type = 'button';
     remove.disabled = true;
     checkbox.disabled = assignedChannels > 0;
@@ -3945,17 +3961,17 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
         const actions = node('div', 'alias-tone-actions');
         actions.setAttribute('role', 'group');
         actions.setAttribute('aria-label', 'Tone sequence order');
-        const up = node('button', 'button secondary alias-tone-move alias-tone-up', '↑');
+        const up = node('button', 'ui-button ui-button-secondary alias-tone-move alias-tone-up', '↑');
         up.type = 'button';
         up.title = 'Move tone up';
         up.setAttribute('aria-label', 'Move tone up');
         up.addEventListener('click', () => moveTone(row, -1, up));
-        const down = node('button', 'button secondary alias-tone-move alias-tone-down', '↓');
+        const down = node('button', 'ui-button ui-button-secondary alias-tone-move alias-tone-down', '↓');
         down.type = 'button';
         down.title = 'Move tone down';
         down.setAttribute('aria-label', 'Move tone down');
         down.addEventListener('click', () => moveTone(row, 1, down));
-        const remove = node('button', 'button secondary alias-tone-remove', 'Remove');
+        const remove = node('button', 'ui-button ui-button-danger-quiet alias-tone-remove', 'Remove');
         remove.type = 'button';
         remove.addEventListener('click', () => {
           row.remove();
@@ -3967,7 +3983,7 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
         refreshToneActions();
       };
       tones.forEach(addTone);
-      const add = node('button', 'button secondary alias-tone-add', 'Add tone');
+      const add = node('button', 'ui-button ui-button-secondary alias-tone-add', 'Add tone');
       add.type = 'button';
       add.addEventListener('click', () => addTone());
       host.append(aliasFormField('Tone sequence', toneHost, 'Tone and duration pairs in order'), add);
@@ -4040,7 +4056,7 @@ function aliasActivityContent(response) {
 }
 
 function aliasEditorModalTabs(panels, initial = 'basics') {
-  const navigation = node('nav', 'tabs alias-modal-tabs');
+  const navigation = node('nav', 'alias-modal-tabs ui-segmented');
   navigation.setAttribute('aria-label', 'Alias editor sections');
   const activate = (id) => {
     Object.entries(panels).forEach(([key, panel]) => { panel.hidden = key !== id; });
@@ -4052,7 +4068,7 @@ function aliasEditorModalTabs(panels, initial = 'basics') {
   };
   [['basics', 'Basics'], ['identifier', 'Identifier'], ['audio', 'Call Handling'],
     ['usage', 'Activity']].forEach(([id, label]) => {
-    const button = node('button', 'secondary', label);
+    const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
     button.dataset.tab = id;
     button.setAttribute('role', 'tab');
@@ -4146,11 +4162,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       source.broadcast_configuration_ids = [...(defaults.broadcast_configuration_ids || [])];
       source.scan_list_ids = [...(defaults.scan_list_ids || [])];
     }
-    const form = node('form', 'alias-editor-form');
-    const basics = node('section', 'alias-editor-panel');
-    const identifier = node('section', 'alias-editor-panel');
-    const audio = node('section', 'alias-editor-panel');
-    const usage = node('section', 'alias-editor-panel alias-editor-usage');
+    const form = node('form', 'alias-editor-form editor-workspace');
+    const basics = node('section', 'alias-editor-panel ui-form-section');
+    const identifier = node('section', 'alias-editor-panel ui-form-section');
+    const audio = node('section', 'alias-editor-panel ui-form-section');
+    const usage = node('section', 'alias-editor-panel alias-editor-usage ui-form-section');
 
     const listSelect = aliasSelect('aliasListId', compatibleLists.map((row) => ({
       value: aliasListId(row), label: row.name
@@ -4244,8 +4260,9 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
     if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
     streamIds.forEach((configurationId) => {
-      const label = node('label', 'alias-check-option');
+      const label = node('label', 'alias-check-option ui-choice-card');
       const checkbox = node('input');
+      checkbox.classList.add('ui-selection-check');
       checkbox.type = 'checkbox';
       checkbox.name = 'broadcastChannel';
       checkbox.value = configurationId;
@@ -4288,13 +4305,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const panels = { basics, identifier, audio, usage };
     const tabBar = aliasEditorModalTabs(panels);
     const errorHost = node('div', 'alias-form-message');
-    const cancel = node('button', 'button secondary', 'Cancel');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
     cancel.addEventListener('click', modal.close);
-    const save = node('button', 'button', editing ? 'Save Changes' : (cloning ? 'Create Copy' : 'Create Alias'));
+    const save = node('button', 'ui-button ui-button-primary', editing ? 'Save Changes' : (cloning ? 'Create Copy' : 'Create Alias'));
     save.type = 'submit';
-    const clone = editing ? node('button', 'button secondary', 'Clone') : null;
-    const remove = editing ? node('button', 'button secondary danger-outline', 'Delete') : null;
+    const clone = editing ? node('button', 'ui-button ui-button-secondary', 'Clone') : null;
+    const remove = editing ? node('button', 'ui-button ui-button-danger-quiet', 'Delete') : null;
     if (clone) {
       clone.type = 'button';
       clone.addEventListener('click', () => {
@@ -4367,9 +4384,9 @@ function openAliasDeleteModal(id, name, revision) {
   body.append(node('p', '', `Delete ${name || `Alias ${id}`} from this alias list?`),
     node('p', 'muted', 'This removes its identifier, scan-list membership, recording, and streaming settings.'));
   const errorHost = node('div', 'alias-form-message');
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const remove = node('button', 'danger', 'Delete Alias');
+  const remove = node('button', 'ui-button ui-button-danger', 'Delete Alias');
   remove.type = 'button';
   body.append(errorHost, aliasModalFooter(cancel, remove));
   const modal = openReadOnlyModal(`Delete ${name || 'Alias'}`, body, {
@@ -4518,12 +4535,13 @@ function aliasBulkBar(onClear) {
   ];
   bar.append(count);
   actions.forEach(([kind, label]) => {
-    const button = node('button', kind === 'delete' ? 'button secondary danger-outline' : 'button secondary', label);
+    const button = node('button', kind === 'delete' ? 'ui-button ui-button-danger-quiet' :
+      'ui-button ui-button-secondary', label);
     button.type = 'button';
     button.addEventListener('click', () => openAliasBulkModal(kind));
     bar.append(button);
   });
-  const clear = node('button', 'button secondary alias-bulk-clear', 'Clear selection');
+  const clear = node('button', 'ui-button ui-button-secondary alias-bulk-clear', 'Clear selection');
   clear.type = 'button';
   clear.addEventListener('click', onClear);
   bar.append(clear);
@@ -4538,8 +4556,9 @@ function aliasBulkStreamChoices(options) {
   const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
   fieldset.append(node('legend', '', 'Destinations'));
   (options?.streams || []).forEach((stream) => {
-    const label = node('label', 'alias-check-option');
+    const label = node('label', 'alias-check-option ui-choice-card');
     const checkbox = node('input');
+    checkbox.classList.add('ui-selection-check');
     checkbox.type = 'checkbox';
     checkbox.name = 'broadcastChannel';
     checkbox.value = stream.configuration_id;
@@ -4554,13 +4573,13 @@ function aliasBulkStreamChoices(options) {
 }
 
 function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescription) {
-  const operation = node('div', 'alias-membership-operation');
+  const operation = node('div', 'alias-membership-operation ui-segmented');
   operation.setAttribute('role', 'group');
   operation.setAttribute('aria-label', ariaLabel);
   let selected = 'add';
   [['add', '+', positiveDescription], ['remove', '−', negativeDescription]]
     .forEach(([value, label, description]) => {
-      const button = node('button', 'secondary', label);
+      const button = node('button', 'ui-segmented-option', label);
       button.type = 'button';
       button.title = description;
       button.setAttribute('aria-label', description);
@@ -4579,7 +4598,7 @@ function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescri
 function openAliasBulkModal(kind) {
   const ids = aliasMutationSelectionIds();
   if (!ids?.length) return;
-  const form = node('form', 'alias-editor-form alias-bulk-form');
+  const form = node('form', 'alias-editor-form alias-bulk-form editor-workspace');
   form.append(node('p', 'modal-introduction',
     `This change applies only to the ${number(ids.length)} selected aliases.`));
   const options = aliasEditorContext?.options || {};
@@ -4685,9 +4704,10 @@ function openAliasBulkModal(kind) {
   }
 
   const errorHost = node('div', 'alias-form-message');
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const submit = node('button', kind === 'delete' ? 'danger' : 'button', submitLabel);
+  const submit = node('button', kind === 'delete' ? 'ui-button ui-button-danger' :
+    'ui-button ui-button-primary', submitLabel);
   submit.type = 'submit';
   form.append(errorHost, aliasModalFooter(cancel, submit));
   const modal = openReadOnlyModal(`${kind === 'delete' ? 'Delete' : 'Bulk'} · ${number(ids.length)} aliases`, form, {
@@ -4736,11 +4756,11 @@ function scanListMemberBulkBar(scanList, onClear) {
   const bar = node('div', 'alias-bulk-bar scan-list-member-bulk-bar');
   bar.hidden = !aliasEditorSelection.size;
   const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
-  const remove = node('button', 'button secondary danger-outline scan-list-member-remove',
+  const remove = node('button', 'ui-button ui-button-danger-quiet scan-list-member-remove',
     `Remove from ${scanList.name}`);
   remove.type = 'button';
   remove.addEventListener('click', () => openScanListMemberRemoveModal(scanList));
-  const clear = node('button', 'button secondary alias-bulk-clear', 'Clear selection');
+  const clear = node('button', 'ui-button ui-button-secondary alias-bulk-clear', 'Clear selection');
   clear.type = 'button';
   clear.addEventListener('click', onClear);
   bar.append(count, remove, clear);
@@ -4759,9 +4779,9 @@ function openScanListMemberRemoveModal(scanList) {
     node('p', 'muted', 'The aliases and their other scan-list memberships will be preserved.'));
   const message = node('div', 'alias-form-message');
   message.setAttribute('role', 'alert');
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const remove = node('button', 'danger', `Remove ${number(ids.length)} Aliases`);
+  const remove = node('button', 'ui-button ui-button-danger', `Remove ${number(ids.length)} Aliases`);
   remove.type = 'button';
   body.append(message, aliasModalFooter(cancel, remove));
   const modal = openReadOnlyModal(`Remove aliases · ${scanList.name}`, body, {
@@ -4806,7 +4826,7 @@ function fullScanListMembershipRequest(revision, operation, aliasListId = null) 
 
 function openFullScanListMembershipModal(scanList, operation) {
   const adding = operation === 'add';
-  const form = node('form', 'alias-editor-form alias-full-membership-form');
+  const form = node('form', 'alias-editor-form alias-full-membership-form editor-workspace');
   let aliasList = null;
   if (adding) {
     aliasList = aliasSelect('aliasListId', [
@@ -4826,9 +4846,10 @@ function openFullScanListMembershipModal(scanList, operation) {
   }
   const message = node('div', 'alias-form-message');
   message.setAttribute('role', 'alert');
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const submit = node('button', adding ? 'button' : 'danger', adding ? 'Add All Aliases' : 'Remove All Members');
+  const submit = node('button', adding ? 'ui-button ui-button-primary' : 'ui-button ui-button-danger',
+    adding ? 'Add All Aliases' : 'Remove All Members');
   submit.type = 'submit';
   form.append(message, aliasModalFooter(cancel, submit));
   const modal = openReadOnlyModal(`${adding ? 'Add All' : 'Remove All'} · ${scanList.name}`, form, {
@@ -4952,7 +4973,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const listId = aliasListId(selectedList);
   const endpoint = `/api/v1/admin/alias-lists/${listId}/transfer`;
   const options = aliasEditorContext?.options || {};
-  const body = node('div', 'alias-editor-form alias-transfer');
+  const body = node('div', 'alias-editor-form alias-transfer editor-workspace');
   const destinationSummary = node('div', 'alias-transfer-destination');
   destinationSummary.append(
     node('strong', '', `${selectedList.name} · ${aliasListFamilyLabel(selectedList)} Alias List`),
@@ -4963,12 +4984,14 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const importPanel = node('div', 'alias-transfer-panel');
   const exportPanel = node('div', 'alias-transfer-panel');
   body.append(importing ? importPanel : exportPanel);
-  const form = node('form', 'alias-editor-form');
+  const form = node('form', 'alias-editor-form editor-workspace');
   importPanel.append(form);
   const field = (title, control) => {
-    const label = node('label', 'alias-form-field');
+    if (control?.matches?.('input:not([type="checkbox"]):not([type="radio"])')) control.classList.add('ui-input');
+    else if (control?.matches?.('select')) control.classList.add('ui-select');
+    const label = node('label', 'alias-form-field ui-field');
     control.setAttribute('aria-label', title);
-    label.append(node('span', '', title), control);
+    label.append(node('span', 'ui-field-label', title), control);
     return label;
   };
   const format = node('select');
@@ -4986,7 +5009,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   file.className = 'visually-hidden';
   const fileDrop = node('label', 'alias-transfer-file-drop');
   const filePrompt = node('strong', '', 'Drop a CSV file here');
-  const fileAction = node('span', 'button secondary', 'Choose CSV file');
+  const fileAction = node('span', 'ui-button ui-button-secondary alias-transfer-file-action', 'Choose CSV file');
   const fileStatus = node('span', 'muted', 'VCE alias exports and RadioReference talkgroup CSV files are supported.');
   fileDrop.append(file, filePrompt, node('span', 'muted', 'or'), fileAction, fileStatus);
   const sourceSection = node('section', 'alias-transfer-section');
@@ -5008,14 +5031,14 @@ function openAliasTransferModal(selectedList, action = 'Import') {
    ['REPLACE', 'Replace this list’s aliases',
     'Aliases that are not in the file will be removed after you review the changes.', '']]
     .forEach(([value, title, description, badgeText]) => {
-      const input = node('input'); input.type = 'radio'; input.name = 'aliasTransferMode'; input.value = value;
+      const input = node('input', 'ui-selection-check'); input.type = 'radio'; input.name = 'aliasTransferMode'; input.value = value;
       input.checked = value === 'UPDATE_ADD';
       input.addEventListener('change', () => { if (input.checked) mode.value = value; });
       const copy = node('span', 'alias-transfer-choice-copy');
       const heading = node('strong', '', title);
       if (badgeText) heading.append(document.createTextNode(' '), badge(badgeText, 'state-current'));
       copy.append(heading, node('span', 'muted', description));
-      const choice = node('label', 'alias-transfer-mode-choice');
+      const choice = node('label', 'alias-transfer-mode-choice ui-choice-card');
       choice.append(input, copy);
       modeChoices.append(choice);
     });
@@ -5069,15 +5092,15 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     if (allowExactNames) {
       const exact = node('details', 'alias-transfer-exact-name');
       exact.append(node('summary', '', 'Add an exact configured name not shown'));
-      exactInput = node('input'); exactInput.type = 'text'; exactInput.placeholder = 'Exact configured name';
+      exactInput = node('input', 'ui-input'); exactInput.type = 'text'; exactInput.placeholder = 'Exact configured name';
       exactInput.setAttribute('aria-label', `Exact ${title.toLowerCase()} name`);
-      exactAdd = node('button', 'button secondary', 'Add'); exactAdd.type = 'button';
+      exactAdd = node('button', 'ui-button ui-button-secondary', 'Add'); exactAdd.type = 'button';
       const controls = node('div', 'alias-transfer-exact-controls');
       const selected = node('div', 'alias-transfer-names');
       const drawExactNames = () => {
         selected.replaceChildren();
         exactNames.forEach((name) => {
-          const remove = node('button', 'button secondary', `${name} ×`); remove.type = 'button';
+          const remove = node('button', 'ui-button ui-button-secondary', `${name} ×`); remove.type = 'button';
           remove.setAttribute('aria-label', `Remove ${name}`);
           remove.addEventListener('click', () => { exactNames.delete(name); drawExactNames(); invalidate(); });
           selected.append(remove);
@@ -5125,12 +5148,12 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     'Stream', options.streams_truncated === true);
   radioDefaults.append(overrides);
   behaviorSection.append(radioDefaults);
-  const sourceCancel = node('button', 'button secondary', 'Cancel'); sourceCancel.type = 'button';
-  const sourceContinue = node('button', 'button', 'Continue'); sourceContinue.type = 'button';
+  const sourceCancel = node('button', 'ui-button ui-button-secondary', 'Cancel'); sourceCancel.type = 'button';
+  const sourceContinue = node('button', 'ui-button ui-button-primary', 'Continue'); sourceContinue.type = 'button';
   sourceContinue.disabled = true;
   sourceSection.append(aliasModalFooter(sourceCancel, node('span', 'alias-modal-footer-spacer'), sourceContinue));
-  const behaviorBack = node('button', 'button secondary', 'Back'); behaviorBack.type = 'button';
-  const previewButton = node('button', 'button', 'Review import'); previewButton.type = 'submit';
+  const behaviorBack = node('button', 'ui-button ui-button-secondary', 'Back'); behaviorBack.type = 'button';
+  const previewButton = node('button', 'ui-button ui-button-primary', 'Review import'); previewButton.type = 'submit';
   behaviorSection.append(aliasModalFooter(behaviorBack, node('span', 'alias-modal-footer-spacer'), previewButton));
   const errorHost = node('div', 'alias-form-message'); errorHost.setAttribute('role', 'status');
   const review = node('section', 'alias-transfer-review');
@@ -5145,13 +5168,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const pagerHost = node('div', 'toolbar');
   const confirm = node('input'); confirm.type = 'checkbox';
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
-  const reviewBack = node('button', 'button secondary', 'Back'); reviewBack.type = 'button';
-  const apply = node('button', 'button', 'Import changes'); apply.type = 'button'; apply.disabled = true;
+  const reviewBack = node('button', 'ui-button ui-button-secondary', 'Back'); reviewBack.type = 'button';
+  const apply = node('button', 'ui-button ui-button-primary', 'Import changes'); apply.type = 'button'; apply.disabled = true;
   review.append(progress.cloneNode(true), destination, summary, filters, rowsHost, pagerHost, confirmLabel,
     aliasModalFooter(reviewBack, node('span', 'alias-modal-footer-spacer'), apply));
   importPanel.append(review);
-  const exportButton = anchor('Download CSV', aliasTransferExportHref(listId), 'button');
-  const exportCancel = node('button', 'button secondary', 'Cancel');
+  const exportButton = anchor('Download CSV', aliasTransferExportHref(listId), 'ui-button ui-button-primary');
+  const exportCancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   exportCancel.type = 'button';
   const exportSummary = node('div', 'alias-transfer-export-summary');
   exportSummary.append(
@@ -5167,13 +5190,13 @@ function openAliasTransferModal(selectedList, action = 'Import') {
    ['filtered', 'Current filtered results',
     'Export every matching alias in the current search and filters, not only the visible page.']]
     .forEach(([value, title, description]) => {
-      const input = node('input'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
+      const input = node('input', 'ui-selection-check'); input.type = 'radio'; input.name = 'aliasTransferExportScope';
       input.value = value; input.checked = value === 'all';
       if (value === 'filtered' && !capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) input.disabled = true;
       const copy = node('span', 'alias-transfer-choice-copy');
       copy.append(node('strong', '', title), node('span', 'muted',
         input.disabled ? `${description} CSV export access is required.` : description));
-      const choice = node('label', 'alias-transfer-mode-choice');
+      const choice = node('label', 'alias-transfer-mode-choice ui-choice-card');
       choice.append(input, copy);
       input.addEventListener('change', () => {
         if (input.checked) exportButton.href = aliasTransferExportHref(listId, input.value);
@@ -5408,7 +5431,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       filters.replaceChildren();
       [['all', 'All', response.total], ...Object.entries(countLabels).map(([key, label]) =>
         [key, label, response.counts[key] || 0])].forEach(([key, label, count]) => {
-          const button = node('button', 'button secondary', `${label} ${number(count)}`);
+          const button = node('button', 'ui-button ui-button-secondary', `${label} ${number(count)}`);
           button.type = 'button'; button.dataset.filter = key;
           button.addEventListener('click', () => { previewFilter = key; drawRows(); });
           filters.append(button);
@@ -5418,7 +5441,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       pagerHost.replaceChildren(node('span', '', `${first}–${Math.min(offset + 100, response.total)} of ${response.total}`));
       for (const [label, next] of [['Previous', offset - 100], ['Next', offset + 100]]) {
         if(next >= 0 && next < response.total) {
-          const button = node('button', 'button secondary', label); button.type = 'button';
+          const button = node('button', 'ui-button ui-button-secondary', label); button.type = 'button';
           button.addEventListener('click', () => loadPreview(next)); pagerHost.append(button);
         }
       }
@@ -5477,7 +5500,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
-  const form = node('form', 'alias-editor-form alias-policy-form');
+  const form = node('form', 'alias-editor-form alias-policy-form editor-workspace');
   form.append(node('p', 'modal-introduction',
     'Set how this Alias List handles unknown traffic and how future Aliases begin.'));
 
@@ -5506,8 +5529,8 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     const streamIds = [...new Set([...configuredStreams.keys(), ...selectedStreams])];
     if (!streamIds.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
     streamIds.forEach((configurationId) => {
-      const label = node('label', 'alias-check-option');
-      const checkbox = node('input');
+      const label = node('label', 'alias-check-option ui-choice-card');
+      const checkbox = node('input', 'ui-selection-check');
       checkbox.type = 'checkbox';
       checkbox.name = `${kind}BroadcastChannel`;
       checkbox.value = configurationId;
@@ -5544,7 +5567,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     'New Aliases begin in the selected scan lists.',
     'New Aliases begin with the selected external streaming destinations.');
 
-  const tabs = node('nav', 'tabs alias-modal-tabs alias-defaults-tabs');
+  const tabs = node('nav', 'alias-modal-tabs alias-defaults-tabs ui-segmented');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Alias List Default behaviors');
   const activate = (id) => {
@@ -5558,7 +5581,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
     });
   };
   [['unknown', 'Unmatched Calls'], ['newAlias', 'New Aliases']].forEach(([id, label]) => {
-    const button = node('button', 'secondary', label);
+    const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
     button.dataset.tab = id;
     button.setAttribute('role', 'tab');
@@ -5568,9 +5591,9 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   activate('unknown');
 
   const errorHost = node('div', 'alias-form-message');
-  const cancel = node('button', 'button secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const save = node('button', 'button', 'Save Call Handling Defaults');
+  const save = node('button', 'ui-button ui-button-primary', 'Save Call Handling Defaults');
   save.type = 'submit';
   form.append(tabs, unknown.panel, newAliases.panel, errorHost, aliasModalFooter(cancel, save));
   const modal = openReadOnlyModal(`Call Handling Defaults · ${selectedList.name}`, form, {
@@ -5779,7 +5802,7 @@ function observedGroupIdentityCreateButton(row, selectedList) {
   if (!observedGroupIdentityPromotionSupported(row)) {
     return badge('Review only', 'state-stale', observedGroupIdentityPromotionReason(row));
   }
-  const button = node('button', 'button secondary observed-group-identity-create', 'Create Alias');
+  const button = node('button', 'ui-button ui-button-secondary observed-group-identity-create', 'Create Alias');
   button.type = 'button';
   button.dataset.groupIdentityId = String(row.group_identity_id);
   button.dataset.observedKey = observedGroupIdentityFocusKey(row);
@@ -5872,7 +5895,7 @@ function observedGroupIdentityToolbar(selectedList) {
     form.append(anchor('Clear', href('aliases', {
       list: aliasListId(selectedList), aliasTab: 'discover', sort: route.get('sort'),
       direction: route.get('direction')
-    }), 'button secondary'));
+    }), 'ui-button ui-button-secondary'));
   }
   return form;
 }
@@ -5963,7 +5986,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   const selectionScope = aliasSelectionScopeKey('scan-list-members', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
-  const summary = node('section', 'alias-list-summary scan-list-member-summary');
+  const summary = node('section', 'alias-list-summary scan-list-member-summary ui-summary-card');
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted scan-list-member-summary-metrics');
   summaryCopy.append(...[
@@ -5979,12 +6002,12 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   updateSummary(scanList);
   const summaryActions = node('div', 'alias-list-summary-actions');
   summaryActions.append(anchor('Back to Scan Lists', href('scan-lists'),
-    'button secondary'));
-  const addAll = node('button', 'button secondary scan-list-add-all', 'Add an Entire Alias List');
+    'ui-button ui-button-secondary'));
+  const addAll = node('button', 'ui-button ui-button-secondary scan-list-add-all', 'Add an Entire Alias List');
   addAll.type = 'button';
   addAll.disabled = !(aliasEditorContext?.lists || []).length;
   addAll.addEventListener('click', () => openFullScanListMembershipModal(scanList, 'add'));
-  const removeAll = node('button', 'button secondary danger-outline scan-list-remove-all',
+  const removeAll = node('button', 'ui-button ui-button-danger-quiet scan-list-remove-all',
     'Remove All Assigned Aliases');
   removeAll.type = 'button';
   removeAll.disabled = Number(scanList.alias_count || 0) <= 0;
@@ -6042,7 +6065,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   });
   tableHost.append(aliasTable);
 
-  const selectPage = node('button', 'button secondary', 'Select This Page');
+  const selectPage = node('button', 'ui-button ui-button-secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
     try {
@@ -6053,7 +6076,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
       updateSelection(error.message, true);
     }
   });
-  const selectAll = node('button', 'button secondary alias-select-all', 'Select All Matching');
+  const selectAll = node('button', 'ui-button ui-button-secondary alias-select-all', 'Select All Matching');
   selectAll.type = 'button';
   selectAll.addEventListener('click', () =>
     selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
@@ -6154,14 +6177,19 @@ async function renderAliases() {
     lists, selectedList, scanListScope, options: null, page: null
   };
 
+  const scanListMode = Boolean(requestedScanListId);
   const subtitle = scanListScope ?
     `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
-    `${number(lists.length)} alias lists · administrator editing enabled`;
-  const workspace = node('div', 'alias-editor-workspace');
-  workspace.append(aliasListRail(lists, selectedList));
+    (scanListMode ? 'Scan list unavailable · administrator editing enabled' :
+      `${number(lists.length)} alias lists · administrator editing enabled`);
+  const workspace = node('div', scanListMode ?
+    'alias-editor-workspace scan-list-members-workspace data-workspace' :
+    'alias-editor-workspace editor-workspace');
+  if (!scanListMode) workspace.append(aliasListRail(lists, selectedList));
   const main = node('div', 'alias-editor-main');
   workspace.append(main);
-  if (!beginPage(renderContext, pageHeader('Alias Editor', subtitle), workspace)) return;
+  if (!beginPage(renderContext, pageHeader(scanListMode ? 'Scan List Members' : 'Alias Editor', subtitle),
+    workspace)) return;
 
   if (scanListScope) {
     await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext);
@@ -6170,10 +6198,10 @@ async function renderAliases() {
 
   if (requestedScanListId) {
     clearInactiveAliasSelection(false);
-    const missing = node('section', 'alias-editor-welcome');
+    const missing = node('section', 'alias-editor-welcome ui-empty-state');
     missing.append(node('h2', '', 'Scan list not found'),
       node('p', '', 'This scan list may have been deleted or changed.'),
-      anchor('Back to Scan Lists', href('scan-lists'), 'button secondary'));
+      anchor('Back to Scan Lists', href('scan-lists'), 'ui-button ui-button-secondary'));
     main.append(missing);
     return;
   }
@@ -6235,7 +6263,7 @@ async function renderAliases() {
   const selectionScope = aliasSelectionScopeKey('alias-list', selectionFilters);
   synchronizeAliasEditorSelectionScope(selectionScope);
 
-  const summary = node('section', 'alias-list-summary');
+  const summary = node('section', 'alias-list-summary ui-summary-card');
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted alias-list-summary-metrics');
   summaryCopy.append(node('h2', '', selectedList.name), badge(aliasListFamilyLabel(selectedList), 'state-current'),
@@ -6247,22 +6275,22 @@ async function renderAliases() {
   updateSummary(selectedList);
   summary.append(summaryCopy);
   const listActions = node('div', 'alias-list-summary-actions');
-  const add = node('button', 'button alias-add-button', 'Add Alias');
+  const add = node('button', 'ui-button ui-button-primary alias-add-button', 'Add Alias');
   add.type = 'button';
   add.addEventListener('click', () => openAliasEditorModal('create'));
-  const remove = node('button', 'button secondary danger-outline', 'Delete List');
+  const remove = node('button', 'ui-button ui-button-danger-quiet', 'Delete List');
   remove.type = 'button';
   remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
   listActions.append(add);
-  const importAliases = node('button', 'button secondary alias-transfer-import-button', 'Import aliases…');
+  const importAliases = node('button', 'ui-button ui-button-secondary alias-transfer-import-button', 'Import aliases…');
   importAliases.type = 'button';
   importAliases.addEventListener('click', () => openAliasTransferModal(selectedList, 'Import'));
-  const exportAliases = node('button', 'button secondary alias-transfer-export-button', 'Export aliases…');
+  const exportAliases = node('button', 'ui-button ui-button-secondary alias-transfer-export-button', 'Export aliases…');
   exportAliases.type = 'button';
   exportAliases.addEventListener('click', () => openAliasTransferModal(selectedList, 'Export'));
   listActions.append(importAliases, exportAliases);
   if (unmatchedTalkgroupsSupported(selectedList)) {
-    const policy = node('button', 'button secondary alias-policy-button', 'Call Handling Defaults');
+    const policy = node('button', 'ui-button ui-button-secondary alias-policy-button', 'Call Handling Defaults');
     policy.type = 'button';
     policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
     listActions.append(policy);
@@ -6334,7 +6362,7 @@ async function renderAliases() {
     updateSelection();
   };
 
-  const selectPage = node('button', 'button secondary', 'Select This Page');
+  const selectPage = node('button', 'ui-button ui-button-secondary', 'Select This Page');
   selectPage.type = 'button';
   selectPage.addEventListener('click', () => {
     try {
@@ -6345,7 +6373,7 @@ async function renderAliases() {
       updateSelection(error.message, true);
     }
   });
-  const selectAll = node('button', 'button secondary alias-select-all', 'Select All Matching');
+  const selectAll = node('button', 'ui-button ui-button-secondary alias-select-all', 'Select All Matching');
   selectAll.type = 'button';
   selectAll.addEventListener('click', () =>
     selectAllMatchingAliases(selectionFilters, selectionScope, selectAll, updateSelection));
@@ -16967,7 +16995,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   const editing = mode === 'edit';
   const loading = node('div', 'loading', editing ? 'Loading channel settings…' : 'Preparing channel editor…');
   const modal = openReadOnlyModal(editing ? 'Edit Channel' : 'Create Channel', loading, {
-    id: `${mode}-channel-${configurationId || 'new'}`, className: 'alias-editor-modal channel-editor-modal',
+    id: `${mode}-channel-${configurationId || 'new'}`, className: 'channel-editor-modal',
     returnFocusSelector: editing ? `.channel-edit-button` : '.channel-admin-toolbar .ui-button-primary'
   });
   if (!modal) return;
@@ -16991,7 +17019,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     const host = node('div');
 
     const draw = () => {
-      const form = node('form', 'alias-editor-form channel-editor-form editor-workspace');
+      const form = node('form', 'channel-editor-form editor-workspace');
       form.dataset.uiDensity = 'comfortable';
       const hero = node('div', 'channel-editor-hero');
       const identity = node('div');
@@ -17027,16 +17055,16 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             host.replaceChildren(node('div', 'error', error.message));
           } finally { modal.setBusy(false); }
         });
-        const protocolField = aliasFormField('Protocol', uiSelectFrame(protocolSelect, 'channel-protocol-select'),
+        const protocolField = formField('Protocol', uiSelectFrame(protocolSelect, 'channel-protocol-select'),
           'The protocol determines the available source, decoder, logging, and recording settings.');
-        protocolField.classList.add('channel-protocol-picker');
+        protocolField.classList.add('channel-editor-field', 'channel-protocol-picker');
         form.append(protocolField);
       }
       const panels = new Map();
       const sectionNodes = [];
       const sectionPlan = channelEditorSectionPlan(profile.sections);
       sectionPlan.forEach(({ definition: sectionDefinition, id, advanced }) => {
-        const panel = node('fieldset', 'alias-editor-panel channel-editor-panel ui-form-section');
+        const panel = node('fieldset', 'channel-editor-panel ui-form-section');
         const labelId = `${id}-label`;
         panel.id = id;
         panel.tabIndex = -1;
@@ -17054,7 +17082,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             }, 'ui-button ui-button-secondary'));
           panel.append(panelHeader);
         }
-        const grid = node('div', 'alias-editor-grid channel-editor-grid');
+        const grid = node('div', 'channel-editor-grid');
         sectionDefinition.fields.forEach((field) => {
           const control = channelEditorControl(field, profile, options, channel);
           let presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
@@ -17063,13 +17091,15 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             unit.append(presentedControl, node('span', 'ui-input-unit', field.unit));
             presentedControl = unit;
           }
+          presentedControl.classList?.add('channel-editor-control');
           const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
             field.type === 'frequency_map' || field.type === 'frequency_list' ?
-            node('div', 'alias-editor-field channel-wide-field') :
-            aliasFormField(field.label, presentedControl, field.help || '');
+            node('div', 'channel-editor-field ui-field channel-wide-field') :
+            formField(field.label, presentedControl, field.help || '');
+          wrapper.classList.add('channel-editor-field');
           if (!wrapper.contains(control)) {
-            wrapper.append(node('span', 'alias-editor-field-label', field.label), presentedControl);
-            if (field.help) wrapper.append(node('small', '', field.help));
+            wrapper.append(node('span', 'ui-field-label', field.label), presentedControl);
+            if (field.help) wrapper.append(node('small', 'ui-field-detail', field.help));
           }
           if (field.path === 'settings.use_bandplan_override' &&
               capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
@@ -17098,7 +17128,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           sectionNodes.push(panel);
         }
       });
-      const errors = node('div', 'alias-form-message');
+      const errors = node('div', 'channel-editor-message admin-form-message');
       errors.setAttribute('role', 'alert');
       errors.setAttribute('aria-live', 'assertive');
       errors.tabIndex = -1;
@@ -17129,8 +17159,10 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
-      form.append(sectionLayout, errors,
-        aliasModalFooter(clearStatistics, reset, node('span', 'alias-modal-footer-spacer'), cancel, save));
+      const footer = node('footer', 'channel-editor-footer ui-action-row');
+      footer.append(...[clearStatistics, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
+        .filter(Boolean));
+      form.append(sectionLayout, errors, footer);
       form.addEventListener('input', () => { modal.setDirty(true); channelEditorDependencies(form); });
       form.addEventListener('change', () => { modal.setDirty(true); channelEditorDependencies(form); });
       form.addEventListener('invalid', (event) => {

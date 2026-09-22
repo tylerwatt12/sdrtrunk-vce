@@ -71,6 +71,30 @@ test('scanner-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
 });
 
+test('aliases-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/design-system.html?theme=light&view=aliases');
+  await expect(page.locator('body')).toHaveScreenshot('aliases-light-desktop.png', { fullPage: true });
+});
+
+test('aliases-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=aliases');
+  await expect(page.locator('body')).toHaveScreenshot('aliases-dark-mobile.png', { fullPage: true });
+});
+
+test('scan-list-members-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/design-system.html?theme=dark&view=scan-list-members');
+  await expect(page.locator('body')).toHaveScreenshot('scan-list-members-dark-desktop.png', { fullPage: true });
+});
+
+test('scan-list-members-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=scan-list-members');
+  await expect(page.locator('body')).toHaveScreenshot('scan-list-members-light-mobile.png', { fullPage: true });
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

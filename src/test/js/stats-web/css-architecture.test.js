@@ -24,6 +24,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/tuner-spectrum.css?v=2") layer(features);',
   '@import url("./styles/features/scanner.css?v=1") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=1") layer(features);',
+  '@import url("./styles/features/aliases.css?v=1") layer(features);',
   '@import url("./styles/features/dashboard.css") layer(features);',
   '@import url("./styles/features/administration.css") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
@@ -752,6 +753,37 @@ function validateRfPlannerFeature(stylesheets, entry) {
     'RF Planner presentation must adapt through semantic tokens instead of feature theme overrides');
 }
 
+function validateAliasesFeature(stylesheets, entry) {
+  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
+  const aliases = stylesheetModule(stylesheets, entry, 'features/aliases.css').source;
+  const aliasSelectors = /(?:alias-editor-|alias-list-|alias-transfer-|alias-modal-|alias-membership-|alias-tone-|observed-group-identity|scan-list-member)/;
+  assert.doesNotMatch(legacy, aliasSelectors,
+    'Alias management presentation belongs in its feature stylesheet');
+  for(const selector of ['.alias-editor-workspace', '.alias-list-rail', '.alias-list-summary',
+    '.alias-editor-filter-toolbar', '.scan-list-members-workspace']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(aliases, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
+      `Missing Alias management rule ${selector}`);
+  }
+  assert.match(aliases,
+    /@media \(max-width: 900px\)[\s\S]*\.alias-editor-workspace\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Alias management workspace must collapse on tablet-sized screens');
+  assert.match(aliases,
+    /@media \(max-width: 560px\)[\s\S]*\.alias-filter-group-identity \.alias-filter-group-fields,[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Alias management filters must collapse on small screens');
+  assert.doesNotMatch(aliases, /:root\[data-theme="dark"\]/,
+    'Alias management presentation must adapt through semantic tokens instead of feature theme overrides');
+
+  const assets = path.dirname(path.resolve(entry));
+  const appSource = fs.readFileSync(path.resolve(assets, 'app.js'), 'utf8');
+  const channelEditorStart = appSource.indexOf('async function openChannelEditorModal');
+  const channelEditorEnd = appSource.indexOf('\nasync function ', channelEditorStart + 1);
+  assert.ok(channelEditorStart >= 0 && channelEditorEnd > channelEditorStart,
+    'Channel editor function must remain discoverable for dependency checks');
+  assert.doesNotMatch(appSource.slice(channelEditorStart, channelEditorEnd), /alias-(?:editor|modal)/,
+    'Channel Setup must not borrow Alias Editor presentation classes or helpers');
+}
+
 function validateLiveFeature(stylesheets, entry) {
   const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
@@ -921,6 +953,7 @@ validateSettingsFeatures(stylesheets, entryStylesheet);
 validateTunerSpectrumFeature(stylesheets, entryStylesheet);
 validateScannerFeature(stylesheets, entryStylesheet);
 validateRfPlannerFeature(stylesheets, entryStylesheet);
+validateAliasesFeature(stylesheets, entryStylesheet);
 validateLiveFeature(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

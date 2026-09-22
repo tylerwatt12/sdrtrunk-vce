@@ -294,6 +294,16 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1240px, calc(100% - 32px));
 }
 
+.visual-aliases-example,
+.visual-scan-list-members-example {
+  width: min(1320px, calc(100% - 32px));
+}
+
+.visual-aliases-example table,
+.visual-scan-list-members-example table {
+  min-width: 760px;
+}
+
 .visual-feature-header > .scanner-header-actions {
   display: flex;
 }
@@ -391,6 +401,8 @@ body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-exam
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
 body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
+body:not([data-gallery-view="aliases"]) .visual-aliases-example,
+body:not([data-gallery-view="scan-list-members"]) .visual-scan-list-members-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   display: none;
@@ -453,6 +465,11 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   }
 
   .visual-rf-planner-example {
+    width: min(100% - 20px, 1180px);
+  }
+
+  .visual-aliases-example,
+  .visual-scan-list-members-example {
     width: min(100% - 20px, 1180px);
   }
 }

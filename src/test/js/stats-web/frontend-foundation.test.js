@@ -307,7 +307,8 @@ async function main() {
   assert.match(appCssSource, /\.settings-form-footer \{[^}]*grid-column: 1 \/ -1[^}]*justify-self: stretch/s);
   assert.doesNotMatch(appCssSource, /\.settings-form-footer \{[^}]*max-width/s);
   const aliasMembershipOperation = functionBinding(appSource, 'aliasBulkBinaryOperation');
-  assert.match(aliasMembershipOperation, /node\('button', 'secondary', label\)/);
+  assert.match(aliasMembershipOperation, /node\('button', 'ui-segmented-option', label\)/);
+  assert.match(aliasMembershipOperation, /alias-membership-operation ui-segmented/);
   const settingsCardGrid = vm.runInNewContext(
     `(function(...cards) ${functionBinding(appSource, 'settingsCardGrid')})`, {
       node: (tag, className) => ({

@@ -219,12 +219,12 @@
   border-radius: var(--radius-card);
 }
 
-.channel-protocol-picker .alias-editor-field-label,
+.channel-protocol-picker .admin-form-label,
 .channel-protocol-picker .channel-protocol-select {
   grid-column: 1;
 }
 
-.channel-protocol-picker .alias-editor-field-label {
+.channel-protocol-picker .admin-form-label {
   color: var(--ink);
   font-size: 12px;
 }
@@ -289,31 +289,14 @@
   grid-column: 1 / -1;
 }
 
-.channel-editor-form .alias-editor-field {
+.channel-editor-field {
   min-width: 0;
   display: grid;
   align-content: start;
   gap: 5px;
 }
 
-.channel-editor-form .alias-editor-field-label {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: .025em;
-  text-transform: uppercase;
-}
-
-.channel-editor-form .alias-editor-field small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.4;
-}
-
-.channel-editor-form .alias-editor-field > .ui-input,
-.channel-editor-form .alias-editor-field > .ui-select-frame,
-.channel-editor-form .alias-editor-field > .ui-textarea {
+.channel-editor-control {
   width: 100%;
 }
 
@@ -420,7 +403,7 @@
   font-weight: 650;
 }
 
-.channel-editor-form .alias-modal-footer {
+.channel-editor-footer {
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -435,7 +418,7 @@
   backdrop-filter: blur(10px);
 }
 
-.channel-editor-form .alias-modal-footer-spacer {
+.channel-editor-footer-spacer {
   flex: 1 1 auto;
 }
 
@@ -464,7 +447,7 @@
 
 :root[data-theme="dark"] .channel-catalog-table thead th,
 :root[data-theme="dark"] .channel-editor-form .channel-editor-hero,
-:root[data-theme="dark"] .channel-editor-form .alias-modal-footer {
+:root[data-theme="dark"] .channel-editor-form .channel-editor-footer {
   border-color: var(--interactive-border);
 }
 
@@ -657,11 +640,11 @@
 }
 
 @media (max-width: 520px) {
-  .channel-editor-form .alias-modal-footer-spacer {
+  .channel-editor-footer-spacer {
     display: none;
   }
 
-  .channel-editor-form .alias-modal-footer .ui-button-primary {
+  .channel-editor-footer .ui-button-primary {
     width: 100%;
     flex: 1 0 100%;
   }

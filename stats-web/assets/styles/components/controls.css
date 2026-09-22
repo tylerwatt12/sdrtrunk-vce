@@ -307,7 +307,9 @@
   cursor: pointer;
 }
 
-.ui-segmented-option.active {
+.ui-segmented-option.active,
+.ui-segmented-option[aria-pressed="true"],
+.ui-segmented-option[aria-selected="true"] {
   color: var(--ink);
   background: var(--surface);
   box-shadow: var(--shadow-selected);
@@ -357,7 +359,8 @@
   background: var(--surface);
 }
 
-.ui-choice-card[aria-pressed="true"] {
+.ui-choice-card[aria-pressed="true"],
+.ui-choice-card:has(.ui-selection-check:checked) {
   background: var(--accent-soft);
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);

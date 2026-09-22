@@ -4,7 +4,7 @@ const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['gallery', 'modal', 'modal-long', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity', 'identity-activity',
-  'scanner', 'tuner-spectrum', 'rf-planner', 'live-notice', 'live-filter'].includes(parameters.get('view')) ?
+  'scanner', 'tuner-spectrum', 'rf-planner', 'aliases', 'scan-list-members', 'live-notice', 'live-filter'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
