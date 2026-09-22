@@ -55,8 +55,13 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("/overview`"));
         assertTrue(app.contains("/unassigned`"));
         assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext)"));
-        assertTrue(app.contains("See aliases that activity-only views cannot show"));
-        assertTrue(app.contains("Where this Alias List is used"));
+        assertFalse(app.contains("See aliases that activity-only views cannot show"));
+        assertFalse(app.contains("Where this Alias List is used"));
+        assertTrue(app.contains("node('h2', '', 'Configuration scope')"));
+        assertTrue(app.contains("node('h2', '', 'Alias inventory')"));
+        assertTrue(app.contains("const navigateCoverage = (target, options = {}) => routeFoundation.navigate"));
+        assertTrue(app.contains("directory.host.replaceChildren(present(model))"));
+        assertTrue(app.contains("scrollToTable: Boolean(link.closest('.pager'))"));
         assertTrue(app.contains("value: 'zero_calls'"));
         assertTrue(app.contains("value: 'never_heard'"));
         assertTrue(app.contains("value: 'talkgroup', label: 'Talkgroups'"));
@@ -74,7 +79,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
         assertTrue(css.contains(".admin-settings-shell {"));
         assertTrue(css.contains(".admin-settings-nested-branch"));
-        assertTrue(css.contains(".alias-coverage-guidance"));
+        assertFalse(css.contains(".alias-coverage-guidance"));
         assertTrue(css.contains(".alias-coverage-scope-list"));
         assertTrue(css.contains(".alias-coverage-table-header"));
         assertTrue(css.contains(".ui-time-pair"));

@@ -374,9 +374,10 @@ async function main() {
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
   const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
   assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
-  assert.match(coverageSource, /aliasCoverageGuidance\(\)/);
+  assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);
   assert.match(coverageSource, /aliasCoverageScope\(overview\)/);
   assert.match(coverageSource, /alias-coverage-table-header/);
+  assert.match(coverageSource, /directory\.host\.replaceChildren\(present\(model\)\)/);
   assert.match(coverageSource, /bare: true/);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /bare: true/);

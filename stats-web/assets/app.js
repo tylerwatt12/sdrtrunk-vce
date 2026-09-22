@@ -17847,7 +17847,7 @@ function aliasCoverageUnassignedColumns() {
   ];
 }
 
-function aliasCoverageSearch(placeholder) {
+function aliasCoverageSearch(placeholder, onNavigate) {
   const form = node('form', 'alias-coverage-search');
   form.method = 'get';
   for (const [key, value] of route.entries()) {
@@ -17870,6 +17870,10 @@ function aliasCoverageSearch(placeholder) {
   const submit = node('button', 'ui-button ui-button-primary', 'Search');
   submit.type = 'submit';
   form.append(field, submit);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    onNavigate(currentHref({ q: input.value.trim() || null, offset: null }));
+  });
   if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }),
     'ui-button ui-button-secondary'));
   return form;
@@ -17897,8 +17901,7 @@ function aliasCoverageScope(overview) {
   const scope = node('section', 'ui-surface alias-coverage-scope');
   const header = node('header', 'alias-coverage-section-header');
   const copy = node('div');
-  copy.append(node('span', 'alias-coverage-eyebrow', 'Configuration scope'),
-    node('h2', '', 'Where this Alias List is used'),
+  copy.append(node('h2', '', 'Configuration scope'),
     node('p', 'muted', rows.length ?
       `${number(rows.length)} channel${rows.length === 1 ? '' : 's'} across ${number(overview.correlated_radio_system_count || 0)} radio system${Number(overview.correlated_radio_system_count) === 1 ? '' : 's'}` :
       'No configured channels currently reference this Alias List'));
@@ -17924,22 +17927,40 @@ function aliasCoverageScope(overview) {
   return scope;
 }
 
-function aliasCoverageGuidance() {
-  const guidance = node('section', 'ui-surface alias-coverage-guidance');
-  guidance.append(node('span', 'alias-coverage-eyebrow', 'Cross-system inventory'),
-    node('h2', '', 'See aliases that activity-only views cannot show'),
-    node('p', '', 'Systems & channels organizes heard activity under each radio system. Alias coverage starts with the configured Alias List, so it also includes aliases with zero calls or no heard activity.'),
-    node('p', 'muted', aliasAdminAllowed() ?
-      'This directory is read-only. Use Manage aliases when you need to edit Alias List definitions.' :
-      'Alias editing is an administrator-only task; this directory remains read-only.'));
-  return guidance;
+async function loadAliasCoverageModel(parameters, previous = null, signal = null) {
+  const selectedRange = parameters.get('range') || '24h';
+  const activeTab = parameters.get('identity_tab') === 'unassigned' ? 'unassigned' : 'configured';
+  const aliasStatus = ['recent', 'zero_calls', 'never_heard'].includes(parameters.get('alias_status')) ?
+    parameters.get('alias_status') : 'all';
+  const options = { signal };
+  const lists = previous?.lists || await apiPage('/api/v1/identities/lists', { limit: 500 }, options);
+  if (!lists.rows.length) return { lists, selectedListId: null, selectedRange, activeTab, aliasStatus };
+  const requested = parameters.get('alias_list_id');
+  const selected = lists.rows.find((row) => String(row.alias_list_id) === String(requested)) || lists.rows[0];
+  const selectedListId = selected.alias_list_id;
+  const configuredSort = parameters.get('sort') || (aliasStatus === 'recent' ? 'last_evidence' : 'name');
+  const configuredDirection = parameters.get('direction') || (aliasStatus === 'recent' ? 'desc' : 'asc');
+  const common = { range: selectedRange, status: aliasStatus, q: parameters.get('q'), limit: 100,
+    offset: parameters.get('offset') || 0, sort: configuredSort, direction: configuredDirection };
+  const emptyPage = { rows: [], limit: 100, offset: 0, has_more: false, next_offset: null };
+  const unassignedParameters = { q: activeTab === 'unassigned' ? parameters.get('q') : null,
+    limit: activeTab === 'unassigned' ? 100 : 1,
+    offset: activeTab === 'unassigned' ? parameters.get('offset') || 0 : 0,
+    sort: activeTab === 'unassigned' ? parameters.get('sort') || 'logical_call_count' : 'logical_call_count',
+    direction: activeTab === 'unassigned' ? parameters.get('direction') || 'desc' : 'desc' };
+  const [overviewResult, aliases, unassigned] = await Promise.all([
+    api(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`,
+      { range: selectedRange }, options),
+    activeTab === 'configured' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
+      { ...common, type: parameters.get('type') }, options) : Promise.resolve(emptyPage),
+    apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
+      unassignedParameters, options)
+  ]);
+  return { lists, selectedListId, selectedList: selected, overview: overviewResult, aliases, unassigned,
+    selectedRange, activeTab, aliasStatus };
 }
 
 async function renderAliasCoverageDirectory(renderContext) {
-  const selectedRange = route.get('range') || '24h';
-  const activeTab = route.get('identity_tab') === 'unassigned' ? 'unassigned' : 'configured';
-  const aliasStatus = ['recent', 'zero_calls', 'never_heard'].includes(route.get('alias_status')) ?
-    route.get('alias_status') : 'all';
   const directory = createAsyncSection('Alias coverage', {
     bare: true,
     loadingMessage: 'Loading Alias Lists and coverage…',
@@ -17950,31 +17971,17 @@ async function renderAliasCoverageDirectory(renderContext) {
     'Compare configured aliases with heard activity across every channel that uses them'),
     radioDirectoryPerspectiveControl('coverage'), directory.element)) return;
 
-  await directory.load(async () => {
-    const lists = await apiPage('/api/v1/identities/lists', { limit: 500 });
-    if (!lists.rows.length) return { lists, selectedListId: null };
-    const requested = route.get('alias_list_id');
-    const selected = lists.rows.find((row) => String(row.alias_list_id) === String(requested)) || lists.rows[0];
-    const selectedListId = selected.alias_list_id;
-    const configuredSort = route.get('sort') || (aliasStatus === 'recent' ? 'last_evidence' : 'name');
-    const configuredDirection = route.get('direction') || (aliasStatus === 'recent' ? 'desc' : 'asc');
-    const common = { range: selectedRange, status: aliasStatus, q: route.get('q'), limit: 100,
-      offset: route.get('offset') || 0, sort: configuredSort, direction: configuredDirection };
-    const emptyPage = { rows: [], limit: 100, offset: 0, has_more: false, next_offset: null };
-    const [overview, aliases, unassigned] = await Promise.all([
-      api(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`, { range: selectedRange }),
-      activeTab === 'configured' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
-        { ...common, type: route.get('type') }) : Promise.resolve(emptyPage),
-      apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
-        { q: activeTab === 'unassigned' ? route.get('q') : null, limit: activeTab === 'unassigned' ? 100 : 1,
-          offset: activeTab === 'unassigned' ? route.get('offset') || 0 : 0,
-          sort: activeTab === 'unassigned' ? route.get('sort') || 'logical_call_count' : 'logical_call_count',
-          direction: activeTab === 'unassigned' ? route.get('direction') || 'desc' : 'desc' })
-    ]);
-    return { lists, selectedListId, selectedList: selected, overview, aliases, unassigned };
-  }, (model) => {
+  let selectedModel = null;
+  let updateSequence = 0;
+  let updateController = null;
+  const navigateCoverage = (target, options = {}) => routeFoundation.navigate(window, target, (nextRoute) => {
+    route = nextRoute;
+    void refreshCoverage(nextRoute, options);
+  });
+  const present = (model) => {
     if (!model.selectedListId) return node('div', 'empty', 'No Alias Lists are configured.');
-    const { lists, selectedListId, selectedList, overview, aliases, unassigned } = model;
+    const { lists, selectedListId, selectedList, overview, aliases, unassigned,
+      selectedRange, activeTab, aliasStatus } = model;
     const wrapper = node('div', 'alias-coverage ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
     const toolbar = node('div', 'alias-coverage-toolbar ui-catalog-toolbar');
@@ -17982,7 +17989,7 @@ async function renderAliasCoverageDirectory(renderContext) {
     listControl.append(node('span', '', 'Alias List'));
     const listSelect = uiSelect(lists.rows.map((row) => ({ value: row.alias_list_id,
       label: `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count)} aliases` })), selectedListId);
-    listSelect.addEventListener('change', () => navigateTo(currentHref({ alias_list_id: listSelect.value,
+    listSelect.addEventListener('change', () => navigateCoverage(currentHref({ alias_list_id: listSelect.value,
       q: null, offset: null, sort: null, direction: null })));
     listControl.append(uiSelectFrame(listSelect));
     const rangeControl = node('label', 'alias-coverage-field');
@@ -17991,7 +17998,7 @@ async function renderAliasCoverageDirectory(renderContext) {
       { value: '1h', label: 'Last hour' }, { value: '24h', label: 'Last day' },
       { value: '7d', label: 'Last week' }, { value: '30d', label: 'Last 30 days' }
     ], selectedRange);
-    rangeSelect.addEventListener('change', () => navigateTo(currentHref({ range: rangeSelect.value, offset: null })));
+    rangeSelect.addEventListener('change', () => navigateCoverage(currentHref({ range: rangeSelect.value, offset: null })));
     rangeControl.append(uiSelectFrame(rangeSelect));
     toolbar.append(listControl, rangeControl);
     if (aliasAdminAllowed()) {
@@ -18008,7 +18015,7 @@ async function renderAliasCoverageDirectory(renderContext) {
       { value: 'configured', label: 'Configured aliases' },
       { value: 'unassigned', label: activeTab === 'unassigned' ?
         `Unassigned observations (${number(unassigned.total_count || 0)})` : 'Unassigned observations' }
-    ], activeTab, (value) => navigateTo(currentHref({ identity_tab: value === 'configured' ? null : value,
+    ], activeTab, (value) => navigateCoverage(currentHref({ identity_tab: value === 'configured' ? null : value,
       q: null, offset: null, sort: null, direction: null })));
     tabs.setAttribute('aria-label', 'Alias coverage inventory');
     const tableSection = node('section', 'ui-surface alias-coverage-table-section');
@@ -18016,27 +18023,26 @@ async function renderAliasCoverageDirectory(renderContext) {
     const tableHeading = node('div');
     const rangeLabel = new Map([['1h', 'last hour'], ['24h', 'last day'], ['7d', 'last week'],
       ['30d', 'last 30 days']]).get(selectedRange) || 'selected range';
-    tableHeading.append(node('span', 'alias-coverage-eyebrow', 'Alias inventory'),
-      node('h2', '', activeTab === 'unassigned' ? 'Unassigned observations' : 'Configured aliases'),
+    tableHeading.append(node('h2', '', 'Alias inventory'),
       node('p', 'muted', activeTab === 'unassigned' ?
         `${selectedList?.name || 'Alias List'} · all retained activity · most calls first` :
         `${selectedList?.name || 'Alias List'} · recent means heard in the ${rangeLabel}`));
     tableHeader.append(tableHeading, tabs);
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
-      'Search unassigned observations' : 'Search configured aliases'));
+      'Search unassigned observations' : 'Search configured aliases', navigateCoverage));
     if (activeTab === 'configured') {
       const status = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'recent', label: 'Recently heard' },
         { value: 'zero_calls', label: `Zero calls (${number(totals.zero_call_alias_count || 0)})` },
         { value: 'never_heard', label: `Never heard (${number(totals.never_heard_alias_count || 0)})` }
-      ], aliasStatus, (value) => navigateTo(currentHref({ alias_status: value === 'all' ? null : value,
+      ], aliasStatus, (value) => navigateCoverage(currentHref({ alias_status: value === 'all' ? null : value,
         offset: null, sort: null, direction: null })));
       status.setAttribute('aria-label', 'Alias activity status');
       const kind = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'talkgroup', label: 'Talkgroups' },
         { value: 'radio', label: 'Radios' }
-      ], route.get('type') || 'all', (value) => navigateTo(currentHref({ type: value === 'all' ? null : value,
+      ], route.get('type') || 'all', (value) => navigateCoverage(currentHref({ type: value === 'all' ? null : value,
         offset: null })));
       kind.setAttribute('aria-label', 'Alias type');
       tableToolbar.append(status, kind);
@@ -18050,9 +18056,58 @@ async function renderAliasCoverageDirectory(renderContext) {
         tableOptions: { defaultSort: aliasStatus === 'recent' ? 'last_evidence' : 'name',
           defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc' } }));
 
-    wrapper.append(toolbar, aliasCoverageGuidance(), summary, aliasCoverageScope(overview), tableSection);
+    tableSection.addEventListener('click', (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey ||
+          event.shiftKey || event.altKey || !(event.target instanceof Element)) return;
+      const link = event.target.closest('a[href]');
+      if (!link || !tableSection.contains(link)) return;
+      const target = routeFoundation.localTarget(window.location, link.href);
+      if (target?.searchParams.get('view') !== 'radio-systems' ||
+          target.searchParams.get('directory_view') !== 'coverage') return;
+      event.preventDefault();
+      navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
+    });
+    wrapper.append(toolbar, summary, aliasCoverageScope(overview), tableSection);
     return wrapper;
-  }, renderContext);
+  };
+
+  const refreshCoverage = async (parameters, options = {}) => {
+    const sequence = ++updateSequence;
+    updateController?.abort();
+    updateController = new AbortController();
+    const tableSection = directory.host.querySelector('.alias-coverage-table-section');
+    const oldTop = tableSection?.getBoundingClientRect().top;
+    const status = uiStatus('Updating…', 'neutral');
+    status.setAttribute('role', 'status');
+    tableSection?.querySelector('.alias-coverage-table-header')?.append(status);
+    tableSection?.setAttribute('aria-busy', 'true');
+    directory.host.querySelector('.alias-coverage-refresh-error')?.remove();
+    try {
+      const model = await loadAliasCoverageModel(parameters, selectedModel, updateController.signal);
+      if (sequence !== updateSequence || !renderIsCurrent(renderContext) || !directory.host.isConnected) return;
+      directory.host.replaceChildren(present(model));
+      selectedModel = model;
+      const newTable = directory.host.querySelector('.alias-coverage-table-section');
+      const newTop = newTable?.getBoundingClientRect().top;
+      if (options.scrollToTable) newTable?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      else if (Number.isFinite(oldTop) && Number.isFinite(newTop)) window.scrollBy(0, newTop - oldTop);
+    } catch (error) {
+      if (error?.name === 'AbortError' || sequence !== updateSequence || !renderIsCurrent(renderContext)) return;
+      const failure = node('div', 'error alias-coverage-refresh-error');
+      failure.setAttribute('role', 'alert');
+      failure.append(node('span', '', error.message || 'Alias coverage could not be updated.'),
+        uiActionButton('Retry', null, () => void refreshCoverage(new URLSearchParams(route))));
+      (tableSection || directory.host).prepend(failure);
+    } finally {
+      if (sequence === updateSequence) {
+        status.remove();
+        tableSection?.removeAttribute('aria-busy');
+      }
+    }
+  };
+  renderContext.signal?.addEventListener('abort', () => updateController?.abort(), { once: true });
+  await directory.load(() => loadAliasCoverageModel(new URLSearchParams(route), null, renderContext.signal),
+    (model) => { selectedModel = model; return present(model); }, renderContext);
 }
 
 function channelTabItems(channel) {
