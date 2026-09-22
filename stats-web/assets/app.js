@@ -1776,7 +1776,7 @@ function channelTagTitle(row) {
 }
 
 function pageHeader(title, subtitle) {
-  const wrapper = node('div', 'page-header');
+  const wrapper = node('div', 'page-header ui-page-header');
   const labels = node('div');
   const heading = node('h1', 'page-title');
   heading.append(valueNode(title));
@@ -2060,16 +2060,19 @@ function databaseLoggingNotice(view) {
 }
 
 function tabs(items, active) {
-  const bar = node('nav', 'tabs');
+  const bar = node('nav', 'ui-page-nav ui-segmented');
   bar.setAttribute('aria-label', 'Section navigation');
   items.forEach((item) => {
     if (item.disabled) {
-      const disabled = node('span', `disabled ${item.id === active ? 'active' : ''}`.trim(), item.label);
+      const disabled = node('span', `ui-segmented-option disabled ${item.id === active ? 'active' : ''}`.trim(),
+        item.label);
       disabled.setAttribute('aria-disabled', 'true');
       disabled.title = item.disabledReason || 'Detailed history is not running';
       bar.append(disabled);
     } else {
-      const link = anchor(item.label, item.href, item.id === active ? 'active' : '');
+      const link = anchor(item.label, item.href,
+        `ui-segmented-option ${item.id === active ? 'active' : ''}`.trim());
+      if (item.id === active) link.setAttribute('aria-current', 'page');
       bar.append(link);
     }
   });
@@ -2077,8 +2080,8 @@ function tabs(items, active) {
 }
 
 function section(title, child, action = null) {
-  const wrapper = node('section', 'section');
-  const titleBar = node('div', 'section-title', title);
+  const wrapper = node('section', 'section ui-section');
+  const titleBar = node('div', 'section-title ui-section-title', title);
   if (action) titleBar.append(action);
   wrapper.append(titleBar);
   if (child) wrapper.append(child);
@@ -2838,9 +2841,9 @@ function keyValues(entries) {
 }
 
 function metrics(values, embedded = false) {
-  const band = node(embedded ? 'div' : 'section', 'summary-band');
+  const band = node(embedded ? 'div' : 'section', 'summary-band ui-metric-grid');
   values.forEach(([label, value, displayValue]) => {
-    const metric = node('div', 'metric');
+    const metric = node('div', 'metric ui-metric');
     const displayed = node('strong');
     displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
     metric.append(node('span', '', label), displayed);
@@ -3318,8 +3321,7 @@ function aliasEditorViewTabs(selectedList) {
     { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
   );
   const navigation = tabs(entries, active);
-  navigation.classList.add('ui-segmented', 'alias-editor-view-tabs');
-  [...navigation.children].forEach((item) => item.classList.add('ui-segmented-option'));
+  navigation.classList.add('alias-editor-view-tabs');
   return navigation;
 }
 
@@ -19907,8 +19909,8 @@ function receiverHealthResolvedSection(incidents) {
 let receiverHealthSectionSequence = 0;
 
 function receiverHealthSection(key, title, child, action = null) {
-  const wrapper = node('section', 'section receiver-health-section');
-  const titleBar = node('div', 'section-title');
+  const wrapper = node('section', 'section ui-section receiver-health-section');
+  const titleBar = node('div', 'section-title ui-section-title');
   const body = node('div', 'receiver-health-section-body');
   body.id = `receiver-health-section-body-${++receiverHealthSectionSequence}`;
   if (child) body.append(child);
@@ -20118,7 +20120,7 @@ async function renderAdminHealth() {
 }
 
 function comingSoonPanel(title) {
-  const panel = node('section', 'section placeholder-page');
+  const panel = node('section', 'section ui-section placeholder-page');
   panel.append(node('h2', '', title), badge('Coming Soon', 'state-stale'));
   return panel;
 }

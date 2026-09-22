@@ -319,13 +319,16 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void keepsSharedTabsScrollableWithoutVisibleScrollbars() throws Exception
+    void usesSharedWrappingSegmentedNavigationForPageViews() throws Exception
     {
         String css = StatsWebStylesheetTestSupport.readAll();
+        String navigation = function(source(), "function tabs(items, active)");
 
-        assertTrue(css.contains(".tabs {"));
-        assertTrue(css.contains("overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;"));
-        assertTrue(css.contains(".tabs::-webkit-scrollbar {\n  display: none;"));
+        assertTrue(navigation.contains("'ui-page-nav ui-segmented'"));
+        assertTrue(navigation.contains("ui-segmented-option"));
+        assertTrue(navigation.contains("aria-current"));
+        assertTrue(css.contains(".ui-page-nav {"));
+        assertTrue(css.contains("flex-wrap: wrap;"));
     }
 
     @Test

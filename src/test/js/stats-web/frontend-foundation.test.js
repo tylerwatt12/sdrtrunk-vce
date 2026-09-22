@@ -162,6 +162,12 @@ async function main() {
     '../web-call-player'
   ].map(loadModule));
   const stableId = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+  assert.match(functionBinding(appSource, 'tabs'), /ui-page-nav ui-segmented/);
+  assert.match(functionBinding(appSource, 'tabs'), /aria-current', 'page'/);
+  assert.match(functionBinding(appSource, 'section'), /section ui-section/);
+  assert.match(functionBinding(appSource, 'metrics'), /summary-band ui-metric-grid/);
+  assert.match(appCssSource, /\.ui-page-nav \{[^}]*flex-wrap: wrap/s);
+  assert.doesNotMatch(appCssSource, /\.tabs a\.active/);
   assert.match(appSource, /const tableType = tableLayouts\.tableId\(options\.type\)/);
   assert.match(appSource,
     /const defaultSchema = tableLayouts\.registerSchema\(tableSchemaRegistry, tableType, declaredColumns\)/);

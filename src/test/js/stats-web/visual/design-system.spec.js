@@ -198,6 +198,23 @@ test('entity-details-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('entity-details-dark-mobile.png', { fullPage: true });
 });
 
+test('page section navigation wraps instead of hiding destinations on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?view=entity-details&theme=dark');
+  const navigation = page.locator('.visual-entity-details-example .ui-page-nav');
+  await navigation.evaluate((element) => {
+    ['Frequencies', 'Quality', 'Neighbors', 'Band Plan', 'Activity'].forEach((label) => {
+      const link = document.createElement('a');
+      link.className = 'ui-segmented-option';
+      link.href = '#';
+      link.textContent = label;
+      element.append(link);
+    });
+  });
+  expect(await navigation.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  expect(await navigation.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(60);
+});
+
 test('modal-mobile-light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=modal');

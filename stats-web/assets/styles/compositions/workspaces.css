@@ -28,6 +28,74 @@
   --ui-summary-number-size: 24px;
 }
 
+.ui-page-header {
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+.ui-page-header .page-title {
+  font-size: clamp(24px, 2.1vw, 30px);
+  font-weight: 750;
+}
+
+.ui-page-header .page-subtitle {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ui-page-nav {
+  width: fit-content;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.ui-page-nav .ui-segmented-option {
+  flex: 0 0 auto;
+}
+
+.ui-page-nav .ui-segmented-option[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.ui-section {
+  overflow: hidden;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-surface-soft);
+}
+
+.ui-section-title {
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  font-weight: 750;
+}
+
+.ui-metric-grid {
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: transparent;
+}
+
+.ui-metric {
+  min-height: 76px;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+}
+
+.ui-metric > span {
+  min-height: 0;
+  font-weight: 700;
+  letter-spacing: .03em;
+}
+
 .ui-catalog {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

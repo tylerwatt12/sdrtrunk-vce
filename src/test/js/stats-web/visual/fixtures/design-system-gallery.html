@@ -525,34 +525,34 @@
 
   <main class="visual-feature-example visual-dashboard-health-example visual-dashboard-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Last activity moments ago</p></div></header>
-    <nav class="tabs" aria-label="Dashboard views"><a class="active" href="#signal">Signal quality</a><a href="#calls">Calls</a><a href="#activity">Activity</a></nav>
-    <section class="section">
-      <div class="section-title"><h2>Signal quality</h2><button class="ui-button ui-button-secondary" type="button">Refresh</button></div>
-      <div class="summary-band">
-        <div class="metric"><span>Healthy channels</span><strong>18</strong></div>
-        <div class="metric"><span>Degraded channels</span><strong>2</strong></div>
-        <div class="metric"><span>Offline channels</span><strong>0</strong></div>
+    <nav class="ui-page-nav ui-segmented" aria-label="Dashboard views"><a class="ui-segmented-option active" aria-current="page" href="#signal">Signal quality</a><a class="ui-segmented-option" href="#calls">Calls</a><a class="ui-segmented-option" href="#activity">Activity</a></nav>
+    <section class="section ui-section">
+      <div class="section-title ui-section-title"><h2>Signal quality</h2><button class="ui-button ui-button-secondary" type="button">Refresh</button></div>
+      <div class="summary-band ui-metric-grid">
+        <div class="metric ui-metric"><span>Healthy channels</span><strong>18</strong></div>
+        <div class="metric ui-metric"><span>Degraded channels</span><strong>2</strong></div>
+        <div class="metric ui-metric"><span>Offline channels</span><strong>0</strong></div>
       </div>
     </section>
-    <section class="section dashboard-summary-section">
-      <div class="section-title"><h2>Monitored Coverage</h2></div>
-      <div class="summary-band"><div class="metric"><span>Radio Systems</span><strong>4</strong></div><div class="metric"><span>Trunked Channels</span><strong>12</strong></div><div class="metric"><span>Conventional Channels</span><strong>8</strong></div></div>
+    <section class="section ui-section dashboard-summary-section">
+      <div class="section-title ui-section-title"><h2>Monitored Coverage</h2></div>
+      <div class="summary-band ui-metric-grid"><div class="metric ui-metric"><span>Radio Systems</span><strong>4</strong></div><div class="metric ui-metric"><span>Trunked Channels</span><strong>12</strong></div><div class="metric ui-metric"><span>Conventional Channels</span><strong>8</strong></div></div>
     </section>
-    <section class="section">
-      <div class="section-title"><h2>Recent Channels</h2></div>
+    <section class="section ui-section">
+      <div class="section-title ui-section-title"><h2>Recent Channels</h2></div>
       <div class="table-wrap"><table><thead><tr><th>Channel</th><th>Mode</th><th>Signal</th><th>Decode</th><th>Seen</th></tr></thead><tbody><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">County Simulcast</strong><small class="dashboard-identity-context">County Public Safety</small></div></td><td><span class="dashboard-mode">P25 · Trunked</span></td><td>-67 dBFS</td><td>98%</td><td>Moments ago</td></tr><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">Fire Dispatch</strong><small class="dashboard-identity-context">154.43000 MHz</small></div></td><td><span class="dashboard-mode">NBFM · Conventional</span></td><td>-74 dBFS</td><td>94%</td><td>1 minute ago</td></tr></tbody></table></div>
     </section>
   </main>
 
   <main class="visual-feature-example visual-dashboard-calls-example visual-dashboard-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Call totals and protocol activity for the last 24 hours.</p></div></header>
-    <nav class="tabs" aria-label="Dashboard views"><a href="#signal">Signal quality</a><a class="active" href="#calls">Calls</a><a href="#activity">Activity</a></nav>
-    <section class="section dashboard-summary-section">
-      <div class="section-title"><h2>Logical Call Totals · Last 24 Hours</h2></div>
-      <div class="summary-band"><div class="metric"><span>Logical Calls</span><strong>12,846</strong></div><div class="metric"><span>Recorded</span><strong>8,203</strong></div><div class="metric"><span>Submitted</span><strong>6,744</strong></div></div>
+    <nav class="ui-page-nav ui-segmented" aria-label="Dashboard views"><a class="ui-segmented-option" href="#signal">Signal quality</a><a class="ui-segmented-option active" aria-current="page" href="#calls">Calls</a><a class="ui-segmented-option" href="#activity">Activity</a></nav>
+    <section class="section ui-section dashboard-summary-section">
+      <div class="section-title ui-section-title"><h2>Logical Call Totals · Last 24 Hours</h2></div>
+      <div class="summary-band ui-metric-grid"><div class="metric ui-metric"><span>Logical Calls</span><strong>12,846</strong></div><div class="metric ui-metric"><span>Recorded</span><strong>8,203</strong></div><div class="metric ui-metric"><span>Submitted</span><strong>6,744</strong></div></div>
     </section>
-    <section class="section">
-      <div class="section-title"><h2>Call Activity · Last 24 Hours</h2></div>
+    <section class="section ui-section">
+      <div class="section-title ui-section-title"><h2>Call Activity · Last 24 Hours</h2></div>
       <div class="dashboard-call-activity">
         <div class="dashboard-activity-controls">
           <div class="dashboard-control-group ui-segmented"><span class="dashboard-control-label">Metric</span><button class="ui-segmented-option dashboard-filter-button active" type="button">Logical Calls</button><button class="ui-segmented-option dashboard-filter-button" type="button">Recorded</button><button class="ui-segmented-option dashboard-filter-button" type="button">Submitted</button></div>
@@ -567,10 +567,10 @@
 
   <main class="visual-feature-example visual-dashboard-activity-example visual-dashboard-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Dashboard</h1><p>Signaling activity and identified source radios.</p></div></header>
-    <nav class="tabs" aria-label="Dashboard views"><a href="#signal">Signal quality</a><a href="#calls">Calls</a><a class="active" href="#activity">Activity</a></nav>
+    <nav class="ui-page-nav ui-segmented" aria-label="Dashboard views"><a class="ui-segmented-option" href="#signal">Signal quality</a><a class="ui-segmented-option" href="#calls">Calls</a><a class="ui-segmented-option active" aria-current="page" href="#activity">Activity</a></nav>
     <div class="dashboard-activity-page-controls"><span class="dashboard-control-label">Time range</span><div class="signal-range-controls ui-segmented"><button class="ui-segmented-option" type="button">6 hours</button><button class="ui-segmented-option active" type="button">24 hours</button><button class="ui-segmented-option" type="button">7 days</button></div></div>
-    <section class="section">
-      <div class="section-title"><h2>Activity Mix · 24 hours</h2></div>
+    <section class="section ui-section">
+      <div class="section-title ui-section-title"><h2>Activity Mix · 24 hours</h2></div>
       <div class="dashboard-activity-mix-body">
         <div class="dashboard-activity-layout">
           <div class="dashboard-activity-chart"><svg class="dashboard-activity-donut" viewBox="0 0 220 220" role="img" aria-label="Activity mix"><circle class="dashboard-activity-donut-background" cx="110" cy="110" r="78"></circle><circle class="dashboard-activity-segment active visual-dashboard-grant" cx="110" cy="110" r="78" stroke-dasharray="285 205" transform="rotate(-90 110 110)"></circle><circle class="dashboard-activity-segment visual-dashboard-register" cx="110" cy="110" r="78" stroke-dasharray="125 365" stroke-dashoffset="-285" transform="rotate(-90 110 110)"></circle><circle class="dashboard-activity-segment visual-dashboard-data" cx="110" cy="110" r="78" stroke-dasharray="80 410" stroke-dashoffset="-410" transform="rotate(-90 110 110)"></circle><text class="dashboard-activity-center-count" x="110" y="106" text-anchor="middle">18,430</text><text class="dashboard-activity-center-label" x="110" y="127" text-anchor="middle">Grant</text></svg></div>
@@ -579,8 +579,8 @@
         <p class="metric-meaning-note">Percentages use the visible activity total. Repeated signaling can produce more than one event for the same call or radio.</p>
       </div>
     </section>
-    <section class="section">
-      <div class="section-title"><h2>Grant · Source radios</h2></div>
+    <section class="section ui-section">
+      <div class="section-title ui-section-title"><h2>Grant · Source radios</h2></div>
       <div class="dashboard-activity-radio-body"><p class="dashboard-activity-radio-status">248 source radios found for Grant.</p><div class="dashboard-activity-radio-result"><p class="metric-meaning-note">Exact currently retained detail identifies source radios heard during grant activity.</p><div class="table-wrap"><table><thead><tr><th>System / Channel</th><th>Radio</th><th>Alias</th><th>Observations</th><th>Last Seen</th></tr></thead><tbody><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">County Public Safety</strong><small class="dashboard-identity-context">Central Simulcast</small></div></td><td>4102841</td><td>Engine 12</td><td>384</td><td>Moments ago</td></tr><tr><td><div class="dashboard-identity"><strong class="dashboard-identity-primary">City Services</strong><small class="dashboard-identity-context">North Site</small></div></td><td>217033</td><td>Supervisor</td><td>190</td><td>2 minutes ago</td></tr></tbody></table></div><nav class="pager dashboard-activity-radio-pager"><span class="muted">Source radios 1-100 of 248</span><button class="ui-button ui-button-secondary" type="button" disabled>Previous</button><button class="ui-button ui-button-secondary" type="button">Next</button></nav></div></div>
     </section>
   </main>
@@ -709,7 +709,7 @@
       </aside>
       <div class="alias-editor-main">
         <section class="alias-list-summary ui-summary-card"><div class="alias-list-summary-copy"><h2>County Public Safety</h2><span class="badge state-current">P25</span><span class="muted alias-list-summary-metrics">1,248 aliases · 12 assigned channels</span></div><div class="alias-list-summary-actions"><button class="ui-button ui-button-primary" type="button">Add Alias</button><button class="ui-button ui-button-secondary" type="button">Import aliases…</button><button class="ui-button ui-button-secondary" type="button">Export aliases…</button><button class="ui-button ui-button-secondary" type="button">Call Handling Defaults</button></div></section>
-        <nav class="tabs alias-editor-view-tabs ui-segmented" aria-label="Alias views"><a class="ui-segmented-option active" href="#">Configuration</a><a class="ui-segmented-option" href="#">Activity</a><a class="ui-segmented-option" href="#">Observed Groups</a></nav>
+        <nav class="ui-page-nav ui-segmented alias-editor-view-tabs" aria-label="Alias views"><a class="ui-segmented-option active" aria-current="page" href="#">Configuration</a><a class="ui-segmented-option" href="#">Activity</a><a class="ui-segmented-option" href="#">Observed Groups</a></nav>
         <form class="alias-editor-filter-toolbar data-workspace">
           <fieldset class="alias-filter-group alias-filter-group-identity"><legend>Identity</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field alias-search-filter"><span class="ui-field-label">Search</span><input class="ui-input" type="search" placeholder="Name, description, or identifier"></label><label class="alias-filter ui-field"><span class="ui-field-label">Identifier</span><select class="ui-select"><option>All types</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Group</span><select class="ui-select"><option>All groups</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Scan List</span><select class="ui-select"><option>All scan lists</option></select></label></div></fieldset>
           <fieldset class="alias-filter-group alias-filter-group-behavior"><legend>Call handling</legend><div class="alias-filter-group-fields"><label class="alias-filter ui-field"><span class="ui-field-label">Recording</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Streaming</span><select class="ui-select"><option>Any</option></select></label><label class="alias-filter ui-field"><span class="ui-field-label">Evidence</span><select class="ui-select"><option>Any</option></select></label><div class="alias-filter-actions"><button class="ui-button ui-button-primary" type="button">Apply</button></div></div></fieldset>
@@ -819,15 +819,15 @@
   </main>
 
   <main class="content visual-entity-details-example">
-    <header class="page-header"><div><h1 class="page-title">County Fire Dispatch</h1><div class="page-subtitle">BEE00-348 · Talkgroup 32518</div></div></header>
-    <nav class="tabs" aria-label="Identity sections"><a class="active" href="#">Info</a><a href="#">Radios</a><a href="#">Activity</a></nav>
+    <header class="page-header ui-page-header"><div><h1 class="page-title">County Fire Dispatch</h1><div class="page-subtitle">BEE00-348 · Talkgroup 32518</div></div></header>
+    <nav class="ui-page-nav ui-segmented" aria-label="Identity sections"><a class="ui-segmented-option active" aria-current="page" href="#">Info</a><a class="ui-segmented-option" href="#">Radios</a><a class="ui-segmented-option" href="#">Activity</a></nav>
     <div class="entity-info-layout">
       <div class="entity-info-column">
-        <section class="section"><div class="section-title">Identity</div><dl class="key-values"><div class="key-value-item"><dt>Radio System</dt><dd><a href="#">County P25</a></dd></div><div class="key-value-item"><dt>Talkgroup ID</dt><dd>32518</dd></div><div class="key-value-item"><dt>Alias</dt><dd>County Fire Dispatch</dd></div><div class="key-value-item"><dt>Description</dt><dd>Primary county fire dispatch</dd></div><div class="key-value-item"><dt>Group</dt><dd>Fire Operations</dd></div></dl></section>
-        <section class="section"><div class="section-title">Logical Call Activity</div><div class="summary-band"><div class="metric"><span>Logical Calls</span><strong>8,429</strong></div><div class="metric"><span>Recorded</span><strong>8,102</strong></div><div class="metric"><span>Submitted to Streamer</span><strong>7,998</strong></div><div class="metric"><span>Encrypted</span><strong>12</strong></div></div></section>
-        <section class="section"><div class="section-title">Observed Times</div><dl class="key-values"><div class="key-value-item"><dt>First Observed</dt><dd>September 12, 2026 at 8:14 AM</dd></div><div class="key-value-item"><dt>Last Observed</dt><dd>12 seconds ago</dd></div></dl></section>
+        <section class="section ui-section"><div class="section-title ui-section-title">Identity</div><dl class="key-values"><div class="key-value-item"><dt>Radio System</dt><dd><a href="#">County P25</a></dd></div><div class="key-value-item"><dt>Talkgroup ID</dt><dd>32518</dd></div><div class="key-value-item"><dt>Alias</dt><dd>County Fire Dispatch</dd></div><div class="key-value-item"><dt>Description</dt><dd>Primary county fire dispatch</dd></div><div class="key-value-item"><dt>Group</dt><dd>Fire Operations</dd></div></dl></section>
+        <section class="section ui-section"><div class="section-title ui-section-title">Logical Call Activity</div><div class="summary-band ui-metric-grid"><div class="metric ui-metric"><span>Logical Calls</span><strong>8,429</strong></div><div class="metric ui-metric"><span>Recorded</span><strong>8,102</strong></div><div class="metric ui-metric"><span>Submitted to Streamer</span><strong>7,998</strong></div><div class="metric ui-metric"><span>Encrypted</span><strong>12</strong></div></div></section>
+        <section class="section ui-section"><div class="section-title ui-section-title">Observed Times</div><dl class="key-values"><div class="key-value-item"><dt>First Observed</dt><dd>September 12, 2026 at 8:14 AM</dd></div><div class="key-value-item"><dt>Last Observed</dt><dd>12 seconds ago</dd></div></dl></section>
       </div>
-      <section class="section"><div class="section-title">Recent Activity</div><div class="table-wrap table-scroll"><table><thead><tr><th>Time</th><th>Channel</th><th>Source</th><th>Duration</th></tr></thead><tbody><tr><td>12 seconds ago</td><td>County Simulcast</td><td>Engine 4</td><td>3.8 s</td></tr><tr><td>2 minutes ago</td><td>County Simulcast</td><td>Dispatch</td><td>7.2 s</td></tr><tr><td>8 minutes ago</td><td>North Site</td><td>Medic 12</td><td>2.1 s</td></tr></tbody></table></div></section>
+      <section class="section ui-section"><div class="section-title ui-section-title">Recent Activity</div><div class="table-wrap table-scroll"><table><thead><tr><th>Time</th><th>Channel</th><th>Source</th><th>Duration</th></tr></thead><tbody><tr><td>12 seconds ago</td><td>County Simulcast</td><td>Engine 4</td><td>3.8 s</td></tr><tr><td>2 minutes ago</td><td>County Simulcast</td><td>Dispatch</td><td>7.2 s</td></tr><tr><td>8 minutes ago</td><td>North Site</td><td>Medic 12</td><td>2.1 s</td></tr></tbody></table></div></section>
     </div>
   </main>
 
