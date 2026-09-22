@@ -15055,59 +15055,6 @@ function radioSystemsDirectoryDetails(row) {
   ].filter(Boolean).join(' · ');
 }
 
-function radioSystemsDirectoryInventory(row) {
-  if (row.directory_type === 'channel') {
-    return `${number(row.learned_channels)} ${Number(row.learned_channels) === 1 ? 'frequency' : 'frequencies'}`;
-  }
-  const values = [`${number(row.channels)} ${Number(row.channels) === 1 ? 'channel' : 'channels'}`];
-  if (isP25(row) && Number(row.patch_groups) > 0) values.push(`${number(row.patch_groups)} patches`);
-  return values.join(' · ');
-}
-
-function radioSystemsDirectoryContent(data) {
-  const { page, tableRows: rows, truncatedParentCount, previewLimit, tableOptions = {} } = data;
-  const columns = [
-    { id: 'directory-name', label: 'Radio System / Channel', width: 230, className: 'directory-name', render: (row) => {
-      const wrapper = node('div', 'directory-entity');
-      if (row.directory_type === 'radio_system') {
-        const label = row.system_name || radioSystemLabel(row);
-        const heading = node('strong');
-        heading.append(radioSystemLink(row.entity_ref, label));
-        wrapper.append(heading);
-        const aliasLists = Array.isArray(row.alias_lists) ? row.alias_lists : [];
-        if (aliasLists.length) wrapper.append(node('span', 'muted',
-          `${aliasLists.length} Alias List${aliasLists.length === 1 ? '' : 's'}`));
-      } else {
-        wrapper.append(node('span', 'directory-branch', '↳'), channelNameSummary(row));
-      }
-      return wrapper;
-    } },
-    { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
-    { id: 'details', label: 'Details', render: radioSystemsDirectoryDetails },
-    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
-      render: (row) => row.directory_type === 'channel' ? frequency(row.current_control_hz) : '' },
-    { id: 'inventory', label: 'Inventory', render: radioSystemsDirectoryInventory },
-    { id: 'groups', label: 'Groups', className: 'numeric',
-      render: (row) => row.directory_type === 'radio_system' ?
-        number(Number(row.talkgroups || 0) + Number(row.patch_groups || 0)) : '' },
-    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
-      row.directory_type === 'radio_system' ? number(row.radios) : '' },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
-  ];
-  const directoryTable = table(rows, columns, 'No radio systems or channels recorded', {
-    type: 'radio-system-directory',
-    sortable: false,
-    rowClass: (row) => `directory-${row.directory_type}-row`,
-    ...tableOptions
-  });
-  const rendered = [directoryTable];
-  if (truncatedParentCount) rendered.push(node('div', 'directory-warning',
-    `${number(truncatedParentCount)} radio system${truncatedParentCount === 1 ? '' : 's'} exceeded the ` +
-    `${number(previewLimit)}-channel preview limit. Open the radio system for its complete channel list.`));
-  rendered.push(pager(page, 'bottom', 'Radio systems'));
-  return fragment(...rendered);
-}
-
 async function renderRadioSystems() {
   const renderContext = captureRenderContext();
   await renderModernChannelCatalog(renderContext, false);

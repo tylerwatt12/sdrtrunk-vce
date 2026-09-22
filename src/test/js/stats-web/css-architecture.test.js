@@ -54,7 +54,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 6582;
+const LEGACY_LINE_BUDGET = 2627;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],

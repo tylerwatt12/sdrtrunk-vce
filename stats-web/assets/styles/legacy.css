@@ -1356,107 +1356,6 @@
   border-top: 1px solid var(--line);
 }
 
-.column-chooser {
-  position: relative;
-  font-weight: 400;
-}
-
-.column-chooser-summary {
-  display: inline-flex;
-  align-items: center;
-  list-style: none;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.column-chooser-summary::-webkit-details-marker {
-  display: none;
-}
-
-.column-chooser-summary::after {
-  content: "▾";
-  margin-left: 7px;
-  color: var(--muted);
-}
-
-.column-chooser[open] .column-chooser-summary::after {
-  content: "▴";
-}
-
-.column-chooser-panel {
-  width: min(680px, calc(100vw - 32px));
-  max-height: min(640px, calc(100vh - 140px));
-  position: absolute;
-  z-index: 15;
-  top: calc(100% + 5px);
-  right: 0;
-  padding: 12px;
-  overflow: auto;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: 4px;
-  box-shadow: 0 8px 28px rgb(0 0 0 / 24%);
-}
-
-.column-chooser-help {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.column-chooser-groups {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.column-chooser-group {
-  min-width: 0;
-  margin: 0;
-  padding: 9px;
-  border: 1px solid var(--line);
-}
-
-.column-chooser-group legend {
-  padding: 0 4px;
-  font-weight: 650;
-}
-
-.column-chooser-option {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
-  padding: 5px 3px;
-  cursor: pointer;
-}
-
-.column-chooser-option input {
-  margin: 2px 0 0;
-}
-
-.column-chooser-option span,
-.column-chooser-option small {
-  display: block;
-}
-
-.column-chooser-option small {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.3;
-}
-
-.column-chooser-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-  margin-top: 10px;
-}
-
 button {
   min-height: 31px;
   padding: 5px 10px;
@@ -1656,20 +1555,6 @@ table {
   margin: 0 0 18px;
   color: var(--muted);
   line-height: 1.5;
-}
-
-.alias-detail {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.alias-detail > .section {
-  margin: 0;
-}
-
-.alias-detail > .section:nth-last-child(-n + 3) {
-  grid-column: 1 / -1;
 }
 
 .alias-color-value {
@@ -1881,39 +1766,6 @@ th.numeric {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   cursor: help;
-}
-
-.directory-system-row td {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  background: #edf5f4;
-  border-top: 2px solid #9cbab6;
-  font-weight: 650;
-}
-
-.directory-entity {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 4px;
-}
-
-.directory-entity strong {
-  grid-column: 1 / -1;
-}
-
-.directory-branch {
-  color: #65817e;
-  font-weight: 700;
-}
-
-.directory-warning {
-  padding: 8px 10px;
-  color: #7a4d00;
-  background: #fff7df;
-  border: 1px solid #e7cb7c;
-  border-top: 0;
 }
 
 .muted {
@@ -2159,17 +2011,6 @@ th.numeric {
   border-color: #86505a;
 }
 
-:root[data-theme="dark"] .directory-system-row td {
-  background: #18312f;
-  border-top-color: #467b75;
-}
-
-:root[data-theme="dark"] .directory-warning {
-  color: #f1cb74;
-  background: #3d3218;
-  border-color: #806b36;
-}
-
 :root[data-theme="dark"] .key-values dt,
 :root[data-theme="dark"] .key-values dd {
   border-bottom-color: var(--table-rule);
@@ -2229,15 +2070,6 @@ th.numeric {
     grid-template-columns: 125px minmax(0, 1fr);
   }
 
-  .alias-detail,
-  .column-chooser-groups {
-    grid-template-columns: 1fr;
-  }
-
-  .alias-detail > .section,
-  .alias-detail > .section:nth-last-child(-n + 3) {
-    grid-column: 1;
-  }
 }
 
 @media (min-width: 1181px) and (max-width: 1250px) {
@@ -2273,17 +2105,6 @@ th.numeric {
   .section-title-actions {
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .column-chooser {
-    flex: 1 1 auto;
-  }
-
-  .column-chooser-panel {
-    width: auto;
-    max-height: calc(100dvh - 32px);
-    position: fixed;
-    inset: 16px 8px auto;
   }
 
   .access-denied-card {
