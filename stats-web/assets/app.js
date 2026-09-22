@@ -15122,11 +15122,7 @@ async function renderGroupIdentity() {
     ])), section('Observed Times', keyValues([
       ['First Observed', dateTime(groupIdentity.first_seen_ms)],
       ['Last Observed', dateTime(groupIdentity.last_seen_ms)]
-    ])), tableSection('Collected Signaling Observations',
-      signalingCounts(groupIdentity).map(([action, count]) => ({ action, count })), [
-      { id: 'action', label: 'Action', key: 'action' },
-      { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No signaling observations recorded', { type: 'action-counts' }));
+    ])));
     infoColumn.append(...blocks);
     const layout = node('div', 'entity-info-layout');
     const activityHistory = await groupIdentityActivityHistorySection({ ...radioSystem,

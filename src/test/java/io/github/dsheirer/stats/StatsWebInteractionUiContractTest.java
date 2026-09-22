@@ -362,7 +362,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("section('Logical Call Activity'"));
         assertTrue(source.contains("tableSection('Retained Signaling Observations'"));
         assertTrue(source.contains("section('Call Activity'"));
-        assertTrue(source.contains("tableSection('Collected Signaling Observations'"));
+        assertFalse(function(source, "async function renderGroupIdentity()")
+            .contains("tableSection('Collected Signaling Observations'"));
+        assertTrue(function(source, "async function renderRadio()")
+            .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(source.contains("tableSection('Retained Signaling Totals'"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("GROUP_IDENTITY_SIGNALING_SERIES"));
