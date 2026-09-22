@@ -10,18 +10,7 @@ body[data-view="tuner-spectrum"] {
 }
 
 .tuner-frequency-popover {
-  position: fixed;
-  inset: auto;
   width: min(272px, calc(100vw - 16px));
-  max-height: calc(100dvh - 16px);
-  margin: 0;
-  padding: var(--space-3);
-  overflow: auto;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-modal);
 }
 
 .tuner-frequency-popover-close {

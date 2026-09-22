@@ -310,6 +310,18 @@
   min-height: 1.4em;
 }
 
+.radioreference-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.radioreference-result-actions .ui-button {
+  flex: 1 1 150px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 @media (max-width: 820px) {
   .admin-web-access-control {
     align-items: stretch;

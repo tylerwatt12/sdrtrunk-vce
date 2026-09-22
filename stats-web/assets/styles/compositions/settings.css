@@ -3,10 +3,9 @@
   gap: 13px;
 }
 
-.admin-form input:not(.ui-input),
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
 .admin-form select:not(.ui-select),
-.admin-form textarea:not(.ui-textarea),
-.admin-tier-select {
+.admin-form textarea:not(.ui-textarea) {
   min-height: 34px;
   padding: 6px 8px;
   color: var(--ink);
@@ -16,7 +15,7 @@
   font: inherit;
 }
 
-.admin-form input:not(.ui-input),
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
 .admin-form select:not(.ui-select),
 .admin-form textarea:not(.ui-textarea) {
   min-width: 0;
@@ -24,17 +23,15 @@
 }
 
 .admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
-.admin-form select:not(.ui-select),
-.admin-tier-select {
+.admin-form select:not(.ui-select) {
   height: 36px;
   min-height: 36px;
   line-height: 1.25;
 }
 
-.admin-form input:not(.ui-input):focus,
+.admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):focus,
 .admin-form select:not(.ui-select):focus,
-.admin-form textarea:not(.ui-textarea):focus,
-.admin-tier-select:focus {
+.admin-form textarea:not(.ui-textarea):focus {
   border-color: var(--focus-ring);
   outline: 2px solid color-mix(in srgb, var(--focus-ring) 24%, transparent);
   outline-offset: 1px;
@@ -241,14 +238,6 @@
   cursor: pointer;
 }
 
-.admin-toggle-control input {
-  width: 20px;
-  min-height: 20px;
-  margin: 1px 0 0;
-  flex: 0 0 auto;
-  accent-color: var(--accent);
-}
-
 .admin-toggle-control:has(input:disabled) {
   cursor: wait;
   opacity: .7;
@@ -315,13 +304,6 @@
   margin: 0 0 2px;
   color: var(--muted);
   line-height: 1.45;
-}
-
-.scan-list-admin-form input[type="checkbox"] {
-  width: 24px;
-  min-height: 24px;
-  justify-self: start;
-  accent-color: var(--accent);
 }
 
 @media (max-width: 560px) {

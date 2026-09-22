@@ -100,6 +100,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(results.contains("row.mode_name"));
         assertTrue(results.contains("row.radio_reference_url"));
         assertTrue(results.contains("'Open RadioReference'"));
+        assertTrue(results.contains("open.classList.add('ui-button', 'ui-button-secondary')"));
         assertTrue(results.contains("'Load details'"));
         assertTrue(results.contains("loaded.site.radio_reference_url"));
         assertTrue(results.contains("replaceFact('channel-use'"));
@@ -148,6 +149,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
         assertTrue(css.contains("color: var(--muted);"));
         assertTrue(css.contains(".radioreference-result-grid"));
+        assertTrue(css.contains(".radioreference-result-actions .ui-button"));
         assertTrue(css.contains("minmax(min(100%, 360px), 1fr)"));
         assertTrue(css.contains(".radioreference-result-actions"));
         assertFalse(css.contains(".radioreference-import-workspace"));

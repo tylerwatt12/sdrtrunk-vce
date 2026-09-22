@@ -35,6 +35,37 @@ test('radio-directory-coverage-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-coverage-dark-mobile.png', { fullPage: true });
 });
 
+test('admin-scan-lists-light-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=admin-scan-lists');
+  await expect(page.locator('body')).toHaveScreenshot('admin-scan-lists-light-desktop.png', { fullPage: true });
+});
+
+test('admin-scan-lists-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=admin-scan-lists');
+  await expect(page.locator('body')).toHaveScreenshot('admin-scan-lists-dark-mobile.png', { fullPage: true });
+});
+
+test('admin-scan-lists-columns-dark-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=admin-scan-lists-columns');
+  await expect(page.locator('body')).toHaveScreenshot('admin-scan-lists-columns-dark-mobile.png', { fullPage: true });
+});
+
+test('older administration toggles keep shared switch behavior', async ({ page }) => {
+  await page.goto('/design-system.html?theme=light&view=health-alert-modal');
+  const toggle = page.locator('.visual-health-alert-modal-example .admin-toggle-control .ui-toggle input').first();
+  const dimensions = await toggle.evaluate((input) => {
+    const style = getComputedStyle(input);
+    return { width: style.width, height: style.height, opacity: style.opacity };
+  });
+  expect(dimensions).toEqual({ width: '1px', height: '1px', opacity: '0' });
+  const before = await toggle.isChecked();
+  await toggle.locator('..').click();
+  expect(await toggle.isChecked()).toBe(!before);
+});
+
 test('tuner-spectrum-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=tuner-spectrum');

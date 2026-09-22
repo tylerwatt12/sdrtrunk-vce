@@ -113,6 +113,70 @@
   box-shadow: var(--ui-surface-shadow, none);
 }
 
+.table-layout-menu {
+  width: max-content;
+  margin: 0 8px 6px auto;
+  padding-top: var(--space-2);
+}
+
+.table-layout-menu-inline {
+  margin: 0;
+  padding: 0;
+}
+
+.table-layout-panel {
+  width: min(340px, calc(100vw - 16px));
+  --ui-popover-max-height: min(480px, calc(100dvh - 16px));
+  --ui-popover-padding: var(--space-2);
+}
+
+.table-layout-panel-header {
+  display: grid;
+  gap: 2px;
+  padding: 4px 6px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-layout-panel-header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-layout-options {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.table-layout-column {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) 30px 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-compact);
+}
+
+.table-layout-column:hover,
+.table-layout-column:focus-within {
+  background: var(--surface-2);
+}
+
+.table-layout-move {
+  min-width: 28px;
+  min-height: 26px;
+  padding: 1px 4px;
+}
+
+.table-layout-panel-footer {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.table-layout-reset {
+  width: 100%;
+}
+
 .ui-editor-layout {
   min-width: 0;
   display: grid;

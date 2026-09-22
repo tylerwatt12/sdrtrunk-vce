@@ -2,6 +2,24 @@ body.modal-open {
   overflow: hidden;
 }
 
+.ui-popover {
+  position: fixed;
+  inset: auto;
+  max-height: var(--ui-popover-max-height, calc(100dvh - 16px));
+  margin: 0;
+  padding: var(--ui-popover-padding, var(--space-3));
+  overflow: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-modal);
+}
+
+.ui-popover::backdrop {
+  background: transparent;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 100;

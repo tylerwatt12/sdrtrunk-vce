@@ -439,10 +439,20 @@
               <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Issue</span><select class="ui-select"><option>No audio</option></select></label>
             </div>
             <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Description for your issue</span><textarea class="ui-textarea support-report-textarea">Calls appear in Live activity, but playback remains silent.</textarea></label>
+            <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="button">Generate Support Bundle</button></div>
           </form>
         </section>
       </div>
     </div>
+  </main>
+
+  <main class="visual-feature-example visual-admin-scan-lists-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Scan Lists</h1><p>Choose which calls listeners can hear together.</p></div></header>
+    <section class="section">
+      <div class="section-title"><h2>Listener Scan Lists</h2><div class="section-title-actions"><a class="ui-button ui-button-secondary" href="#">Assign Individual Aliases</a><button class="ui-button ui-button-primary" type="button">Create Scan List</button><div class="table-layout-menu table-layout-menu-inline"><button class="ui-button ui-button-secondary ui-icon-button table-layout-trigger" type="button" aria-label="Choose table columns"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></button></div></div></div>
+      <div class="admin-section-body"><p class="admin-section-intro">A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls listeners hear.</p><div class="table-wrap"><table><thead><tr><th>Scan list</th><th>Description</th><th>Assigned aliases</th><th>Actions</th></tr></thead><tbody><tr><td><strong>County Public Safety</strong> <span class="ui-pill ui-pill-success">Default</span></td><td>Fire, EMS, and county dispatch</td><td>124</td><td><div class="admin-row-actions"><a class="ui-button ui-button-secondary" href="#">Manage Members</a><button class="ui-button ui-button-secondary" type="button">Edit Details</button><button class="ui-button ui-button-danger-quiet" type="button" disabled>Delete</button></div></td></tr><tr><td><strong>City Services</strong></td><td>Roads and public works</td><td>38</td><td><div class="admin-row-actions"><a class="ui-button ui-button-secondary" href="#">Manage Members</a><button class="ui-button ui-button-secondary" type="button">Edit Details</button><button class="ui-button ui-button-danger-quiet" type="button">Delete</button></div></td></tr></tbody></table></div></div>
+    </section>
+    <div class="ui-popover table-layout-panel visual-table-layout-panel" role="dialog" aria-label="Table columns"><div class="table-layout-panel-header"><strong>Table columns</strong><span>Show and arrange this table.</span></div><div class="table-layout-options"><div class="table-layout-column"><input class="ui-selection-check" type="checkbox" checked aria-label="Show Scan list column"><span>Scan list</span><button class="ui-button ui-button-secondary table-layout-move" type="button" disabled>←</button><button class="ui-button ui-button-secondary table-layout-move" type="button">→</button></div><div class="table-layout-column"><input class="ui-selection-check" type="checkbox" checked aria-label="Show Description column"><span>Description</span><button class="ui-button ui-button-secondary table-layout-move" type="button">←</button><button class="ui-button ui-button-secondary table-layout-move" type="button">→</button></div><div class="table-layout-column"><input class="ui-selection-check" type="checkbox" checked aria-label="Show Actions column"><span>Actions</span><button class="ui-button ui-button-secondary table-layout-move" type="button">←</button><button class="ui-button ui-button-secondary table-layout-move" type="button" disabled>→</button></div></div><div class="table-layout-panel-footer"><button class="ui-button ui-button-secondary table-layout-reset" type="button">Reset this table</button></div></div>
   </main>
 
   <main class="visual-feature-example visual-admin-access-example">
@@ -841,7 +851,7 @@
 
   <div class="visual-tuner-frequency-popover-example">
     <div class="visual-frequency-spectrum-window"><div class="visual-frequency-fft"><svg viewBox="0 0 1000 180" preserveAspectRatio="none" aria-hidden="true"><path class="visual-spectrum-grid" d="M0 45H1000M0 90H1000M0 135H1000M200 0V180M400 0V180M600 0V180M800 0V180"></path><path class="visual-spectrum-line" d="M0 145L60 138L110 142L170 126L220 134L285 118L335 125L385 73L410 130L465 121L520 137L580 119L635 126L690 56L715 128L780 116L835 132L900 121L955 136L1000 125"></path></svg></div><div class="visual-frequency-waterfall"></div></div>
-    <section class="tuner-frequency-popover" role="dialog" aria-label="Frequency actions">
+    <section class="ui-popover tuner-frequency-popover" role="dialog" aria-label="Frequency actions">
       <button class="ui-button ui-button-secondary ui-icon-button tuner-frequency-popover-close" type="button" aria-label="Close frequency actions">×</button>
       <div class="tuner-frequency-action-body">
           <dl class="tuner-frequency-action-summary"><dt>Frequency</dt><dd>770.306250 MHz</dd><dt>Pointer</dt><dd>770.306287 MHz</dd></dl>

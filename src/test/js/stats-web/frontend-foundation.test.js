@@ -291,6 +291,8 @@ async function main() {
   assert.match(appSource, /visibility\.setAttribute\('aria-label', `Show \$\{displayLabel\} column`\)/);
   assert.doesNotMatch(appSource, /inline \? '' : 'Columns'/);
   assert.match(appSource, /panel\.setAttribute\('popover', 'auto'\)/);
+  assert.match(appSource, /const panel = node\('div', 'ui-popover table-layout-panel'\)/);
+  assert.match(appSource, /const visibility = node\('input', 'ui-selection-check'\)/);
   assert.match(appSource, /bindAnchoredDropdown\(trigger, panel, activeRenderController\?\.signal\)/);
   const dropdownBinding = functionBinding(appSource, 'bindAnchoredDropdown');
   assert.match(dropdownBinding, /new AbortController\(\)/);
@@ -299,8 +301,21 @@ async function main() {
   assert.match(dropdownBinding, /setAttribute\('aria-expanded'/);
   assert.match(dropdownBinding, /panel\.style\.maxHeight = ''/);
   assert.match(dropdownBinding, /panel\.hidePopover\(\)/);
-  assert.match(appCssSource, /\.table-layout-menu \{[^}]*margin: 0 8px 6px auto[^}]*padding-top: 8px/s);
-  assert.match(appCssSource, /\.table-layout-panel \{[^}]*position: fixed[^}]*inset: auto[^}]*margin: 0/s);
+  assert.match(appCssSource, /\.table-layout-menu \{[^}]*margin: 0 8px 6px auto[^}]*padding-top: var\(--space-2\)/s);
+  assert.match(appCssSource, /\.ui-popover \{[^}]*position: fixed[^}]*inset: auto[^}]*margin: 0/s);
+  assert.match(appCssSource, /\.table-layout-panel \{[^}]*--ui-popover-max-height:/s);
+  assert.doesNotMatch(appCssSource, /\.admin-toggle-control input\s*\{/);
+  assert.doesNotMatch(appCssSource, /\.scan-list-admin-form input\[type="checkbox"\]/);
+  assert.doesNotMatch(appCssSource, /button\.secondary\.danger-outline/);
+  assert.match(functionBinding(appSource, 'openScanListAdminModal'),
+    /ui-button ui-button-primary', editing \? 'Save Scan List'/);
+  assert.match(functionBinding(appSource, 'renderAdminSupportReport'),
+    /ui-button ui-button-primary', 'Generate Support Bundle'/);
+  assert.match(functionBinding(appSource, 'userTierControl'),
+    /node\('select', 'ui-select admin-tier-select'\)/);
+  assert.match(functionBinding(appSource, 'accessPolicyTierControl'),
+    /node\('select', 'ui-select admin-tier-select'\)/);
+  assert.doesNotMatch(appCssSource, /\.admin-tier-select\s*\{[^}]*background:/s);
   const dropdownPlacement = vm.runInNewContext(
     `(function(anchorRect, panelRect, viewport) ${functionBinding(appSource, 'anchoredDropdownPlacement')})`);
   assert.deepEqual(JSON.parse(JSON.stringify(dropdownPlacement({ right: 600, bottom: 100 }, { width: 300 },

@@ -340,7 +340,7 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
   status.setAttribute('role', 'alert');
   const actions = node('span', 'preference-status-actions');
   if (retryable) {
-    const retryButton = node('button', 'button secondary', 'Retry');
+    const retryButton = node('button', 'ui-button ui-button-secondary', 'Retry');
     retryButton.type = 'button';
     retryButton.addEventListener('click', () => {
       retryButton.disabled = true;
@@ -351,7 +351,7 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
     });
     actions.append(retryButton);
   }
-  const dismiss = node('button', 'button secondary', 'Dismiss');
+  const dismiss = node('button', 'ui-button ui-button-secondary', 'Dismiss');
   dismiss.type = 'button';
   dismiss.addEventListener('click', clearUserPreferenceError);
   actions.append(dismiss);
@@ -469,7 +469,7 @@ function setIconButton(button, iconId, label) {
   return button;
 }
 
-function iconButton(iconId, label, className = 'button secondary icon-button') {
+function iconButton(iconId, label, className = 'ui-button ui-button-secondary ui-icon-button') {
   const button = node('button', className);
   button.type = 'button';
   return setIconButton(button, iconId, label);
@@ -795,7 +795,7 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
   const actions = node('div', 'admin-form-actions');
-  const submit = node('button', '', 'Sign In');
+  const submit = node('button', 'ui-button ui-button-primary', 'Sign In');
   submit.type = 'submit';
   actions.append(submit);
   form.append(formField('Username', username), formField('Password', password), message, actions);
@@ -1836,7 +1836,7 @@ function openReadOnlyModal(title, body, options = {}) {
   const header = node('header', 'modal-header');
   const heading = node('h2', '', title);
   heading.id = titleId;
-  const close = node('button', 'button secondary modal-close', 'Close');
+  const close = node('button', 'ui-button ui-button-secondary modal-close', 'Close');
   close.type = 'button';
   close.setAttribute('aria-label', `Close ${title}`);
   header.append(heading, close);
@@ -2634,7 +2634,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
     trigger.setAttribute('aria-expanded', 'false');
-    const panel = node('div', 'table-layout-panel');
+    const panel = node('div', 'ui-popover table-layout-panel');
     panel.id = panelId;
     panel.setAttribute('popover', 'auto');
     panel.setAttribute('role', 'dialog');
@@ -2646,7 +2646,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const byId = new Map(declaredColumns.map((column) => [column.id, column]));
     layout.column_order.forEach((id) => {
       const item = node('div', 'table-layout-column');
-      const visibility = node('input');
+      const visibility = node('input', 'ui-selection-check');
       visibility.type = 'checkbox';
       visibility.dataset.layoutFocusKey = `visibility:${id}`;
       visibility.dataset.layoutColumnId = id;
@@ -2662,7 +2662,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const group = layout.groups[id] || '';
       const siblings = layout.column_order.filter((column) => (layout.groups[column] || '') === group);
       const position = siblings.indexOf(id);
-      const earlier = node('button', 'button secondary table-layout-move', '←');
+      const earlier = node('button', 'ui-button ui-button-secondary table-layout-move', '←');
       earlier.type = 'button';
       earlier.dataset.layoutFocusKey = `earlier:${id}`;
       earlier.dataset.layoutColumnId = id;
@@ -2671,7 +2671,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       earlier.setAttribute('aria-label', `Move ${label.textContent} left`);
       earlier.addEventListener('click', () => void replaceForLayout(
         tableLayouts.move(layout, id, siblings[position - 1])));
-      const later = node('button', 'button secondary table-layout-move', '→');
+      const later = node('button', 'ui-button ui-button-secondary table-layout-move', '→');
       later.type = 'button';
       later.dataset.layoutFocusKey = `later:${id}`;
       later.dataset.layoutColumnId = id;
@@ -2685,7 +2685,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       item.append(visibility, label, earlier, later);
       optionsHost.append(item);
     });
-    const reset = node('button', 'button secondary table-layout-reset', 'Reset this table');
+    const reset = node('button', 'ui-button ui-button-secondary table-layout-reset', 'Reset this table');
     reset.type = 'button';
     reset.dataset.layoutFocusKey = 'reset';
     reset.addEventListener('click', async () => {
@@ -2866,8 +2866,9 @@ function searchBar(placeholder = 'Search') {
   input.value = route.get('q') || '';
   input.placeholder = placeholder;
   input.setAttribute('aria-label', placeholder);
-  form.append(input, node('button', '', 'Search'));
-  if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }), 'button secondary'));
+  form.append(input, node('button', 'ui-button ui-button-primary', 'Search'));
+  if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }),
+    'ui-button ui-button-secondary'));
   return form;
 }
 
@@ -2882,10 +2883,15 @@ function pager(page, position = 'bottom', itemLabel = 'Rows') {
     `${itemLabel} ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
     `${itemLabel} ${number(firstRow)}-${number(lastRow)}`;
   bar.append(node('span', 'muted', range));
-  bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }), 'button secondary') :
-    node('span', 'button disabled', 'Previous'));
-  bar.append(page.has_more ? anchor('Next', currentHref({ offset: page.next_offset }), 'button secondary') :
-    node('span', 'button disabled', 'Next'));
+  const disabled = (label) => {
+    const control = node('span', 'ui-button ui-button-secondary disabled', label);
+    control.setAttribute('aria-disabled', 'true');
+    return control;
+  };
+  bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }),
+    'ui-button ui-button-secondary') : disabled('Previous'));
+  bar.append(page.has_more ? anchor('Next', currentHref({ offset: page.next_offset }),
+    'ui-button ui-button-secondary') : disabled('Next'));
   return bar;
 }
 
@@ -3613,20 +3619,10 @@ function aliasTextInput(name, value = '', type = 'text') {
 }
 
 function aliasEditorFilterInput(name, value = '', type = 'text') {
-  const input = aliasTextInput(name, value, type);
-  input.classList.add('ui-input');
-  return input;
+  return aliasTextInput(name, value, type);
 }
 
 function aliasModalFooter(...controls) {
-  controls.filter(Boolean).forEach((control) => {
-    if (!control.matches?.('button, a.button')) return;
-    control.classList.add('ui-button');
-    if (control.classList.contains('danger-outline')) control.classList.add('ui-button-danger-quiet');
-    else if (control.classList.contains('danger')) control.classList.add('ui-button-danger');
-    else if (control.classList.contains('secondary')) control.classList.add('ui-button-secondary');
-    else control.classList.add('ui-button-primary');
-  });
   const footer = node('footer', 'alias-modal-footer ui-action-row');
   footer.append(...controls.filter(Boolean));
   return footer;
@@ -7999,7 +7995,7 @@ function asyncSectionFailure(error, fallbackMessage, retry) {
   const failure = node('div', 'error async-section-error');
   failure.setAttribute('role', 'alert');
   failure.append(node('div', '', error?.message || fallbackMessage || 'This section could not be loaded.'));
-  const action = node('button', 'secondary async-section-retry', 'Retry');
+  const action = node('button', 'ui-button ui-button-secondary async-section-retry', 'Retry');
   action.type = 'button';
   action.addEventListener('click', () => {
     action.disabled = true;
@@ -9626,7 +9622,7 @@ function affiliationFilterActions(exportAction = null) {
   const actions = node('div', 'section-title-actions');
   if (filters.affiliated || filters.configuration_id) {
     actions.append(anchor('Clear Filter', currentHref({ affiliated: null, configuration_id: null, offset: null }),
-      'button secondary'));
+      'ui-button ui-button-secondary'));
   }
   if (exportAction) actions.append(exportAction);
   return actions.childNodes.length ? actions : null;
@@ -11726,10 +11722,10 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
       const actions = node('div', 'radioreference-result-actions');
       if (!isTrunked && row.radio_reference_url) {
         const open = externalAnchor('Open RadioReference', row.radio_reference_url);
-        open.classList.add('button', 'secondary');
+        open.classList.add('ui-button', 'ui-button-secondary');
         actions.append(open);
       }
-      const detailsButton = node('button', 'secondary', 'Load details');
+      const detailsButton = node('button', 'ui-button ui-button-secondary', 'Load details');
       detailsButton.type = 'button';
       actions.append(detailsButton);
 
@@ -11888,7 +11884,7 @@ function openTunerRadioReferenceLookup(selectedHz) {
       if (detailController.signal.aborted) return;
       message.textContent = error.message;
       results.append(anchor('Open RadioReference settings', href('admin', { tab: 'live-activity' }),
-        'button secondary'));
+        'ui-button ui-button-secondary'));
     }
   })();
   return modal;
@@ -12003,7 +11999,7 @@ function openTunerFrequencyActions(selection) {
   });
   actions.append(radioReference, listen, addSystem);
   body.append(summary, actions, audioOptions, message);
-  const panel = node('div', 'tuner-frequency-popover');
+  const panel = node('div', 'ui-popover tuner-frequency-popover');
   panel.setAttribute('popover', 'auto');
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Frequency actions');
@@ -14455,10 +14451,10 @@ function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit
     const modalBody = node('div', 'tuner-frequency-action-body');
     modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${String(label)}.`));
     const actions = node('div', 'tuner-frequency-action-list');
-    const manage = anchor('', aliasTarget, 'button secondary tuner-frequency-action');
+    const manage = anchor('', aliasTarget, 'ui-button ui-button-secondary tuner-frequency-action');
     manage.append(node('strong', '', aliasMode === 'create' ? 'Create alias' : 'Edit alias'),
       node('small', '', `${aliasMode === 'create' ? 'Create' : 'Open'} this ${identityLabel}'s configured alias.`));
-    const infoLink = anchor('', infoTarget, 'button secondary tuner-frequency-action');
+    const infoLink = anchor('', infoTarget, 'ui-button ui-button-secondary tuner-frequency-action');
     infoLink.append(node('strong', '', info.title),
       node('small', '', info.description));
     actions.append(manage, infoLink);
@@ -15281,7 +15277,8 @@ async function renderGroupIdentity() {
             presenceChannelSortValue(row) : '' });
     }
     const action = currentAffiliations ? anchor(affiliatedOnly ? 'Clear Filter' : 'Show Affiliated',
-      currentHref({ affiliated: affiliatedOnly ? null : true, offset: null }), 'button secondary') : null;
+      currentHref({ affiliated: affiliatedOnly ? null : true, offset: null }),
+      'ui-button ui-button-secondary') : null;
     content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
       columns, null, radioTableType('group-identity-radios', columns), action));
   } else if (tab === 'activity') {
@@ -16074,7 +16071,10 @@ async function renderActivity(scopeParameters, title = 'Activity') {
       return current;
     }
     if (!enabled && current?.tagName === 'SPAN' && current.classList.contains('disabled')) return current;
-    return enabled ? anchor(label, target, 'button secondary') : node('span', 'button disabled', label);
+    if (enabled) return anchor(label, target, 'ui-button ui-button-secondary');
+    const unavailable = node('span', 'ui-button ui-button-secondary disabled', label);
+    unavailable.setAttribute('aria-disabled', 'true');
+    return unavailable;
   };
   const updatePager = (page) => {
     const nextNewest = pagerControl(newestControl, Boolean(route.get('before_id')), 'Newest',
@@ -16104,7 +16104,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     const announcement = node('span', 'visually-hidden');
     announcement.setAttribute('role', 'status');
     announcement.setAttribute('aria-live', 'polite');
-    const pause = node('button', 'button secondary', 'Pause refresh');
+    const pause = node('button', 'ui-button ui-button-secondary', 'Pause refresh');
     pause.type = 'button';
     pause.setAttribute('aria-pressed', 'false');
     refreshControls.append(countdown, pause, announcement);
@@ -18425,7 +18425,7 @@ function userTierControl(account, statusHost) {
     locked.title = 'The primary administrator is managed from the JavaFX interface.';
     return locked;
   }
-  const select = node('select', 'admin-tier-select');
+  const select = node('select', 'ui-select admin-tier-select');
   select.setAttribute('aria-label', `Access tier for ${account.username}`);
   ['USER', 'ADMIN'].forEach((tier) => {
     const option = node('option', '', accessTierLabel(tier));
@@ -18663,7 +18663,7 @@ function adminAccessPolicies(response) {
 }
 
 function accessPolicyTierControl(policy, statusHost) {
-  const select = node('select', 'admin-tier-select');
+  const select = node('select', 'ui-select admin-tier-select');
   select.setAttribute('aria-label', `Required access tier for ${policy.displayName || policy.id}`);
   ['PUBLIC', 'USER', 'ADMIN'].forEach((tier) => {
     const option = node('option', '', accessTierLabel(tier));
@@ -18796,9 +18796,9 @@ function openScanListAdminModal(scanList, revision) {
   defaultScanList.addEventListener('change', syncDefault);
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
-  const cancel = node('button', 'secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const submit = node('button', '', editing ? 'Save Scan List' : 'Create Scan List');
+  const submit = node('button', 'ui-button ui-button-primary', editing ? 'Save Scan List' : 'Create Scan List');
   submit.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(cancel, submit);
@@ -18853,9 +18853,9 @@ function openDeleteScanListAdminModal(scanList, revision) {
       'themselves are preserved.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
-  const cancel = node('button', 'secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const remove = node('button', 'danger', 'Delete Scan List');
+  const remove = node('button', 'ui-button ui-button-danger', 'Delete Scan List');
   remove.type = 'button';
   const actions = node('div', 'admin-form-actions');
   actions.append(cancel, remove);
@@ -18898,12 +18898,12 @@ function adminScanListActions(scanList, revision) {
   const actions = node('div', 'admin-row-actions');
   const members = anchor('Manage Members', href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
-  }), 'button secondary admin-scan-list-members');
-  const edit = node('button', 'secondary admin-scan-list-edit', 'Edit Details');
+  }), 'ui-button ui-button-secondary admin-scan-list-members');
+  const edit = node('button', 'ui-button ui-button-secondary admin-scan-list-edit', 'Edit Details');
   edit.type = 'button';
   edit.dataset.scanListId = String(scanList.id);
   edit.addEventListener('click', () => openScanListAdminModal(scanList, revision));
-  const remove = node('button', 'secondary danger-outline admin-scan-list-delete', 'Delete');
+  const remove = node('button', 'ui-button ui-button-danger-quiet admin-scan-list-delete', 'Delete');
   remove.type = 'button';
   remove.dataset.scanListId = String(scanList.id);
   remove.disabled = scanList.default === true;
@@ -18940,13 +18940,13 @@ async function renderAdminScanLists() {
   const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
   const revision = Number(response?.revision ?? 0);
   const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
-  const create = node('button', '', 'Create Scan List');
+  const create = node('button', 'ui-button ui-button-primary', 'Create Scan List');
   create.type = 'button';
   create.id = 'admin-create-scan-list';
   create.addEventListener('click', () => openScanListAdminModal(null, revision));
   const actions = node('div', 'section-title-actions');
   actions.append(anchor('Assign Individual Aliases', href('aliases', { aliasTab: 'configure' }),
-    'button secondary'), create);
+    'ui-button ui-button-secondary'), create);
   const body = node('div', 'admin-section-body');
   body.append(node('p', 'admin-section-intro',
     'A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls ' +
@@ -20279,7 +20279,7 @@ function openStatusIconSettings(returnFocusSelector = null) {
   });
   apply(snapshot.preferences);
 
-  const save = node('button', '', 'Save status icon choices');
+  const save = node('button', 'ui-button ui-button-primary', 'Save status icon choices');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
@@ -20382,7 +20382,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   fields.append(formField('Decode quality format', qualityMode,
     'Choose a compact percentage or the underlying frame and error counters.'),
   formField('Matching rows shown', rowLimit, 'Limit each matching Live detail list to 25–500 rows.'));
-  const save = node('button', '', 'Save Live Presentation');
+  const save = node('button', 'ui-button ui-button-primary', 'Save Live Presentation');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
@@ -20483,7 +20483,7 @@ function openScannerSettings(returnFocusSelector = null) {
     targetGrouping.control, fields);
   const titleCard = settingsCard('Page titles',
     'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
-  const save = node('button', '', 'Save Scanner Settings');
+  const save = node('button', 'ui-button ui-button-primary', 'Save Scanner Settings');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(save);
@@ -20549,9 +20549,9 @@ function openResetUserPreferences(returnFocusSelector = null) {
       'access, receiver configuration, or other users.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const cancel = node('button', 'secondary', 'Cancel');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const reset = node('button', 'danger', 'Reset All Personal Preferences');
+  const reset = node('button', 'ui-button ui-button-danger', 'Reset All Personal Preferences');
   reset.type = 'button';
   const actions = node('div', 'admin-form-actions');
   actions.append(cancel, reset);
@@ -20603,7 +20603,7 @@ async function renderSettings() {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
-    const retry = node('button', 'button secondary', 'Retry');
+    const retry = node('button', 'ui-button ui-button-secondary', 'Retry');
     retry.type = 'button';
     retry.addEventListener('click', async () => {
       retry.disabled = true;
@@ -20616,11 +20616,11 @@ async function renderSettings() {
 
   const current = snapshot.preferences;
   const overview = node('div', 'settings-page-form user-settings-summary');
-  const reset = node('button', 'button danger-outline', 'Reset All Personal Preferences');
+  const reset = node('button', 'ui-button ui-button-danger-quiet', 'Reset All Personal Preferences');
   reset.type = 'button';
   reset.id = 'reset-user-preferences';
   reset.addEventListener('click', () => openResetUserPreferences('#reset-user-preferences'));
-  const statusIcon = node('button', 'button secondary', 'Change Status Icon');
+  const statusIcon = node('button', 'ui-button ui-button-secondary', 'Change Status Icon');
   statusIcon.type = 'button';
   statusIcon.id = 'status-icon-settings';
   statusIcon.addEventListener('click', () => openStatusIconSettings('#status-icon-settings'));
@@ -20867,14 +20867,14 @@ function renderAdminSupportReport() {
   const output = node('pre');
   outputWrap.append(output);
 
-  const generate = node('button', '', 'Generate Support Bundle');
+  const generate = node('button', 'ui-button ui-button-primary', 'Generate Support Bundle');
   generate.type = 'submit';
-  const stop = node('button', 'secondary', 'Stop');
+  const stop = node('button', 'ui-button ui-button-secondary', 'Stop');
   stop.type = 'button';
   stop.hidden = true;
-  const download = anchor('Download Support Bundle', '#', 'button secondary');
+  const download = anchor('Download Support Bundle', '#', 'ui-button ui-button-secondary');
   download.hidden = true;
-  const submit = node('button', '', 'Submit Bug Report');
+  const submit = node('button', 'ui-button ui-button-primary', 'Submit Bug Report');
   submit.type = 'button';
   submit.hidden = true;
   const actions = node('div', 'admin-form-actions ui-action-row');
@@ -21158,7 +21158,7 @@ function renderNotFound(view, renderContext = captureRenderContext()) {
   const panel = node('section', 'access-denied-card');
   panel.append(node('h2', '', 'Page not found'),
     node('p', '', `The page “${String(view || '').slice(0, 80)}” does not exist.`));
-  const home = anchor('Open Dashboard', href('dashboard'), 'button');
+  const home = anchor('Open Dashboard', href('dashboard'), 'ui-button ui-button-primary');
   panel.append(home);
   beginPage(renderContext, pageHeader('Not Found', 'The requested web-interface route is invalid'), panel);
 }
@@ -21175,7 +21175,8 @@ function renderAccessDenied(view, renderContext = captureRenderContext()) {
       `${routeViewLabel(view)} is not available to public visitors. Sign in with an authorized account.`));
   panel.append(heading, node('p', '', detail));
   const actions = node('div', 'admin-form-actions');
-  const action = node('button', '', accessSession.authenticated ? 'Return to an available page' :
+  const action = node('button', 'ui-button ui-button-primary',
+    accessSession.authenticated ? 'Return to an available page' :
     (accessSessionAvailable ? 'Sign In' : 'Retry'));
   action.type = 'button';
   action.addEventListener('click', async () => {

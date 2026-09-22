@@ -116,11 +116,7 @@
   flex: 0 0 auto;
   display: inline-flex;
   gap: 6px;
-}
-
-.preference-status-actions .button {
-  min-height: 28px;
-  padding: 3px 8px;
+  --ui-control-height: var(--control-height-compact);
 }
 
 .auth-controls {
@@ -1501,7 +1497,6 @@
   margin-top: 10px;
 }
 
-.button,
 button {
   min-height: 31px;
   padding: 5px 10px;
@@ -1517,29 +1512,10 @@ button:disabled {
   opacity: .65;
 }
 
-button.danger {
-  color: #fff;
-  background: #9b1c31;
-  border-color: #711322;
-}
-
-button.secondary.danger-outline {
-  color: #8b1d2c;
-  border-color: #c18891;
-}
-
-.button.secondary,
 button.secondary {
   color: var(--ink);
   background: var(--surface-2);
   border-color: var(--line-dark);
-}
-
-.button.disabled {
-  color: var(--muted);
-  background: var(--surface-2);
-  border-color: var(--line);
-  pointer-events: none;
 }
 
 .table-wrap {
@@ -1549,96 +1525,6 @@ button.secondary {
   padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
-}
-
-.table-layout-menu {
-  width: max-content;
-  margin: 0 8px 6px auto;
-  padding-top: 8px;
-}
-
-.table-layout-menu-inline {
-  margin: 0;
-  padding: 0;
-}
-
-.table-layout-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.table-layout-panel {
-  position: fixed;
-  inset: auto;
-  width: min(340px, calc(100vw - 16px));
-  max-height: min(480px, calc(100dvh - 16px));
-  margin: 0;
-  padding: 8px;
-  overflow: auto;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: 8px;
-  box-shadow: 0 14px 36px rgb(12 24 34 / 24%), 0 2px 8px rgb(12 24 34 / 18%);
-}
-
-.table-layout-panel::backdrop {
-  background: transparent;
-}
-
-.table-layout-panel-header {
-  display: grid;
-  gap: 2px;
-  padding: 4px 6px 9px;
-  border-bottom: 1px solid var(--line);
-}
-
-.table-layout-panel-header span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.table-layout-options {
-  display: grid;
-  gap: 2px;
-  padding: 6px 0;
-}
-
-.table-layout-column {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) 30px 30px;
-  align-items: center;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 5px;
-}
-
-.table-layout-column:hover,
-.table-layout-column:focus-within {
-  background: var(--surface-2);
-}
-
-.table-layout-column input[type="checkbox"] {
-  width: 18px;
-  min-height: 18px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.table-layout-move {
-  min-width: 28px;
-  min-height: 26px;
-  padding: 1px 4px;
-}
-
-.table-layout-panel-footer {
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.table-layout-reset {
-  width: 100%;
 }
 
 .resizable-table {
@@ -1776,19 +1662,6 @@ table {
   margin: 0;
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-
-.radioreference-result-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.radioreference-result-actions .button,
-.radioreference-result-actions button {
-  flex: 1 1 150px;
-  min-width: 0;
-  white-space: nowrap;
 }
 
 .radioreference-result-status {
@@ -2229,8 +2102,7 @@ th.numeric {
 }
 
 :root[data-theme="dark"] .activity-series-button.active,
-:root[data-theme="dark"] .button:not(.secondary):not(.disabled):not(.danger),
-:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.danger):not(.ui-button):not(.ui-segmented-option):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab):not(.channels-tab-select):not(.channels-tab-title-button):not(.channels-tab-close):not(.receiver-health-section-toggle) {
+:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.ui-button):not(.ui-segmented-option):not(.playback-command):not(.theme-toggle):not(.navigation-toggle):not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab):not(.channels-tab-select):not(.channels-tab-title-button):not(.channels-tab-close):not(.receiver-health-section-toggle) {
   color: #071a18;
   border-color: #69cec2;
 }
@@ -2326,17 +2198,6 @@ th.numeric {
   color: #ffabb6;
   background: #412028;
   border-color: #86505a;
-}
-
-:root[data-theme="dark"] button.danger {
-  color: #fff;
-  background: #9b2940;
-  border-color: #d05b70;
-}
-
-:root[data-theme="dark"] button.secondary.danger-outline {
-  color: #ff9aaa;
-  border-color: #98515d;
 }
 
 :root[data-theme="dark"] .directory-system-row td {
