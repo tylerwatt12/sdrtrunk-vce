@@ -47,6 +47,18 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
+test('rf-planner-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=dark&view=rf-planner');
+  await expect(page.locator('body')).toHaveScreenshot('rf-planner-dark-desktop.png', { fullPage: true });
+});
+
+test('rf-planner-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=rf-planner');
+  await expect(page.locator('body')).toHaveScreenshot('rf-planner-light-mobile.png', { fullPage: true });
+});
+
 test('scanner-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=scanner');

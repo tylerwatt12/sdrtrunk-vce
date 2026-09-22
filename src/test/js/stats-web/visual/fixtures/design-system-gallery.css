@@ -286,6 +286,10 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1180px, calc(100% - 32px));
 }
 
+.visual-rf-planner-example {
+  width: min(1240px, calc(100% - 32px));
+}
+
 .visual-feature-header > .scanner-header-actions {
   display: flex;
 }
@@ -381,6 +385,7 @@ body:not([data-gallery-view="dashboard-activity"]) .visual-dashboard-activity-ex
 body:not([data-gallery-view="identity-activity"]) .visual-identity-activity-example,
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
+body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
 body:not([data-gallery-view="live-notice"]) .visual-live-example,
 body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   display: none;
@@ -439,6 +444,10 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example {
   }
 
   .visual-scanner-example {
+    width: min(100% - 20px, 1180px);
+  }
+
+  .visual-rf-planner-example {
     width: min(100% - 20px, 1180px);
   }
 }

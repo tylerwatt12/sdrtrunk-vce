@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"148\">"));
-        assertTrue(html.contains("/assets/app.css?v=125"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"149\">"));
+        assertTrue(html.contains("/assets/app.css?v=126"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=174\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=175\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertFalse(html.contains("data-nav-tab=\"recording\""));
@@ -39,7 +39,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("data-view=\"streaming\" href=\"/?view=streaming\""));
         assertTrue(html.contains("data-view=\"tuners\" href=\"/?view=tuners\""));
         assertTrue(html.contains("data-view=\"rf-planner\" href=\"/?view=rf-planner\""));
-        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js';"));
+        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js?v=2';"));
         String hardware = block(source, "function renderHardware()");
         assertTrue(hardware.contains("route.get('tab') === 'rf-planner'"));
         assertTrue(source.contains("function renderRfPlanner()"));
@@ -61,14 +61,16 @@ class StatsWebNavigationHeaderUiContractTest
     void keepsRfPlannerOnTheSharedThemeAndOperatorLanguage() throws Exception
     {
         String planner = readText(RF_PLANNER);
-        String css = StatsWebStylesheetTestSupport.readAll();
-        String plannerCss = css.substring(css.indexOf("/* RF planner */"));
+        String plannerCss = Files.readString(Path.of("stats-web", "assets", "styles", "features",
+            "rf-planner.css"));
 
         assertTrue(planner.contains("Frequencies to cover (MHz)"));
         assertTrue(planner.contains("Loaded ${loaded.length} tuner"));
         assertTrue(planner.contains("target?.usable_bandwidth_hz"));
         assertTrue(planner.contains("if (planBuilt) calculate();"));
-        assertTrue(planner.contains("button secondary rfp-small rfp-add-tuner"));
+        assertTrue(planner.contains("ui-button ui-button-secondary rfp-small rfp-add-tuner"));
+        assertTrue(planner.contains("ui-empty-state rfp-empty"));
+        assertTrue(planner.contains("ui-notice ui-notice-${tone} rfp-notice"));
         assertFalse(planner.contains("DSheirer"));
         assertFalse(planner.contains("upstream"));
         assertFalse(planner.contains("rfp-placement-engine"));

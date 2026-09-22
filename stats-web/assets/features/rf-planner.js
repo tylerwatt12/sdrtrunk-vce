@@ -427,39 +427,39 @@ function modelChecks() {
 
 function createPlanner(loadTunerRows = null) {
   const root = document.createElement('div');
-  root.className = 'rf-planner';
+  root.className = 'rf-planner editor-workspace';
   root.innerHTML = `
     <div class="rfp-intro">
       <p>Enter the channels you want to receive. RF Planner will show which tuners can cover them at the same time
         and recommend a center frequency for each tuner.</p>
     </div>
     <div class="rfp-layout">
-      <section class="rfp-panel rfp-controls" aria-labelledby="rfp-input-heading">
-        <header class="rfp-panel-head">
-          <h2 id="rfp-input-heading">Build a coverage plan</h2>
-          <p>Choose the tuners, sample rates, and channels you want to use.</p>
+      <section class="settings-card rfp-controls" aria-labelledby="rfp-input-heading">
+        <header class="settings-card-header rfp-panel-head">
+          <h2 class="settings-card-title" id="rfp-input-heading">Build a coverage plan</h2>
+          <p class="settings-card-description">Choose the tuners, sample rates, and channels you want to use.</p>
         </header>
-        <form class="rfp-form admin-form">
+        <form class="rfp-form admin-form settings-card-body">
           <div class="rfp-tuner-pool">
             <div class="rfp-tuner-pool-head"><span class="rfp-label">Tuners in this plan</span>
-              <button class="button secondary rfp-small rfp-add-tuner" type="button">Add tuner</button></div>
+              <button class="ui-button ui-button-secondary rfp-small rfp-add-tuner" type="button">Add tuner</button></div>
             <p class="rfp-tuner-source" role="status"></p>
             <div class="rfp-tuner-list"></div>
           </div>
-          <div class="rfp-field">
-            <label for="rfp-frequencies">Frequencies to cover (MHz)</label>
-            <textarea id="rfp-frequencies" class="rfp-frequencies" spellcheck="false" placeholder="851.0125&#10;851.2625&#10;851.7750 @ 6.25k"></textarea>
-            <div class="rfp-hint">Enter one frequency per line. Channels use 12.5 kHz by default; add
-              <code>@ 6.25k</code> after a frequency when needed.</div>
-          </div>
-          <div class="rfp-actions">
-            <button class="button secondary rfp-example" type="button">Try an example</button>
-            <button class="button rfp-primary" type="submit">Build plan</button>
+          <label class="ui-field rfp-field" for="rfp-frequencies">
+            <span class="ui-field-label">Frequencies to cover (MHz)</span>
+            <textarea id="rfp-frequencies" class="ui-textarea rfp-frequencies" spellcheck="false" placeholder="851.0125&#10;851.2625&#10;851.7750 @ 6.25k"></textarea>
+            <small class="ui-field-detail rfp-hint">Enter one frequency per line. Channels use 12.5 kHz by default; add
+              <code>@ 6.25k</code> after a frequency when needed.</small>
+          </label>
+          <div class="ui-action-row rfp-actions">
+            <button class="ui-button ui-button-secondary rfp-example" type="button">Try an example</button>
+            <button class="ui-button ui-button-primary rfp-primary" type="submit">Build plan</button>
           </div>
         </form>
       </section>
       <section class="rfp-results" aria-live="polite" aria-label="Calculation results">
-        <div class="rfp-panel rfp-empty"><div><div class="rfp-empty-mark" aria-hidden="true">⌁</div>
+        <div class="ui-empty-state rfp-empty"><div><div class="rfp-empty-mark" aria-hidden="true">⌁</div>
           <h2>Enter the channels you want to cover</h2>
           <p>We’ll recommend a center frequency for each tuner and flag any channels that don’t fit.</p>
         </div></div>
@@ -468,19 +468,19 @@ function createPlanner(loadTunerRows = null) {
     <template class="rfp-tuner-template">
       <section class="rfp-tuner-card">
         <div class="rfp-tuner-card-head"><div class="rfp-tuner-card-title"><span class="rfp-tuner-index"></span><span class="rfp-tuner-name"></span></div>
-          <div class="rfp-tuner-actions"><button class="button secondary rfp-icon rfp-duplicate-tuner" type="button" title="Duplicate this tuner">Duplicate</button>
-            <button class="button secondary danger-outline rfp-icon rfp-remove-tuner" type="button" title="Remove this tuner">Remove</button></div></div>
-        <div class="rfp-tuner-fields"><div class="rfp-field"><label>Tuner model</label><select class="rfp-tuner-profile"></select></div>
-          <div class="rfp-field"><label>Sample rate</label><select class="rfp-tuner-rate"></select></div></div>
+          <div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary rfp-icon rfp-duplicate-tuner" type="button" title="Duplicate this tuner">Duplicate</button>
+            <button class="ui-button ui-button-danger-quiet rfp-icon rfp-remove-tuner" type="button" title="Remove this tuner">Remove</button></div></div>
+        <div class="rfp-tuner-fields"><label class="ui-field rfp-field"><span class="ui-field-label">Tuner model</span><select class="ui-select rfp-tuner-profile"></select></label>
+          <label class="ui-field rfp-field"><span class="ui-field-label">Sample rate</span><select class="ui-select rfp-tuner-rate"></select></label></div>
         <div class="rfp-tuner-spec"></div>
         <div class="rfp-custom-tuner-fields" hidden>
-          <div class="rfp-field"><label>Sample rate · Hz</label><input class="rfp-custom-rate" type="number" min="50000" max="100000000" step="1" inputmode="numeric"></div>
-          <div class="rfp-field"><label>Coverage bandwidth (%)</label><input class="rfp-custom-usable" type="number" min="1" max="100" step="0.001" inputmode="decimal"></div>
-          <div class="rfp-field"><label>Center exclusion (Hz each side)</label><input class="rfp-custom-dc" type="number" min="0" max="10000000" step="1" inputmode="numeric"></div>
-          <div class="rfp-field"><label>Tuning range (MHz)</label><div class="rfp-row">
-            <input class="rfp-custom-min" aria-label="Minimum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
-            <input class="rfp-custom-max" aria-label="Maximum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
-          </div></div>
+          <label class="ui-field rfp-field"><span class="ui-field-label">Sample rate · Hz</span><input class="ui-input rfp-custom-rate" type="number" min="50000" max="100000000" step="1" inputmode="numeric"></label>
+          <label class="ui-field rfp-field"><span class="ui-field-label">Coverage bandwidth (%)</span><input class="ui-input rfp-custom-usable" type="number" min="1" max="100" step="0.001" inputmode="decimal"></label>
+          <label class="ui-field rfp-field"><span class="ui-field-label">Center exclusion (Hz each side)</span><input class="ui-input rfp-custom-dc" type="number" min="0" max="10000000" step="1" inputmode="numeric"></label>
+          <label class="ui-field rfp-field"><span class="ui-field-label">Tuning range (MHz)</span><span class="rfp-row">
+            <input class="ui-input rfp-custom-min" aria-label="Minimum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+            <input class="ui-input rfp-custom-max" aria-label="Maximum tune in MHz" type="number" min="0" step="0.001" inputmode="decimal">
+          </span></label>
         </div>
       </section>
     </template>`;
@@ -572,7 +572,8 @@ function createPlanner(loadTunerRows = null) {
 
   function renderNotice(messages, type = 'warning') {
     if (!messages.length) return '';
-    return `<div class="rfp-notice ${type}" role="${type === 'error' ? 'alert' : 'status'}"><span aria-hidden="true">${type === 'error' ? '×' : '!'}</span><div>${messages.map(escapeHtml).join('<br>')}</div></div>`;
+    const tone = type === 'error' ? 'danger' : 'warning';
+    return `<div class="ui-notice ui-notice-${tone} rfp-notice" role="${type === 'error' ? 'alert' : 'status'}"><span aria-hidden="true">${type === 'error' ? '×' : '!'}</span><div>${messages.map(escapeHtml).join('<br>')}</div></div>`;
   }
 
   function channelTop(index) {
@@ -613,10 +614,10 @@ function createPlanner(loadTunerRows = null) {
     const hardware = plan.hardware;
     const usableHalf = Math.trunc(hardware.usableBandwidth / 2);
     const chips = plan.channels.map((channel) => `<span class="rfp-chip">${formatMHz(channel.frequency)} <small>MHz · ${formatRate(channel.bandwidth)}</small></span>`).join('');
-    return `<article class="rfp-panel rfp-tuner-result"><header class="rfp-result-head">
+    return `<article class="settings-card rfp-tuner-result"><header class="settings-card-header rfp-result-head">
       <div class="rfp-result-title"><span class="rfp-tuner-number">${String(plan.tunerIndex + 1).padStart(2, '0')}</span>
         <div><h3>Tuner ${plan.tunerIndex + 1}</h3><p>${plan.channels.length} channel${plan.channels.length === 1 ? '' : 's'} · ${escapeHtml(hardware.label)} · ${formatRate(hardware.rate)}</p></div></div>
-      <button class="button secondary rfp-small rfp-copy-center" type="button" data-center="${plan.center}">Copy frequency</button></header>
+      <button class="ui-button ui-button-secondary rfp-small rfp-copy-center" type="button" data-center="${plan.center}">Copy frequency</button></header>
       <div class="rfp-center-value"><span class="rfp-center-label">Recommended center</span>
         <div class="rfp-center-frequency">${formatMHz(plan.center, 6)} <small>MHz · ${formatInteger(plan.center)} Hz</small></div></div>
       ${renderSpectrum(plan, hardware)}
@@ -670,7 +671,7 @@ function createPlanner(loadTunerRows = null) {
     }
     warnings.push('This plan assumes the listed channels need coverage at the same time. sdrtrunk may choose a different center frequency while a tuner is already in use.');
     const assigned = parsed.channels.length - rejected.length;
-    results.innerHTML = `<div class="rfp-result-stack"><section class="rfp-panel rfp-summary" aria-label="Plan summary">
+    results.innerHTML = `<div class="rfp-result-stack"><section class="rfp-summary" aria-label="Plan summary">
       <div><span>Channels entered</span><strong>${parsed.channels.length}</strong></div><div><span>Channels covered</span><strong>${assigned}</strong></div>
       <div><span>Tuners used</span><strong>${plans.length}/${hardwares.length}</strong></div></section>
       ${renderNotice(warnings)}${plans.map(renderPlan).join('')}

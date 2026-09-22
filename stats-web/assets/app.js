@@ -11,7 +11,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import * as rfPlanner from './features/rf-planner.js';
+import * as rfPlanner from './features/rf-planner.js?v=2';
 import { WebCallPlayer } from './web-call-player.js';
 
 let route = new URLSearchParams(window.location.search);

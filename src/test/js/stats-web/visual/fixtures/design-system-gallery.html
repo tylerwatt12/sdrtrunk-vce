@@ -595,6 +595,48 @@
     </div>
   </main>
 
+  <main class="visual-feature-example visual-rf-planner-example">
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Hardware</p><h1>RF Planner</h1><p>Plan channel coverage and tuner center frequencies.</p></div></header>
+    <div class="rf-planner editor-workspace">
+      <div class="rfp-intro"><p>Enter the channels you want to receive. RF Planner will show which tuners can cover them at the same time and recommend a center frequency for each tuner.</p></div>
+      <div class="rfp-layout">
+        <section class="settings-card rfp-controls">
+          <header class="settings-card-header rfp-panel-head"><h2 class="settings-card-title">Build a coverage plan</h2><p class="settings-card-description">Choose the tuners, sample rates, and channels you want to use.</p></header>
+          <form class="rfp-form admin-form settings-card-body">
+            <div class="rfp-tuner-pool">
+              <div class="rfp-tuner-pool-head"><span class="rfp-label">Tuners in this plan</span><button class="ui-button ui-button-secondary rfp-small" type="button">Add tuner</button></div>
+              <p class="rfp-tuner-source">Loaded 1 tuner from this receiver. Recording tuners are not included.</p>
+              <div class="rfp-tuner-list">
+                <section class="rfp-tuner-card">
+                  <div class="rfp-tuner-card-head"><div class="rfp-tuner-card-title"><span class="rfp-tuner-index">01</span><span>RTL-SDR 00000001</span></div><div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary rfp-icon" type="button">Duplicate</button><button class="ui-button ui-button-danger-quiet rfp-icon" type="button" disabled>Remove</button></div></div>
+                  <div class="rfp-tuner-fields"><label class="ui-field rfp-field"><span class="ui-field-label">Tuner model</span><select class="ui-select"><option>RTL-SDR (R8x)</option></select></label><label class="ui-field rfp-field"><span class="ui-field-label">Sample rate</span><select class="ui-select"><option>2.4 MHz</option></select></label></div>
+                  <div class="rfp-tuner-spec">2.304 MHz coverage · 25 kHz center exclusion · 24–1766 MHz tuning range</div>
+                </section>
+              </div>
+            </div>
+            <label class="ui-field rfp-field"><span class="ui-field-label">Frequencies to cover (MHz)</span><textarea class="ui-textarea rfp-frequencies">851.0125
+851.2625
+851.7750 @ 6.25k</textarea><small class="ui-field-detail rfp-hint">Enter one frequency per line. Channels use 12.5 kHz by default.</small></label>
+            <div class="ui-action-row rfp-actions"><button class="ui-button ui-button-secondary" type="button">Try an example</button><button class="ui-button ui-button-primary" type="button">Build plan</button></div>
+          </form>
+        </section>
+        <section class="rfp-results">
+          <div class="rfp-result-stack">
+            <section class="rfp-summary"><div><span>Channels entered</span><strong>3</strong></div><div><span>Channels covered</span><strong>3</strong></div><div><span>Tuners used</span><strong>1/1</strong></div></section>
+            <div class="ui-notice ui-notice-warning rfp-notice"><span aria-hidden="true">!</span><div>This plan assumes the listed channels need coverage at the same time.</div></div>
+            <article class="settings-card rfp-tuner-result">
+              <header class="settings-card-header rfp-result-head"><div class="rfp-result-title"><span class="rfp-tuner-number">01</span><div><h3>Tuner 1</h3><p>3 channels · RTL-SDR (R8x) · 2.4 MHz</p></div></div><button class="ui-button ui-button-secondary rfp-small" type="button">Copy frequency</button></header>
+              <div class="rfp-center-value"><span class="rfp-center-label">Recommended center</span><div class="rfp-center-frequency">851.400000 <small>MHz · 851400000 Hz</small></div></div>
+              <div class="rfp-spectrum"><div class="rfp-spectrum-track"><span class="rfp-usable-zone" style="left:2%;right:2%"></span><span class="rfp-edge-guard" style="left:0;width:2%"></span><span class="rfp-edge-guard" style="left:98%;right:0"></span><span class="rfp-dc-zone" style="left:49.5%;width:1%"></span><span class="rfp-center-line"></span><span class="rfp-channel-band" style="left:33%;width:1%;top:23px"></span><span class="rfp-channel-band" style="left:43%;width:1%;top:54px"></span><span class="rfp-channel-band" style="left:64%;width:1%;top:85px"></span></div><div class="rfp-band-labels"><span>850.2000 MHz</span><span>▲ 851.400000</span><span>852.6000 MHz</span></div><div class="rfp-spectrum-legend"><span><i class="rfp-legend-swatch channel"></i>Channel width</span><span><i class="rfp-legend-swatch"></i>Coverage range</span><span><i class="rfp-legend-swatch guard"></i>Edge buffer</span><span><i class="rfp-legend-swatch dc"></i>Center exclusion</span></div></div>
+              <div class="rfp-detail-grid"><div><span>Coverage range</span><strong>850.24800–852.55200 MHz</strong></div><div><span>Edge buffer</span><strong>48 kHz each side</strong></div><div><span>Center exclusion</span><strong>±25 kHz</strong></div></div>
+              <div class="rfp-channels"><span class="rfp-chip">851.0125 <small>MHz · 12.5 kHz</small></span><span class="rfp-chip">851.2625 <small>MHz · 12.5 kHz</small></span><span class="rfp-chip">851.7750 <small>MHz · 6.25 kHz</small></span></div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
   <main class="content visual-live-example">
     <header class="page-header visual-feature-header"><div><p class="visual-settings-eyebrow">Monitor</p><h1>Live</h1><p>Current receiver activity and channel details.</p></div><span class="ui-pill ui-pill-success">Live</span></header>
     <div class="live-split">
