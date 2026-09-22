@@ -575,9 +575,39 @@ public final class ApplicationMigrationService
     }
 
     /**
-     * Inspects the application-owned database without making a full-size copy or hashing all of its content. This is
-     * the normal startup path; a caller that will ask the operator to approve a migration must use
-     * {@link #readMigrationApproval(Path)} instead.
+     * Accepts an exact current-format database without a full-file quick check or derived-state scan. Older formats
+     * and databases that fail the bounded current-format checks still receive the full preflight for migration or
+     * repair. Damage detectable only by the omitted scans is deferred until an explicit full inspection.
+     */
+    public static DatabaseMigrationChain.PreflightReport readStartupPlan(Path database)
+        throws IOException, SQLException
+    {
+        Path normalized = database.toAbsolutePath().normalize();
+        SqliteDatabaseSnapshot.requireSourceUsable(normalized);
+        if(!Files.isRegularFile(Path.of(normalized + "-journal"), LinkOption.NOFOLLOW_LINKS))
+        {
+            Path wal = Path.of(normalized + "-wal");
+            boolean committedWalPresent = Files.isRegularFile(wal, LinkOption.NOFOLLOW_LINKS) && Files.size(wal) > 0;
+            try(Connection connection = committedWalPresent ? openLiveReadOnly(normalized) : openReadOnly(normalized))
+            {
+                SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+                try
+                {
+                    return DatabaseMigrationChain.plan(DatabaseFormatCatalog.requireCurrent(connection));
+                }
+                catch(SQLException ignored)
+                {
+                    //The full preflight distinguishes an older format from repairable current-format data.
+                }
+            }
+        }
+        return readMigrationPlan(normalized);
+    }
+
+    /**
+     * Fully inspects the application-owned database without making a full-size copy or hashing its content. Use
+     * this for migration/import review; ordinary startup uses {@link #readStartupPlan(Path)} first. A caller that
+     * asks the operator to approve a migration must use {@link #readMigrationApproval(Path)} instead.
      */
     public static DatabaseMigrationChain.PreflightReport readMigrationPlan(Path database)
         throws IOException, SQLException

@@ -158,7 +158,7 @@ public final class SetupWizard extends JDialog
             Throwable inspectionFailure = null;
             if(Files.isRegularFile(wizard.database))
             {
-                try { current = !ApplicationMigrationService.readMigrationPlan(wizard.database).requiresMigration(); }
+                try { current = !ApplicationMigrationService.readStartupPlan(wizard.database).requiresMigration(); }
                 catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
             if(current)

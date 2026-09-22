@@ -954,6 +954,47 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void startupSkipsDeepDerivedStateInspectionForExactCurrentFormat() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("fast-startup"));
+        SdrTrunkTestDatabase.create(database);
+        insertAlias(database, "Derived summary can be rebuilt");
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                DELETE FROM alias_activity_summary WHERE alias_id IN (
+                    SELECT id FROM alias WHERE name='Derived summary can be rebuilt')
+                """);
+        }
+
+        assertTrue(ApplicationMigrationService.readStartupPlan(database).steps().isEmpty());
+        assertTrue(ApplicationMigrationService.readMigrationPlan(database).steps().stream().anyMatch(step ->
+            CurrentDatabaseDerivedStateRepair.STEP_ID.equals(step.id())));
+        assertEquals("0", scalar(database, """
+            SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id IN (
+                SELECT id FROM alias WHERE name='Derived summary can be rebuilt')
+            """));
+    }
+
+    @Test
+    void startupStillFullyInspectsOlderAndSuspectFormats() throws Exception
+    {
+        Path older = Format1TestDatabase.create(
+            SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("older-startup")));
+        assertEquals(ApplicationMigrationService.readMigrationPlan(older),
+            ApplicationMigrationService.readStartupPlan(older));
+
+        Path markerless = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("markerless-startup"));
+        SdrTrunkTestDatabase.create(markerless);
+        try(Connection connection = open(markerless); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+        }
+        assertEquals(ApplicationMigrationService.readMigrationPlan(markerless),
+            ApplicationMigrationService.readStartupPlan(markerless));
+    }
+
+    @Test
     void approvalUsesAndCleansTheCallerSelectedScratchVolume() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("approval-source"));
@@ -992,6 +1033,7 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationPlan(sourceDatabase);
 
         assertFalse(plan.source().requiresMigration());
+        assertEquals(plan, ApplicationMigrationService.readStartupPlan(sourceDatabase));
         assertTrue(plan.requiresMigration());
         assertEquals(1, plan.steps().size());
         assertEquals("repair-portable-preferences", plan.steps().getFirst().id());

@@ -50,7 +50,7 @@ public final class SdrTrunkDatabaseBootstrap
         if(Files.isRegularFile(database))
         {
             if(options.upgradeData() != null) throw new IOException("The current portable data folder already has a database");
-            var plan = ApplicationMigrationService.readMigrationPlan(database);
+            var plan = ApplicationMigrationService.readStartupPlan(database);
             if(plan.requiresMigration())
             {
                 if(!options.upgradeCurrent()) throw new IOException("The portable database requires these changes: " +

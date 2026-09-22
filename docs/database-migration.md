@@ -342,6 +342,12 @@ not promoted. After the atomic promotion point, the already validated result may
 validation restores the retained backup on failure. Normal application startup after setup is exact-schema
 validation-only and never creates, repairs, or migrates an existing schema.
 
+For ordinary launches of an exact current-format database, startup checks the format, schema, and bounded required
+settings without running a full SQLite quick check or scanning all receiver-derived tables. An older database, or one
+that fails those bounded checks, still receives the full read-only preflight before setup offers migration or repair.
+Damage detectable only by the omitted scans may surface later or during explicit maintenance. Migration and import
+continue to perform the full integrity and staged-result checks above.
+
 After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
 restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.
 The wizard preflights the selected source and displays a bold red replacement warning before confirmation. With the
