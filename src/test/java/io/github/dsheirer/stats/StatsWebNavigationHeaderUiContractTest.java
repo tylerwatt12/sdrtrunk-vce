@@ -29,7 +29,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"163\">"));
         assertTrue(html.contains("/assets/app.css?v=140"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=194\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=195\"></script>"));
         assertTrue(html.contains("id=\"icon-recording\""));
         assertTrue(html.contains("id=\"icon-streaming\""));
         assertFalse(html.contains("data-nav-tab=\"recording\""));

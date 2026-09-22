@@ -18035,7 +18035,7 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
     apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
       unassignedParameters, options)
   ]);
-  return { lists, selectedListId, selectedList: selected, overview: overviewResult, aliases, unassigned,
+  return { lists, selectedListId, overview: overviewResult, aliases, unassigned,
     selectedRange, activeTab, aliasStatus };
 }
 
@@ -18059,7 +18059,7 @@ async function renderAliasCoverageDirectory(renderContext) {
   });
   const present = (model) => {
     if (!model.selectedListId) return node('div', 'empty', 'No Alias Lists are configured.');
-    const { lists, selectedListId, selectedList, overview, aliases, unassigned,
+    const { lists, selectedListId, overview, aliases, unassigned,
       selectedRange, activeTab, aliasStatus } = model;
     const wrapper = node('div', 'alias-coverage ui-catalog data-workspace');
     wrapper.dataset.uiDensity = 'compact';
@@ -18100,12 +18100,7 @@ async function renderAliasCoverageDirectory(renderContext) {
     const tableSection = node('section', 'ui-surface alias-coverage-table-section');
     const tableHeader = node('header', 'alias-coverage-table-header');
     const tableHeading = node('div');
-    const rangeLabel = new Map([['1h', 'last hour'], ['24h', 'last day'], ['7d', 'last week'],
-      ['30d', 'last 30 days']]).get(selectedRange) || 'selected range';
-    tableHeading.append(node('h2', '', 'Alias inventory'),
-      node('p', 'muted', activeTab === 'unassigned' ?
-        `${selectedList?.name || 'Alias List'} · all retained activity · most calls first` :
-        `${selectedList?.name || 'Alias List'} · recent means heard in the ${rangeLabel}`));
+    tableHeading.append(node('h2', '', 'Alias inventory'));
     tableHeader.append(tableHeading, tabs);
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
