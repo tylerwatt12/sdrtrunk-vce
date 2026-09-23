@@ -111,23 +111,20 @@
 
 
 .signal-history-overview {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(100px, 1fr));
-  gap: 1px;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(0, 1fr));
   margin-bottom: 4px;
-  background: var(--line);
-  border: 1px solid var(--line);
 }
 
 .signal-history-overview.without-identity {
-  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.signal-history-identity,
-.signal-history-metric {
+.signal-history-identity {
   min-width: 0;
-  padding: 7px 9px;
+  padding: var(--space-2);
   background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
 }
 
 .signal-history-identity a {
@@ -138,19 +135,10 @@
   white-space: nowrap;
 }
 
-.signal-history-identity span,
-.signal-history-metric span {
+.signal-history-identity span {
   display: block;
   color: var(--muted);
-  font-size: 10px;
-  text-transform: uppercase;
-}
-
-.signal-history-metric strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
+  font-size: 11px;
 }
 
 .quality-chart-stack {

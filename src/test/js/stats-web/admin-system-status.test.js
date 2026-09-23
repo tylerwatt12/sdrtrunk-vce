@@ -37,9 +37,11 @@ class RuntimeNode {
 
 const context = {
   Intl,
+  METRIC_ICONS: {},
   Node: RuntimeNode,
   Number,
   document: { createTextNode: (value) => new RuntimeNode(value) },
+  iconGlyph: () => new RuntimeNode(),
   node: (tag, className = '', text = null) => {
     const result = new RuntimeNode();
     result.tag = tag;
@@ -52,6 +54,7 @@ vm.createContext(context);
 vm.runInContext([
   functionSource('function number(value)'),
   functionSource('function valueNode(value)'),
+  functionSource('function metricCard(label, value, displayValue = undefined)'),
   functionSource('function metrics(values, embedded = false)'),
   functionSource('function adminStatusBytes(value)'),
   functionSource('function adminDatabaseDisplay(database)')
@@ -80,5 +83,5 @@ const status = context.metrics([
   ['Detailed history', false, 'Configured · Inactive'],
   ['Activity database', 1048576, '1.0 MB']
 ], true);
-assert.deepStrictEqual(status.children.map((metric) => metric.children[1].textContent),
+assert.deepStrictEqual(status.children.map((metric) => metric.children[1].children[1].textContent),
   ['Running', 'Configured · Inactive', '1.0 MB']);

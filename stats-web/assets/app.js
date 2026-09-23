@@ -12,7 +12,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import * as rfPlanner from './features/rf-planner.js?v=2';
+import * as rfPlanner from './features/rf-planner.js?v=3';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=8';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
@@ -2858,15 +2858,50 @@ function keyValues(entries) {
   return list;
 }
 
+const METRIC_ICONS = {
+  'Logical Calls': 'icon-live', 'Channel Observations': 'icon-channel',
+  Recorded: 'icon-recording', Submitted: 'icon-share', 'Submitted to Streamer': 'icon-share',
+  Encrypted: 'icon-lock', 'Observed Radios': 'icon-scanner', 'Known Radios': 'icon-scanner',
+  'Observed Groups': 'icon-identities', 'Known Talkgroups': 'icon-identities',
+  'Known Patch Groups': 'icon-trunked', 'Configured Channels': 'icon-conventional',
+  'Currently Affiliated': 'icon-identities', 'Affiliated Channels': 'icon-channel',
+  'Current Affiliations': 'icon-identities', 'Affiliated Radios': 'icon-scanner',
+  'Metadata Updates': 'icon-refresh', Frequencies: 'icon-spectrum',
+  Neighbors: 'icon-trunked', 'Band Plans': 'icon-channel', Patches: 'icon-trunked',
+  Relationships: 'icon-trunked',
+  'Join Relationships': 'icon-trunked', Total: 'icon-live', Grants: 'icon-play',
+  Join: 'icon-plus', Emergency: 'icon-warning', Register: 'icon-plus',
+  Logout: 'icon-stop', Denial: 'icon-warning', Data: 'icon-dashboard',
+  'Healthy channels': 'icon-health', 'Degraded channels': 'icon-warning',
+  'Offline channels': 'icon-stop', 'Current issues': 'icon-health',
+  'Need action': 'icon-warning', 'Check soon': 'icon-warning',
+  'Summary logging': 'icon-live', 'Detailed history': 'icon-scan-lists',
+  'Activity database': 'icon-dashboard', Added: 'icon-plus', Updated: 'icon-refresh',
+  Unchanged: 'icon-pause', Removed: 'icon-trash', Errors: 'icon-warning',
+  Current: 'icon-spectrum', '30s average': 'icon-live', Decode: 'icon-channel',
+  'Last sample': 'icon-replay'
+};
+
+function metricCard(label, value, displayValue = undefined) {
+  const name = String(label).split(' · ')[0];
+  const hasAlert = Number(value) > 0;
+  const tone = hasAlert && ['Need action', 'Errors'].includes(name) ? 'danger' :
+    hasAlert && ['Check soon', 'Degraded channels', 'Emergency', 'Denial'].includes(name) ?
+      'warning' : 'blue';
+  const metric = node('div', `metric ui-metric ui-metric-${tone}`);
+  const icon = node('span', 'ui-metric-icon');
+  icon.append(iconGlyph(METRIC_ICONS[name] || 'icon-dashboard'));
+  const copy = node('div', 'ui-metric-copy');
+  const displayed = node('strong');
+  displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
+  copy.append(node('span', 'ui-metric-label', label), displayed);
+  metric.append(icon, copy);
+  return metric;
+}
+
 function metrics(values, embedded = false) {
   const band = node(embedded ? 'div' : 'section', 'summary-band ui-metric-grid');
-  values.forEach(([label, value, displayValue]) => {
-    const metric = node('div', 'metric ui-metric');
-    const displayed = node('strong');
-    displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
-    metric.append(node('span', '', label), displayed);
-    band.append(metric);
-  });
+  values.forEach(([label, value, displayValue]) => band.append(metricCard(label, value, displayValue)));
   return band;
 }
 
@@ -5174,7 +5209,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   review.hidden = true;
   review.append(node('h3', '', 'Review changes'));
   const destination = node('p', 'muted');
-  const summary = node('div', 'alias-transfer-counts');
+  const summary = node('div', 'alias-transfer-counts ui-metric-grid');
   const filters = node('div', 'alias-transfer-review-filters');
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter reviewed aliases');
@@ -5422,11 +5457,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
         `From ${response.source_list} into ${response.destination_list}` :
         `Importing into ${response.destination_list}`;
       const countLabels = { added: 'Added', updated: 'Updated', unchanged: 'Unchanged', deleted: 'Removed', error: 'Errors' };
-      summary.replaceChildren(...Object.entries(countLabels).map(([key, label]) => {
-        const card = node('div', `alias-transfer-count alias-transfer-count-${key}`);
-        card.append(node('strong', '', number(response.counts[key] || 0)), node('span', '', label));
-        return card;
-      }));
+      summary.replaceChildren(...Object.entries(countLabels).map(([key, label]) =>
+        metricCard(label, response.counts[key] || 0)));
       const drawRows = () => {
         rowsHost.replaceChildren();
         const visibleRows = response.rows.filter((row) => previewFilter === 'all' || row.result === previewFilter);
@@ -7288,7 +7320,7 @@ function sortSignalChannels(channels) {
 }
 
 function signalOverview(channel, includeName = true) {
-  const overview = node('div', 'signal-history-overview');
+  const overview = node('div', 'signal-history-overview ui-metric-grid');
   overview.classList.toggle('without-identity', !includeName);
   if (includeName) {
     const identity = node('div', 'signal-history-identity');
@@ -7300,8 +7332,8 @@ function signalOverview(channel, includeName = true) {
   [['Current', signalNumber(channel.signal_dbfs)], ['30s average', signalNumber(channel.average_signal_dbfs)],
     ['Decode', percentNumber(channel.decode_health_pct)],
     ['Last sample', elapsedLabel(channel.last_observed_ms)]].forEach(([label, value]) => {
-    const metric = node('div', 'signal-history-metric');
-    metric.append(node('span', '', label), node('strong', '', value));
+    const metric = metricCard(label, null, value);
+    metric.classList.add('ui-metric-compact');
     overview.append(metric);
   });
   return overview;
@@ -7499,18 +7531,12 @@ async function channelSignalHistorySection(channel) {
 }
 
 function groupIdentityHistoryTotals(totals) {
-  const summary = node('dl', 'group-identity-history-totals');
-  [
+  return metrics([
     ['Logical Calls', totals?.logical_call_count],
     ['Recorded', totals?.recorded_logical_call_count],
     ['Submitted to Streamer', totals?.stream_submitted_logical_call_count],
     ['Encrypted', totals?.encrypted_logical_call_count]
-  ].forEach(([label, value]) => {
-    const item = node('div', 'group-identity-history-total');
-    item.append(node('dt', '', label), node('dd', '', number(value)));
-    summary.append(item);
-  });
-  return summary;
+  ], true);
 }
 
 async function groupIdentityActivityHistorySection(scopeParameters) {
@@ -15316,14 +15342,14 @@ async function renderGroupIdentity() {
     ], true))];
     if (kind === 'talkgroup' && radioSystemCapability(groupIdentity, 'current_affiliations')) {
       const currentState = [
-        ['Currently Affiliated', anchor(number(groupIdentity.affiliated_radios),
+        ['Currently Affiliated', groupIdentity.affiliated_radios, anchor(number(groupIdentity.affiliated_radios),
           href('group-identity', { ...radioSystemRoute(groupIdentity), identity_key: identityKey,
             tab: 'radios', affiliated: true }))]
       ];
       if (radioSystemCapability(groupIdentity, 'radio_channel_presence')) {
-        currentState.push(['Affiliated Channels', number(groupIdentity.affiliated_channels)]);
+        currentState.push(['Affiliated Channels', groupIdentity.affiliated_channels]);
       }
-      blocks.push(section('Current State', keyValues(currentState)));
+      blocks.push(section('Current State', metrics(currentState, true)));
     }
     blocks.push(section('Last-known Facts', keyValues([
       ['Last Source', radioLink(groupIdentity, groupIdentity.last_source_radio_id, undefined,
@@ -18028,12 +18054,12 @@ function aliasCoverageSummaryCards(totals, unassigned) {
   const recent = Number(totals.active_alias_count || 0);
   const summary = node('div', 'alias-coverage-summary');
   [
-    ['Configured aliases', configured, 'icon-identities', 'configured'],
-    ['Heard in period', recent, 'icon-live', 'recent'],
-    ['Not heard in period', Math.max(0, configured - recent), 'icon-pause', 'quiet'],
-    ['Unassigned observed', unassigned.total_count || 0, 'icon-warning', 'unassigned']
+    ['Configured aliases', configured, 'icon-identities', 'blue'],
+    ['Heard in period', recent, 'icon-live', 'success'],
+    ['Not heard in period', Math.max(0, configured - recent), 'icon-pause', 'neutral'],
+    ['Unassigned observed', unassigned.total_count || 0, 'icon-warning', 'warning']
   ].forEach(([label, value, icon, tone]) => {
-    const card = node('div', `ui-summary-card alias-coverage-summary-card alias-summary-${tone}`);
+    const card = node('div', `ui-summary-card ui-summary-${tone}`);
     card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
     summary.append(card);
   });

@@ -181,7 +181,7 @@
 
 .ui-metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
   align-items: stretch;
   gap: var(--space-2);
   padding: var(--space-3);
@@ -190,36 +190,90 @@
 
 .ui-metric {
   min-width: 0;
-  min-height: 76px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: var(--space-2);
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
   padding: var(--space-3);
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
 }
 
-.ui-metric > span {
-  min-height: 0;
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .03em;
-  line-height: 1.25;
-  text-transform: uppercase;
+.ui-metric-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  color: var(--link);
+  background: var(--blue-soft);
+  border-radius: var(--radius-control);
 }
 
-.ui-metric > strong {
+.ui-metric-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ui-metric-warning .ui-metric-icon {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.ui-metric-danger .ui-metric-icon {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.ui-metric-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ui-metric-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.ui-metric-copy > strong {
   display: block;
   max-width: 100%;
-  font-size: 22px;
-  font-weight: 650;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
   overflow-wrap: anywhere;
 }
+
+.ui-metric-compact {
+  min-height: 64px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.ui-metric-compact .ui-metric-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.ui-metric-compact .ui-metric-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ui-metric-compact .ui-metric-label { font-size: 11px; }
+.ui-metric-compact .ui-metric-copy > strong { font-size: 16px; }
 
 @media (max-width: 900px) {
   .ui-metric-grid {
@@ -282,38 +336,51 @@
 .ui-summary-card {
   min-height: var(--ui-summary-height, 76px);
   display: grid;
-  grid-template-columns: 34px max-content minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto auto;
   align-items: center;
-  gap: 9px;
+  align-content: center;
+  gap: var(--space-1) var(--space-3);
   padding: var(--ui-surface-padding, 14px);
-  color: var(--accent);
-  background: var(--surface);
+  color: var(--link);
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
 .ui-summary-card > svg {
-  width: 26px;
-  height: 26px;
-  padding: 5px;
-  background: var(--accent-soft);
+  width: 38px;
+  height: 38px;
+  grid-row: 1 / 3;
+  padding: 9px;
+  background: var(--blue-soft);
   border-radius: var(--ui-control-radius, 8px);
 }
 
-.ui-summary-card strong {
+.ui-summary-card > strong {
+  grid-column: 2;
+  grid-row: 2;
   color: var(--ink);
   font-size: var(--ui-summary-number-size, 24px);
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 
-.ui-summary-card span {
+.ui-summary-card > span {
+  grid-column: 2;
+  grid-row: 1;
   color: var(--muted);
+  font-size: 13px;
   font-weight: 650;
 }
 
 .ui-summary-success { color: var(--success); }
+.ui-summary-success > svg { background: var(--success-soft); }
 .ui-summary-blue { color: var(--link); }
+.ui-summary-neutral { color: var(--muted); }
+.ui-summary-neutral > svg { background: var(--surface); }
+.ui-summary-warning { color: var(--warning); }
+.ui-summary-warning > svg { background: var(--warning-soft); }
 
 .ui-catalog-toolbar {
   display: flex;

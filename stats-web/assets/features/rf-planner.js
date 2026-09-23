@@ -576,6 +576,10 @@ function createPlanner(loadTunerRows = null) {
     return `<div class="ui-notice ui-notice-${tone} rfp-notice" role="${type === 'error' ? 'alert' : 'status'}"><span aria-hidden="true">${type === 'error' ? '×' : '!'}</span><div>${messages.map(escapeHtml).join('<br>')}</div></div>`;
   }
 
+  function summaryMetric(label, value, iconId) {
+    return `<div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#${iconId}"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div></div>`;
+  }
+
   function channelTop(index) {
     return 23 + (index % 3) * 31;
   }
@@ -671,9 +675,10 @@ function createPlanner(loadTunerRows = null) {
     }
     warnings.push('This plan assumes the listed channels need coverage at the same time. sdrtrunk may choose a different center frequency while a tuner is already in use.');
     const assigned = parsed.channels.length - rejected.length;
-    results.innerHTML = `<div class="rfp-result-stack"><section class="rfp-summary" aria-label="Plan summary">
-      <div><span>Channels entered</span><strong>${parsed.channels.length}</strong></div><div><span>Channels covered</span><strong>${assigned}</strong></div>
-      <div><span>Tuners used</span><strong>${plans.length}/${hardwares.length}</strong></div></section>
+    results.innerHTML = `<div class="rfp-result-stack"><section class="rfp-summary ui-metric-grid" aria-label="Plan summary">
+      ${summaryMetric('Channels entered', parsed.channels.length, 'icon-conventional')}
+      ${summaryMetric('Channels covered', assigned, 'icon-channel')}
+      ${summaryMetric('Tuners used', `${plans.length}/${hardwares.length}`, 'icon-tuner')}</section>
       ${renderNotice(warnings)}${plans.map(renderPlan).join('')}
       ${rejected.length ? renderNotice(['Some channels don’t fit. Try adding a tuner or choosing a higher sample rate.'], 'error') : ''}</div>`;
     results.querySelectorAll('.rfp-copy-center').forEach((button) => {

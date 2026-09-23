@@ -85,33 +85,6 @@
   gap: var(--space-2);
 }
 
-.alias-coverage-summary-card {
-  grid-template-columns: 34px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  align-content: center;
-  gap: 2px 9px;
-}
-
-.alias-coverage-summary-card > svg {
-  grid-row: 1 / 3;
-}
-
-.alias-coverage-summary-card strong {
-  align-self: end;
-  line-height: 1;
-}
-
-.alias-coverage-summary-card span {
-  align-self: start;
-  font-size: 10px;
-  letter-spacing: .035em;
-  text-transform: uppercase;
-}
-
-.alias-summary-recent { color: var(--success); }
-.alias-summary-quiet { color: var(--muted); }
-.alias-summary-unassigned { color: var(--warning); }
-
 .alias-coverage-section-header,
 .alias-coverage-table-header {
   min-width: 0;

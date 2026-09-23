@@ -15,6 +15,17 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+test('stat counters share a rounded tile with a decorative landmark icon', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=entity-details');
+  const tile = page.locator('.visual-entity-details-example .ui-metric').first();
+  await expect(tile).toHaveCSS('border-left-width', '1px');
+  await expect(tile).toHaveCSS('border-radius', '8px');
+  await expect(tile.locator('.ui-metric-icon svg')).toHaveAttribute('aria-hidden', 'true');
+  await expect(tile.locator('.ui-metric-label')).toHaveText('Logical Calls');
+  await expect(page.locator('.visual-entity-details-example .ui-metric a')).toHaveText('9');
+});
+
 test('icon actions share a size and show one hint on hover and focus', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');

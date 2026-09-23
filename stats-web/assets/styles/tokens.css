@@ -89,6 +89,7 @@
   --success-soft: #ddf5e9;
   --warning-ink: #5f3a00;
   --warning-soft: #fff3d6;
+  --danger-soft: #fbe8ee;
   --blue-soft: #e4effc;
   --shadow-raised: 0 12px 32px rgb(25 38 50 / 14%);
   --shadow-surface: 0 5px 18px rgb(20 34 48 / 7%);
@@ -180,6 +181,7 @@
   --success-soft: #15382b;
   --warning-ink: #ffe0a3;
   --warning-soft: #3f3016;
+  --danger-soft: #40202d;
   --blue-soft: #182f47;
   --shadow-raised: 0 16px 42px rgb(0 0 0 / 38%);
   --shadow-surface: 0 5px 18px rgb(0 0 0 / 28%);
