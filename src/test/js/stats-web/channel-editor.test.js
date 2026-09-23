@@ -65,6 +65,13 @@ const channelColumns = functionSource('function channelAdminColumns(');
 assert.match(channelColumns, /event\.shiftKey/);
 assert.match(channelColumns, /visibleIds\.slice\(Math\.min\(first, last\), Math\.max\(first, last\) \+ 1\)/);
 assert.match(channelColumns, /state\.selectionAnchor = id/);
+const channelModal = functionSource('async function openChannelEditorModal(');
+assert.match(channelModal, /action, configuration_ids: \[configurationId\]/,
+  'The editor must start or stop only its own channel');
+assert.match(channelModal, /modal\.isDirty\(\)/,
+  'Start and Stop must not discard unsaved channel settings');
+assert.match(application, /new ResizeObserver\(positionSelectionBar\)/,
+  'The selected-channel bar must follow the changing header height');
 
 const plan = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'general', label: 'General', fields: [{ path: 'name', required: true }] },

@@ -16847,6 +16847,16 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const tableController = {};
     const selectedBar = node('div', 'channel-selection-bar ui-selection-bar');
     selectedBar.hidden = true;
+    const appHeader = document.querySelector('.app-header');
+    if (appHeader && 'ResizeObserver' in window) {
+      const positionSelectionBar = () => {
+        selectedBar.style.top = `${Math.ceil(appHeader.getBoundingClientRect().height) + 8}px`;
+      };
+      const headerObserver = new ResizeObserver(positionSelectionBar);
+      headerObserver.observe(appHeader);
+      renderContext.signal?.addEventListener('abort', () => headerObserver.disconnect(), { once: true });
+      positionSelectionBar();
+    }
     const selectedSummary = node('strong');
     const hiddenSummary = node('span', 'muted');
     let enableAutoStart = null;
@@ -17621,7 +17631,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   });
   if (!modal) return;
   try {
-    const [protocols, options, entry] = await Promise.all([
+    const [protocols, options, loadedEntry] = await Promise.all([
       prefetched?.protocols ? Promise.resolve(prefetched.protocols) :
         requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
       prefetched?.options ? Promise.resolve(prefetched.options) :
@@ -17630,6 +17640,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         Promise.resolve(null)
     ]);
     if (activeReadOnlyModal !== modal.state) return;
+    let entry = loadedEntry;
     const profiles = protocols.profiles || [];
     let revision = Number(entry?.revision ?? options.revision ?? 0);
     let profile = profiles.find((candidate) => candidate.id === entry?.channel?.protocol_id) || profiles[0];
@@ -17785,16 +17796,49 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           errors.replaceChildren(node('div', 'error', error.message));
         } finally { clearStatistics.disabled = false; }
       }, 'ui-button ui-button-danger') : null;
+      const startStop = editing ? uiActionButton(entry.processing_state === 'RUNNING' ? 'Stop' : 'Start',
+        entry.processing_state === 'RUNNING' ? 'icon-stop' : 'icon-play', async () => {
+          if (modal.isDirty() || startStop.disabled) return;
+          startStop.disabled = true;
+          modal.setBusy(true);
+          errors.replaceChildren();
+          try {
+            const action = entry.processing_state === 'RUNNING' ? 'STOP' : 'START';
+            const result = await requestJson('/api/v1/admin/channels/actions', {
+              method: 'POST', body: { revision, action, configuration_ids: [configurationId] },
+              timeoutMs: 30_000
+            });
+            const failure = (result?.results || []).find((value) => value.success !== true);
+            if (failure) throw new Error(failure.message || 'Channel state could not be changed');
+            entry = await requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`,
+              { csrf: false });
+            revision = Number(entry.revision);
+            channel = entry.channel;
+            baselineChannel = structuredClone(channel);
+            draw();
+          } catch (error) {
+            errors.replaceChildren(node('div', 'ui-notice ui-notice-danger', error.message));
+            startStop.disabled = false;
+          } finally { modal.setBusy(false); }
+        }, 'ui-button ui-button-secondary') : null;
       const sectionLayout = node('div', 'channel-editor-section-layout ui-editor-layout');
       const sectionStack = node('div', 'channel-editor-sections ui-editor-sections');
       sectionStack.append(...sectionNodes);
       sectionLayout.append(channelEditorSectionNavigation(panels, sectionPlan), sectionStack);
       const footer = node('footer', 'channel-editor-footer ui-action-row');
-      footer.append(...[clearStatistics, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
+      footer.append(...[startStop, clearStatistics, reset, node('span', 'channel-editor-footer-spacer'), cancel, save]
         .filter(Boolean));
       form.append(sectionLayout, errors, footer);
-      form.addEventListener('input', () => { modal.setDirty(true); channelEditorDependencies(form); });
-      form.addEventListener('change', () => { modal.setDirty(true); channelEditorDependencies(form); });
+      form.addEventListener('input', () => {
+        modal.setDirty(true);
+        if (startStop) startStop.disabled = true;
+        channelEditorDependencies(form);
+      });
+      form.addEventListener('change', () => {
+        modal.setDirty(true);
+        if (startStop) startStop.disabled = true;
+        channelEditorDependencies(form);
+      });
       form.addEventListener('invalid', (event) => {
         const disclosure = event.target.closest?.('details.channel-editor-section-disclosure');
         if (disclosure) disclosure.open = true;
