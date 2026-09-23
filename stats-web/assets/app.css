@@ -19,7 +19,7 @@
 @import url("./styles/features/channels.css?v=3") layer(features);
 @import url("./styles/features/entity-details.css?v=5") layer(features);
 @import url("./styles/features/live.css?v=3") layer(features);
-@import url("./styles/features/radio-directory.css?v=1") layer(features);
+@import url("./styles/features/radio-directory.css?v=2") layer(features);
 @import url("./styles/features/tuner-spectrum.css?v=6") layer(features);
 @import url("./styles/features/scanner.css?v=2") layer(features);
 @import url("./styles/features/rf-planner.css?v=1") layer(features);

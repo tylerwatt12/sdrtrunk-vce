@@ -429,6 +429,11 @@ async function main() {
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
   const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
+  const embeddedDirectoryPanel = functionBinding(appSource, 'radioDirectoryEmbeddedPanel');
+  assert.match(embeddedDirectoryPanel, /radio-directory-panel-body/);
+  assert.match(embeddedDirectoryPanel,
+    /body\.append\(radioDirectoryPerspectiveControl\(view\), directory\)/);
+  assert.match(coverageSource, /radioDirectoryEmbeddedPanel\('coverage', directory\.element\)/);
   assert.match(coverageSource, /alias-coverage ui-catalog data-workspace[\s\S]+uiSelectFrame\(listSelect\)/);
   assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);
   assert.match(coverageSource, /aliasCoverageScope\(overview\)/);
@@ -436,6 +441,7 @@ async function main() {
   assert.match(coverageSource, /directory\.host\.replaceChildren\(present\(model\)\)/);
   assert.match(coverageSource, /bare: true/);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
+  assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', loading\.element\)/);
   assert.match(radioDirectorySource, /bare: true/);
   assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext, embedded\)/);
   assert.match(radioDirectorySource,

@@ -56,6 +56,19 @@ test('radio-directory-coverage-light-desktop', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-coverage-light-desktop.png', { fullPage: true });
 });
 
+for(const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/design-system.html?theme=${theme}&view=radio-directory-panel`);
+    const panel = page.locator('.visual-radio-directory-coverage-example .ui-section');
+    const body = panel.locator('.radio-directory-panel-body');
+    await expect(body).toHaveCSS('padding', '12px');
+    await expect(panel).toHaveScreenshot(
+      `radio-directory-panel-${theme}-${width === 390 ? 'mobile' : 'desktop'}.png`,
+      { fullPage: true });
+  });
+}
+
 for(const [view, theme, width] of [
   ['signal-quality-detail', 'light', 1280],
   ['signal-quality-detail', 'dark', 390],

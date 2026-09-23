@@ -10,6 +10,17 @@
   margin-bottom: var(--space-3);
 }
 
+.radio-directory-panel-body {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.radio-directory-panel-body .radio-directory-perspective {
+  margin-bottom: 0;
+}
+
 .alias-coverage-loader {
   min-width: 0;
   padding: 0;

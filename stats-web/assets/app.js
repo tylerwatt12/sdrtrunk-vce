@@ -16675,6 +16675,12 @@ function radioDirectoryPerspectiveControl(activeView) {
   return control;
 }
 
+function radioDirectoryEmbeddedPanel(view, directory) {
+  const body = node('div', 'radio-directory-panel-body');
+  body.append(radioDirectoryPerspectiveControl(view), directory);
+  return section('Radio directory', body);
+}
+
 function renderNestedRadioDirectory(renderContext, embedded = false) {
   if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, embedded);
   const loading = createAsyncSection('Radio Directory', {
@@ -16683,8 +16689,7 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
     errorMessage: 'The radio directory could not be loaded.'
   });
   if (embedded) {
-    content.append(section('Radio directory',
-      fragment(radioDirectoryPerspectiveControl('systems'), loading.element)));
+    content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
   } else if (!beginPage(renderContext, pageHeader('Radio Directory',
     'Browse systems, sites, and conventional channels'),
     radioDirectoryPerspectiveControl('systems'), loading.element)) return;
@@ -18051,8 +18056,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   });
   directory.host.classList.add('alias-coverage-loader');
   if (embedded) {
-    content.append(section('Radio directory',
-      fragment(radioDirectoryPerspectiveControl('coverage'), directory.element)));
+    content.append(radioDirectoryEmbeddedPanel('coverage', directory.element));
   } else if (!beginPage(renderContext, pageHeader('Radio Directory',
     'Compare configured aliases with heard activity across every channel that uses them'),
     radioDirectoryPerspectiveControl('coverage'), directory.element)) return;
