@@ -15777,7 +15777,8 @@ function renderTrunkedChannelBandPlans(channel, data) {
     { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }) :
-    section('ISSI Advertised Band Plans', node('p', 'muted', 'No ISSI-advertised band plans recorded')));
+    section('ISSI Advertised Band Plans',
+      node('p', 'muted channel-frequency-note', 'No ISSI-advertised band plans recorded')));
 }
 
 async function renderTrunkedChannel(channel, configurationId, renderContext) {

@@ -978,6 +978,7 @@ async function main() {
     [130, 94, 86], { descriptor: 130 }, 400), [130, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
     [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 94]);
+  assert.equal(tableDefaults.width('channel-frequency-bands', { id: 'band' }), 64);
   assert.deepEqual(tableDefaults.layout('example', [{ id: 'calls' }, { id: 'name' }]), {
     schema: ['calls', 'name'], column_order: ['calls', 'name'],
     column_widths: {}, hidden_columns: []

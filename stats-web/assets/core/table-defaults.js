@@ -25,12 +25,12 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['descriptor', 'callsign', 'tags']
   },
   'channel-frequency-bands': {
-    widths: { band: 48, base: 94, spacing: 72, bandwidth: 72, offset: 94,
-      tdma: 60, slots: 56, state: 86, observations: 78, 'last-seen': 166 },
+    widths: { band: 64, base: 94, spacing: 68, bandwidth: 68, offset: 92,
+      tdma: 60, slots: 56, state: 82, observations: 76, 'last-seen': 166 },
     hidden: ['tdma'], grow: []
   },
   'channel-frequency-bands-override': {
-    widths: { band: 48, base: 94, spacing: 72, bandwidth: 72, offset: 94,
+    widths: { band: 64, base: 94, spacing: 68, bandwidth: 68, offset: 92,
       tdma: 60, slots: 56 },
     hidden: ['tdma'], grow: []
   },
