@@ -158,6 +158,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       if (path.includes('/systems/details?')) return { system: {
         id: 2001, system_id: '2000', name: 'Central County P25', type: 'Project 25 Phase II', city: 'Columbus'
       }, talkgroup_categories: [{ id: 9, name: 'Fire' }] };
+      if (path.includes('/systems/sites/catalog?') &&
+          new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
       if (path.includes('/systems/sites/catalog?')) return { items: [{ id: 4001, name: 'Central Simulcast',
         number: 1, county_name: 'Franklin County', tdma_control_channel: false, channels: [
           { frequency_hz: 773081250, primary_control: true },
@@ -345,6 +347,16 @@ test('site sorting and preview use the RadioReference database system ID', async
     .toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');
 });
 
+test('site loading retains the system heading and filter context', async ({ page }) => {
+  await installWorkspace(page, 'light', false, true);
+  await page.locator('.radioreference-result-open').first().click();
+  await expect(page.getByRole('heading', { name: 'Central County P25' })).toBeVisible();
+  await expect(page.getByLabel('Filter site or channel name')).toBeDisabled();
+  await expect(page.locator('.radioreference-sites-list .ui-feedback-loading')).toContainText(
+    'Large systems may take a minute');
+  await expect(page.getByLabel('Filter site or channel name')).toBeEnabled();
+});
+
 test('slow talkgroup loading shows a spinner until the catalog arrives', async ({ page }) => {
   await installWorkspace(page, 'light', false, true);
   await openSystem(page);
@@ -361,6 +373,45 @@ for (const [name, theme, viewport] of [
     await page.setViewportSize(viewport);
     await installWorkspace(page, theme);
     await openSystem(page);
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
+for (const [name, theme, viewport] of [
+  ['radioreference-account-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['radioreference-account-dark-mobile', 'dark', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'light';
+      document.body.innerHTML = `<main class="content">
+        <header class="page-header ui-page-header"><div><h1 class="page-title">RadioReference</h1>
+          <p class="page-subtitle">Browse systems and agencies, compare changes, and import</p></div></header>
+        <div class="radioreference-page"><div class="radioreference-login-gate ui-surface editor-workspace">
+          <span class="radioreference-gate-eyebrow">RadioReference Premium</span>
+          <h2>Connect your account</h2>
+          <p class="muted">Sign in to browse systems, compare talkgroups, and import channels.</p>
+          <form class="admin-form radioreference-account-form editor-workspace">
+            <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Username</span>
+              <input class="ui-input" value="radio-listener"></label>
+            <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Password</span>
+              <input class="ui-input" type="password"></label>
+            <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy">
+              <strong>Remember credentials on this receiver</strong>
+              <span>Stores the credentials in this receiver’s protected portable settings.</span></span>
+              <label class="ui-toggle"><input type="checkbox" checked aria-label="Remember credentials">
+              <span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span>
+              <span class="ui-toggle-state">On</span></label></div>
+            <div class="admin-form-message ui-notice ui-notice-danger" role="alert">
+              RadioReference did not respond before the request deadline.</div>
+            <div class="admin-form-actions"><button type="submit" class="ui-button ui-button-primary">
+              Connect RadioReference</button></div>
+          </form></div></div></main>`;
+    });
+    const toggle = page.locator('.radioreference-account-form .admin-toggle-copy');
+    expect((await toggle.boundingBox()).width).toBeGreaterThan(viewport.width === 390 ? 180 : 360);
     await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
   });
 }

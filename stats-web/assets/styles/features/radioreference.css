@@ -3,15 +3,15 @@
 .radioreference-browser {
   min-width: 0;
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .radioreference-login-gate {
-  width: min(460px, 100%);
-  margin: var(--space-5) auto;
-  padding: var(--space-5);
+  width: min(560px, 100%);
+  margin: var(--space-5) auto 0;
+  padding: clamp(var(--space-4), 4vw, var(--space-5));
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .radioreference-login-gate[hidden],
@@ -21,6 +21,43 @@
 
 .radioreference-login-gate :where(h2, p) {
   margin: 0;
+}
+
+.radioreference-login-gate h2 {
+  font-size: clamp(24px, 3vw, 30px);
+  line-height: 1.2;
+}
+
+.radioreference-gate-eyebrow {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.radioreference-account-form {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.radioreference-account-form > .admin-toggle-control {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.radioreference-account-form > .admin-form-message:empty {
+  display: none;
+}
+
+.radioreference-account-form > .admin-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .radioreference-workspace-header {
@@ -50,10 +87,9 @@
   border-bottom: 1px solid var(--line);
 }
 
-.radioreference-account-details > .settings-card {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+.radioreference-account-details > .radioreference-account-form {
+  margin: 0;
+  padding: var(--space-3);
 }
 
 .radioreference-settings-modal .settings-card {
@@ -75,8 +111,8 @@
 .radioreference-browse-form {
   min-width: 0;
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-4);
 }
 
 .radioreference-browse-fields,
@@ -101,8 +137,8 @@
 .radioreference-workbench-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(255px, 28%) minmax(0, 1fr);
-  gap: var(--space-3);
+  grid-template-columns: minmax(290px, 26%) minmax(0, 1fr);
+  gap: var(--space-4);
   align-items: start;
 }
 
@@ -126,17 +162,6 @@
 .radioreference-directory-list {
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.radioreference-directory-scope {
-  display: grid;
-  gap: 2px;
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--line);
-}
-
-.radioreference-directory-scope small {
-  line-height: 1.4;
 }
 
 .radioreference-directory-group {
@@ -203,6 +228,11 @@
   border-bottom: 1px solid var(--line);
 }
 
+.radioreference-directory-item.is-active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 var(--accent);
+}
+
 .radioreference-result-open {
   min-width: 0;
   width: 100%;
@@ -234,7 +264,7 @@
 
 .radioreference-detail-header {
   flex: none;
-  padding: var(--space-3);
+  padding: var(--space-4);
   background: var(--section-header);
   border-bottom: 1px solid var(--line);
 }
@@ -261,8 +291,8 @@
 .radioreference-system-tabs {
   flex: none;
   width: fit-content;
-  max-width: calc(100% - 24px);
-  margin: var(--space-2) var(--space-3);
+  max-width: calc(100% - 2 * var(--space-4));
+  margin: var(--space-3) var(--space-4) 0;
 }
 
 .radioreference-system-body {
@@ -271,8 +301,8 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: 0 0 var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
 }
 
 .radioreference-sites-toolbar,
@@ -281,7 +311,6 @@
   display: flex;
   align-items: end;
   gap: var(--space-3);
-  margin-inline: var(--space-3);
 }
 
 .radioreference-sites-toolbar > .admin-form-field:first-child {
@@ -299,6 +328,14 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+}
+
+.radioreference-sites-list > .ui-feedback-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .radioreference-sites-list > .table-wrap,
@@ -341,7 +378,6 @@
   display: grid;
   grid-template-columns: minmax(165px, .9fr) minmax(165px, .8fr) minmax(190px, 1.2fr);
   gap: var(--space-2);
-  margin-inline: var(--space-3);
 }
 
 .radioreference-import-all {
@@ -379,7 +415,6 @@
 
 .radioreference-talkgroup-actions {
   justify-content: flex-end;
-  margin-inline: var(--space-3);
 }
 
 .radioreference-talkgroup-actions[hidden] {
@@ -608,10 +643,8 @@
     padding: var(--space-3);
   }
 
-  .radioreference-sites-toolbar,
-  .radioreference-conventional-toolbar,
-  .radioreference-talkgroup-toolbar {
-    margin-inline: var(--space-2);
+  .radioreference-system-body {
+    padding: var(--space-3);
   }
 
   .radioreference-browse-fields,
@@ -659,7 +692,7 @@
   }
 
   .radioreference-system-tabs {
-    width: calc(100% - 24px);
+    width: calc(100% - 2 * var(--space-3));
     max-width: none;
     margin-inline: var(--space-3);
   }

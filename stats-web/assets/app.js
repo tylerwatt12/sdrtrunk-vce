@@ -12,7 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=5';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=6';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -19062,10 +19062,11 @@ async function renderAdminRadioReferenceSettings() {
   const loadingState = node('div', 'ui-feedback ui-feedback-loading',
     'Checking saved RadioReference sign-in…');
   loadingState.setAttribute('role', 'status');
-  const gate = node('div', 'radioreference-login-gate ui-surface');
+  const gate = node('div', 'radioreference-login-gate ui-surface editor-workspace');
   gate.hidden = true;
-  gate.append(node('h2', '', 'Connect to continue'),
-    node('p', 'muted', 'Sign in with a RadioReference Premium account to browse and import.'));
+  gate.append(node('span', 'radioreference-gate-eyebrow', 'RadioReference Premium'),
+    node('h2', '', 'Connect your account'),
+    node('p', 'muted', 'Sign in to browse systems, compare talkgroups, and import channels.'));
   const workspace = node('div', 'radioreference-connected-page');
   workspace.hidden = true;
   const workspaceHeader = node('div', 'radioreference-workspace-header');
@@ -19077,8 +19078,7 @@ async function renderAdminRadioReferenceSettings() {
   workspace.append(workspaceHeader);
   page.append(loadingState, gate, workspace);
   content.append(page);
-  const accountForm = node('form',
-    'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
+  const accountForm = node('form', 'admin-form radioreference-account-form editor-workspace');
   const userName = node('input', 'ui-input');
   userName.name = 'radioreference-username';
   userName.autocomplete = 'username';
@@ -19096,6 +19096,12 @@ async function renderAdminRadioReferenceSettings() {
   const remember = rememberSetting.input;
   const accountMessage = node('div', 'admin-form-message');
   accountMessage.setAttribute('role', 'status');
+  const setAccountMessage = (message, isError = false) => {
+    accountMessage.textContent = message;
+    accountMessage.classList.toggle('ui-notice', isError);
+    accountMessage.classList.toggle('ui-notice-danger', isError);
+    accountMessage.setAttribute('role', isError ? 'alert' : 'status');
+  };
   const connect = node('button', 'ui-button ui-button-primary', 'Connect RadioReference');
   connect.type = 'submit';
   const signOut = node('button', 'ui-button ui-button-danger', 'Log out and clear saved credentials');
@@ -19104,10 +19110,7 @@ async function renderAdminRadioReferenceSettings() {
   signOut.hidden = true;
   const accountActions = node('div', 'admin-form-actions');
   accountActions.append(signOut, connect);
-  accountForm.append(node('h3', 'admin-settings-form-title', 'Account'),
-    node('p', 'settings-card-description', 'Connect the receiver with a current RadioReference Premium account.'),
-    formField('Username', userName), formField('Password', password,
-    'A current Premium subscription is required. The password is never returned to the browser.'),
+  accountForm.append(formField('Username', userName), formField('Password', password),
     rememberSetting.control, accountMessage, accountActions);
 
   const regionForm = node('form',
@@ -19161,7 +19164,9 @@ async function renderAdminRadioReferenceSettings() {
     configuration = next || configuration || {};
     const account = configuration?.account || {};
     const connected = account.state === 'VALID_PREMIUM';
-    accountMessage.textContent = radioReferenceAccountMessage(account);
+    setAccountMessage(account.state === 'SIGNED_OUT' ? '' : radioReferenceAccountMessage(account),
+      ['EXPIRED_PREMIUM', 'INVALID_CREDENTIALS', 'SECURE_TRANSPORT_REQUIRED', 'UNAVAILABLE']
+        .includes(account.state));
     if (initializeUserName || !userName.value) {
       userName.value = account.user_name || configuration?.stored_user_name || '';
     }
@@ -19211,7 +19216,7 @@ async function renderAdminRadioReferenceSettings() {
     if (!accountForm.reportValidity() || connect.disabled) return;
     connect.disabled = true;
     signOut.disabled = true;
-    accountMessage.textContent = 'Connecting to RadioReference…';
+    setAccountMessage('Connecting to RadioReference…');
     try {
       const next = await requestJson('/api/v1/admin/radioreference/session', {
         method: 'PUT', body: { userName: userName.value, password: password.value, remember: remember.checked },
@@ -19222,11 +19227,15 @@ async function renderAdminRadioReferenceSettings() {
       settingsModal?.setDirty(false);
       if (updateAccount(next)) {
         importWorkspace.reload();
-        await loadRegions();
+        try {
+          await loadRegions();
+        } catch (error) {
+          regionMessage.textContent = `Lookup region could not be loaded: ${error.message}`;
+        }
       }
     } catch (error) {
       password.value = '';
-      accountMessage.textContent = error.message;
+      setAccountMessage(error.message, true);
     } finally {
       connect.disabled = false;
       signOut.disabled = configuration?.account?.state === 'SIGNED_OUT';
@@ -19237,7 +19246,7 @@ async function renderAdminRadioReferenceSettings() {
     if (signOut.disabled) return;
     signOut.disabled = true;
     connect.disabled = true;
-    accountMessage.textContent = 'Signing out of RadioReference…';
+    setAccountMessage('Signing out of RadioReference…');
     try {
       const next = await requestJson('/api/v1/admin/radioreference/session', { method: 'DELETE' });
       radioReferenceDetailCache.clear();
@@ -19252,7 +19261,7 @@ async function renderAdminRadioReferenceSettings() {
       replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
       regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
     } catch (error) {
-      accountMessage.textContent = error.message;
+      setAccountMessage(error.message, true);
     } finally {
       connect.disabled = false;
       signOut.disabled = configuration?.account?.state !== 'VALID_PREMIUM';
@@ -19289,9 +19298,15 @@ async function renderAdminRadioReferenceSettings() {
 
   try {
     const initial = await requestJson('/api/v1/admin/radioreference', { csrf: false });
-    if (updateAccount(initial, true)) await loadRegions();
+    if (updateAccount(initial, true)) {
+      try {
+        await loadRegions();
+      } catch (error) {
+        regionMessage.textContent = `Lookup region could not be loaded: ${error.message}`;
+      }
+    }
   } catch (error) {
-    accountMessage.textContent = error.message;
+    setAccountMessage(error.message, true);
     loadingState.hidden = true;
     gate.hidden = false;
     gate.append(accountForm);

@@ -631,7 +631,29 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const renderSites = async (system, target, systemDocument) => {
-    target.replaceChildren(feedback('Loading RadioReference sites…', 'loading'));
+    const toolbar = node('div', 'radioreference-sites-toolbar ui-catalog-toolbar');
+    const searchFrame = node('label', 'ui-search');
+    searchFrame.append(iconGlyph('icon-search'));
+    const search = input('search');
+    search.placeholder = 'Filter site or channel name';
+    search.setAttribute('aria-label', search.placeholder);
+    search.value = state.siteSearch;
+    search.disabled = true;
+    searchFrame.append(search);
+    const sort = select();
+    [['number', 'Site number'], ['alphabetical', 'Alphabetical']].forEach(([value, label]) => {
+      const option = node('option', '', label);
+      option.value = value;
+      sort.append(option);
+    });
+    sort.value = state.siteSort;
+    sort.disabled = true;
+    const count = node('span', 'muted', 'Loading sites…');
+    toolbar.append(formField('Search sites & channels', searchFrame),
+      formField('Sort sites', selectFrame(sort)), count);
+    const list = node('div', 'radioreference-sites-list');
+    list.append(feedback('Loading sites for this system. Large systems may take a minute.', 'loading'));
+    target.replaceChildren(toolbar, list);
     try {
       const id = systemId(system);
       if (!state.siteCatalogs.has(id)) {
@@ -650,29 +672,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           ].join(' ').toLowerCase()
         })));
       }
-      if (state.activeSystemId !== id || target.dataset.rrTab !== 'sites') return;
+      if (state.activeSystemId !== id || target.dataset.rrTab !== 'sites' ||
+          target.firstElementChild !== toolbar) return;
       const catalog = state.siteCatalogs.get(id);
       const systemDetails = systemDocument?.system || systemDocument || system;
-      const toolbar = node('div', 'radioreference-sites-toolbar ui-catalog-toolbar');
-      const searchFrame = node('label', 'ui-search');
-      searchFrame.append(iconGlyph('icon-search'));
-      const search = input('search');
-      search.placeholder = 'Filter site or channel name';
-      search.setAttribute('aria-label', search.placeholder);
-      search.value = state.siteSearch;
-      searchFrame.append(search);
-      const sort = select();
-      [['number', 'Site number'], ['alphabetical', 'Alphabetical']].forEach(([value, label]) => {
-        const option = node('option', '', label);
-        option.value = value;
-        sort.append(option);
-      });
-      sort.value = state.siteSort;
-      const count = node('span', 'muted');
-      toolbar.append(formField('Search sites & channels', searchFrame),
-        formField('Sort sites', selectFrame(sort)), count);
-      const list = node('div', 'radioreference-sites-list');
-      target.replaceChildren(toolbar, list);
+      search.disabled = false;
+      sort.disabled = false;
       let offset = 0;
       const draw = () => {
         const term = search.value.trim().toLowerCase();
@@ -719,7 +724,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       sort.addEventListener('change', () => { state.siteSort = sort.value; offset = 0; draw(); });
       draw();
     } catch (error) {
-      target.replaceChildren(feedback(error.message, 'error'));
+      if (state.activeSystemId === systemId(system) && target.dataset.rrTab === 'sites' &&
+          target.firstElementChild === toolbar) {
+        count.textContent = 'Sites unavailable';
+        const notice = feedback(error.message, 'error');
+        const retry = button('Retry sites');
+        retry.addEventListener('click', () => void renderSites(system, target, systemDocument));
+        notice.append(retry);
+        list.replaceChildren(notice);
+      }
     }
   };
 
@@ -1221,14 +1234,23 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       entry.breadcrumb = trail;
       const item = node('div', 'radioreference-directory-item');
       const open = button('', 'link-button ui-row-action radioreference-result-open');
+      open.setAttribute('aria-pressed', 'false');
       const identity = node('span', 'radioreference-row-identity');
       identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
       const secondary = textValue(entry, ['secondary', 'location', 'description']);
       if (secondary) identity.append(node('small', 'muted', secondary));
       open.append(identity, uiPill(entryKind(entry) === 'TRUNKED_SYSTEM' ? 'Trunked' : 'Conventional',
         entryKind(entry) === 'TRUNKED_SYSTEM' ? 'blue' : 'neutral'));
-      open.addEventListener('click', () => entryKind(entry) === 'TRUNKED_SYSTEM' ?
-        renderSystem(entry, detailHost) : renderConventional(entry, detailHost));
+      open.addEventListener('click', () => {
+        listHost.querySelectorAll('.radioreference-directory-item.is-active').forEach((value) => {
+          value.classList.remove('is-active');
+          value.querySelector('.radioreference-result-open')?.setAttribute('aria-pressed', 'false');
+        });
+        item.classList.add('is-active');
+        open.setAttribute('aria-pressed', 'true');
+        if (entryKind(entry) === 'TRUNKED_SYSTEM') void renderSystem(entry, detailHost);
+        else void renderConventional(entry, detailHost);
+      });
       item.append(open, starButton(bookmarkForEntry(entry), () => state.onBookmarksChanged?.()));
       return item;
     };
@@ -1267,10 +1289,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       location.region || 'Statewide', !countywide.length));
     if (national.length) tree.append(branch('National', national, 'National',
       !countywide.length && !statewide.length));
-    const scope = node('div', 'radioreference-directory-scope');
-    scope.append(node('strong', '', location.county || location.region || location.country || 'Results'),
-      node('small', 'muted', 'Results are grouped by coverage area. Select one to review it.'));
-    listHost.replaceChildren(scope, tree);
+    listHost.replaceChildren(tree);
   };
 
   const buildBrowser = async () => {
@@ -1316,6 +1335,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         }
         const item = node('div', 'radioreference-directory-item');
         const open = button('', 'link-button ui-row-action radioreference-result-open');
+        open.setAttribute('aria-pressed', 'false');
         const identity = node('span', 'radioreference-row-identity');
         const parentEntry = state.browseRows.find((entry) =>
           (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'CONVENTIONAL_AGENCY' ?
@@ -1334,6 +1354,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           `Import talkgroups to ${textValue(preferredList, ['name'], 'Alias List')}`));
         open.append(identity);
         open.addEventListener('click', () => {
+          listHost.querySelectorAll('.radioreference-directory-item.is-active').forEach((value) => {
+            value.classList.remove('is-active');
+            value.querySelector('.radioreference-result-open')?.setAttribute('aria-pressed', 'false');
+          });
+          item.classList.add('is-active');
+          open.setAttribute('aria-pressed', 'true');
           if (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY') {
             const system = {
               id: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.id : bookmark.parentId,
