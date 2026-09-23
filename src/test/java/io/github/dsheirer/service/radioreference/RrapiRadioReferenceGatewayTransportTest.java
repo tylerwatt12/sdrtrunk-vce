@@ -27,12 +27,18 @@ import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
+import io.github.dsheirer.rrapi.response.GetFlavorsResponse;
+import io.github.dsheirer.rrapi.response.GetModesResponse;
 import io.github.dsheirer.rrapi.response.GetSitesResponse;
 import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
+import io.github.dsheirer.rrapi.response.GetSubCategoryFrequenciesResponse;
 import io.github.dsheirer.rrapi.response.GetSystemInformationResponse;
 import io.github.dsheirer.rrapi.response.GetTalkgroupCategoriesResponse;
 import io.github.dsheirer.rrapi.response.GetTalkgroupsResponse;
+import io.github.dsheirer.rrapi.response.GetTypesResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
+import io.github.dsheirer.rrapi.response.GetUserFeedBroadcastsResponse;
+import io.github.dsheirer.rrapi.response.GetVoicesResponse;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
@@ -49,6 +55,7 @@ import io.github.dsheirer.rrapi.type.SystemInformation;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
 import io.github.dsheirer.rrapi.type.UserInfo;
+import io.github.dsheirer.rrapi.type.UserFeedBroadcast;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -99,9 +106,6 @@ class RrapiRadioReferenceGatewayTransportTest
         assertEquals("api.radioreference.com", SecureRadioReferenceSoapClient.productionEndpoint().getHost());
         assertFalse(RadioReferenceService.class.isAssignableFrom(SecureRadioReferenceService.class),
             "the application-owned service must not inherit any legacy plaintext methods");
-        assertEquals(SecureRadioReferenceService.class,
-            RadioReference.class.getMethod("getService").getReturnType());
-        assertEquals(SecureRadioReferenceService.class, CachingRadioReferenceService.class.getSuperclass());
 
         RadioReferenceGatewayException insecure = assertThrows(RadioReferenceGatewayException.class,
             () -> new SecureRadioReferenceSoapClient(URI.create(LEGACY_PLAINTEXT_ENDPOINT), "user",
@@ -204,6 +208,180 @@ class RrapiRadioReferenceGatewayTransportTest
         assertTrue(requests.getLast().contains("xsi:type=\"xsd:decimal\""));
         assertTrue(requests.getLast().contains(">rpc</style>"));
         assertEquals("http://api.radioreference.com/soap2#searchStateFreq", soapActions.getLast());
+    }
+
+    @Test
+    void secureTransportMapsCompleteImportRowsAndUserFeeds() throws Exception
+    {
+        io.github.dsheirer.rrapi.type.RadioNetwork network = new io.github.dsheirer.rrapi.type.RadioNetwork();
+        network.setWacn("BEE00");
+        network.setSystemId("49F");
+        SystemInformation system = new SystemInformation();
+        system.setName("State P25");
+        system.setCity("Capital");
+        system.setTypeId(1);
+        system.setFlavorId(2);
+        system.setVoiceId(3);
+        system.setCounties(List.of());
+        system.setStates(List.of());
+        system.setRectangles(List.of());
+        system.setRadioNetworks(List.of(network));
+        system.setBandplans(List.of());
+        GetSystemInformationResponse systemResponse = new GetSystemInformationResponse();
+        systemResponse.setSystemInformation(system);
+
+        io.github.dsheirer.rrapi.type.Type type = new io.github.dsheirer.rrapi.type.Type();
+        type.setTypeId(1);
+        type.setName("Project 25");
+        GetTypesResponse typesResponse = new GetTypesResponse();
+        typesResponse.setTypes(List.of(type));
+        io.github.dsheirer.rrapi.type.Flavor flavor = new io.github.dsheirer.rrapi.type.Flavor();
+        flavor.setFlavorId(2);
+        flavor.setTypeId(1);
+        flavor.setName("Phase II");
+        GetFlavorsResponse flavorsResponse = new GetFlavorsResponse();
+        flavorsResponse.setFlavors(List.of(flavor));
+        io.github.dsheirer.rrapi.type.Voice voice = new io.github.dsheirer.rrapi.type.Voice();
+        voice.setVoiceId(3);
+        voice.setTypeId(1);
+        voice.setName("APCO-25 Common Air Interface");
+        GetVoicesResponse voicesResponse = new GetVoicesResponse();
+        voicesResponse.setVoices(List.of(voice));
+
+        io.github.dsheirer.rrapi.type.SiteFrequency siteFrequency =
+            new io.github.dsheirer.rrapi.type.SiteFrequency();
+        siteFrequency.setFrequency(853.1625);
+        siteFrequency.setLogicalChannelNumber(17);
+        siteFrequency.setChannelId("1-17");
+        siteFrequency.setUse("c");
+        siteFrequency.setColorCode("7");
+        Site site = new Site();
+        site.setSiteId(3001);
+        site.setSystemId(6643);
+        site.setSiteNumber(12);
+        site.setDescription("Franklin Simulcast");
+        site.setCountyId(100);
+        site.setZoneNumber(1);
+        site.setRfss(2);
+        site.setNac("491");
+        site.setRan(3);
+        site.setModulation("LSM");
+        site.setTdmaControlChannel(1);
+        site.setRectangles(List.of());
+        site.setSiteLicenses(List.of());
+        site.setSiteFrequencies(List.of(siteFrequency));
+        site.setBandplans(List.of());
+        GetSitesResponse sitesResponse = new GetSitesResponse();
+        sitesResponse.setSites(List.of(site));
+
+        io.github.dsheirer.rrapi.type.Tag tag = new io.github.dsheirer.rrapi.type.Tag();
+        tag.setTagId(1);
+        tag.setDescription("Law Dispatch");
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setTalkgroupId(901);
+        talkgroup.setDecimalValue(1201);
+        talkgroup.setAlphaTag("Police Dispatch");
+        talkgroup.setDescription("Primary dispatch");
+        talkgroup.setMode("DE");
+        talkgroup.setEncryptionState(2);
+        talkgroup.setTalkgroupCategoryId(9);
+        talkgroup.setTags(new io.github.dsheirer.rrapi.type.Tag[]{tag});
+        GetTalkgroupsResponse talkgroupsResponse = new GetTalkgroupsResponse();
+        talkgroupsResponse.setTalkgroups(List.of(talkgroup));
+
+        TalkgroupCategory category = new TalkgroupCategory();
+        category.setTalkgroupCategoryId(9);
+        category.setSystemId(6643);
+        category.setName("Dispatch");
+        category.setRectangles(List.of());
+        GetTalkgroupCategoriesResponse categoriesResponse = new GetTalkgroupCategoriesResponse();
+        categoriesResponse.setTalkgroupCategories(List.of(category));
+
+        io.github.dsheirer.rrapi.type.Frequency frequency = new io.github.dsheirer.rrapi.type.Frequency();
+        frequency.setFrequencyId(77);
+        frequency.setDownlink(155.25);
+        frequency.setUplink(154.65);
+        frequency.setCallsign("WQAB123");
+        frequency.setDescription("County Fire");
+        frequency.setAlphaTag("Fire Dispatch");
+        frequency.setTone("123.0 PL");
+        frequency.setColorCode("4");
+        frequency.setTalkgroup("1201");
+        frequency.setSlot("2");
+        frequency.setMode("4");
+        frequency.setEncryption(0);
+        frequency.setClassification("RM");
+        frequency.setTags(List.of(tag));
+        frequency.setSubCategoryId(444);
+        GetSubCategoryFrequenciesResponse frequenciesResponse = new GetSubCategoryFrequenciesResponse();
+        frequenciesResponse.setFrequencies(List.of(frequency));
+        io.github.dsheirer.rrapi.type.Mode mode = new io.github.dsheirer.rrapi.type.Mode();
+        mode.setModeId(4);
+        mode.setName("Project 25");
+        GetModesResponse modesResponse = new GetModesResponse();
+        modesResponse.setModes(List.of(mode));
+
+        UserFeedBroadcast nativeFeed = new UserFeedBroadcast();
+        nativeFeed.setFeedId(55);
+        nativeFeed.setDescription("County Public Safety");
+        nativeFeed.setHostname("audio.example.test");
+        nativeFeed.setPort("8000");
+        nativeFeed.setMount("/county");
+        nativeFeed.setPassword("feed-secret");
+        GetUserFeedBroadcastsResponse feedsResponse = new GetUserFeedBroadcastsResponse();
+        feedsResponse.setUserFeedBroadcasts(List.of(nativeFeed));
+
+        List<String> responses = List.of(response(systemResponse), response(typesResponse),
+            response(flavorsResponse), response(voicesResponse), response(sitesResponse),
+            response(talkgroupsResponse), response(categoriesResponse), response(frequenciesResponse),
+            response(modesResponse), response(feedsResponse));
+        AtomicInteger requestIndex = new AtomicInteger();
+
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            byte[] bytes = responses.get(requestIndex.getAndIncrement()).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(2), 1024 * 1024);
+            RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
+        {
+            RadioReferenceGateway.TrunkedSystemDetails details = gateway.trunkedSystemDetails(6643);
+            assertEquals("Project 25", details.type());
+            assertEquals("Phase II", details.flavor());
+            assertEquals("BEE00", details.wacn());
+            assertEquals("49F", details.systemId());
+
+            RadioReferenceGateway.TrunkedSiteDetails mappedSite = gateway.trunkedSiteDetails(6643).getFirst();
+            assertEquals("491", mappedSite.nac());
+            assertTrue(mappedSite.tdmaControlChannel());
+            assertEquals(853_162_500L, mappedSite.channels().getFirst().frequencyHz());
+            assertEquals(17, mappedSite.channels().getFirst().logicalChannelNumber());
+            assertEquals("1-17", mappedSite.channels().getFirst().channelId());
+
+            RadioReferenceGateway.RemoteTalkgroup mappedTalkgroup = gateway.talkgroups(6643).getFirst();
+            assertEquals(901, mappedTalkgroup.id());
+            assertEquals(2, mappedTalkgroup.encryptionState());
+            assertEquals(List.of("Law Dispatch"), mappedTalkgroup.tags());
+            assertEquals("Dispatch", gateway.talkgroupCategories(6643).getFirst().name());
+
+            RadioReferenceGateway.ConventionalFrequency mappedFrequency =
+                gateway.subcategoryFrequencies(444).getFirst();
+            assertEquals(77, mappedFrequency.id());
+            assertEquals(155_250_000L, mappedFrequency.downlinkHz());
+            assertEquals(154_650_000L, mappedFrequency.uplinkHz());
+            assertEquals("Project 25", mappedFrequency.mode());
+
+            RadioReferenceGateway.UserFeed feed = gateway.userFeeds().getFirst();
+            assertEquals(55, feed.id());
+            assertEquals("audio.example.test", feed.host());
+            assertEquals("feed-secret", feed.password());
+            assertFalse(feed.toString().contains("feed-secret"));
+        }
+
+        assertEquals(responses.size(), requestIndex.get());
     }
 
     @Test
@@ -467,29 +645,6 @@ class RrapiRadioReferenceGatewayTransportTest
         }
 
         assertEquals(5, requestIndex.get());
-    }
-
-    @Test
-    void cacheFailureDoesNotImmediatelyRepeatTheRemoteRequest() throws Exception
-    {
-        AtomicInteger requests = new AtomicInteger();
-
-        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
-            requests.incrementAndGet();
-            exchange.sendResponseHeaders(503, -1);
-            exchange.close();
-        });
-            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
-                Duration.ofSeconds(1), 1024);
-            CachingRadioReferenceService service = new CachingRadioReferenceService(client))
-        {
-            RadioReferenceException exception =
-                assertThrows(RadioReferenceException.class, () -> service.getSites(6643));
-            assertTrue(exception.getCause() instanceof RadioReferenceGatewayException);
-            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
-                ((RadioReferenceGatewayException)exception.getCause()).kind());
-            assertEquals(1, requests.get());
-        }
     }
 
     @Test

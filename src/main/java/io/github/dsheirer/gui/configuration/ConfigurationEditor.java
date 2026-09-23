@@ -23,7 +23,6 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.ViewWebAliasRequest;
 import io.github.dsheirer.gui.ViewWebChannelRequest;
-import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceEditor;
 import io.github.dsheirer.gui.configuration.streaming.StreamingEditor;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
@@ -54,7 +53,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * Retained JavaFX streaming and radioreference.com import editor. Channel management is web-first.
+ * Retained JavaFX streaming editor. Channel and RadioReference management are web-first.
  */
 public class ConfigurationEditor extends BorderPane
 {
@@ -64,7 +63,6 @@ public class ConfigurationEditor extends BorderPane
     private UserPreferences mUserPreferences;
     private MenuBar mMenuBar;
     private TabPane mTabPane;
-    private Tab mRadioReferenceTab;
     private Tab mStreamingTab;
 
     /**
@@ -183,21 +181,10 @@ public class ConfigurationEditor extends BorderPane
         {
             mTabPane = new TabPane();
             mTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-            mTabPane.getTabs().addAll(getStreamingTab(), getRadioReferenceTab());
+            mTabPane.getTabs().add(getStreamingTab());
         }
 
         return mTabPane;
-    }
-
-    private Tab getRadioReferenceTab()
-    {
-        if(mRadioReferenceTab == null)
-        {
-            mRadioReferenceTab = new Tab("Radio Reference");
-            mRadioReferenceTab.setContent(new RadioReferenceEditor(mUserPreferences, mConfigurationManager));
-        }
-
-        return mRadioReferenceTab;
     }
 
     private Tab getStreamingTab()

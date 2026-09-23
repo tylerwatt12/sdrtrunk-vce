@@ -18,8 +18,10 @@ import java.time.format.DateTimeParseException;
 import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -235,6 +237,27 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public AccountStatus status()
     {
         return mAccountStatus;
+    }
+
+    /** Loads the authenticated user's Broadcastify feed assignments for stream configuration. */
+    public List<RadioReferenceGateway.UserFeed> userFeeds() throws RadioReferenceDirectoryException
+    {
+        List<RadioReferenceGateway.UserFeed> source = invokePremium(RadioReferenceGateway::userFeeds);
+        enforceImportBound(source == null ? 0 : source.size());
+        List<RadioReferenceGateway.UserFeed> feeds = new ArrayList<>();
+
+        if(source != null)
+        {
+            source.stream().filter(Objects::nonNull).filter(feed -> feed.id() > 0)
+                .map(feed -> new RadioReferenceGateway.UserFeed(feed.id(), text(feed.description()),
+                    text(feed.host()), text(feed.port()), text(feed.mount()),
+                    feed.password() == null ? "" : feed.password()))
+                .sorted(Comparator.comparing(RadioReferenceGateway.UserFeed::description,
+                    String.CASE_INSENSITIVE_ORDER).thenComparingInt(RadioReferenceGateway.UserFeed::id))
+                .forEach(feeds::add);
+        }
+
+        return List.copyOf(feeds);
     }
 
     public RuntimeStatus runtimeStatus()
@@ -531,6 +554,250 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return new FrequencyDetails(resolveMode(rawMode, modes),
             selectedCategory == null ? "" : selectedCategory.categoryName(),
             selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetail);
+    }
+
+    /** Loads one trunked-system description for a preview/import workflow. */
+    public RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+        RadioReferenceGateway.TrunkedSystemDetails details = invokePremium(
+            gateway -> gateway.trunkedSystemDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+
+        if(details == null || details.id() != systemId)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
+        }
+
+        return details;
+    }
+
+    /** Loads one stable, bounded page of complete sites for a selected trunked system. */
+    public BoundedPage<RadioReferenceGateway.TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+        validatePage(offset, limit);
+        List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremium(
+            gateway -> gateway.trunkedSiteDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+        enforceImportBound(source == null ? 0 : source.size());
+
+        if(source != null)
+        {
+            long channelCount = source.stream().filter(Objects::nonNull)
+                .mapToLong(site -> site.channels().size()).sum();
+
+            if(channelCount > MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                throw tooLarge();
+            }
+        }
+
+        List<RadioReferenceGateway.TrunkedSiteDetails> sites = source == null ? new ArrayList<>() :
+            source.stream().filter(Objects::nonNull).filter(site -> site.systemId() == systemId)
+                .sorted(Comparator.comparingInt(RadioReferenceGateway.TrunkedSiteDetails::number)
+                    .thenComparing(RadioReferenceGateway.TrunkedSiteDetails::name,
+                        String.CASE_INSENSITIVE_ORDER)
+                    .thenComparingInt(RadioReferenceGateway.TrunkedSiteDetails::id))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        enforceImportBound(sites.size());
+        return page(sites, offset, limit);
+    }
+
+    /** Loads a filtered, stable page from the complete talkgroup catalog for a selected system. */
+    public BoundedPage<RadioReferenceGateway.RemoteTalkgroup> talkgroups(int systemId, Integer categoryId,
+                                                                         String search, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+
+        if(categoryId != null && categoryId <= 0)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        String normalizedSearch = normalizedSearch(search);
+        validatePage(offset, limit);
+        List<RadioReferenceGateway.RemoteTalkgroup> source = loadTalkgroups(systemId);
+        List<RadioReferenceGateway.RemoteTalkgroup> talkgroups = new ArrayList<>();
+
+        source.stream().filter(talkgroup -> categoryId == null || talkgroup.categoryId() == categoryId)
+            .filter(talkgroup -> matches(normalizedSearch, talkgroup.alphaTag(), talkgroup.description(),
+                Integer.toString(talkgroup.value())))
+            .sorted(Comparator.comparingInt(RadioReferenceGateway.RemoteTalkgroup::value)
+                .thenComparingInt(RadioReferenceGateway.RemoteTalkgroup::id))
+            .forEach(talkgroups::add);
+        return page(talkgroups, offset, limit);
+    }
+
+    /** Loads the complete bounded catalog once for the explicit Import All operation. */
+    public List<RadioReferenceGateway.RemoteTalkgroup> allTalkgroups(int systemId)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+        return loadTalkgroups(systemId).stream()
+            .sorted(Comparator.comparingInt(RadioReferenceGateway.RemoteTalkgroup::value)
+                .thenComparingInt(RadioReferenceGateway.RemoteTalkgroup::id))
+            .toList();
+    }
+
+    /** Reloads selected IDs so an import never trusts browser-supplied talkgroup fields. */
+    public List<RadioReferenceGateway.RemoteTalkgroup> talkgroupsById(int systemId, Collection<Integer> talkgroupIds)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+        LinkedHashSet<Integer> selectedIds = validatedIds(talkgroupIds);
+        Map<Integer,RadioReferenceGateway.RemoteTalkgroup> indexed = new LinkedHashMap<>();
+
+        loadTalkgroups(systemId).stream().filter(talkgroup -> selectedIds.contains(talkgroup.id()))
+            .forEach(talkgroup -> indexed.putIfAbsent(talkgroup.id(), talkgroup));
+
+        if(indexed.size() != selectedIds.size())
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        return selectedIds.stream().map(indexed::get).toList();
+    }
+
+    /** Loads the bounded category catalog for a selected trunked system. */
+    public BoundedPage<RadioReferenceGateway.RemoteTalkgroupCategory> talkgroupCategories(int systemId,
+                                                                                           int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
+        validatePage(offset, limit);
+        List<RadioReferenceGateway.RemoteTalkgroupCategory> source = invokePremium(
+            gateway -> gateway.talkgroupCategories(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+        enforceImportBound(source == null ? 0 : source.size());
+        List<RadioReferenceGateway.RemoteTalkgroupCategory> categories = source == null ? new ArrayList<>() :
+            source.stream().filter(Objects::nonNull).filter(category -> category.systemId() == systemId)
+                .sorted(Comparator.comparing(RadioReferenceGateway.RemoteTalkgroupCategory::name,
+                    String.CASE_INSENSITIVE_ORDER)
+                    .thenComparingInt(RadioReferenceGateway.RemoteTalkgroupCategory::id))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        enforceImportBound(categories.size());
+        return page(categories, offset, limit);
+    }
+
+    /** Loads conventional frequency categories for one selected agency or county. */
+    public BoundedPage<RadioReferenceGateway.FrequencyCategory> conventionalCategories(
+        RadioReferenceGateway.DetailKind ownerKind, int ownerId, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(ownerId);
+        validatePage(offset, limit);
+
+        if(ownerKind != RadioReferenceGateway.DetailKind.AGENCY &&
+            ownerKind != RadioReferenceGateway.DetailKind.COUNTY)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        List<RadioReferenceGateway.FrequencyCategory> source = invokePremium(gateway ->
+            ownerKind == RadioReferenceGateway.DetailKind.AGENCY ? gateway.agencyFrequencyCategories(ownerId) :
+                gateway.countyFrequencyCategories(ownerId));
+        enforceImportBound(source == null ? 0 : source.size());
+        List<RadioReferenceGateway.FrequencyCategory> categories = source == null ? new ArrayList<>() :
+            source.stream().filter(Objects::nonNull)
+                .sorted(Comparator.comparing(RadioReferenceGateway.FrequencyCategory::categoryName,
+                    String.CASE_INSENSITIVE_ORDER)
+                    .thenComparing(RadioReferenceGateway.FrequencyCategory::subCategoryName,
+                        String.CASE_INSENSITIVE_ORDER)
+                    .thenComparingInt(RadioReferenceGateway.FrequencyCategory::subCategoryId))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        enforceImportBound(categories.size());
+        return page(categories, offset, limit);
+    }
+
+    /** Loads a filtered, stable page of conventional rows for one selected subcategory. */
+    public BoundedPage<RadioReferenceGateway.ConventionalFrequency> conventionalFrequencies(int subCategoryId,
+                                                                                             String search,
+                                                                                             int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(subCategoryId);
+        String normalizedSearch = normalizedSearch(search);
+        validatePage(offset, limit);
+        List<RadioReferenceGateway.ConventionalFrequency> source = loadConventionalFrequencies(subCategoryId);
+        List<RadioReferenceGateway.ConventionalFrequency> frequencies = new ArrayList<>();
+
+        source.stream().filter(frequency -> frequency.subCategoryId() == subCategoryId)
+            .filter(frequency -> matches(normalizedSearch, frequency.alphaTag(), frequency.description(),
+                frequency.callsign(), frequency.mode(), Long.toString(frequency.downlinkHz())))
+            .sorted(Comparator.comparingLong(RadioReferenceGateway.ConventionalFrequency::downlinkHz)
+                .thenComparingInt(RadioReferenceGateway.ConventionalFrequency::id))
+            .forEach(frequencies::add);
+        return page(frequencies, offset, limit);
+    }
+
+    /** Reloads selected conventional IDs so an import never trusts browser-supplied frequency fields. */
+    public List<RadioReferenceGateway.ConventionalFrequency> conventionalFrequenciesById(int subCategoryId,
+                                                                                          Collection<Integer> ids)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(subCategoryId);
+        LinkedHashSet<Integer> selectedIds = validatedIds(ids);
+        Map<Integer,RadioReferenceGateway.ConventionalFrequency> indexed = new LinkedHashMap<>();
+
+        loadConventionalFrequencies(subCategoryId).stream()
+            .filter(frequency -> frequency.subCategoryId() == subCategoryId)
+            .filter(frequency -> selectedIds.contains(frequency.id()))
+            .forEach(frequency -> indexed.putIfAbsent(frequency.id(), frequency));
+
+        if(indexed.size() != selectedIds.size())
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        return selectedIds.stream().map(indexed::get).toList();
+    }
+
+    private List<RadioReferenceGateway.RemoteTalkgroup> loadTalkgroups(int systemId)
+        throws RadioReferenceDirectoryException
+    {
+        List<RadioReferenceGateway.RemoteTalkgroup> source = invokePremium(gateway -> gateway.talkgroups(systemId),
+            DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+        enforceImportBound(source == null ? 0 : source.size());
+        return source == null ? List.of() : source.stream().filter(Objects::nonNull).toList();
+    }
+
+    private List<RadioReferenceGateway.ConventionalFrequency> loadConventionalFrequencies(int subCategoryId)
+        throws RadioReferenceDirectoryException
+    {
+        List<RadioReferenceGateway.ConventionalFrequency> source = invokePremium(
+            gateway -> gateway.subcategoryFrequencies(subCategoryId));
+        enforceImportBound(source == null ? 0 : source.size());
+        return source == null ? List.of() : source.stream().filter(Objects::nonNull).toList();
+    }
+
+    private static LinkedHashSet<Integer> validatedIds(Collection<Integer> ids)
+        throws RadioReferenceDirectoryException
+    {
+        if(ids == null || ids.isEmpty() || ids.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        LinkedHashSet<Integer> selectedIds = new LinkedHashSet<>();
+
+        for(Integer id: ids)
+        {
+            if(id == null || id <= 0 || !selectedIds.add(id))
+            {
+                throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+            }
+        }
+
+        return selectedIds;
+    }
+
+    private static void enforceImportBound(int size) throws RadioReferenceDirectoryException
+    {
+        if(size > MAXIMUM_REMOTE_ITEMS_SCANNED)
+        {
+            throw tooLarge();
+        }
     }
 
     private FrequencyDetailSnapshot frequencyDetailSnapshot(RadioReferenceGateway gateway, Integer systemId,

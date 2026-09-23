@@ -39,7 +39,9 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.service.radioreference.RadioReference;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
+import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
@@ -73,7 +75,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private ChannelProcessingManager mChannelProcessingManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
-    private RadioReference mRadioReference;
+    private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
+    private final RadioReferenceImportService mRadioReferenceImportService;
     private final ConfigurationRepository mConfigurationRepository;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ChannelAdministrationService mChannelAdministrationService;
@@ -83,6 +86,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
     private final AtomicLong mChannelConfigurationRevision = new AtomicLong();
     private final Object mHeadlessWebConfigurationLock = new Object();
+    private final Object mRadioReferenceLoginLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
     private volatile boolean mInitialized = false;
@@ -113,12 +117,13 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mAliasAdministrationService = new AliasAdministrationService(this);
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
-        mRadioReference = new RadioReference();
+        mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
 
         mChannelModel = new ChannelModel();
         mChannelProcessingManager = new ChannelProcessingManager(eventLogManager, mTunerManager, mAliasModel,
             mUserPreferences);
         mChannelAdministrationService = new ChannelAdministrationService(this);
+        mRadioReferenceImportService = new RadioReferenceImportService(mRadioReferenceDirectoryService, this);
 
         //Register the channel processing manager to receive global channel stop processing requests so that it can
         //respond to tuner shutdown (ie error) events
@@ -252,12 +257,51 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mIconModel;
     }
 
-    /**
-     * Radio Reference service interface
-     */
-    public RadioReference getRadioReference()
+    /** Shared web-first RadioReference account and directory boundary. */
+    public RadioReferenceDirectoryService getRadioReferenceDirectoryService()
     {
-        return mRadioReference;
+        return mRadioReferenceDirectoryService;
+    }
+
+    /** Shared web-first RadioReference preview and import boundary. */
+    public RadioReferenceImportService getRadioReferenceImportService()
+    {
+        return mRadioReferenceImportService;
+    }
+
+    /** Signs in from saved credentials for non-web consumers such as Broadcastify feed setup. */
+    public RadioReferenceDirectoryService.AccountStatus ensureStoredRadioReferenceSession()
+        throws RadioReferenceDirectoryException
+    {
+        if(!canRetryStoredRadioReferenceLogin())
+        {
+            return mRadioReferenceDirectoryService.status();
+        }
+
+        synchronized(mRadioReferenceLoginLock)
+        {
+            if(!canRetryStoredRadioReferenceLogin())
+            {
+                return mRadioReferenceDirectoryService.status();
+            }
+
+            String userName = mUserPreferences.getRadioReferencePreference().getUserName();
+            String password = mUserPreferences.getRadioReferencePreference().getPassword();
+
+            if(userName != null && !userName.isBlank() && password != null && !password.isEmpty())
+            {
+                return mRadioReferenceDirectoryService.login(userName, password.toCharArray());
+            }
+
+            return mRadioReferenceDirectoryService.status();
+        }
+    }
+
+    private boolean canRetryStoredRadioReferenceLogin()
+    {
+        RadioReferenceDirectoryService.AccountState state = mRadioReferenceDirectoryService.status().state();
+        return state == RadioReferenceDirectoryService.AccountState.SIGNED_OUT ||
+            state == RadioReferenceDirectoryService.AccountState.UNAVAILABLE;
     }
 
     /**

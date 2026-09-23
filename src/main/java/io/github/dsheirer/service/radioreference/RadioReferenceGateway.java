@@ -15,13 +15,17 @@ import java.util.List;
 /**
  * JavaFX-independent boundary around the RadioReference client library.
  *
- * <p>The snapshots are compact, immutable projections of directory and exact-frequency search data.
- * {@link DetailReference} carries the native object identity used to load bounded details for one frequency result
- * without changing the lookup contract.</p>
+ * <p>The snapshots are compact, immutable projections of directory, import, exact-frequency and assigned-feed data.
+ * {@link DetailReference} carries native identity without exposing the mutable upstream response models.</p>
  */
 public interface RadioReferenceGateway extends AutoCloseable
 {
     Account account() throws RadioReferenceGatewayException;
+
+    default List<UserFeed> userFeeds() throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
 
     List<Country> countries() throws RadioReferenceGatewayException;
 
@@ -54,11 +58,53 @@ public interface RadioReferenceGateway extends AutoCloseable
         return List.of();
     }
 
+    /** Loads the decoder-relevant description of one trunked system. */
+    default TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        return null;
+    }
+
+    /** Loads complete site and channel details used by the configuration importer. */
+    default List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    /** Loads the complete talkgroup catalog for one trunked system. */
+    default List<RemoteTalkgroup> talkgroups(int systemId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    /** Loads talkgroup category labels for one trunked system. */
+    default List<RemoteTalkgroupCategory> talkgroupCategories(int systemId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    /** Loads conventional frequency rows for one explicitly selected subcategory. */
+    default List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
+        throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
     @Override
     void close();
 
     record Account(String userName, String expiration)
     {
+    }
+
+    /** Broadcastify feed assigned to the authenticated RadioReference account. */
+    record UserFeed(int id, String description, String host, String port, String mount, String password)
+    {
+        @Override
+        public String toString()
+        {
+            return "UserFeed[id=" + id + ", description=" + description + ", host=" + host +
+                ", port=" + port + ", mount=" + mount + ", password=<redacted>]";
+        }
     }
 
     record Country(int id, String name, String code)
@@ -110,6 +156,50 @@ public interface RadioReferenceGateway extends AutoCloseable
 
     record FrequencyCategory(int subCategoryId, String categoryName, String subCategoryName)
     {
+    }
+
+    record TrunkedSystemDetails(int id, String name, String city, String type, String flavor, String voice,
+                                String wacn, String systemId)
+    {
+    }
+
+    record TrunkedSiteDetails(int id, int systemId, int number, String name, int countyId, int zoneNumber,
+                              int rfss, String nac, int ran, String modulation, boolean tdmaControlChannel,
+                              List<TrunkedSiteChannel> channels)
+    {
+        public TrunkedSiteDetails
+        {
+            channels = immutable(channels);
+        }
+    }
+
+    record TrunkedSiteChannel(long frequencyHz, int logicalChannelNumber, String channelId, String use,
+                              String colorCode, boolean primaryControl, boolean alternateControl)
+    {
+    }
+
+    record RemoteTalkgroup(int id, int value, String alphaTag, String description, String mode,
+                           int encryptionState, int categoryId, List<String> tags)
+    {
+        public RemoteTalkgroup
+        {
+            tags = immutable(tags);
+        }
+    }
+
+    record RemoteTalkgroupCategory(int id, int systemId, String name)
+    {
+    }
+
+    record ConventionalFrequency(int id, long downlinkHz, Long uplinkHz, String callsign, String description,
+                                 String alphaTag, String tone, String colorCode, String talkgroup, String slot,
+                                 String mode, int encryption, String classification, List<String> tags,
+                                 int subCategoryId)
+    {
+        public ConventionalFrequency
+        {
+            tags = immutable(tags);
+        }
     }
 
     record CountryDirectory(Country country, List<State> states, List<Agency> agencies)

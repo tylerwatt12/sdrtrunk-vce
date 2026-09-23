@@ -26,7 +26,9 @@ import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.ConfiguredBroadcast;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyFeedConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
-import io.github.dsheirer.rrapi.type.UserFeedBroadcast;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountState;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountStatus;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.UserFeed;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -83,7 +85,7 @@ public class StreamingEditor extends SplitPane
     private AbstractBroadcastEditor<?> mCurrentEditor;
     private final UnknownStreamEditor mUnknownEditor;
     private Map<BroadcastServerType, AbstractBroadcastEditor<?>> mEditorMap = new EnumMap<>(BroadcastServerType.class);
-    private final List<UserFeedBroadcast> mBroadcastifyFeeds = new ArrayList<>();
+    private final List<UserFeed> mBroadcastifyFeeds = new ArrayList<>();
     private ScrollPane mEditorScrollPane;
     private StreamAliasSelectionEditor mStreamAliasSelectionEditor;
     private final StreamConfigurationEditorModificationListener mStreamConfigurationEditorModificationListener =
@@ -97,8 +99,6 @@ public class StreamingEditor extends SplitPane
     {
         mConfigurationManager = configurationManager;
         mUnknownEditor = new UnknownStreamEditor(mConfigurationManager);
-        mConfigurationManager.getRadioReference().availableProperty()
-            .addListener((observable, oldValue, newValue) -> refreshBroadcastifyStreams());
         refreshBroadcastifyStreams();
 
         VBox buttonsBox = new VBox();
@@ -230,21 +230,41 @@ public class StreamingEditor extends SplitPane
      */
     private void refreshBroadcastifyStreams()
     {
-        if(mConfigurationManager.getRadioReference().availableProperty().get())
-        {
-            ThreadPool.CACHED.submit(() -> {
-                try
+        getRadioReferenceLoginLabel().setText("Loading Broadcastify feeds…");
+        getRadioReferenceLoginLabel().setVisible(true);
+        ThreadPool.CACHED.submit(() -> {
+            List<UserFeed> feeds = List.of();
+            String statusText = null;
+
+            try
+            {
+                AccountStatus status = mConfigurationManager.ensureStoredRadioReferenceSession();
+
+                if(status.state() == AccountState.VALID_PREMIUM)
                 {
-                    List<UserFeedBroadcast> feeds = mConfigurationManager.getRadioReference().getService().getUserFeeds();
-                    mBroadcastifyFeeds.clear();
-                    mBroadcastifyFeeds.addAll(feeds);
+                    feeds = mConfigurationManager.getRadioReferenceDirectoryService().userFeeds();
                 }
-                catch(Throwable t)
+                else
                 {
-                    mLog.error("Unable to refresh broadcastify stream configuration(s)");
+                    statusText = "Sign in to RadioReference in the web interface to load Broadcastify feeds.";
                 }
+            }
+            catch(Throwable throwable)
+            {
+                mLog.error("Unable to refresh Broadcastify stream configurations", throwable);
+                statusText = "Broadcastify feeds are temporarily unavailable. Use Refresh to try again.";
+            }
+
+            List<UserFeed> refreshed = List.copyOf(feeds);
+            String message = statusText;
+            Platform.runLater(() -> {
+                mBroadcastifyFeeds.clear();
+                mBroadcastifyFeeds.addAll(refreshed);
+                getRadioReferenceLoginLabel().setText(message != null ? message :
+                    refreshed.isEmpty() ? "No Broadcastify feeds are assigned to this account." : "");
+                getRadioReferenceLoginLabel().setVisible(message != null || refreshed.isEmpty());
             });
-        }
+        });
     }
 
     private StreamAliasSelectionEditor getStreamAliasSelectionEditor()
@@ -261,8 +281,7 @@ public class StreamingEditor extends SplitPane
     {
         if(mRadioReferenceLoginLabel == null)
         {
-            mRadioReferenceLoginLabel = new Label("Note: use Radio Reference tab to login and access Broadcastify stream configuration(s)");
-            mRadioReferenceLoginLabel.visibleProperty().bind(mConfigurationManager.getRadioReference().availableProperty().not());
+            mRadioReferenceLoginLabel = new Label();
         }
 
         return mRadioReferenceLoginLabel;
@@ -322,11 +341,11 @@ public class StreamingEditor extends SplitPane
             mNewButton.setOnShowing(event -> {
                 mNewButton.getItems().clear();
 
-                for(UserFeedBroadcast feed: mBroadcastifyFeeds)
+                for(UserFeed feed: mBroadcastifyFeeds)
                 {
                     //Only show a menu item for the feed if it's not already defined
                     if(mConfigurationManager.getBroadcastModel()
-                        .getBroadcastConfigurationByName(feed.getDescription()) == null)
+                        .getBroadcastConfigurationByName(feed.description()) == null)
                     {
                         mNewButton.getItems().add(new CreateBroadcastifyMenuItem(feed));
                     }
@@ -471,14 +490,14 @@ public class StreamingEditor extends SplitPane
      */
     public class CreateBroadcastifyMenuItem extends MenuItem
     {
-        private UserFeedBroadcast mUserFeedBroadcast;
+        private UserFeed mUserFeed;
 
-        public CreateBroadcastifyMenuItem(UserFeedBroadcast userFeedBroadcast)
+        public CreateBroadcastifyMenuItem(UserFeed userFeed)
         {
-            mUserFeedBroadcast = userFeedBroadcast;
-            setText("Broadcastify Feed: " + mUserFeedBroadcast.getDescription());
+            mUserFeed = userFeed;
+            setText("Broadcastify Feed: " + mUserFeed.description());
             setOnAction(event -> {
-                BroadcastConfiguration configuration = BroadcastifyFeedConfiguration.from(mUserFeedBroadcast);
+                BroadcastConfiguration configuration = BroadcastifyFeedConfiguration.from(mUserFeed);
 
                 if(configuration != null)
                 {

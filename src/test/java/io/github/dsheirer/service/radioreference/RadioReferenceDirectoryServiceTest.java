@@ -44,6 +44,13 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.SiteChann
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.State;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.StateDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystem;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystemDetails;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSiteDetails;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSiteChannel;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.RemoteTalkgroup;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.RemoteTalkgroupCategory;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.ConventionalFrequency;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.UserFeed;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -62,6 +69,82 @@ class RadioReferenceDirectoryServiceTest
 {
     private static final Clock CLOCK =
         Clock.fixed(Instant.parse("2026-07-24T12:00:00Z"), ZoneOffset.UTC);
+
+    @Test
+    void loadsBoundedAuthoritativeImportDataAndUserFeeds() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.systemDetails = new TrunkedSystemDetails(2001, "State P25", "Capital", "Project 25",
+            "Phase II", "APCO-25 Common Air Interface", "BEE00", "49F");
+        gateway.siteDetails = List.of(new TrunkedSiteDetails(3001, 2001, 12, "Franklin Simulcast", 100,
+            1, 2, "491", 3, "LSM", true,
+            List.of(new TrunkedSiteChannel(853_162_500L, 17, "1-17", "c", "7", true, false))));
+        gateway.remoteCategories = List.of(new RemoteTalkgroupCategory(9, 2001, "Dispatch"));
+        gateway.remoteTalkgroups = List.of(
+            new RemoteTalkgroup(101, 200, "Fire", "Fire dispatch", "DE", 2, 9,
+                List.of("Fire Dispatch")),
+            new RemoteTalkgroup(100, 100, "Police", "Police dispatch", "D", 0, 9,
+                List.of("Law Dispatch")));
+        gateway.conventional = List.of(new ConventionalFrequency(77, 155_250_000L, 154_650_000L, "WQAB123",
+            "County Fire", "Fire", "123.0 PL", "4", "1201", "2", "FMN", 0, "RM",
+            List.of("Fire Dispatch"), 444));
+        gateway.userFeeds = List.of(new UserFeed(5, " County Public Safety ", " audio.example.test ", "8000",
+            " /county ", " feed-secret "));
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+
+            assertEquals("49F", service.trunkedSystemDetails(2001).systemId());
+            TrunkedSiteDetails site = service.trunkedSites(2001, 0, 10).items().getFirst();
+            assertEquals("491", site.nac());
+            assertTrue(site.tdmaControlChannel());
+            assertEquals("1-17", site.channels().getFirst().channelId());
+            assertEquals(17, site.channels().getFirst().logicalChannelNumber());
+
+            assertEquals(List.of(100, 200), service.talkgroups(2001, 9, "dispatch", 0, 10).items().stream()
+                .map(RemoteTalkgroup::value).toList());
+            assertEquals(List.of(100, 101), service.allTalkgroups(2001).stream()
+                .map(RemoteTalkgroup::id).toList());
+            assertEquals(List.of(101, 100), service.talkgroupsById(2001, List.of(101, 100)).stream()
+                .map(RemoteTalkgroup::id).toList());
+            assertEquals(Code.INVALID_REQUEST, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.talkgroupsById(2001, List.of(999))).code());
+            assertEquals("Dispatch", service.talkgroupCategories(2001, 0, 10).items().getFirst().name());
+
+            assertEquals("Public Safety", service.conventionalCategories(DetailKind.AGENCY, 1001, 0, 10)
+                .items().getFirst().categoryName());
+            ConventionalFrequency frequency = service.conventionalFrequencies(444, "fire", 0, 10)
+                .items().getFirst();
+            assertEquals(154_650_000L, frequency.uplinkHz());
+            assertEquals("FMN", frequency.mode());
+            assertEquals(List.of(77), service.conventionalFrequenciesById(444, List.of(77)).stream()
+                .map(ConventionalFrequency::id).toList());
+            assertEquals(Code.INVALID_REQUEST, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.conventionalFrequenciesById(444, List.of(999))).code());
+
+            UserFeed feed = service.userFeeds().getFirst();
+            assertEquals("County Public Safety", feed.description());
+            assertEquals("audio.example.test", feed.host());
+            assertEquals(" feed-secret ", feed.password());
+            assertFalse(feed.toString().contains("feed-secret"));
+        }
+    }
+
+    @Test
+    void rejectsOversizedImportCatalogs() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.remoteTalkgroups = java.util.Collections.nCopies(10_001,
+            new RemoteTalkgroup(1, 100, "Dispatch", "", "D", 0, 1, List.of()));
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            assertEquals(Code.RESULT_SET_TOO_LARGE, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.allTalkgroups(2001)).code());
+        }
+    }
 
     @Test
     void authenticatesReportsStatusLogsOutAndClearsPasswords() throws Exception
@@ -680,6 +763,12 @@ class RadioReferenceDirectoryServiceTest
             List.of(new SiteChannel(853.1625, "c", true, false))));
         private List<FrequencyCategory> categories =
             List.of(new FrequencyCategory(444, "Public Safety", "County Dispatch"));
+        private TrunkedSystemDetails systemDetails;
+        private List<TrunkedSiteDetails> siteDetails = List.of();
+        private List<RemoteTalkgroup> remoteTalkgroups = List.of();
+        private List<RemoteTalkgroupCategory> remoteCategories = List.of();
+        private List<ConventionalFrequency> conventional = List.of();
+        private List<UserFeed> userFeeds = List.of();
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
@@ -700,6 +789,12 @@ class RadioReferenceDirectoryServiceTest
             }
 
             return account;
+        }
+
+        @Override
+        public List<UserFeed> userFeeds()
+        {
+            return userFeeds;
         }
 
         @Override
@@ -783,6 +878,43 @@ class RadioReferenceDirectoryServiceTest
         {
             categoryCalls.incrementAndGet();
             return categories;
+        }
+
+        @Override
+        public List<FrequencyCategory> countyFrequencyCategories(int countyId)
+        {
+            categoryCalls.incrementAndGet();
+            return categories;
+        }
+
+        @Override
+        public TrunkedSystemDetails trunkedSystemDetails(int systemId)
+        {
+            return systemDetails;
+        }
+
+        @Override
+        public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId)
+        {
+            return siteDetails;
+        }
+
+        @Override
+        public List<RemoteTalkgroup> talkgroups(int systemId)
+        {
+            return remoteTalkgroups;
+        }
+
+        @Override
+        public List<RemoteTalkgroupCategory> talkgroupCategories(int systemId)
+        {
+            return remoteCategories;
+        }
+
+        @Override
+        public List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
+        {
+            return conventional;
         }
 
         @Override

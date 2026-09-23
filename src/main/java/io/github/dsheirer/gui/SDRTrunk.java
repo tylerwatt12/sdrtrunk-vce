@@ -259,7 +259,9 @@ public class SDRTrunk
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mReceiverActivityService,
             mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
-            mConfigurationManager.getScanListModel(), mConfigurationManager.getChannelAdministrationService());
+            mConfigurationManager.getScanListModel(), mConfigurationManager.getChannelAdministrationService(),
+            mConfigurationManager.getRadioReferenceDirectoryService(),
+            mConfigurationManager.getRadioReferenceImportService());
 
         if(!GraphicsEnvironment.isHeadless() && !mStatsWebServerService.getRuntimeState().running())
         {

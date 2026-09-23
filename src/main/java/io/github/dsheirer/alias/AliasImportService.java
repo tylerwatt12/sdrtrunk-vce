@@ -17,7 +17,7 @@ public final class AliasImportService
                         List<String> scanLists, List<String> streams, String sourceAliasList) {}
     public record Defaults(Boolean recordable, List<String> scanLists, List<String> streams) {}
     public record Change(String field, String before, String after) {}
-    public record Row(int row, String result, String name, List<Change> changes, String error) {}
+    public record Row(int row, Long aliasId, String result, String name, List<Change> changes, String error) {}
     public record Preview(long revision, String list, String sourceList, Mode mode, Map<String,Long> counts,
                           List<Row> rows) {}
     public static final class Plan
@@ -121,7 +121,8 @@ public final class AliasImportService
                     !Objects.equals(before.get(entry.getKey()), entry.getValue()))
                     .map(entry -> new Change(entry.getKey(), before.getOrDefault(entry.getKey(), ""), entry.getValue())).toList();
                 String result = old == null ? "added" : changes.isEmpty() ? "unchanged" : "updated";
-                rows.add(new Row(index, result, alias.getName(), changes, null));
+                rows.add(new Row(index, old != null ? old.alias().getId() : null, result, alias.getName(), changes,
+                    null));
                 if(old != null)
                 {
                     matchedExisting.add(old.alias().getId());
@@ -131,8 +132,9 @@ public final class AliasImportService
             }
             catch(IllegalArgumentException exception)
             {
-                rows.add(new Row(index, "error", input == null || input.alias() == null ? "" : input.alias().getName(),
-                    List.of(), exception.getMessage()));
+                rows.add(new Row(index, null, "error",
+                    input == null || input.alias() == null ? "" : input.alias().getName(), List.of(),
+                    exception.getMessage()));
             }
         }
         if(mode == Mode.REPLACE)
@@ -142,7 +144,8 @@ public final class AliasImportService
                 if(!retained.contains(entry.alias().getId()))
                 {
                     deletions.add(entry.alias().getId());
-                    rows.add(new Row(0, "deleted", entry.alias().getName(), fields(entry.alias(), entry.scanListIds(), options)
+                    rows.add(new Row(0, entry.alias().getId(), "deleted", entry.alias().getName(),
+                        fields(entry.alias(), entry.scanListIds(), options)
                         .entrySet().stream().filter(value -> !value.getKey().equals("format_version"))
                         .map(value -> new Change(value.getKey(), value.getValue(), "")).toList(), null));
                 }

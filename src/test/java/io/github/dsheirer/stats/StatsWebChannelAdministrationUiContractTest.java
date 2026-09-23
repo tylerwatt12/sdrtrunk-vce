@@ -61,15 +61,15 @@ class StatsWebChannelAdministrationUiContractTest
     }
 
     @Test
-    void desktopChannelAndSquelchEditorsAreRemoved() throws Exception
+    void desktopChannelRadioReferenceAndSquelchEditorsAreRemoved() throws Exception
     {
         Path javaEditors = Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel");
+        Path radioReferenceEditors =
+            Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference");
         String windowManager = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/gui/JavaFxWindowManager.java"));
-        String frequencyEditor = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference/FrequencyEditor.java"));
-        String siteEditor = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference/SiteEditor.java"));
+        String configurationEditor = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java"));
 
         if(Files.exists(javaEditors))
         {
@@ -78,10 +78,17 @@ class StatsWebChannelAdministrationUiContractTest
                 assertFalse(files.anyMatch(path -> path.toString().endsWith(".java")));
             }
         }
+        if(Files.exists(radioReferenceEditors))
+        {
+            try(var files = Files.list(radioReferenceEditors))
+            {
+                assertFalse(files.anyMatch(path -> path.toString().endsWith(".java")));
+            }
+        }
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java")));
         assertFalse(windowManager.contains("ViewChannelRequest"));
         assertTrue(windowManager.contains("process(ViewWebChannelRequest request)"));
-        assertTrue(frequencyEditor.contains("new ViewWebChannelRequest(channel.getConfigurationId())"));
-        assertTrue(siteEditor.contains("new ViewWebChannelRequest(channel.getConfigurationId())"));
+        assertFalse(configurationEditor.contains("RadioReferenceEditor"));
+        assertFalse(configurationEditor.contains("Radio Reference"));
     }
 }

@@ -322,8 +322,21 @@ Wire enum values are explicit and case-sensitive:
   `tone_sequence`, `dcs`, and `esn`.
 - Alias matcher protocols are `am`, `p25`, `dmr`, `nxdn`, `nbfm`, `fleetsync`, and `mdc1200`.
 
-The browser API does not import RadioReference systems, sites, talkgroups, or conventional channels. Use the desktop
-Configuration Editor for those workflows.
+RadioReference account setup, directory browsing, and imports are web-first under
+`/api/v1/admin/radioreference`. Directory reads include countries, states, counties, browse results, trunked-system
+details and sites, talkgroups, and conventional categories and frequencies. Channel and talkgroup mutations use a
+two-step contract:
+
+- `POST /api/v1/admin/radioreference/imports/site/preview`
+- `POST /api/v1/admin/radioreference/imports/conventional/preview`
+- `POST /api/v1/admin/radioreference/imports/talkgroups/preview`
+- `POST /api/v1/admin/radioreference/imports/{preview_id}/apply`
+
+Apply consumes the exact server-held preview. Site imports create one channel with the chosen control, alternate,
+selected, or complete frequency set. Conventional imports create one channel at a time. A matching saved channel is
+refreshed only when system, site, channel name, and protocol all match; only its RadioReference source frequencies are
+replaced, while decoder and local recording settings remain unchanged. Talkgroup updates replace RadioReference-owned
+name, description, and group fields while preserving local Alias behavior.
 
 For a listener-facing explanation of browser playback, see
 [How Browser Listening and Scan Lists Work](browser-listening-and-scan-lists.md).

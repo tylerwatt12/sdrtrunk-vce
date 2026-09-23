@@ -20,13 +20,20 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Country;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountryDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.County;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountyDirectory;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.ConventionalFrequency;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyCategory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyResult;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Mode;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.RemoteTalkgroup;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.RemoteTalkgroupCategory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Site;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.SiteChannel;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.State;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.StateDirectory;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSiteChannel;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSiteDetails;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystem;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystemDetails;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -82,9 +89,11 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/states?country_id=1").GET())).at("/items/0/name").textValue());
 
                 HttpResponse<String> location = send(client, jsonRequest(origin, "/location")
-                    .PUT(HttpRequest.BodyPublishers.ofString("{\"country_id\":1,\"state_id\":10}")));
+                    .PUT(HttpRequest.BodyPublishers.ofString(
+                        "{\"country_id\":1,\"state_id\":10,\"county_id\":100}")));
                 assertEquals(1, data(location).at("/country_id").intValue());
                 assertEquals(10, settings.stateId);
+                assertEquals(100, settings.countyId);
 
                 JsonNode matches = data(send(client,
                     request(origin, "/frequencies?state_id=10&frequency_hz=853162500").GET()));
@@ -109,17 +118,28 @@ class RadioReferenceHttpControllerTest
                 assertEquals("https://www.radioreference.com/db/site/3001",
                     details.at("/site/radio_reference_url").textValue());
 
+                assertEquals("Franklin", data(send(client,
+                    request(origin, "/counties?state_id=10").GET())).at("/items/0/name").textValue());
+                assertEquals("State P25", data(send(client,
+                    request(origin, "/browse?country_id=1&state_id=10").GET())).at("/items/0/name").textValue());
+                assertEquals("Project 25", data(send(client,
+                    request(origin, "/systems/details?system_id=2001").GET())).at("/type").textValue());
+                assertEquals("Franklin Simulcast", data(send(client,
+                    request(origin, "/systems/sites?system_id=2001").GET())).at("/items/0/name").textValue());
+                assertEquals(1201, data(send(client,
+                    request(origin, "/systems/talkgroups?system_id=2001").GET()))
+                    .at("/items/0/value").intValue());
+                assertEquals("Dispatch", data(send(client,
+                    request(origin, "/conventional/categories?owner_kind=COUNTY&owner_id=100").GET()))
+                    .at("/items/0/sub_category_name").textValue());
+                assertEquals(155_250_000L, data(send(client,
+                    request(origin, "/conventional/frequencies?sub_category_id=501").GET()))
+                    .at("/items/0/downlink_hz").longValue());
+
                 for(String removedImportPath: List.of(
-                    "/counties?state_id=10",
-                    "/browse?country_id=1",
-                    "/systems/details?system_id=2001",
-                    "/systems/sites?system_id=2001",
                     "/systems/site-preview?system_id=2001&site_id=3001",
                     "/systems/channels",
-                    "/systems/talkgroups?system_id=2001&alias_list_id=1",
                     "/systems/talkgroups/import",
-                    "/conventional/categories?owner_kind=COUNTY&owner_id=100",
-                    "/conventional/frequencies?sub_category_id=1",
                     "/conventional/channels"))
                 {
                     HttpResponse<String> removedImport = send(client, request(origin, removedImportPath).GET());
@@ -167,6 +187,7 @@ class RadioReferenceHttpControllerTest
         private String password;
         private int countryId = -1;
         private int stateId = -1;
+        private int countyId = -1;
 
         @Override
         public boolean hasStoredCredentials()
@@ -199,6 +220,12 @@ class RadioReferenceHttpControllerTest
         }
 
         @Override
+        public int countyId()
+        {
+            return countyId;
+        }
+
+        @Override
         public void storeCredentials(String userName, String password)
         {
             credentialsStored = true;
@@ -215,10 +242,11 @@ class RadioReferenceHttpControllerTest
         }
 
         @Override
-        public void storeLocation(int countryId, int stateId)
+        public void storeLocation(int countryId, int stateId, Integer countyId)
         {
             this.countryId = countryId;
             this.stateId = stateId;
+            this.countyId = countyId != null ? countyId : -1;
         }
     }
 
@@ -277,6 +305,47 @@ class RadioReferenceHttpControllerTest
         {
             return List.of(new Site(3001, systemId, 12, "Franklin Simulcast", 100,
                 List.of(new SiteChannel(853.1625, "c", true, false))));
+        }
+
+        @Override
+        public List<FrequencyCategory> countyFrequencyCategories(int countyId)
+        {
+            return List.of(new FrequencyCategory(501, "Public Safety", "Dispatch"));
+        }
+
+        @Override
+        public TrunkedSystemDetails trunkedSystemDetails(int systemId)
+        {
+            return new TrunkedSystemDetails(systemId, "State P25", "Capital", "Project 25", "Phase I",
+                "APCO-25 Common Air Interface", "BEE00", "123");
+        }
+
+        @Override
+        public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId)
+        {
+            return List.of(new TrunkedSiteDetails(3001, systemId, 12, "Franklin Simulcast", 100, 0, 12,
+                "34C", 0, "", false,
+                List.of(new TrunkedSiteChannel(853_162_500L, 1, "1", "c", "", true, false))));
+        }
+
+        @Override
+        public List<RemoteTalkgroup> talkgroups(int systemId)
+        {
+            return List.of(new RemoteTalkgroup(9001, 1201, "Dispatch", "County dispatch", "D", 0, 701,
+                List.of("Law Dispatch")));
+        }
+
+        @Override
+        public List<RemoteTalkgroupCategory> talkgroupCategories(int systemId)
+        {
+            return List.of(new RemoteTalkgroupCategory(701, systemId, "Public Safety"));
+        }
+
+        @Override
+        public List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
+        {
+            return List.of(new ConventionalFrequency(8001, 155_250_000L, null, "WXYZ", "County Dispatch",
+                "Dispatch", "", "", "", "", "FMN", 0, "", List.of("Law Dispatch"), subCategoryId));
         }
 
         @Override

@@ -45,6 +45,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
@@ -185,6 +186,7 @@ public class StatsWebServerService implements AutoCloseable
     private final ChannelAdministrationService mChannelAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
+    private final RadioReferenceImportService mRadioReferenceImportService;
     private final Path mWebAccessDatabasePath;
     private final SpectrumSnapSettingsService mSpectrumSnapSettingsService;
     private final WebReceiverSettingsService mWebReceiverSettingsService;
@@ -256,10 +258,25 @@ public class StatsWebServerService implements AutoCloseable
                                  ScanListModel scanListModel,
                                  ChannelAdministrationService channelAdministrationService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, channelAdministrationService, null, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 ReceiverActivityService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel,
+                                 ChannelAdministrationService channelAdministrationService,
+                                 RadioReferenceDirectoryService radioReferenceDirectoryService,
+                                 RadioReferenceImportService radioReferenceImportService)
+    {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
-        mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
+        mRadioReferenceDirectoryService = radioReferenceDirectoryService != null ?
+            radioReferenceDirectoryService : new RadioReferenceDirectoryService();
+        mRadioReferenceImportService = radioReferenceImportService;
         mDatabase = new StatsWebDatabase(userPreferences);
         WebEntityNavigationCatalog entityCatalog =
             new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
@@ -726,7 +743,8 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
-            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
+            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference(),
+            mRadioReferenceImportService);
         server.createContext(RadioReferenceHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 

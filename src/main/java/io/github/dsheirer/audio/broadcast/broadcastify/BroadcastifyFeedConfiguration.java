@@ -22,7 +22,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.audio.broadcast.icecast.IcecastTCPConfiguration;
-import io.github.dsheirer.rrapi.type.UserFeedBroadcast;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.UserFeed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,22 +54,23 @@ public class BroadcastifyFeedConfiguration extends IcecastTCPConfiguration
         setInline(true);
     }
 
-    public static BroadcastifyFeedConfiguration from(UserFeedBroadcast userFeedBroadcast)
+    /** Creates a stream destination from the shared web-first RadioReference account service. */
+    public static BroadcastifyFeedConfiguration from(UserFeed userFeed)
     {
         BroadcastifyFeedConfiguration config = new BroadcastifyFeedConfiguration(BroadcastFormat.MP3);
-        config.setName(userFeedBroadcast.getDescription());
-        config.setHost(userFeedBroadcast.getHostname());
-        config.setMountPoint(userFeedBroadcast.getMount());
-        config.setFeedID(userFeedBroadcast.getFeedId());
-        config.setPassword(userFeedBroadcast.getPassword());
+        config.setName(userFeed.description());
+        config.setHost(userFeed.host());
+        config.setMountPoint(userFeed.mount());
+        config.setFeedID(userFeed.id());
+        config.setPassword(userFeed.password());
 
         try
         {
-            config.setPort(Integer.parseInt(userFeedBroadcast.getPort()));
+            config.setPort(Integer.parseInt(userFeed.port()));
         }
-        catch(Exception e)
+        catch(Exception exception)
         {
-            mLog.error("Error creating broadcastify configuration from radio reference user feed instance");
+            mLog.error("Error creating Broadcastify configuration from RadioReference user feed");
         }
 
         return config;
