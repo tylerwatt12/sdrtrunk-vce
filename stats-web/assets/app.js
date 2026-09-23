@@ -1550,26 +1550,32 @@ function exportCsvFileName(response, fallback = 'export.csv') {
   return safe || fallback;
 }
 
-function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {}) {
+function exportCsvLink(dataset, context = {}, options = {}) {
+  const label = `Export ${dataset.replace(/-/g, ' ')} as CSV`;
   if (!capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) {
-    const disabled = node('span', 'ui-button ui-button-secondary export-csv-action', label);
+    const disabled = node('span', 'ui-button ui-button-secondary ui-icon-button export-csv-action');
+    disabled.append(iconGlyph('icon-share'));
+    disabled.setAttribute('role', 'button');
     disabled.setAttribute('aria-disabled', 'true');
-    disabled.title = accessSession.authenticated ? 'CSV export is not available to this account.' :
-      'Sign in to use CSV export.';
+    disabled.setAttribute('aria-label', label);
+    disabled.title = accessSession.authenticated ? `${label} is not available to this account.` :
+      `${label} requires sign-in.`;
     return disabled;
   }
-  const link = anchor(label, exportCsvHref(dataset, context), 'ui-button ui-button-secondary export-csv-action');
+  const link = anchor(iconGlyph('icon-share'), exportCsvHref(dataset, context),
+    'ui-button ui-button-secondary ui-icon-button export-csv-action');
   link.setAttribute('download', '');
-  link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
+  link.setAttribute('aria-label', label);
+  link.title = label;
   if (options.loading) {
     const target = link.href;
     let activeController = null;
-    const reset = () => {
+    const reset = (errorMessage = '') => {
       link.classList.remove('is-loading');
       link.removeAttribute('aria-busy');
-      link.textContent = label;
-      link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
-      link.title = '';
+      link.replaceChildren(iconGlyph('icon-share'));
+      link.setAttribute('aria-label', label);
+      link.title = errorMessage || label;
     };
     link.addEventListener('click', (event) => {
       event.preventDefault();
@@ -1581,10 +1587,11 @@ function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {}
       activeController = controller;
       link.classList.add('is-loading');
       link.setAttribute('aria-busy', 'true');
-      link.setAttribute('aria-label', `Preparing ${dataset.replace(/-/g, ' ')} report; click to cancel`);
-      link.title = 'Click again to cancel the report download';
-      link.textContent = options.loadingLabel || 'Preparing report…';
+      link.setAttribute('aria-label', `Preparing ${label.toLowerCase()}; click to cancel`);
+      link.title = 'Preparing CSV export. Click again to cancel.';
+      link.replaceChildren();
       void (async () => {
+        let errorMessage = '';
         try {
           const response = await fetch(target, {
             cache: 'no-store', credentials: 'same-origin',
@@ -1606,12 +1613,12 @@ function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {}
           window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
         } catch (error) {
           if (error?.name !== 'AbortError') {
-            link.title = error.message || 'The report could not be downloaded.';
+            errorMessage = error.message || 'The CSV could not be downloaded.';
           }
         } finally {
           if (activeController === controller) {
             activeController = null;
-            reset();
+            reset(errorMessage);
           }
         }
       })();
@@ -5183,7 +5190,10 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   review.append(progress.cloneNode(true), destination, summary, filters, rowsHost, pagerHost, confirmLabel,
     aliasModalFooter(reviewBack, node('span', 'alias-modal-footer-spacer'), apply));
   importPanel.append(review);
-  const exportButton = anchor('Download CSV', aliasTransferExportHref(listId), 'ui-button ui-button-primary');
+  const exportButton = anchor(iconGlyph('icon-share'), aliasTransferExportHref(listId),
+    'ui-button ui-button-primary ui-icon-button');
+  exportButton.setAttribute('aria-label', 'Export alias list as CSV');
+  exportButton.title = 'Export alias list as CSV';
   const exportCancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   exportCancel.type = 'button';
   const exportSummary = node('div', 'alias-transfer-export-summary');
@@ -6094,7 +6104,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   ]).forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, 'Download table report', { loading: true }));
+  actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'scan-list-member-table-section');
   bulkBar = scanListMemberBulkBar(scanList, () => {
@@ -6393,7 +6403,7 @@ async function renderAliases() {
   exportFilters.forEach((queryKey, routeKey) => {
     if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
-  actions.append(exportCsvLink('aliases', exportContext, 'Download table report', { loading: true }));
+  actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
   const pagerHost = node('div');
   pagerHost.append(pager(page));
   const block = section(view === 'configure' ? 'Alias Configuration' :
@@ -16723,8 +16733,6 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
     ], activeView, (value) => { activeView = value; draw(); });
     filters.setAttribute('aria-label', 'Filter radio directory');
     const exportLink = exportCsvLink('channels');
-    exportLink.classList.add('ui-button', 'ui-button-secondary');
-    exportLink.prepend(iconGlyph('icon-download'));
     const refresh = uiActionButton('', 'icon-refresh', () => embedded ? renderDashboard() : renderRadioSystems(),
       'ui-button ui-button-secondary ui-icon-button');
     refresh.title = 'Refresh radio directory';
@@ -16835,8 +16843,6 @@ async function renderModernChannelCatalog(renderContext, editable) {
     if (editable) toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
       openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
     const exportLink = exportCsvLink('channels');
-    exportLink.classList.add('ui-button', 'ui-button-secondary');
-    exportLink.prepend(iconGlyph('icon-download'));
     const refresh = uiActionButton('', 'icon-refresh', () =>
       editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');

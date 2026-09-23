@@ -184,7 +184,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure
 const aliasRenderer = functionSource('async function renderAliases()');
 const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(aliasPage, options = null)');
 const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList)');
-const aliasExportLink = functionSource("function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {})");
+const aliasExportLink = functionSource('function exportCsvLink(dataset, context = {}, options = {})');
 const aliasDetailLink = functionSource('function aliasDetailLink(row)');
 const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {})');
 assert.match(aliasRenderer, /sort: route\.get\('sort'\) \|\| defaultOrder\.sort/,
@@ -216,8 +216,12 @@ assert.match(aliasDiscoverToolbar, /ui-button ui-button-primary/,
   'Alias Editor discovery actions must use the shared primary button styling.');
 assert.match(aliasExportLink, /options\.loading/,
   'Alias table exports must support an explicit loading state.');
-assert.match(aliasExportLink, /ui-button ui-button-secondary export-csv-action/,
-  'Alias table exports must use the shared secondary button treatment.');
+assert.match(aliasExportLink, /ui-button ui-button-secondary ui-icon-button export-csv-action/,
+  'CSV exports must use the shared icon-button treatment.');
+assert.match(aliasExportLink, /iconGlyph\('icon-share'\)/,
+  'CSV exports must show the share glyph.');
+assert.match(aliasExportLink, /link\.title = label/,
+  'CSV exports must explain their action on hover.');
 assert.match(aliasExportLink, /new AbortController\(\)/,
   'Report downloads must have a cancellable request lifecycle.');
 assert.match(aliasExportLink, /await fetch\(target/,
@@ -331,7 +335,7 @@ assert.match(transferModal, /Up to 500 destinations are listed/);
 assert.match(transferModal, /Drop a CSV file here/);
 assert.match(transferModal, /Add new aliases and update matches/);
 assert.match(transferModal, /Replace this list’s aliases/);
-assert.match(transferModal, /Download CSV/);
+assert.match(transferModal, /Export alias list as CSV/);
 assert.match(transferModal, /All aliases in this Alias List/);
 assert.match(transferModal, /Current filtered results/);
 assert.match(transferModal, /not only the visible page/);

@@ -248,6 +248,21 @@
   padding: 0;
 }
 
+.ui-icon-button.is-loading {
+  cursor: wait;
+  opacity: .75;
+}
+
+.ui-icon-button.is-loading::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ui-feedback-spin .8s linear infinite;
+}
+
 .ui-toggle {
   min-height: 32px;
   display: inline-flex;
@@ -812,7 +827,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ui-feedback-loading::before { animation: none; }
+  .ui-feedback-loading::before,
+  .ui-icon-button.is-loading::before { animation: none; }
 }
 
 .ui-feedback-error {

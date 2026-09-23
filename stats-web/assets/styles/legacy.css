@@ -27,33 +27,6 @@
   color: var(--danger);
 }
 
-.export-csv-action {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.export-csv-action.is-loading {
-  cursor: wait;
-  opacity: .75;
-}
-
-.export-csv-action.is-loading::before {
-  content: '';
-  display: inline-block;
-  width: .85em;
-  height: .85em;
-  margin-right: 7px;
-  vertical-align: -.1em;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: export-csv-spin .8s linear infinite;
-}
-
-@keyframes export-csv-spin {
-  to { transform: rotate(360deg); }
-}
-
 .credits-copy {
   max-width: 880px;
   padding: 12px 14px;
