@@ -195,7 +195,8 @@ function normalizeBookmark(value) {
     parentId: Number(firstValue(value, ['parent_id', 'parentId'], 0)),
     ownerKind: textValue(value, ['owner_kind', 'ownerKind']),
     name: textValue(value, ['name']),
-    parentName: textValue(value, ['parent_name', 'parentName'])
+    parentName: textValue(value, ['parent_name', 'parentName']),
+    preferredAliasListId: integerValue(value, ['preferred_alias_list_id', 'preferredAliasListId'])
   };
 }
 
@@ -230,6 +231,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     bookmarks: [],
     siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
+    talkgroupCatalogId: null,
     siteSearch: '',
     siteSort: 'number',
     talkgroupStatus: 'ALL',
@@ -329,8 +331,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     if (control.disabled) return;
     control.disabled = true;
     try {
+      const targetSystem = value.kind === 'TALKGROUP_CATEGORY' ? value.parentId : value.id;
+      const preferred = targetSystem === state.activeSystemId &&
+        (value.kind === 'TRUNKED_SYSTEM' || value.kind === 'TALKGROUP_CATEGORY') ?
+        state.talkgroupAliasListId : null;
       const next = await api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks, {
-        method: bookmarked(value) ? 'DELETE' : 'PUT', body: value
+        method: bookmarked(value) ? 'DELETE' : 'PUT',
+        body: { ...value, preferredAliasListId: preferred }
       });
       state.bookmarks = rows(next).map(normalizeBookmark);
       const saved = bookmarked(value);
@@ -440,7 +447,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const actions = node('div', 'ui-action-row radioreference-completion-actions');
     const configurationId = textValue(response, ['configuration_id', 'configurationId'],
       textValue(response?.channel, ['configuration_id', 'configurationId']));
-    if (configurationId) actions.append(anchor('Open channel', href('channel', { configuration_id: configurationId }),
+    if (configurationId) actions.append(anchor('Open channel', href('channel-setup', { channel: configurationId }),
       'ui-button ui-button-secondary'));
     const listId = integerValue(response, ['alias_list_id', 'aliasListId']) || Number(aliasListIdValue);
     if (kind === 'talkgroups' && Number.isSafeInteger(listId) && listId > 0) {
@@ -451,7 +458,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const openPreview = async ({ title, path, body, kind, returnFocusSelector, aliasListIdValue, onApplied }) => {
-    const loading = feedback('Preparing a current RadioReference import preview…', 'loading');
+    const loading = feedback('Preparing the RadioReference import preview…', 'loading');
     const modal = openReadOnlyModal(title, loading, {
       id: `radioreference-${kind}-preview`, className: 'radioreference-import-modal', returnFocusSelector
     });
@@ -722,6 +729,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const toolbar = node('div', 'radioreference-talkgroup-toolbar ui-catalog-toolbar');
     const aliasList = aliasSelect(compatibleFamily(systemDocument?.system || systemDocument) ||
       compatibleFamily(system), state.talkgroupAliasListId);
+    if (aliasList.value) state.talkgroupAliasListId = Number(aliasList.value);
     const category = select();
     const categoryStar = node('span', 'radioreference-category-star');
     const categoryField = node('div', 'radioreference-category-field');
@@ -766,8 +774,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       selectionBadge.querySelector('span').textContent = formatNumber(count) + ' selected';
       actions.hidden = count === 0;
       clear.disabled = count === 0;
-      importSelected.disabled = count === 0 || !aliasList.value;
-      importAll.disabled = !aliasList.value;
+      importSelected.disabled = count === 0 || !aliasList.value || !state.talkgroupCatalogId;
+      importAll.disabled = !aliasList.value || !state.talkgroupCatalogId;
       aliasList.disabled = count > 0;
       aliasList.title = count > 0 ? 'Clear the current selection before changing Alias Lists.' : '';
     };
@@ -886,9 +894,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       try {
         if (force || !state.talkgroupCatalogs.has(key)) {
           const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
-            system_id: systemIdValue, alias_list_id: aliasList.value
+            system_id: systemIdValue, alias_list_id: aliasList.value,
+            catalog_id: state.talkgroupCatalogId || undefined
           }), { timeoutMs: 65_000 });
+          const loadedCatalogId = textValue(response, ['catalog_id', 'catalogId']) || null;
           state.talkgroupCatalogs.set(key, {
+            catalogId: loadedCatalogId,
             categories: Array.isArray(response?.categories) ? response.categories : [],
             items: rows(response).map((row) => {
               const talkgroup = talkgroupValue(row);
@@ -905,6 +916,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         }
         if (state.activeSystemId !== systemIdValue || target.dataset.rrTab !== 'talkgroups') return;
         const saved = state.talkgroupCatalogs.get(key);
+        state.talkgroupCatalogId = saved.catalogId;
         catalog = saved.items;
         if (!categoryRows.length && saved.categories.length && category.options.length <= 1) {
           setOptions(category, saved.categories, state.talkgroupCategoryId, 'All categories', true);
@@ -913,6 +925,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         offset = 0;
         draw();
       } catch (error) {
+        if (state.talkgroupCatalogId && /catalog is no longer available/i.test(error.message)) {
+          state.talkgroupCatalogId = null;
+          state.talkgroupCatalogs.delete(key);
+          await load(true);
+          return;
+        }
         tableHost.replaceChildren(feedback(error.message, 'error'));
       }
     };
@@ -932,7 +950,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         returnFocusSelector: all ? '.radioreference-import-all' : '.radioreference-import-selected',
         aliasListIdValue: Number(aliasList.value),
         body: { system_id: systemIdValue, alias_list_id: Number(aliasList.value),
-          import_all: all, talkgroup_ids: all ? [] : selectedIds },
+          import_all: all, talkgroup_ids: all ? [] : selectedIds,
+          catalog_id: state.talkgroupCatalogId },
         onApplied: () => {
           selected.clear();
           state.talkgroupCatalogs.delete(systemIdValue + ':' + aliasList.value);
@@ -948,6 +967,18 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     importAll.addEventListener('click', () => previewTalkgroups(true));
     aliasList.addEventListener('change', () => {
       state.talkgroupAliasListId = Number(aliasList.value) || null;
+      const preferred = state.bookmarks.find((entry) => entry.kind === 'TALKGROUP_CATEGORY' &&
+        entry.parentId === systemIdValue && entry.id === Number(category.value)) ||
+        state.bookmarks.find((entry) => entry.kind === 'TRUNKED_SYSTEM' && entry.id === systemIdValue);
+      if (preferred && state.talkgroupAliasListId) {
+        void api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks, {
+          method: 'PUT', body: { ...preferred, preferredAliasListId: state.talkgroupAliasListId }
+        }).then((response) => {
+          state.bookmarks = rows(response).map(normalizeBookmark);
+          state.onBookmarksChanged?.();
+        })
+          .catch((error) => { status.textContent = `Alias List preference could not be saved: ${error.message}`; });
+      }
       load();
     });
     category.addEventListener('change', () => {
@@ -968,8 +999,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const id = systemId(system);
     const sequence = ++state.detailSequence;
     state.activeSystemId = id;
+    state.talkgroupCatalogId = null;
     state.selectedTalkgroups.clear();
     state.talkgroupAliasListId = null;
+    state.talkgroupAliasListId = options.bookmark?.preferredAliasListId || null;
     state.talkgroupCategoryId = Number(options.categoryId) || null;
     state.talkgroupStatus = 'ALL';
     state.talkgroupSearch = '';
@@ -1295,6 +1328,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           bookmark.parentName;
         const trail = [savedPath, bookmark.name].filter(Boolean).join(' > ');
         identity.append(node('strong', '', trail));
+        const preferredList = state.aliasLists.find((entry) =>
+          aliasListId(entry) === bookmark.preferredAliasListId);
+        if (preferredList) identity.append(node('small', 'muted',
+          `Import talkgroups to ${textValue(preferredList, ['name'], 'Alias List')}`));
         open.append(identity);
         open.addEventListener('click', () => {
           if (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY') {
@@ -1304,8 +1341,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
                 bookmark.parentName.split(' > ').at(-1),
               type: 'TRUNKED_SYSTEM', breadcrumb: savedPath
             };
-            void renderSystem(system, detailHost, bookmark.kind === 'TALKGROUP_CATEGORY' ?
-              { categoryId: bookmark.id } : {});
+            void renderSystem(system, detailHost, { bookmark,
+              categoryId: bookmark.kind === 'TALKGROUP_CATEGORY' ? bookmark.id : null });
           } else {
             const entry = {
               id: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.id : bookmark.parentId,
@@ -1468,13 +1505,22 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     element: host,
     setConfiguration(configuration) {
       const wasConnected = state.configuration?.account?.state === 'VALID_PREMIUM';
+      const previousUser = state.configuration?.account?.user_name;
       state.configuration = configuration || {};
       const connected = state.configuration?.account?.state === 'VALID_PREMIUM';
+      if (wasConnected && connected && previousUser !== state.configuration?.account?.user_name) {
+        state.initialized = false;
+        state.siteCatalogs.clear();
+        state.talkgroupCatalogs.clear();
+        state.talkgroupCatalogId = null;
+        state.selectedTalkgroups.clear();
+      }
       if (!connected) {
         state.initialized = false;
         state.selectedTalkgroups.clear();
         state.siteCatalogs.clear();
         state.talkgroupCatalogs.clear();
+        state.talkgroupCatalogId = null;
         state.bookmarks = [];
         host.replaceChildren(empty('Connect RadioReference to import',
           'A current Premium account is required for directory browsing and imports.'));
@@ -1484,6 +1530,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     },
     reload() {
       state.initialized = false;
+      state.siteCatalogs.clear();
+      state.talkgroupCatalogs.clear();
+      state.talkgroupCatalogId = null;
+      state.selectedTalkgroups.clear();
       void initialize();
     }
   };

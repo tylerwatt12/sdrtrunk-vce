@@ -169,7 +169,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
       if (path.includes('/systems/talkgroups/catalog?') &&
           new URLSearchParams(location.search).has('large')) return {
-        total_items: 10000, categories: [{ id: 9, name: 'Fire' }],
+        catalog_id: 'loaded-catalog', total_items: 10000, categories: [{ id: 9, name: 'Fire' }],
         items: Array.from({ length: 10000 }, (_, index) => ({
           talkgroup: { id: index + 1, value: index + 1, category_id: 9,
             alpha_tag: index === 9999 ? 'Rare Target' : `Talkgroup ${index + 1}`,
@@ -177,7 +177,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           category: 'Fire', status: index === 9999 ? 'DIFFERENT' : 'IDENTICAL'
         }))
       };
-      if (path.includes('/systems/talkgroups/catalog?')) return { total_items: 2, categories: [{ id: 9, name: 'Fire' }],
+      if (path.includes('/systems/talkgroups/catalog?')) return { catalog_id: 'loaded-catalog',
+        total_items: 2, categories: [{ id: 9, name: 'Fire' }],
         items: [
           { talkgroup: { id: 101, value: 101, category_id: 9, alpha_tag: 'Fire Dispatch',
             description: 'Countywide fire' },
@@ -206,6 +207,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       if (path.endsWith('/imports/conventional/preview')) return { preview_id: 'frequency-preview', action: 'CREATE',
         channel: { name: options.body.channel_name, protocol_id: 'nbfm',
           source: { frequencies_hz: [154430000] } } };
+      if (path.endsWith('/imports/site-preview/apply')) return { configuration_id: 'new-channel' };
       if (path.includes('/imports/') && path.endsWith('/apply')) return { added: 2, updated: 0, alias_list_id: 7 };
       if (path.endsWith('/location')) return { account: { state: 'VALID_PREMIUM' }, country_id: 1,
         state_id: 39, county_id: options.body.countyId || 0 };
@@ -269,6 +271,20 @@ test('single changed talkgroup preview shows the RadioReference-owned field chan
   await expect(preview.getByText('RadioReference fields changing')).toBeVisible();
   await expect(preview.getByText('Fireground Two')).toBeVisible();
   await expect(preview.getByText('Fireground 2', { exact: true })).toBeVisible();
+  const previewRequest = await page.evaluate(() => window.radioReferenceVisual.calls.find(
+    ([path]) => path.endsWith('/imports/talkgroups/preview')));
+  expect(previewRequest[1].body.catalog_id).toBe('loaded-catalog');
+});
+
+test('a talkgroup bookmark remembers its preferred Alias List', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('7');
+  await page.locator('.radioreference-import-detail .radioreference-bookmark').first().click();
+  const saved = await page.evaluate(() => window.radioReferenceVisual.calls.findLast(
+    ([path, options]) => path.endsWith('/bookmarks') && options.method === 'PUT'));
+  expect(saved[1].body.preferredAliasListId).toBe(7);
 });
 
 test('large talkgroup catalogs filter locally without rendering thousands of rows', async ({ page }) => {
@@ -323,6 +339,10 @@ test('site sorting and preview use the RadioReference database system ID', async
     { name: 'Review Channel' }).click();
   await expect.poll(async () => page.evaluate(() => window.radioReferenceVisual.calls
     .find(([path]) => path.endsWith('/imports/site/preview'))?.[1]?.body?.system_id)).toBe(2001);
+  await page.getByRole('dialog', { name: /Review Central County P25 · Alpha Site/ }).getByRole('button',
+    { name: 'Apply Channel' }).click();
+  await expect(page.getByRole('link', { name: 'Open channel' }))
+    .toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');
 });
 
 test('slow talkgroup loading shows a spinner until the catalog arrives', async ({ page }) => {

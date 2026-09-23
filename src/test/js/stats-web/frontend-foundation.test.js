@@ -400,6 +400,9 @@ async function main() {
   assert.match(radioReferenceImportSource, /search\.addEventListener\('input'/);
   assert.doesNotMatch(radioReferenceImportSource, /System, agency, city, or county/);
   assert.match(radioReferenceImportSource, /Preview no longer valid/);
+  assert.match(radioReferenceImportSource, /href\('channel-setup', \{ channel: configurationId \}\)/);
+  assert.match(radioReferenceImportSource, /catalog_id: state\.talkgroupCatalogId/);
+  assert.match(radioReferenceImportSource, /preferredAliasListId/);
   assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
   assert.match(radioReferenceImportSource, /browseCatalog/);
   assert.match(radioReferenceImportSource, /RadioReference fields changing/);

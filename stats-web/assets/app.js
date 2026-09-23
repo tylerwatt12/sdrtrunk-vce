@@ -19176,7 +19176,10 @@ async function renderAdminRadioReferenceSettings() {
       radioReferenceDetailCache.clear();
       password.value = '';
       settingsModal?.setDirty(false);
-      if (updateAccount(next)) await loadRegions();
+      if (updateAccount(next)) {
+        importWorkspace.reload();
+        await loadRegions();
+      }
     } catch (error) {
       password.value = '';
       accountMessage.textContent = error.message;
