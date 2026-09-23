@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 class StatsWebFrequencyActionsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path RADIO_REFERENCE_IMPORT_JAVASCRIPT =
+        Path.of("stats-web", "assets", "features", "radioreference-import.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -34,31 +36,32 @@ class StatsWebFrequencyActionsUiContractTest
     }
 
     @Test
-    void doesNotShipTheDeferredRadioReferenceImporter() throws Exception
+    void shipsTheRadioReferenceImporterAsAnApiBackedWorkspace() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
+        String importer = Files.readString(RADIO_REFERENCE_IMPORT_JAVASCRIPT);
 
-        for(String endpoint: new String[]{"/browse?", "/counties?", "/systems/details?",
-            "/systems/sites?", "/systems/site-preview?", "/systems/talkgroups?",
-            "/systems/channels", "/systems/talkgroups/import", "/conventional/categories?",
-            "/conventional/frequencies?", "/conventional/channels"})
+        for(String endpoint: new String[]{"/browse", "/counties", "/systems/details",
+            "/systems/sites", "/systems/talkgroups", "/conventional/categories",
+            "/conventional/frequencies", "/imports/site/preview", "/imports/conventional/preview",
+            "/imports/talkgroups/preview"})
         {
-            assertFalse(source.contains("/api/v1/admin/radioreference" + endpoint),
-                () -> "Deferred RadioReference import endpoint remains in the browser: " + endpoint);
+            assertTrue(importer.contains("${API_ROOT}" + endpoint),
+                () -> "RadioReference import endpoint is missing from the browser: " + endpoint);
         }
 
-        for(String helper: new String[]{"renderRadioReferenceImportWorkspace",
-            "openRadioReferenceTalkgroupImportConfirmation", "radioReferenceAliasSelect",
-            "radioReferenceTalkgroupImportCounts", "radioReferenceItems"})
-        {
-            assertFalse(source.contains(helper), () -> "Deferred RadioReference import helper remains: " + helper);
-        }
-
-        assertFalse(source.contains("Import from RadioReference"));
-        assertFalse(source.contains("RadioReference is not treated as authoritative"));
+        assertTrue(source.contains("createRadioReferenceImportWorkspace"));
+        assertTrue(source.contains("Browse and import"));
+        assertTrue(importer.contains("selectedTalkgroups: new Set()"));
+        assertTrue(importer.contains("Selections stay checked while paging or filtering"));
+        assertTrue(importer.contains("Clear selection"));
+        assertTrue(importer.contains("Import Selected"));
+        assertTrue(importer.contains("Import All"));
+        assertTrue(importer.contains("Create one combined channel"));
+        assertTrue(importer.contains("Import one channel at a time"));
+        assertFalse(importer.contains("For Each Frequency"));
+        assertFalse(importer.contains("Create Selected Channels"));
         assertTrue(source.contains("RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000"));
-        assertFalse(source.contains("RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS"));
-        assertFalse(source.contains("RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS"));
     }
 
     @Test
@@ -152,10 +155,10 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".radioreference-result-actions .ui-button"));
         assertTrue(css.contains("minmax(min(100%, 360px), 1fr)"));
         assertTrue(css.contains(".radioreference-result-actions"));
-        assertFalse(css.contains(".radioreference-import-workspace"));
-        assertFalse(css.contains(".radioreference-browse-form"));
-        assertFalse(css.contains(".radioreference-selection-row"));
-        assertFalse(css.contains(".radioreference-site-import-form"));
+        assertTrue(css.contains(".radioreference-import-workspace"));
+        assertTrue(css.contains(".radioreference-browse-form"));
+        assertTrue(css.contains(".radioreference-selection-badge"));
+        assertTrue(css.contains(".radioreference-site-form"));
     }
 
     private static String block(String source, String marker)

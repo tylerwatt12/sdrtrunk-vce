@@ -11,6 +11,8 @@ const appSource = fs.readFileSync(path.resolve(core, '../app.js'), 'utf8');
 const appCssSource = readStylesheetSource(path.resolve(core, '../app.css'));
 const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf8');
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
+const radioReferenceImportSource = fs.readFileSync(
+  path.resolve(core, '../features/radioreference-import.js'), 'utf8');
 
 function closingDelimiter(source, start, open = '(', close = ')') {
   let depth = 0;
@@ -377,6 +379,29 @@ async function main() {
   assert.match(functionBinding(appSource, 'renderAdminSpectrumSnapSettings'), /ui-button ui-button-primary/);
   assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
     /ui-button ui-button-primary[\s\S]+ui-button ui-button-danger/);
+  assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
+    /createRadioReferenceImportWorkspace\([\s\S]+Browse and import/);
+  assert.match(radioReferenceImportSource, /selectedTalkgroups: new Set\(\)/);
+  assert.match(radioReferenceImportSource, /Selections stay checked while paging or filtering/);
+  assert.match(radioReferenceImportSource, /Clear selection/);
+  assert.match(radioReferenceImportSource, /Import Selected/);
+  assert.match(radioReferenceImportSource, /Import All/);
+  assert.match(radioReferenceImportSource,
+    /\['CONTROL'[\s\S]+\['CONTROL_AND_ALTERNATES'[\s\S]+\['SELECTED'[\s\S]+\['ALL'/);
+  assert.match(radioReferenceImportSource, /Create one combined channel/);
+  assert.match(radioReferenceImportSource, /Import one channel at a time/);
+  assert.match(radioReferenceImportSource, /detectedSiteModulation/);
+  assert.match(radioReferenceImportSource, /description\.includes\('simul'\)/);
+  assert.match(radioReferenceImportSource, /const SITE_LIMIT = 500/);
+  assert.match(radioReferenceImportSource, /Preview no longer valid/);
+  assert.match(radioReferenceImportSource, /existingAliasId/);
+  assert.match(radioReferenceImportSource, /aliasTab: 'configure', alias: id/);
+  assert.match(radioReferenceImportSource, /RadioReference fields changing/);
+  assert.match(radioReferenceImportSource, /mobileCards: true/);
+  assert.match(radioReferenceImportSource, /imports\/site\/preview/);
+  assert.match(radioReferenceImportSource, /imports\/conventional\/preview/);
+  assert.match(radioReferenceImportSource, /imports\/talkgroups\/preview/);
+  assert.doesNotMatch(radioReferenceImportSource, /For Each Frequency|Create Selected Channels/);
   assert.match(functionBinding(appSource, 'renderAdminUsers'),
     /admin-operation-status ui-notice[\s\S]+ui-button ui-button-primary/);
   assert.match(functionBinding(appSource, 'renderAdminAccess'), /admin-operation-status ui-notice/);

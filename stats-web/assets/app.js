@@ -12,6 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -2248,7 +2249,12 @@ function setTableColumnWidths(element, columnElements, widths) {
     columnElements[index].style.width = `${Math.round(width)}px`;
   });
   element.style.width = '100%';
-  element.style.minWidth = `${Math.round(total)}px`;
+  if (element.dataset.mobileCards === 'true') {
+    element.style.removeProperty('min-width');
+    element.style.setProperty('--table-content-min-width', `${Math.round(total)}px`);
+  } else {
+    element.style.minWidth = `${Math.round(total)}px`;
+  }
 }
 
 function measureTableColumnContentWidth(element, header, index) {
@@ -2424,6 +2430,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   String(options.tableClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => element.classList.add(className));
   element.dataset.tableType = tableType;
+  if (options.mobileCards) element.dataset.mobileCards = 'true';
   const columnGroup = node('colgroup');
   const columnElements = columns.map(() => node('col'));
   columnGroup.append(...columnElements);
@@ -19043,6 +19050,29 @@ async function renderAdminRadioReferenceSettings() {
     'clicked in Tuner Spectrum. Use your own current Premium account.'), settingsForms);
   content.append(section('RadioReference lookup', body));
 
+  const importWorkspace = createRadioReferenceImportWorkspace({
+    node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
+    openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
+    href, anchor, modalFooter: aliasModalFooter,
+    directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
+    mutationTimeoutMs: 65_000,
+    onLocationSaved: async (next) => {
+      configuration = next || configuration;
+      if (String(country.value) !== String(configuration?.country_id || '')) {
+        country.value = String(configuration?.country_id || '');
+        await loadStates(country.value, configuration?.state_id);
+      } else {
+        state.value = String(configuration?.state_id || state.value);
+      }
+      regionMessage.textContent = 'RadioReference lookup and import region saved.';
+    }
+  });
+  const importBody = node('div', 'admin-section-body');
+  importBody.append(node('p', 'admin-section-intro',
+    'Browse systems and conventional agencies, review exactly what will change, then import channels or aliases ' +
+    'into this receiver.'), importWorkspace.element);
+  content.append(section('Browse and import', importBody));
+
   let configuration = null;
 
   const updateAccount = (next, initializeUserName = false) => {
@@ -19058,6 +19088,7 @@ async function renderAdminRadioReferenceSettings() {
     country.disabled = !connected;
     state.disabled = !connected || !country.value;
     saveRegion.disabled = !connected || !state.value;
+    importWorkspace.setConfiguration(configuration);
     return connected;
   };
 
@@ -19145,6 +19176,7 @@ async function renderAdminRadioReferenceSettings() {
       configuration = await requestJson('/api/v1/admin/radioreference/location', {
         method: 'PUT', body: { countryId: Number(country.value), stateId: Number(state.value) }
       });
+      importWorkspace.reload();
       regionMessage.textContent = 'RadioReference lookup region saved.';
     } catch (error) {
       regionMessage.textContent = error.message;
