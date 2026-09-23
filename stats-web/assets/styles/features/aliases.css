@@ -164,6 +164,18 @@
   margin-bottom: var(--space-3);
 }
 
+.alias-filter {
+  min-width: 135px;
+}
+
+.alias-search-filter {
+  min-width: min(320px, 100%);
+}
+
+.alias-search-filter input[type="search"] {
+  width: 100%;
+}
+
 .alias-filter-group {
   min-width: 0;
   margin: 0;

@@ -1,5 +1,18 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .primary-nav,
+  .playback-progress.ending {
+    transition: none;
+  }
+
+  .playback-progress {
+    transition: none;
+  }
+
+  .playback-progress-glow {
+    box-shadow: none;
+  }
+
   .channels-tab-quality span {
     transition: none;
   }

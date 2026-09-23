@@ -12,25 +12,27 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, legacy, components, compositions, features, utilities;',
   '@import url("./styles/base.css") layer(reset);',
   '@import url("./styles/tokens.css?v=1") layer(tokens);',
-  '@import url("./styles/legacy.css?v=4") layer(legacy);',
-  '@import url("./styles/components/controls.css?v=2") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=2") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=1") layer(compositions);',
+  '@import url("./styles/legacy.css?v=5") layer(legacy);',
+  '@import url("./styles/components/controls.css?v=3") layer(components);',
+  '@import url("./styles/compositions/workspaces.css?v=3") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=2") layer(compositions);',
+  '@import url("./styles/compositions/charts.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=2") layer(compositions);',
   '@import url("./styles/features/channels.css?v=3") layer(features);',
-  '@import url("./styles/features/entity-details.css?v=4") layer(features);',
+  '@import url("./styles/features/entity-details.css?v=5") layer(features);',
   '@import url("./styles/features/live.css?v=2") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=1") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=6") layer(features);',
   '@import url("./styles/features/scanner.css?v=1") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=1") layer(features);',
-  '@import url("./styles/features/aliases.css?v=2") layer(features);',
-  '@import url("./styles/features/dashboard.css") layer(features);',
-  '@import url("./styles/features/administration.css?v=1") layer(features);',
+  '@import url("./styles/features/aliases.css?v=3") layer(features);',
+  '@import url("./styles/features/dashboard.css?v=1") layer(features);',
+  '@import url("./styles/features/administration.css?v=2") layer(features);',
+  '@import url("./styles/features/signal-quality.css?v=1") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
   '@import url("./styles/features/receiver-health.css") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=1") layer(utilities);',
 ];
 
 // Existing global element selectors are frozen debt. New controls and tables must be
@@ -55,7 +57,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map([
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 2355;
+const LEGACY_LINE_BUDGET = 730;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],

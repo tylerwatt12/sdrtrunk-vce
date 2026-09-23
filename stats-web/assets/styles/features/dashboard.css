@@ -32,11 +32,6 @@
   font-size: 10px;
 }
 
-.dashboard-mode {
-  font-weight: 650;
-  white-space: nowrap;
-}
-
 .dashboard-activity-controls {
   display: flex;
   flex-wrap: wrap;

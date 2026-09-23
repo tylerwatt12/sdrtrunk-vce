@@ -304,7 +304,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"163\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"165\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -654,7 +654,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=140"));
+        assertTrue(html.contains("/assets/app.css?v=141"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -715,7 +715,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
         assertTrue(css.contains("height: 20px"));
         assertTrue(css.contains(".playback-volume {\n  position: relative;\n  width: 92px;\n  height: 32px;"));
-        assertTrue(css.contains("border: 1px solid #30383b;"));
+        assertTrue(css.contains("border: 1px solid var(--transport-control);"));
     }
 
     @Test
@@ -772,14 +772,15 @@ class StatsWebInteractionUiContractTest
             "aria-label=\"Replay last call\""));
         assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
         assertTrue(html.contains("id=\"playback-control-menu\" class=\"playback-control-menu\" open"));
-        assertTrue(css.contains("#desktop-playback-slot .playback-control-menu[open] > " +
+        assertTrue(css.contains(".desktop-playback-slot .playback-control-menu[open] > " +
             ".playback-control-menu-panel"));
-        assertTrue(css.contains("#desktop-playback-slot .playback-control-menu-panel .playback-volume"));
+        assertTrue(css.contains(".desktop-playback-slot .playback-control-menu-panel .playback-volume"));
         assertFalse(css.contains(".playback-controls .playback-command:not(#playback-play)"));
         assertFalse(html.contains("id=\"playback-capacity\""));
         assertFalse(source.contains("Matching calls are delivered once"));
         assertTrue(css.contains(".playback-panel-note:empty"));
-        assertTrue(css.contains("linear-gradient(180deg, #2c3235 0%, #202528 52%, #171b1d 100%)"));
+        assertTrue(css.contains("linear-gradient(180deg, var(--transport-control) 0%, " +
+            "var(--transport-surface) 52%, var(--transport-surface) 100%)"));
         assertFalse(html.contains("id=\"playback-mute\""));
         assertFalse(html.contains(">Unmute<"));
         assertTrue(source.contains("this.stopped = true"));

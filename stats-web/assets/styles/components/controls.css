@@ -343,6 +343,65 @@
   border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
 }
 
+.ui-badge-group {
+  max-width: 100%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ui-pill:is(.state-current, .role-voice) {
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success) 45%, var(--line));
+}
+
+.ui-pill:is(.state-stale, .role-secondary) {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+}
+
+.ui-pill.role-primary {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+.ui-pill.role-data {
+  color: var(--link);
+  background: var(--blue-soft);
+  border-color: color-mix(in srgb, var(--link) 42%, var(--line));
+}
+
+.ui-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.ui-toolbar > .ui-input[type="search"] {
+  width: min(340px, 100%);
+}
+
+.ui-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.ui-pager.pager-top {
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+}
+
 .ui-status {
   display: inline-flex;
   align-items: center;
@@ -699,6 +758,16 @@
   color: var(--muted);
   line-height: 1.45;
 }
+
+.quality-good,
+.quality-warn,
+.quality-bad {
+  font-weight: 700;
+}
+
+.quality-good { color: var(--success); }
+.quality-warn { color: var(--warning); }
+.quality-bad { color: var(--danger); }
 
 .ui-feedback-loading {
   background: var(--surface-2);

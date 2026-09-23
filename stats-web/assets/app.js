@@ -1423,7 +1423,7 @@ function identityDomainLabel(row) {
 }
 
 function badge(label, className = '', title = '') {
-  const element = node('span', `badge ${className}`.trim(), label);
+  const element = node('span', `badge ui-pill ${className}`.trim(), label);
   if (title) element.title = title;
   return element;
 }
@@ -1431,7 +1431,7 @@ function badge(label, className = '', title = '') {
 function badgeGroup(values) {
   const badges = (values || []).filter(Boolean);
   if (!badges.length) return fragment();
-  const group = node('span', 'badge-group');
+  const group = node('span', 'badge-group ui-badge-group');
   group.append(...badges);
   return group;
 }
@@ -2828,9 +2828,9 @@ function tableSection(title, rows, columns, emptyText = 'No rows', options = {},
 }
 
 function keyValues(entries) {
-  const list = node('dl', 'key-values');
+  const list = node('dl', 'key-values ui-facts');
   entries.forEach(([label, value]) => {
-    const item = node('div', 'key-value-item');
+    const item = node('div', 'key-value-item ui-fact');
     item.append(node('dt', '', label));
     const detail = node('dd');
     detail.append(valueNode(value));
@@ -2853,7 +2853,7 @@ function metrics(values, embedded = false) {
 }
 
 function searchBar(placeholder = 'Search') {
-  const form = node('form', 'toolbar');
+  const form = node('form', 'toolbar ui-toolbar');
   form.method = 'get';
   for (const [key, value] of route.entries()) {
     if (key === 'q' || key === 'offset') continue;
@@ -2865,6 +2865,7 @@ function searchBar(placeholder = 'Search') {
   }
   const input = node('input');
   input.type = 'search';
+  input.className = 'ui-input';
   input.name = 'q';
   input.value = route.get('q') || '';
   input.placeholder = placeholder;
@@ -2876,7 +2877,7 @@ function searchBar(placeholder = 'Search') {
 }
 
 function pager(page, position = 'bottom', itemLabel = 'Rows') {
-  const bar = node('nav', `pager pager-${position}`);
+  const bar = node('nav', `pager ui-pager pager-${position}`);
   bar.setAttribute('aria-label', `${position === 'top' ? 'Top' : 'Bottom'} table pagination`);
   const { offset, limit } = page;
   const firstRow = offset + (page.rows.length ? 1 : 0);
@@ -3334,7 +3335,7 @@ function aliasLocalDateTimeValue(epoch) {
 
 function aliasEditorFilterToolbar(aliasPage, options = null) {
   const scanListScope = options?.scan_list_scope === true;
-  const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace');
+  const form = node('form', 'toolbar ui-toolbar ui-catalog-toolbar alias-catalog-toolbar alias-editor-filter-toolbar data-workspace');
   form.method = 'get';
   [['view', 'aliases'], ['list', route.get('list')], ['aliasTab', route.get('aliasTab') || 'configure'],
     ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
@@ -3348,7 +3349,7 @@ function aliasEditorFilterToolbar(aliasPage, options = null) {
   const selectFilter = (label, name, values) => {
     const wrapper = node('label', 'alias-filter ui-field');
     wrapper.append(node('span', 'ui-field-label', label));
-    const select = node('select');
+    const select = node('select', 'ui-select');
     select.name = name;
     values.forEach(([value, text]) => {
       const option = node('option', '', text);
@@ -5164,7 +5165,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter reviewed aliases');
   const rowsHost = node('div');
-  const pagerHost = node('div', 'toolbar');
+  const pagerHost = node('div', 'toolbar ui-toolbar');
   const confirm = node('input'); confirm.type = 'checkbox';
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
   const reviewBack = node('button', 'ui-button ui-button-secondary', 'Back'); reviewBack.type = 'button';
@@ -5868,7 +5869,7 @@ function openObservedGroupIdentityDetail(row, selectedList) {
 }
 
 function observedGroupIdentityToolbar(selectedList) {
-  const form = node('form', 'toolbar alias-catalog-toolbar observed-group-identity-toolbar');
+  const form = node('form', 'toolbar ui-toolbar ui-catalog-toolbar alias-catalog-toolbar observed-group-identity-toolbar data-workspace');
   form.method = 'get';
   [['view', 'aliases'], ['list', aliasListId(selectedList)], ['aliasTab', 'discover'],
     ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
@@ -5879,8 +5880,8 @@ function observedGroupIdentityToolbar(selectedList) {
     hidden.value = String(value);
     form.append(hidden);
   });
-  const search = node('label', 'alias-filter alias-search-filter');
-  search.append(node('span', '', 'Search'));
+  const search = node('label', 'alias-filter alias-search-filter ui-field');
+  search.append(node('span', 'ui-field-label', 'Search'));
   const input = aliasEditorFilterInput('q', route.get('q') || '', 'search');
   input.placeholder = 'Group, system, or channel';
   search.append(input);
@@ -7202,7 +7203,7 @@ function qualityHistoryChart(channel, response, metric, domain) {
 }
 
 function qualityChartPanel(title, description, chart) {
-  const panel = node('div', 'quality-chart-panel');
+  const panel = node('div', 'quality-chart-panel ui-surface');
   const heading = node('div', 'quality-chart-heading');
   heading.append(node('strong', '', title), node('span', '', description));
   panel.append(heading, chart);
@@ -7217,7 +7218,10 @@ function updateSignalCurrentTile(tile, channel) {
   const system = node('div', 'signal-current-system');
   system.append(dashboardChannelContext(channel));
   labels.append(system);
-  header.append(labels, badge(state.label, `signal-state ${state.className}`));
+  const tone = state.className === 'healthy' ? 'ui-pill-success' :
+    state.className === 'degraded' ? 'ui-pill-warning' :
+      state.className === 'poor' ? 'ui-pill-danger' : '';
+  header.append(labels, badge(state.label, `signal-state ${tone}`));
   const power = node('div', 'signal-current-power');
   power.append(node('strong', '', signalNumber(channel.signal_dbfs)),
     node('span', '', `30s avg ${signalNumber(channel.average_signal_dbfs)}`));
@@ -7237,7 +7241,7 @@ function updateSignalCurrentTile(tile, channel) {
 }
 
 function signalCurrentTile(channel) {
-  return updateSignalCurrentTile(node('article', 'signal-current-tile'), channel);
+  return updateSignalCurrentTile(node('article', 'signal-current-tile ui-surface'), channel);
 }
 
 function sortSignalChannels(channels) {
@@ -11204,7 +11208,7 @@ function liveChannelPane() {
 
   const setStatus = (text, className = 'state-stale') => {
     connection.textContent = text;
-    connection.className = `badge ${className}`;
+    connection.className = `badge ui-pill ${className}`;
   };
 
   const updateReadouts = () => {
@@ -11684,14 +11688,14 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
     const group = node('section', 'radioreference-frequency-group');
     const grid = node('div', 'radioreference-result-grid');
     items.forEach((row) => {
-      const card = node('article', 'radioreference-result-card');
+      const card = node('article', 'radioreference-result-card ui-surface');
       const title = isTrunked ? channelLabel(row) || row.description || row.system_name :
         row.alpha_tag || row.description || 'Conventional frequency';
       const header = node('div', 'radioreference-result-card-header');
-      header.append(node('h4', '', title), node('span', 'radioreference-result-type',
+      header.append(node('h4', '', title), node('span', 'radioreference-result-type ui-pill',
         isTrunked ? 'Trunked' : 'Conventional'));
 
-      const values = node('dl', 'radioreference-result-facts');
+      const values = node('dl', 'radioreference-result-facts ui-fact-list');
       const factValues = new Map();
       const addFact = (key, factLabel, value, required = false) => {
         const present = value instanceof Node || String(value ?? '').trim();
@@ -11734,12 +11738,12 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
       detailsButton.type = 'button';
       actions.append(detailsButton);
 
-      const status = node('p', 'radioreference-result-status');
+      const status = node('p', 'radioreference-result-status ui-status');
       let detailRequest = 0;
       status.setAttribute('aria-live', 'polite');
       const showDetails = async (button) => {
         const request = ++detailRequest;
-        status.classList.remove('error');
+        status.classList.remove('ui-status-danger');
         status.textContent = 'Loading RadioReference details…';
         button.disabled = true;
         try {
@@ -11765,7 +11769,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
           detailsButton.textContent = 'Details loaded';
         } catch (error) {
           if (request !== detailRequest) return;
-          status.classList.add('error');
+          status.classList.add('ui-status-danger');
           status.textContent = error.message;
           detailsButton.textContent = 'Retry details';
           button.disabled = false;
@@ -12598,7 +12602,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   const setStatus = (text, className = 'state-stale') => {
     if (status.textContent !== text) status.textContent = text;
-    const nextClassName = `badge ${className}`;
+    const nextClassName = `badge ui-pill ${className}`;
     if (status.className !== nextClassName) status.className = nextClassName;
   };
 
@@ -14960,11 +14964,11 @@ function liveChannelsSection(onSelectionChange) {
     },
     open: () => {
       connection.textContent = 'Live';
-      connection.className = 'badge state-current';
+      connection.className = 'badge ui-pill state-current';
     },
     error: () => {
       connection.textContent = 'Reconnecting';
-      connection.className = 'badge state-stale';
+      connection.className = 'badge ui-pill state-stale';
     }
   });
   return block;
@@ -18869,13 +18873,13 @@ function adminScanListMemberCount(scanList) {
 function adminScanListUnmatchedAliasLists(scanList) {
   const aliasLists = Array.isArray(scanList?.unmatched_alias_lists) ? scanList.unmatched_alias_lists : [];
   if (!aliasLists.length) return node('span', 'muted', 'None');
-  const links = node('span', 'badge-group');
+  const links = node('span', 'badge-group ui-badge-group');
   aliasLists.forEach((aliasList) => {
     const id = Number(aliasList?.alias_list_id);
     if (!Number.isInteger(id) || id <= 0) return;
     links.append(anchor(aliasList.name || `Alias List ${id}`, href('aliases', {
       list: id, aliasTab: 'configure'
-    }), 'badge'));
+    }), 'badge ui-pill'));
   });
   return links.childElementCount ? links : node('span', 'muted', 'None');
 }
