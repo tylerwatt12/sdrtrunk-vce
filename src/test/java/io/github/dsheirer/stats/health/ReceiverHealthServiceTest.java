@@ -126,6 +126,24 @@ class ReceiverHealthServiceTest
     }
 
     @Test
+    void exposesOnlyTheAcknowledgedRadioResolveCallCount()
+    {
+        AtomicLong accepted = new AtomicLong();
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            () -> 1_000L))
+        {
+            service.setRadioResolveAcceptedCalls(accepted::get);
+            service.sampleNow();
+            assertEquals(0L, service.snapshot().get("radioresolve_accepted_calls"));
+
+            accepted.set(3);
+            service.sampleNow();
+            assertEquals(3L, service.snapshot().get("radioresolve_accepted_calls"));
+        }
+    }
+
+    @Test
     void distinguishesWebCallCapacityDropsFromEncoderFailures()
     {
         AtomicLong clock = new AtomicLong(1_000);

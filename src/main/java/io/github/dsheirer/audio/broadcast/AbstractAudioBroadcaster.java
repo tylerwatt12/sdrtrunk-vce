@@ -32,7 +32,7 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
     private T mBroadcastConfiguration;
     protected ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>(BroadcastState.READY);
     protected ObjectProperty<BroadcastState> mLastBadBroadcastState = new SimpleObjectProperty<>();
-    protected int mStreamedAudioCount = 0;
+    protected volatile int mStreamedAudioCount = 0;
     protected int mErrorAudioCount = 0;
     protected int mAgedOffAudioCount = 0;
 

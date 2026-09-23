@@ -20,6 +20,7 @@ package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveBroadcaster;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
@@ -115,6 +116,15 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     public ObservableList<ConfiguredBroadcast> getConfiguredBroadcasts()
     {
         return mConfiguredBroadcasts;
+    }
+
+    /** Process-local count of RadioResolve calls acknowledged as accepted by the server. */
+    public long getRadioResolveAcceptedCallCount()
+    {
+        return mBroadcasterMap.values().stream()
+            .filter(RadioResolveBroadcaster.class::isInstance)
+            .mapToLong(AbstractAudioBroadcaster::getStreamedAudioCount)
+            .sum();
     }
 
     /**

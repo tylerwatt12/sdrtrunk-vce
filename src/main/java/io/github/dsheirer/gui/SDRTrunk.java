@@ -293,7 +293,7 @@ public class SDRTrunk
         }
 
         mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
-            mAudioStreamingManager);
+            mAudioStreamingManager, mConfigurationManager.getBroadcastModel());
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(

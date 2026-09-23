@@ -2125,9 +2125,12 @@ public class StatsWebServerService implements AutoCloseable
      */
     public void setReceiverHealthOutputSources(AudioCallCoordinator coordinator,
                                                AudioRecordingManager recordingManager,
-                                               AudioStreamingManager streamingManager)
+                                               AudioStreamingManager streamingManager,
+                                               io.github.dsheirer.audio.broadcast.BroadcastModel broadcastModel)
     {
         mReceiverHealthService.setOutputSources(coordinator, recordingManager, streamingManager);
+        mReceiverHealthService.setRadioResolveAcceptedCalls(
+            broadcastModel != null ? broadcastModel::getRadioResolveAcceptedCallCount : null);
     }
 
     private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException

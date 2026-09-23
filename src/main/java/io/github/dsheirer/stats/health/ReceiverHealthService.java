@@ -85,6 +85,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private volatile AudioCallCoordinator mAudioCallCoordinator;
     private volatile AudioRecordingManager mAudioRecordingManager;
     private volatile AudioStreamingManager mAudioStreamingManager;
+    private volatile LongSupplier mRadioResolveAcceptedCalls = () -> 0L;
     private volatile Supplier<Map<String,Object>> mWebStatusSupplier = Map::of;
     private volatile Supplier<ChannelActivityModel.SnapshotSet> mChannelActivitySnapshotSupplier;
     private volatile Map<String,Object> mSnapshot;
@@ -154,6 +155,11 @@ public final class ReceiverHealthService implements AutoCloseable
         mAudioCallCoordinator = coordinator;
         mAudioRecordingManager = recordingManager;
         mAudioStreamingManager = streamingManager;
+    }
+
+    public void setRadioResolveAcceptedCalls(LongSupplier acceptedCalls)
+    {
+        mRadioResolveAcceptedCalls = acceptedCalls != null ? acceptedCalls : () -> 0L;
     }
 
     public void setWebStatusSupplier(Supplier<Map<String,Object>> webStatusSupplier)
@@ -229,6 +235,7 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("active", active);
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
+        response.put("radioresolve_accepted_calls", mRadioResolveAcceptedCalls.getAsLong());
         mSnapshot = Map.copyOf(response);
     }
 
@@ -1104,7 +1111,7 @@ public final class ReceiverHealthService implements AutoCloseable
         return Map.of("started_at_ms", startedAtMs, "generated_at_ms", startedAtMs,
             "summary", Map.of("severity", "healthy", "active_count", 0, "warning_count", 0,
                 "critical_count", 0), "active", List.of(), "resolved", List.of(),
-            "measurements", List.of());
+            "measurements", List.of(), "radioresolve_accepted_calls", 0L);
     }
 
     private static Path legacySnapshotPath(UserPreferences userPreferences)
