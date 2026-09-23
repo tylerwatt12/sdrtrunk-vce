@@ -27,6 +27,10 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 
 import java.util.prefs.Preferences;
+import java.util.prefs.BackingStoreException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 /**
  * User preferences for the display of channel decode events
@@ -41,6 +45,7 @@ public class RadioReferencePreference extends Preference
     private static final String PREFERRED_COUNTRY_ID = "preferred.country";
     private static final String PREFERRED_STATE_ID = "preferred.state";
     private static final String PREFERRED_COUNTY_ID = "preferred.county";
+    private static final String BOOKMARKS = "bookmarks";
 
     private String mUserName;
     private String mPassword;
@@ -242,6 +247,114 @@ public class RadioReferencePreference extends Preference
         mPreferredCountyId = county;
         mPreferences.putInt(PREFERRED_COUNTY_ID, mPreferredCountyId);
         notifyPreferenceUpdated();
+    }
+
+    public enum BookmarkKind
+    {
+        TRUNKED_SYSTEM, CONVENTIONAL_AGENCY, TALKGROUP_CATEGORY, CONVENTIONAL_CATEGORY
+    }
+
+    public record Bookmark(BookmarkKind kind, int id, int parentId, String ownerKind, String name,
+                           String parentName)
+    {
+        public Bookmark
+        {
+            if(kind == null || id <= 0 || name == null || name.isBlank() || name.length() > 256 ||
+                parentId < 0 || parentName != null && parentName.length() > 256)
+            {
+                throw new IllegalArgumentException("RadioReference bookmark is invalid");
+            }
+
+            ownerKind = ownerKind == null ? "" : ownerKind.strip().toUpperCase(java.util.Locale.ROOT);
+            name = name.strip();
+            parentName = parentName == null ? "" : parentName.strip();
+            boolean category = kind == BookmarkKind.TALKGROUP_CATEGORY ||
+                kind == BookmarkKind.CONVENTIONAL_CATEGORY;
+            if(category != (parentId > 0) ||
+                kind == BookmarkKind.TALKGROUP_CATEGORY && !"TRUNKED_SYSTEM".equals(ownerKind) ||
+                (kind == BookmarkKind.CONVENTIONAL_AGENCY || kind == BookmarkKind.CONVENTIONAL_CATEGORY) &&
+                    !"AGENCY".equals(ownerKind) && !"COUNTY".equals(ownerKind) ||
+                kind == BookmarkKind.TRUNKED_SYSTEM && !ownerKind.isEmpty())
+            {
+                throw new IllegalArgumentException("RadioReference bookmark target is invalid");
+            }
+        }
+
+        public String key()
+        {
+            return kind.name() + "-" + ownerKind + "-" + parentId + "-" + id;
+        }
+    }
+
+    public synchronized List<Bookmark> getBookmarks()
+    {
+        try
+        {
+            Preferences bookmarks = mPreferences.node(BOOKMARKS);
+            List<Bookmark> result = new ArrayList<>();
+            for(String key: bookmarks.childrenNames())
+            {
+                Preferences entry = bookmarks.node(key);
+                try
+                {
+                    result.add(new Bookmark(BookmarkKind.valueOf(entry.get("kind", "")),
+                        entry.getInt("id", -1), entry.getInt("parent_id", 0),
+                        entry.get("owner_kind", ""), entry.get("name", ""),
+                        entry.get("parent_name", "")));
+                }
+                catch(IllegalArgumentException ignored)
+                {
+                    //An invalid saved item must not hide the remaining bookmarks.
+                }
+            }
+            result.sort(Comparator.comparing(Bookmark::kind)
+                .thenComparing(Bookmark::name, String.CASE_INSENSITIVE_ORDER));
+            return List.copyOf(result);
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference bookmarks could not be loaded", exception);
+        }
+    }
+
+    public synchronized List<Bookmark> saveBookmark(Bookmark bookmark)
+    {
+        try
+        {
+            Preferences entry = mPreferences.node(BOOKMARKS).node(bookmark.key());
+            entry.put("kind", bookmark.kind().name());
+            entry.putInt("id", bookmark.id());
+            entry.putInt("parent_id", bookmark.parentId());
+            entry.put("owner_kind", bookmark.ownerKind());
+            entry.put("name", bookmark.name());
+            entry.put("parent_name", bookmark.parentName());
+            entry.flush();
+            notifyPreferenceUpdated();
+            return getBookmarks();
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference bookmark could not be saved", exception);
+        }
+    }
+
+    public synchronized List<Bookmark> removeBookmark(Bookmark bookmark)
+    {
+        try
+        {
+            Preferences bookmarks = mPreferences.node(BOOKMARKS);
+            if(bookmarks.nodeExists(bookmark.key()))
+            {
+                bookmarks.node(bookmark.key()).removeNode();
+                bookmarks.flush();
+                notifyPreferenceUpdated();
+            }
+            return getBookmarks();
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference bookmark could not be removed", exception);
+        }
     }
 
 }

@@ -132,6 +132,9 @@ class RadioReferenceImportServiceTest
             fixture.directory.system = p25System();
             RadioReferenceImportService.TalkgroupPage page = fixture.importer.talkgroups(10, p25List, null, null,
                 0, 100);
+            RadioReferenceImportService.TalkgroupPage catalog = fixture.importer.talkgroupCatalog(10, p25List);
+            assertEquals(2, catalog.totalItems());
+            assertEquals(2, catalog.items().size());
             assertEquals(List.of(RadioReferenceImportService.TalkgroupStatus.NOT_PRESENT,
                     RadioReferenceImportService.TalkgroupStatus.NOT_PRESENT),
                 page.items().stream().map(RadioReferenceImportService.TalkgroupRow::status).toList());

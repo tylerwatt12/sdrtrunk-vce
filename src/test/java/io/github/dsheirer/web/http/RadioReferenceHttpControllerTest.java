@@ -126,6 +126,8 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/systems/details?system_id=2001").GET())).at("/type").textValue());
                 assertEquals("Franklin Simulcast", data(send(client,
                     request(origin, "/systems/sites?system_id=2001").GET())).at("/items/0/name").textValue());
+                assertEquals("Franklin Simulcast", data(send(client,
+                    request(origin, "/systems/sites/catalog?system_id=2001").GET())).at("/0/name").textValue());
                 assertEquals(1201, data(send(client,
                     request(origin, "/systems/talkgroups?system_id=2001").GET()))
                     .at("/items/0/value").intValue());
@@ -135,6 +137,16 @@ class RadioReferenceHttpControllerTest
                 assertEquals(155_250_000L, data(send(client,
                     request(origin, "/conventional/frequencies?sub_category_id=501").GET()))
                     .at("/items/0/downlink_hz").longValue());
+
+                String bookmarkBody = "{\"kind\":\"TRUNKED_SYSTEM\",\"id\":2001," +
+                    "\"parent_id\":0,\"owner_kind\":\"\",\"name\":\"State P25\"," +
+                    "\"parent_name\":\"\"}";
+                assertEquals("TRUNKED_SYSTEM", data(send(client, jsonRequest(origin, "/bookmarks")
+                    .PUT(HttpRequest.BodyPublishers.ofString(bookmarkBody)))).at("/0/kind").textValue());
+                assertEquals(2001, data(send(client, request(origin, "/bookmarks").GET()))
+                    .at("/0/id").intValue());
+                assertEquals(0, data(send(client, jsonRequest(origin, "/bookmarks")
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString(bookmarkBody)))).size());
 
                 for(String removedImportPath: List.of(
                     "/systems/site-preview?system_id=2001&site_id=3001",
@@ -182,6 +194,8 @@ class RadioReferenceHttpControllerTest
 
     private static final class FakeSettings implements RadioReferenceHttpController.Settings
     {
+        private final java.util.Map<String,io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark>
+            bookmarks = new java.util.LinkedHashMap<>();
         private boolean credentialsStored;
         private String userName;
         private String password;
@@ -247,6 +261,28 @@ class RadioReferenceHttpControllerTest
             this.countryId = countryId;
             this.stateId = stateId;
             this.countyId = countyId != null ? countyId : -1;
+        }
+
+        @Override
+        public List<io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark> bookmarks()
+        {
+            return List.copyOf(bookmarks.values());
+        }
+
+        @Override
+        public List<io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark> saveBookmark(
+            io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark bookmark)
+        {
+            bookmarks.put(bookmark.key(), bookmark);
+            return bookmarks();
+        }
+
+        @Override
+        public List<io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark> removeBookmark(
+            io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark bookmark)
+        {
+            bookmarks.remove(bookmark.key());
+            return bookmarks();
         }
     }
 

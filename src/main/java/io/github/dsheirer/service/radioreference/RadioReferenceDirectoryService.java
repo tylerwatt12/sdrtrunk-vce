@@ -576,8 +576,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public BoundedPage<RadioReferenceGateway.TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
         throws RadioReferenceDirectoryException
     {
-        validateId(systemId);
         validatePage(offset, limit);
+        return page(allTrunkedSites(systemId), offset, limit);
+    }
+
+    /** Loads the complete bounded site catalog once for in-browser filtering and paging. */
+    public List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
         List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremium(
             gateway -> gateway.trunkedSiteDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         enforceImportBound(source == null ? 0 : source.size());
@@ -601,7 +608,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     .thenComparingInt(RadioReferenceGateway.TrunkedSiteDetails::id))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         enforceImportBound(sites.size());
-        return page(sites, offset, limit);
+        return List.copyOf(sites);
     }
 
     /** Loads a filtered, stable page from the complete talkgroup catalog for a selected system. */

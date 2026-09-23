@@ -217,6 +217,20 @@ public final class RadioReferenceImportService
             categories);
     }
 
+    /** Annotates the bounded catalog once so browser searches do not repeat an upstream request. */
+    public TalkgroupPage talkgroupCatalog(int systemId, long aliasListId)
+        throws RadioReferenceDirectoryException
+    {
+        TrunkedSystemDetails system = requireSystem(positive(systemId, "system_id"));
+        DecoderPlan decoder = systemDecoder(system);
+        requireSupported(decoder);
+        requireCompatibleTalkgroupList(aliasListId, decoder.decoderType());
+        List<RemoteTalkgroup> catalog = mDirectory.allTalkgroups(systemId);
+        List<RemoteTalkgroupCategory> categories = optionalCategories(systemId);
+        AliasRows rows = aliasRows(aliasListId, decoder.protocol(), catalog, categories);
+        return new TalkgroupPage(rows.revision(), rows.items(), 0, null, rows.items().size(), categories);
+    }
+
     /** Builds one revision-bound Alias import plan for selected talkgroups or the whole system. */
     public TalkgroupImportPreview previewTalkgroups(TalkgroupImportRequest request)
         throws RadioReferenceDirectoryException

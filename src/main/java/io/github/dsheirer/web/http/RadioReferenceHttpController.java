@@ -14,6 +14,7 @@ import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
+import io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountState;
@@ -114,6 +115,10 @@ public final class RadioReferenceHttpController
             {
                 location(exchange);
             }
+            else if((PATH + "/bookmarks").equals(path))
+            {
+                bookmarks(exchange);
+            }
             else if((PATH + "/countries").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -207,6 +212,15 @@ public final class RadioReferenceHttpController
                     positiveInt(query.get("system_id"), "system_id"), optionalInt(query.get("offset"), 0),
                     optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
             }
+            else if((PATH + "/systems/sites/catalog").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                requireEmptyBody(exchange, "GET");
+                Map<String,String> query = query(exchange, "system_id");
+                ensureStoredSession();
+                ApiHttpResponse.sendData(exchange, 200,
+                    mService.allTrunkedSites(positiveInt(query.get("system_id"), "system_id")));
+            }
             else if((PATH + "/systems/talkgroups").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -234,6 +248,16 @@ public final class RadioReferenceHttpController
                     ApiHttpResponse.sendData(exchange, 200, new RawTalkgroupPage(page.items(), page.offset(),
                         page.nextOffset(), page.totalItems(), categories.items()));
                 }
+            }
+            else if((PATH + "/systems/talkgroups/catalog").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                requireEmptyBody(exchange, "GET");
+                Map<String,String> query = query(exchange, "system_id", "alias_list_id");
+                ensureStoredSession();
+                ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupCatalog(
+                    positiveInt(query.get("system_id"), "system_id"),
+                    positiveLong(query.get("alias_list_id"), "alias_list_id")));
             }
             else if((PATH + "/conventional/categories").equals(path))
             {
@@ -449,6 +473,30 @@ public final class RadioReferenceHttpController
         else
         {
             methodNotAllowed(exchange, "PUT, DELETE");
+        }
+    }
+
+    private void bookmarks(HttpExchange exchange) throws IOException, RequestException,
+        RadioReferenceDirectoryException
+    {
+        requireNoQuery(exchange);
+        ensureStoredSession();
+        if("GET".equals(exchange.getRequestMethod()))
+        {
+            requireEmptyBody(exchange, "GET");
+            ApiHttpResponse.sendData(exchange, 200, mSettings.bookmarks());
+        }
+        else if("PUT".equals(exchange.getRequestMethod()))
+        {
+            ApiHttpResponse.sendData(exchange, 200, mSettings.saveBookmark(read(exchange, Bookmark.class)));
+        }
+        else if("DELETE".equals(exchange.getRequestMethod()))
+        {
+            ApiHttpResponse.sendData(exchange, 200, mSettings.removeBookmark(read(exchange, Bookmark.class)));
+        }
+        else
+        {
+            methodNotAllowed(exchange, "GET, PUT, DELETE");
         }
     }
 
@@ -831,6 +879,9 @@ public final class RadioReferenceHttpController
         void storeCredentials(String userName, String password);
         void clearCredentials();
         void storeLocation(int countryId, int stateId, Integer countyId);
+        List<Bookmark> bookmarks();
+        List<Bookmark> saveBookmark(Bookmark bookmark);
+        List<Bookmark> removeBookmark(Bookmark bookmark);
     }
 
     private static final class PreferenceSettings implements Settings
@@ -908,6 +959,24 @@ public final class RadioReferenceHttpController
             {
                 mPreference.setPreferredCountyId(RadioReferencePreference.INVALID_ID);
             }
+        }
+
+        @Override
+        public List<Bookmark> bookmarks()
+        {
+            return mPreference.getBookmarks();
+        }
+
+        @Override
+        public List<Bookmark> saveBookmark(Bookmark bookmark)
+        {
+            return mPreference.saveBookmark(bookmark);
+        }
+
+        @Override
+        public List<Bookmark> removeBookmark(Bookmark bookmark)
+        {
+            return mPreference.removeBookmark(bookmark);
         }
     }
 
