@@ -11,23 +11,23 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, legacy, components, compositions, features, utilities;',
   '@import url("./styles/base.css") layer(reset);',
-  '@import url("./styles/tokens.css?v=1") layer(tokens);',
+  '@import url("./styles/tokens.css?v=2") layer(tokens);',
   '@import url("./styles/legacy.css?v=7") layer(legacy);',
-  '@import url("./styles/components/controls.css?v=7") layer(components);',
+  '@import url("./styles/components/controls.css?v=8") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=5") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=2") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=3") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=2") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=2") layer(compositions);',
   '@import url("./styles/features/channels.css?v=4") layer(features);',
   '@import url("./styles/features/entity-details.css?v=5") layer(features);',
-  '@import url("./styles/features/live.css?v=3") layer(features);',
+  '@import url("./styles/features/live.css?v=4") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=2") layer(features);',
-  '@import url("./styles/features/tuner-spectrum.css?v=6") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css?v=7") layer(features);',
   '@import url("./styles/features/scanner.css?v=2") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=1") layer(features);',
-  '@import url("./styles/features/aliases.css?v=3") layer(features);',
+  '@import url("./styles/features/aliases.css?v=4") layer(features);',
   '@import url("./styles/features/dashboard.css?v=2") layer(features);',
   '@import url("./styles/features/administration.css?v=2") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=1") layer(features);',
@@ -588,10 +588,11 @@ function validateModernControlStates(stylesheets, entry) {
   const controls = stylesheetModule(stylesheets, entry, 'components/controls.css').source;
   assert.match(controls, /(?:^|\n)\.link-button\s*\{\s*min-height:\s*0;/,
     'Link-style buttons must not inherit the legacy button minimum height');
-  const dangerHoverHeader = '.ui-button-danger:hover:not(:disabled),\n'
-    + '.ui-button-danger-quiet:hover:not(:disabled)';
+  const dangerHoverHeader = '.ui-button-danger:hover:not(:disabled, [aria-disabled="true"]),\n'
+    + '.ui-button-danger-quiet:hover:not(:disabled, [aria-disabled="true"])';
   const dangerHover = ruleBody(controls, dangerHoverHeader);
-  assert.ok(controls.indexOf(dangerHoverHeader) > controls.indexOf('.ui-button:hover:not(:disabled)'),
+  assert.ok(controls.indexOf(dangerHoverHeader) >
+    controls.indexOf('.ui-button:hover:not(:disabled, [aria-disabled="true"])'),
     'Danger hover rules must follow the shared button hover rule');
   assert.match(dangerHover, /color:\s*var\(--danger\)/);
   assert.match(dangerHover, /background:[^;]*var\(--danger\)/);

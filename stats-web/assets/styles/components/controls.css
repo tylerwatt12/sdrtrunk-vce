@@ -100,12 +100,12 @@
   stroke-linejoin: round;
 }
 
-.ui-button:hover:not(:disabled) {
+.ui-button:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--accent);
   background: var(--surface-2);
 }
 
-.ui-button:active:not(:disabled) {
+.ui-button:active:not(:disabled, [aria-disabled="true"]) {
   transform: translateY(1px);
 }
 
@@ -218,7 +218,7 @@
   border-color: var(--primary-control);
 }
 
-.ui-button-primary:hover:not(:disabled) {
+.ui-button-primary:hover:not(:disabled, [aria-disabled="true"]) {
   color: var(--primary-control-ink);
   background: var(--primary-control-hover);
   border-color: var(--primary-control-hover);
@@ -235,17 +235,55 @@
   border-color: transparent;
 }
 
-.ui-button-danger:hover:not(:disabled),
-.ui-button-danger-quiet:hover:not(:disabled) {
+.ui-button-danger:hover:not(:disabled, [aria-disabled="true"]),
+.ui-button-danger-quiet:hover:not(:disabled, [aria-disabled="true"]) {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, var(--surface));
   border-color: color-mix(in srgb, var(--danger) 58%, var(--line));
 }
 
 .ui-icon-button {
-  width: var(--ui-control-height, var(--control-height-comfortable));
-  min-width: var(--ui-control-height, var(--control-height-comfortable));
+  width: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  height: var(--icon-action-size);
+  min-height: var(--icon-action-size);
   padding: 0;
+  border-radius: var(--icon-action-radius);
+  flex: 0 0 auto;
+}
+
+.ui-icon-button svg {
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
+}
+
+.ui-icon-button.ui-button-danger-quiet {
+  background: var(--surface);
+  border-color: var(--interactive-border);
+}
+
+.ui-icon-button:not(.ui-button-primary, .ui-button-header, .ui-button-danger-quiet):hover:not(:disabled, [aria-disabled="true"]) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ui-icon-hint {
+  position: fixed;
+  z-index: 150;
+  width: max-content;
+  max-width: min(var(--hint-max-width), calc(100vw - var(--space-4)));
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--surface);
+  background: var(--ink);
+  border: 0;
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-raised);
+  font-size: var(--hint-font-size);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
 }
 
 .ui-icon-button.is-loading {

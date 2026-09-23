@@ -355,7 +355,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       control.textContent = saved ? '★' : '☆';
       control.setAttribute('aria-pressed', String(saved));
       control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
-      control.title = saved ? 'Remove bookmark' : 'Bookmark this item';
+      control.title = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
       control.disabled = false;
       onChanged?.();
     } catch (error) {
@@ -369,7 +369,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       'ui-button ui-button-secondary ui-icon-button radioreference-bookmark');
     control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
     control.setAttribute('aria-pressed', String(saved));
-    control.title = saved ? 'Remove bookmark' : 'Bookmark this item';
+    control.title = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
     control.addEventListener('click', () => toggleBookmark(value, control, onChanged));
     return control;
   };

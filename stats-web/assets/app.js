@@ -5,6 +5,7 @@ import * as tableLayouts from './core/table-layout.js';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
+import { installIconHints } from './core/icon-hints.js?v=1';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -12,7 +13,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=7';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=8';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -3981,18 +3982,14 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
         const actions = node('div', 'alias-tone-actions');
         actions.setAttribute('role', 'group');
         actions.setAttribute('aria-label', 'Tone sequence order');
-        const up = node('button', 'ui-button ui-button-secondary alias-tone-move alias-tone-up', '↑');
-        up.type = 'button';
-        up.title = 'Move tone up';
-        up.setAttribute('aria-label', 'Move tone up');
+        const up = iconButton('icon-arrow-up', 'Move tone up',
+          'ui-button ui-button-secondary ui-icon-button alias-tone-move alias-tone-up');
         up.addEventListener('click', () => moveTone(row, -1, up));
-        const down = node('button', 'ui-button ui-button-secondary alias-tone-move alias-tone-down', '↓');
-        down.type = 'button';
-        down.title = 'Move tone down';
-        down.setAttribute('aria-label', 'Move tone down');
+        const down = iconButton('icon-arrow-down', 'Move tone down',
+          'ui-button ui-button-secondary ui-icon-button alias-tone-move alias-tone-down');
         down.addEventListener('click', () => moveTone(row, 1, down));
-        const remove = node('button', 'ui-button ui-button-danger-quiet alias-tone-remove', 'Remove');
-        remove.type = 'button';
+        const remove = iconButton('icon-trash', 'Remove tone',
+          'ui-button ui-button-danger-quiet ui-icon-button alias-tone-remove');
         remove.addEventListener('click', () => {
           row.remove();
           refreshToneActions();
@@ -11885,7 +11882,7 @@ function diagnosticAudioPlayer(initialVolume = 0.7) {
 
 function tunerFrequencyAction(label, icon, hint, disabled = false) {
   const button = node(disabled ? 'span' : 'button',
-    `tuner-frequency-action ui-icon-button${disabled ? ' disabled-action' : ''}`);
+    `ui-button ui-button-secondary tuner-frequency-action ui-icon-button${disabled ? ' disabled-action' : ''}`);
   if (!disabled) button.type = 'button';
   button.title = hint;
   button.setAttribute('aria-label', label);
@@ -12010,7 +12007,7 @@ function openTunerFrequencyActions(selection) {
     audioStream?.close();
     audioStream = null;
     player.stop();
-    listen.classList.remove('is-active');
+    listen.classList.remove('active');
     listen.title = 'Listen to this frequency in NBFM';
     listen.setAttribute('aria-label', 'Listen to NBFM');
   };
@@ -12034,7 +12031,7 @@ function openTunerFrequencyActions(selection) {
         },
         onError: (error) => { message.textContent = error.message || 'Frequency listening is unavailable.'; }
       });
-      listen.classList.add('is-active');
+      listen.classList.add('active');
       listen.title = 'Stop listening';
       listen.setAttribute('aria-label', 'Stop listening');
       message.textContent = 'Listening for NBFM audio…';
@@ -12063,9 +12060,11 @@ function openTunerFrequencyActions(selection) {
   panel.setAttribute('popover', 'auto');
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-label', 'Frequency actions');
-  const close = node('button', 'ui-button ui-button-secondary ui-icon-button tuner-frequency-popover-close', '×');
+  const close = node('button', 'ui-button ui-button-secondary ui-icon-button tuner-frequency-popover-close');
   close.type = 'button';
+  close.append(iconGlyph('icon-close'));
   close.setAttribute('aria-label', 'Close frequency actions');
+  close.title = 'Close frequency actions';
   close.addEventListener('click', () => panel.hidePopover());
   panel.append(close, body);
   const renderSignal = activeRenderController?.signal;
@@ -14905,8 +14904,8 @@ function liveChannelsSection(onSelectionChange) {
         else showTable(value.table_id);
       });
       const title = node('span', 'channels-tab-title');
-      const close = node('button', 'channels-tab-close', '×');
-      close.type = 'button';
+      const close = iconButton('icon-close', 'Close stopped channel',
+        'ui-button ui-button-danger-quiet ui-icon-button channels-tab-close');
       close.hidden = true;
       close.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -18958,16 +18957,21 @@ function adminScanListActions(scanList, revision) {
   const members = anchor('Manage Members', href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
   }), 'ui-button ui-button-secondary admin-scan-list-members');
-  const edit = node('button', 'ui-button ui-button-secondary admin-scan-list-edit', 'Edit Details');
-  edit.type = 'button';
+  const edit = iconButton('icon-edit', `Edit ${scanList.name} details`,
+    'ui-button ui-button-secondary ui-icon-button admin-scan-list-edit');
   edit.dataset.scanListId = String(scanList.id);
   edit.addEventListener('click', () => openScanListAdminModal(scanList, revision));
-  const remove = node('button', 'ui-button ui-button-danger-quiet admin-scan-list-delete', 'Delete');
-  remove.type = 'button';
+  const remove = iconButton('icon-trash', `Delete ${scanList.name}`,
+    'ui-button ui-button-danger-quiet ui-icon-button admin-scan-list-delete');
   remove.dataset.scanListId = String(scanList.id);
-  remove.disabled = scanList.default === true;
-  if (remove.disabled) remove.title = 'Choose another default scan list before deleting this one.';
-  remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList, revision));
+  if (scanList.default === true) {
+    const reason = 'Choose another default scan list before deleting this one.';
+    remove.setAttribute('aria-disabled', 'true');
+    remove.setAttribute('aria-description', reason);
+    remove.title = reason;
+  } else {
+    remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList, revision));
+  }
   actions.append(members, edit, remove);
   return actions;
 }
@@ -21595,6 +21599,7 @@ window.addEventListener('popstate', () => {
   render();
 });
 initializeThemeToggle();
+installIconHints();
 initializeAccessControls();
 initializeNavigation();
 initializePlaybackHeader();

@@ -111,15 +111,15 @@
 
 .playback-icon-command,
 .playback-letter-command {
-  width: 32px;
-  min-width: 32px;
-  padding-inline: 5px;
+  width: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  padding-inline: 0;
 }
 
 .playback-icon-command svg,
 .playback-menu-command svg {
-  width: 19px;
-  height: 19px;
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
   display: block;
   margin: auto;
   fill: none;
@@ -148,23 +148,23 @@
 }
 
 .playback-command-group .playback-command:first-child {
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--icon-action-radius) 0 0 var(--icon-action-radius);
 }
 
 .playback-command-group .playback-command:last-child {
   margin-left: -1px;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--icon-action-radius) var(--icon-action-radius) 0;
 }
 
 .playback-menu-command {
-  width: 23px;
-  min-width: 23px;
-  padding: 3px;
+  width: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  padding: 0;
 }
 
 .playback-menu-command svg {
-  width: 12px;
-  height: 12px;
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
 }
 
 .playback-now {
@@ -477,8 +477,8 @@
 .nav-icon,
 .nav-lock,
 .icon-button svg {
-  width: 18px;
-  height: 18px;
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
   flex: 0 0 auto;
   fill: none;
   stroke: currentColor;
@@ -503,17 +503,14 @@
 }
 
 .icon-button {
-  min-width: 34px;
-  min-height: 34px;
+  width: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  height: var(--icon-action-size);
+  min-height: var(--icon-action-size);
   display: inline-grid;
   place-items: center;
-  padding: 6px;
-}
-
-.section-title-actions .section-title-icon {
-  min-width: 28px;
-  min-height: 28px;
-  padding: 4px;
+  padding: 0;
+  border-radius: var(--icon-action-radius);
 }
 
 .navigation-toggle {
@@ -743,8 +740,8 @@
   }
 
   .desktop-playback-slot .playback-control-menu > summary {
-    width: 32px;
-    height: 32px;
+    width: var(--icon-action-size);
+    height: var(--icon-action-size);
     display: grid;
     place-items: center;
     padding: 4px;
@@ -757,8 +754,8 @@
   }
 
   .desktop-playback-slot .playback-control-menu > summary svg {
-    width: 18px;
-    height: 18px;
+    width: var(--icon-glyph-size);
+    height: var(--icon-glyph-size);
     fill: none;
     stroke: currentColor;
     stroke-width: 1.8;
@@ -844,21 +841,21 @@
 }
 
 .header-controls .ui-button-header {
-  --ui-control-height: 34px;
-  --ui-control-radius: var(--radius-compact);
+  --ui-control-height: var(--icon-action-size);
+  --ui-control-radius: var(--icon-action-radius);
 }
 
 .header-controls .icon-button {
-  width: 34px;
-  min-width: 34px;
-  padding: 6px;
+  width: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  padding: 0;
 }
 
 .ui-header-indicator {
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  min-height: 34px;
+  width: var(--icon-action-size);
+  height: var(--icon-action-size);
+  min-width: var(--icon-action-size);
+  min-height: var(--icon-action-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -866,13 +863,13 @@
   color: var(--header-muted);
   background: color-mix(in srgb, var(--header) 82%, var(--surface));
   border: 1px solid var(--header-line);
-  border-radius: var(--radius-compact);
+  border-radius: var(--icon-action-radius);
   white-space: nowrap;
 }
 
 .ui-header-indicator svg {
-  width: 19px;
-  height: 19px;
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
 }
 
 .ui-header-indicator:hover {
@@ -915,17 +912,17 @@
 .playback-subscriptions summary,
 .playback-queue summary,
 .desktop-playback-slot .playback-control-menu > summary {
-  min-height: var(--control-height-compact);
+  min-height: var(--icon-action-size);
   color: var(--transport-ink);
   background: var(--transport-control);
   border: 1px solid var(--transport-surface);
-  border-radius: var(--radius-compact);
+  border-radius: var(--icon-action-radius);
   box-shadow: none;
 }
 
 .playback-command {
-  min-width: 48px;
-  padding: 3px 8px;
+  min-width: var(--icon-action-size);
+  padding: 0;
   font-weight: 780;
   cursor: pointer;
 }

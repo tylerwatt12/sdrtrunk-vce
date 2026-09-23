@@ -15,6 +15,49 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+test('icon actions share a size and show one hint on hover and focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  const action = page.locator('.visual-icon-button');
+  await expect(action).toHaveCSS('width', '40px');
+  await expect(action).toHaveCSS('height', '40px');
+  await action.hover();
+  const hint = page.locator('.ui-icon-hint');
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText('Receiver health');
+  await page.mouse.move(0, 0);
+  await expect(hint).toBeHidden();
+  await action.focus();
+  await expect(hint).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(hint).toBeHidden();
+
+  await page.goto('/design-system.html?theme=light&view=app-chrome');
+  await expect(page.locator('.visual-app-chrome-example .theme-toggle')).toHaveCSS('width', '40px');
+  await expect(page.locator('.visual-app-chrome-example .playback-icon-command').first()).toHaveCSS('width', '40px');
+});
+
+test('disabled icon hint stays visible outside a table', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=dark&view=admin-scan-lists');
+  const hint = page.locator('.ui-icon-hint');
+  await expect(hint).toHaveCount(1);
+  const deleteDefault = page.getByRole('button', { name: 'Delete County Public Safety' });
+  await deleteDefault.scrollIntoViewIfNeeded();
+  await page.mouse.move(0, 0);
+  await deleteDefault.hover();
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText(/Choose another default scan list before deleting this one/);
+  await expect(deleteDefault).not.toHaveAttribute('title');
+  const bounds = await hint.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await deleteDefault.evaluate((element) => { element.disabled = true; });
+  await page.mouse.move(0, 0);
+  await deleteDefault.hover();
+  await expect(hint).toBeVisible();
+});
+
 test('app-chrome-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/design-system.html?theme=light&view=app-chrome');

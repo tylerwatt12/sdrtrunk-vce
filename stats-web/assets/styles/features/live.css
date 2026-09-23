@@ -178,8 +178,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .channels-tab-select,
-.channels-tab-title-button,
-.channels-tab-close {
+.channels-tab-title-button {
   min-height: 34px;
   color: inherit;
   background: transparent;
@@ -208,21 +207,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   padding: 5px 8px 5px 2px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.channels-tab-close {
-  min-width: 29px;
-  padding: 4px 8px;
-  color: var(--muted);
-  font-size: 18px;
-  line-height: 1;
-  border-left: 1px solid var(--line);
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
-}
-
-.channels-tab-close:hover {
-  color: var(--danger);
-  background: var(--surface-2);
 }
 
 .channels-live-tab.stopped .channels-tab-quality {
@@ -759,12 +743,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
 .live-filter-expand,
 .live-filter-expand-spacer {
-  width: 28px;
-  height: 28px;
+  width: var(--icon-action-size);
+  height: var(--icon-action-size);
 }
 
 .live-filter-expand {
-  --ui-control-height: 28px;
   font-size: 18px;
   line-height: 1;
 }

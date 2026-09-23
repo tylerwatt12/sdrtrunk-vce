@@ -17,12 +17,6 @@ body[data-view="tuner-spectrum"] {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
-  --ui-control-height: 28px;
-  width: 28px;
-  min-width: 28px;
-  padding: 0;
-  font-size: 22px;
-  line-height: 1;
 }
 
 .tuner-frequency-action-summary {
@@ -30,7 +24,7 @@ body[data-view="tuner-spectrum"] {
   grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--space-2) var(--space-3);
   margin: 0;
-  padding: 0 var(--space-5) var(--space-2) 0;
+  padding: 0 calc(var(--icon-action-size) + var(--space-2)) var(--space-2) 0;
   background: none;
 }
 
@@ -52,42 +46,6 @@ body[data-view="tuner-spectrum"] {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-}
-
-.tuner-frequency-popover .tuner-frequency-action {
-  --ui-control-height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--interactive-border);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-control);
-}
-
-.tuner-frequency-popover .tuner-frequency-action svg {
-  width: 19px;
-  height: 19px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.tuner-frequency-popover .tuner-frequency-action:hover:not(.disabled-action),
-.tuner-frequency-popover .tuner-frequency-action.is-active {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.tuner-frequency-popover .tuner-frequency-action.disabled-action {
-  color: var(--muted);
-  background: var(--surface-2);
-  opacity: .55;
-  cursor: not-allowed;
 }
 
 .tuner-frequency-action-message,

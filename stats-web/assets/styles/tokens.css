@@ -113,6 +113,11 @@
   --space-5: 24px;
   --control-height-compact: 32px;
   --control-height-comfortable: 40px;
+  --icon-action-size: 40px;
+  --icon-action-radius: 12px;
+  --icon-glyph-size: 18px;
+  --hint-max-width: 260px;
+  --hint-font-size: 12px;
   --radius-compact: 4px;
   --radius-comfortable: 12px;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
