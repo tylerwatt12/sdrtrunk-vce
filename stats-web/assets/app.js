@@ -6491,26 +6491,6 @@ function dashboardChannelKind(row) {
   return '';
 }
 
-function dashboardModeLabel(row) {
-  const family = protocolFamily(row) || 'Unknown';
-  const channelKind = dashboardChannelKind(row);
-  if (!['P25', 'DMR', 'NXDN'].includes(family)) return family;
-  if (channelKind === 'TRUNKED') return `${family}-T`;
-  if (channelKind === 'CONVENTIONAL') return `${family}-C`;
-  return family;
-}
-
-function dashboardMode(row) {
-  const family = protocolFamily(row) || 'Unknown protocol';
-  const channelKind = dashboardChannelKind(row);
-  const topology = channelKind === 'TRUNKED' ? 'Trunked' :
-    channelKind === 'CONVENTIONAL' ? 'Conventional' : 'Unknown topology';
-  const value = node('span', 'dashboard-mode', dashboardModeLabel(row));
-  value.title = `${family} · ${topology}`;
-  value.setAttribute('aria-label', `${family}, ${topology}`);
-  return value;
-}
-
 function callSourceLabel(row) {
   if (dashboardChannelKind(row) === 'TRUNKED') return channelLabel(row);
   if (row.source_label) return row.source_label;
@@ -9847,22 +9827,6 @@ function dashboardChannelContext(row) {
   return values.join(' · ');
 }
 
-const dashboardHealthColumns = [
-  { id: 'name', label: 'Channel', render: callSourceLink, className: 'alias-cell',
-    sortValue: callSourceLabel },
-  { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
-    render: dashboardMode, sortValue: dashboardModeLabel },
-  { id: 'radio-context', label: 'Radio Context', render: dashboardChannelContext,
-    sortValue: dashboardChannelContext },
-  { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
-    render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
-    className: 'numeric', sortValue: (row) =>
-      Number(row.current_control_hz || row.primary_frequency_hz || 0) },
-  { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
-    render: (row) => dateTime(row.last_seen_ms),
-    sortValue: (row) => Number(row.last_seen_ms || 0) }
-];
-
 function dashboardIdentityId(row) {
   return identityKind(row.identity_kind) === 'unknown' || Number(row.identity_id) <= 0 ? '—' :
     identityNumber(row, row.identity_id);
@@ -10396,7 +10360,6 @@ function radioTableType(baseType, columns) {
 async function renderDashboard() {
   const renderContext = captureRenderContext();
   const dashboard = await api('/api/v1/dashboard');
-  const counts = dashboard.counts || {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const requestedTab = route.get('tab') || 'health';
@@ -10414,13 +10377,6 @@ async function renderDashboard() {
     const signalHealth = await signalHealthSection();
     if (!renderIsCurrent(renderContext)) return;
     content.append(signalHealth);
-    content.append(dashboardSummarySection('Monitored Coverage', [
-      ['Radio Systems', counts.radio_systems],
-      ['Trunked Channels', counts.trunked_channels],
-      ['Conventional Channels', counts.conventional_channels]
-    ]));
-    content.append(tableSection('Recent Channels', dashboard.recent_channels || [],
-      dashboardHealthColumns, 'No channels recorded', { type: 'dashboard-channels' }));
     return;
   }
 

@@ -509,7 +509,7 @@ async function main() {
     assert.equal(new Set(ids).size, ids.length, `${name} repeats a column ID`);
   });
   [
-    'radioSystemChannelColumns', 'dashboardHealthColumns', 'dashboardCallSourceColumns',
+    'radioSystemChannelColumns', 'dashboardCallSourceColumns',
     'dashboardActivityRadioColumns', 'groupIdentityColumns'
   ].forEach((name) => {
     const ids = [...arrayBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]

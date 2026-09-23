@@ -38,9 +38,9 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
         assertTrue(dashboard.indexOf("if (tab === 'health')") <
             dashboard.indexOf("await signalHealthSection()"));
-        assertTrue(dashboard.contains("'Monitored Coverage'"));
-        assertTrue(dashboard.contains("'Recent Channels'"));
-        assertTrue(dashboard.contains("dashboard.recent_channels"));
+        assertFalse(dashboard.contains("'Monitored Coverage'"));
+        assertFalse(dashboard.contains("'Recent Channels'"));
+        assertFalse(dashboard.contains("dashboard.recent_channels"));
         assertTrue(dashboard.contains("'Logical Call Totals · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Call Activity · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Logical Calls by Conventional Channel · Last 24 Hours'"));
@@ -54,12 +54,7 @@ class StatsWebDashboardUiContractTest
         assertFalse(dashboard.contains("topTalkgroups"));
         assertFalse(dashboard.contains("topRadios"));
         assertFalse(dashboard.contains("P25 Trunked"));
-        assertTrue(dashboard.contains("counts.radio_systems"));
-        assertTrue(dashboard.contains("counts.trunked_channels"));
-        assertTrue(dashboard.contains("counts.conventional_channels"));
-        assertFalse(dashboard.contains("counts.talkgroups"));
-        assertFalse(dashboard.contains("counts.radios"));
-        assertFalse(dashboard.contains("counts.frequencies"));
+        assertFalse(dashboard.contains("dashboard.counts"));
     }
 
     @Test
@@ -149,25 +144,13 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void keepsDashboardTablesCompactAndProtocolNeutral() throws Exception
+    void keepsCallTablesCompactAndProtocolNeutral() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String health = declaration(source, "const dashboardHealthColumns = [");
         String calls = declaration(source, "const dashboardCallSourceColumns = [");
         String identities = function(source, "function dashboardIdentityColumns(identityLabel)");
         String context = function(source, "function dashboardChannelContext(row)");
-        assertTrue(health.contains("label: 'Channel'"));
-        assertTrue(health.contains("label: 'Mode'"));
-        assertTrue(health.contains("label: 'Radio Context'"));
-        assertTrue(health.contains("label: 'MHz'"));
-        assertTrue(health.contains("label: 'Seen'"));
-        assertFalse(health.contains("label: 'System'"));
-        assertFalse(health.contains("label: 'RFSS'"));
-        assertFalse(health.contains("label: 'Site ID'"));
-        assertFalse(health.contains("label: 'NAC'"));
-        assertFalse(health.contains("label: 'Decoder'"));
-        assertFalse(health.contains("label: 'Protocol'"));
-        assertFalse(health.contains("label: 'Topology'"));
+        assertFalse(source.contains("const dashboardHealthColumns = ["));
         assertTrue(context.contains("`RFSS ${hex(row.rfss, 2)}`"));
         assertTrue(context.contains("`RAN ${identifierNumber(row.ran)}`"));
         assertTrue(context.contains("`NAC ${hex(row.nac, 3)}`"));
@@ -195,18 +178,11 @@ class StatsWebDashboardUiContractTest
     }
 
     @Test
-    void abbreviatesModeAndHumanizesLiveDecoderNames() throws Exception
+    void humanizesLiveDecoderNames() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String modeLabel = function(source, "function dashboardModeLabel(row)");
-        String mode = function(source, "function dashboardMode(row)");
         String decoder = function(source, "function decoderLabel(value, compact = false)");
         String live = function(source, "function liveChannelsSection(onSelectionChange)");
-        assertTrue(modeLabel.contains("`${family}-T`"));
-        assertTrue(modeLabel.contains("`${family}-C`"));
-        assertTrue(modeLabel.contains("!['P25', 'DMR', 'NXDN'].includes(family)"));
-        assertTrue(mode.contains("value.title = `${family} · ${topology}`"));
-        assertTrue(mode.contains("value.setAttribute('aria-label'"));
         assertTrue(decoder.contains("P25_PHASE1: ['P25 P1', 'P25 Phase 1']"));
         assertTrue(decoder.contains("P25_PHASE2: ['P25 P2', 'P25 Phase 2']"));
         assertTrue(decoder.contains("P25_CONVENTIONAL: ['P25 Conv', 'P25 Conventional']"));
