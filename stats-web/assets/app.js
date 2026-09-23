@@ -6492,6 +6492,26 @@ function dashboardChannelKind(row) {
   return '';
 }
 
+function dashboardModeLabel(row) {
+  const family = protocolFamily(row) || 'Unknown';
+  const channelKind = dashboardChannelKind(row);
+  if (!['P25', 'DMR', 'NXDN'].includes(family)) return family;
+  if (channelKind === 'TRUNKED') return `${family}-T`;
+  if (channelKind === 'CONVENTIONAL') return `${family}-C`;
+  return family;
+}
+
+function dashboardMode(row) {
+  const family = protocolFamily(row) || 'Unknown protocol';
+  const channelKind = dashboardChannelKind(row);
+  const topology = channelKind === 'TRUNKED' ? 'Trunked' :
+    channelKind === 'CONVENTIONAL' ? 'Conventional' : 'Unknown topology';
+  const value = node('span', 'dashboard-mode', dashboardModeLabel(row));
+  value.title = `${family} · ${topology}`;
+  value.setAttribute('aria-label', `${family}, ${topology}`);
+  return value;
+}
+
 function callSourceLabel(row) {
   if (dashboardChannelKind(row) === 'TRUNKED') return channelLabel(row);
   if (row.source_label) return row.source_label;
