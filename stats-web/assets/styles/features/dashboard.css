@@ -1,5 +1,14 @@
 .dashboard-identity-split {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 560px) {
+  .dashboard-identity-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .dashboard-identity-split > * {

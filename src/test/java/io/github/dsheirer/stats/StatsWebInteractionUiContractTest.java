@@ -280,13 +280,15 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));"));
-        assertTrue(css.contains(".metric {\n  min-width: 0;"));
+        assertTrue(css.contains(".ui-metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
-        assertTrue(css.contains(".resizable-table th:last-child .column-resizer {\n  right: 0;"));
+        assertTrue(css.contains(".ui-data-table.resizable-table th:last-child .column-resizer {\n  right: 0;"));
         assertTrue(css.contains(".table-column-autofit-measurement {"));
         assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
-        assertTrue(css.contains(".table-wrap {"));
+        assertTrue(css.contains(".ui-table-wrap {"));
         assertTrue(css.contains("overflow-x: auto;"));
+        assertTrue(source.contains("wrapper.className = 'table-wrap ui-table-wrap'"));
+        assertTrue(source.contains("node('table', 'data-table resizable-table ui-data-table')"));
         assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths)")
             .contains("element.style.minWidth = `${Math.round(total)}px`"));
         assertTrue(function(source, "function addColumnResizers(element, columns, columnElements, headers, tableType,")
@@ -304,7 +306,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"166\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"167\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -654,7 +656,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=143"));
+        assertTrue(html.contains("/assets/app.css?v=144"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -666,8 +668,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains("color-scheme: light"));
         assertTrue(css.contains("--chart-call:"));
-        assertTrue(css.contains(
-            ":not(.auth-action):not(.auth-session-button):not(.table-sort-control):not(.channels-live-tab)"));
+        assertTrue(css.contains(".ui-button-header"));
+        assertFalse(css.contains("button:not(.auth-action):not(.auth-session-button)"));
         assertFalse(css.contains("filter: invert("));
     }
 
@@ -1223,7 +1225,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("historyNotice?.select(selection)"));
         assertTrue(live.contains(
             "beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []))"));
-        assertTrue(systems.contains("node('div', 'section-title-actions live-channels-title-actions')"));
+        assertTrue(systems.contains("node('div', 'section-title-actions ui-section-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
         assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));

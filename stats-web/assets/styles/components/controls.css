@@ -402,6 +402,15 @@
   border-bottom: 1px solid var(--line);
 }
 
+.ui-pager-surface {
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
 .ui-status {
   display: inline-flex;
   align-items: center;

@@ -370,7 +370,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const internalPager = ({ offset, limit, visible, total, more, label, onPage }) => {
-    const pager = node('nav', 'radioreference-pager');
+    const pager = node('nav', 'radioreference-pager ui-pager ui-pager-surface');
     pager.setAttribute('aria-label', `${label} pages`);
     const first = visible ? offset + 1 : 0;
     const last = offset + visible;

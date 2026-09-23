@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"166\">"));
-        assertTrue(html.contains("/assets/app.css?v=143"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"167\">"));
+        assertTrue(html.contains("/assets/app.css?v=144"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=200\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=201\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
@@ -165,11 +165,11 @@ class StatsWebNavigationHeaderUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String indicator = block(source, "  updateIndicator()");
 
-        assertTrue(html.contains("class=\"receiver-health-indicator receiver-health-loading icon-button\""));
+        assertTrue(html.contains("class=\"receiver-health-indicator receiver-health-loading icon-button ui-header-indicator\""));
         assertTrue(indicator.contains("indicator.classList.remove(`receiver-health-${status}`)"));
         assertTrue(indicator.contains("indicator.classList.add(`receiver-health-${className}`)"));
         assertFalse(indicator.contains("indicator.className"));
-        assertTrue(css.contains(".receiver-health-indicator {\n  width: 34px;\n  height: 34px;"));
+        assertTrue(css.contains(".ui-header-indicator {\n  width: 34px;\n  height: 34px;"));
         assertTrue(css.contains("border-radius: 4px;"));
         assertTrue(html.contains("theme-toggle icon-button ui-button ui-button-header"));
         assertTrue(html.contains("auth-action ui-button ui-button-header"));

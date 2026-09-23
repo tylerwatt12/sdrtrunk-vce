@@ -14,11 +14,16 @@
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   align-items: center;
-  gap: 22px;
+  gap: 16px;
   padding: 0 16px;
+  overflow: visible;
+  color: var(--header-ink);
+  background: var(--header);
+  border-bottom: 1px solid var(--header-line);
 }
 
 .brand {
+  color: var(--header-ink);
   font-size: 17px;
   font-weight: 700;
 }
@@ -28,9 +33,12 @@
 }
 
 .primary-nav {
+  position: relative;
   display: flex;
   align-self: stretch;
-  gap: 2px;
+  align-items: stretch;
+  gap: 3px;
+  overflow: visible;
 }
 
 .primary-nav a {
@@ -512,19 +520,6 @@
   display: none;
 }
 
-.topbar {
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
-  gap: 16px;
-  overflow: visible;
-}
-
-.primary-nav {
-  position: relative;
-  align-items: stretch;
-  gap: 3px;
-  overflow: visible;
-}
-
 .nav-group {
   position: relative;
   display: flex;
@@ -844,16 +839,6 @@
   box-shadow: var(--shadow-control);
 }
 
-.topbar {
-  color: var(--header-ink);
-  background: var(--header);
-  border-bottom: 1px solid var(--header-line);
-}
-
-.brand {
-  color: var(--header-ink);
-}
-
 .navigation-toggle.ui-button {
   display: none;
 }
@@ -867,6 +852,34 @@
   width: 34px;
   min-width: 34px;
   padding: 6px;
+}
+
+.ui-header-indicator {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  color: var(--header-muted);
+  background: color-mix(in srgb, var(--header) 82%, var(--surface));
+  border: 1px solid var(--header-line);
+  border-radius: var(--radius-compact);
+  white-space: nowrap;
+}
+
+.ui-header-indicator svg {
+  width: 19px;
+  height: 19px;
+}
+
+.ui-header-indicator:hover {
+  color: var(--header-ink);
+  background: color-mix(in srgb, var(--header) 68%, var(--surface));
+  border-color: color-mix(in srgb, var(--header-line) 55%, var(--header-ink));
+  text-decoration: none;
 }
 
 .header-controls .auth-action {
@@ -914,6 +927,7 @@
   min-width: 48px;
   padding: 3px 8px;
   font-weight: 780;
+  cursor: pointer;
 }
 
 .playback-command:hover:not(:disabled),

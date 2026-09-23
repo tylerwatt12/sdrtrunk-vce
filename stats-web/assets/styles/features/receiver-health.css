@@ -1,31 +1,3 @@
-.receiver-health-indicator {
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  color: var(--header-muted);
-  background: color-mix(in srgb, var(--header) 82%, var(--surface));
-  border: 1px solid var(--header-line);
-  border-radius: var(--radius-compact);
-  white-space: nowrap;
-}
-
-.receiver-health-indicator svg {
-  width: 19px;
-  height: 19px;
-}
-
-.receiver-health-indicator:hover {
-  color: var(--header-ink);
-  background: color-mix(in srgb, var(--header) 68%, var(--surface));
-  border-color: color-mix(in srgb, var(--header-line) 55%, var(--header-ink));
-  text-decoration: none;
-}
-
 .receiver-health-indicator.receiver-health-healthy {
   color: color-mix(in srgb, var(--success) 48%, var(--header-ink));
   background: color-mix(in srgb, var(--success) 24%, var(--header));
@@ -85,6 +57,7 @@
   font: inherit;
   font-weight: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .receiver-health-section-toggle::before {

@@ -1,0 +1,193 @@
+/* Shared, opt-in data tables. Column measurement remains a legacy implementation detail. */
+.ui-table-wrap {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ui-data-table.resizable-table {
+  table-layout: fixed;
+}
+
+.ui-data-table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  background: var(--surface);
+}
+
+.ui-data-table .table-group-header {
+  position: static;
+  padding: 5px 8px;
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 14px;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.06em;
+  text-align: left;
+}
+
+.ui-data-table .table-group-header + .table-group-header {
+  border-left: 2px solid var(--line-dark);
+}
+
+
+.ui-data-table th,
+.ui-data-table td {
+  height: auto;
+  padding: 5px 7px;
+  border-right: 1px solid var(--table-column-rule);
+  border-bottom: 1px solid var(--table-rule);
+  white-space: normal;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.ui-data-table th:last-child,
+.ui-data-table td:last-child {
+  border-right: 0;
+}
+
+.ui-data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  background: var(--surface-2);
+}
+
+.ui-data-table th .table-sort-control {
+  width: 100%;
+  min-height: 0;
+  display: block;
+  padding: 0 13px 0 0;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.ui-data-table th .table-column-label {
+  display: block;
+  padding-right: 13px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-data-table th .table-sort-control:hover {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.ui-data-table th[aria-sort="ascending"] .table-sort-control::after,
+.ui-data-table th[aria-sort="descending"] .table-sort-control::after {
+  position: absolute;
+  right: 9px;
+}
+
+.ui-data-table th[aria-sort="ascending"] .table-sort-control::after {
+  content: '\25B2';
+}
+
+.ui-data-table th[aria-sort="descending"] .table-sort-control::after {
+  content: '\25BC';
+}
+
+.ui-data-table .column-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  z-index: 3;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.ui-data-table.resizable-table th:last-child .column-resizer {
+  right: 0;
+}
+
+.ui-data-table .column-resizer::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+}
+
+.ui-data-table .column-resizer:hover::after,
+.ui-data-table .column-resizer:focus-visible::after {
+  background: var(--muted);
+}
+
+.ui-data-table.resizable-table.table-layout-busy .column-resizer {
+  pointer-events: none;
+  opacity: .45;
+}
+
+.ui-data-table tbody tr:hover {
+  background: var(--table-hover);
+}
+
+@keyframes activity-row-highlight {
+  from { background-color: var(--accent-soft); }
+  to { background-color: transparent; }
+}
+
+.ui-data-table .activity-row-new > td {
+  animation: activity-row-highlight 8s ease-out;
+}
+
+.ui-data-table td.numeric,
+.ui-data-table th.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.ui-data-table td.ui-table-empty {
+  padding: var(--space-4);
+  color: var(--muted);
+}
+
+.ui-data-table .alias-cell {
+  min-width: 175px;
+  max-width: 360px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ui-data-table .special-identifier {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.ui-data-table.resizable-table .alias-cell {
+  min-width: 0;
+  max-width: none;
+}

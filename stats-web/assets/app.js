@@ -12,7 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=2';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=3';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -2090,8 +2090,11 @@ function section(title, child, action = null) {
 }
 
 function sectionActionHost(action = null) {
-  if (action?.classList?.contains('section-title-actions')) return action;
-  const actions = node('div', 'section-title-actions');
+  if (action?.classList?.contains('section-title-actions')) {
+    action.classList.add('ui-section-actions');
+    return action;
+  }
+  const actions = node('div', 'section-title-actions ui-section-actions');
   if (action) actions.append(action);
   return actions;
 }
@@ -2422,11 +2425,11 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     removeResetTableLayout(tableType);
   }
   const wrapper = options.wrapper || node('div');
-  wrapper.className = 'table-wrap';
+  wrapper.className = 'table-wrap ui-table-wrap';
   wrapper.replaceChildren();
   String(options.wrapperClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => wrapper.classList.add(className));
-  const element = node('table', 'data-table resizable-table');
+  const element = node('table', 'data-table resizable-table ui-data-table');
   String(options.tableClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => element.classList.add(className));
   element.dataset.tableType = tableType;
@@ -2457,7 +2460,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     body.replaceChildren();
     if (!orderedRows.length) {
       const row = node('tr');
-      const cell = node('td', 'empty', emptyText);
+      const cell = node('td', 'empty ui-table-empty', emptyText);
       cell.colSpan = columns.length;
       row.append(cell);
       body.append(row);
@@ -5423,7 +5426,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
         visibleRows.forEach((row) => {
           const detail = node('details', `alias-transfer-row alias-transfer-row-${row.result}`);
           detail.append(node('summary', '', `${countLabels[row.result] || row.result} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`));
-          if (row.error) detail.append(node('p', 'error', row.error));
+          if (row.error) detail.append(node('p', 'ui-feedback ui-feedback-error', row.error));
           if (row.changes.length) detail.append(table(row.changes, [
             { id: 'field', label: 'Field', render: (change) => change.field.replaceAll('_', ' ') },
             { id: 'before', label: 'Current', render: (change) => change.before || '—' },
@@ -5920,7 +5923,7 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
   const host = node('div', 'alias-catalog-table-host observed-group-identity-table-host');
   const tableController = {};
   const controller = {};
-  const actions = node('div', 'section-title-actions');
+  const actions = node('div', 'section-title-actions ui-section-actions');
   const observedTable = table(rows, columns,
     'No observed groups without an exact alias are available for this list', {
       type: 'alias-observed-group-identities', serverSort: true, sortable: false,
@@ -6036,7 +6039,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     selectionStatus.replaceChildren();
     if (message) selectionStatus.append(node(error ? 'div' : 'span', error ? 'error' : 'muted', message));
   };
-  const actions = node('div', 'section-title-actions');
+  const actions = node('div', 'section-title-actions ui-section-actions');
   const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
     'No aliases belong to this scan list', {
       type: 'alias-scan-list-members', serverSort: true, sortable: false,
@@ -6314,7 +6317,7 @@ async function renderAliases() {
   const selectionStatus = node('div', 'alias-form-message alias-selection-status');
   selectionStatus.setAttribute('role', 'status');
   selectionStatus.setAttribute('aria-live', 'polite');
-  const actions = node('div', 'section-title-actions');
+  const actions = node('div', 'section-title-actions ui-section-actions');
   let bulkBar = null;
   const updateSelection = (message = '', error = false, preserveRequest = false) => {
     if (!preserveRequest) aliasEditorSelectionRequest += 1;
@@ -7430,7 +7433,7 @@ async function channelSignalHistorySection(channel) {
   const exportLink = exportCsvLink('channel-quality', {
     configuration_id: channel.configuration_id, range: selectedRange
   });
-  const titleActions = node('div', 'section-title-actions');
+  const titleActions = node('div', 'section-title-actions ui-section-actions');
   titleActions.append(rangeControl.controls, exportLink);
   block.querySelector('.section-title').append(titleActions);
   const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
@@ -9153,7 +9156,7 @@ function scannerField(label, value, level, action, wide = false) {
   field.append(node('span', 'scanner-field-label', label));
   const text = value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
   if (action && text !== '—') {
-    const link = node('button', 'scanner-field-link', text);
+    const link = node('button', 'link-button scanner-field-link', text);
     link.type = 'button';
     link.addEventListener('click', action);
     field.append(link);
@@ -9679,7 +9682,7 @@ function affiliationRouteFilters() {
 
 function affiliationFilterActions(exportAction = null) {
   const filters = affiliationRouteFilters();
-  const actions = node('div', 'section-title-actions');
+  const actions = node('div', 'section-title-actions ui-section-actions');
   if (filters.affiliated || filters.configuration_id) {
     actions.append(anchor('Clear Filter', currentHref({ affiliated: null, configuration_id: null, offset: null }),
       'ui-button ui-button-secondary'));
@@ -11716,7 +11719,7 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
   const trunked = rows.filter((row) => row.match_type === 'TRUNKED');
 
   if (!rows.length) {
-    return node('p', 'empty radioreference-frequency-empty',
+    return node('p', 'ui-feedback ui-feedback-empty radioreference-frequency-empty',
       'No RadioReference records match this frequency in the selected state.');
   }
 
@@ -14142,7 +14145,7 @@ function liveEventsPanel(onCollapse) {
   let expectedSubscriptionId = null;
   let scheduleRender = () => {};
 
-  const panel = node('section', 'section live-details');
+  const panel = node('section', 'section ui-section live-details');
   const header = node('div', 'live-details-header');
   const tabBar = node('div', 'live-details-tabs ui-segmented');
   tabBar.setAttribute('role', 'tablist');
@@ -14774,7 +14777,7 @@ function liveChannelsSection(onSelectionChange) {
   ];
   const tabBar = node('div', 'channels-live-tabs');
   const connection = badge('Connecting', 'state-stale');
-  const titleActions = node('div', 'section-title-actions live-channels-title-actions');
+  const titleActions = node('div', 'section-title-actions ui-section-actions live-channels-title-actions');
   titleActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
     const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
@@ -16050,7 +16053,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   const initialRows = withoutGrantActions(data.rows);
   const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
     'Detailed event history is enabled, but no matching activity has been recorded yet.';
-  const titleActions = node('div', 'section-title-actions');
+  const titleActions = node('div', 'section-title-actions ui-section-actions');
   const activityTable = table(initialRows, columns, emptyMessage,
     { type: 'activity', rowKey: (row) => row.id, layoutMenuHost: titleActions });
   activityTable.setAttribute('aria-live', 'off');
@@ -16091,7 +16094,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   content.append(block);
 
   if (!route.get('before_id') && (!statsLoggingState().available || statsLoggingState().historyActive)) {
-    const refreshControls = node('div', 'section-title-actions activity-refresh-controls');
+    const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
     const countdown = node('span', 'activity-refresh-countdown');
     countdown.setAttribute('role', 'timer');
     countdown.setAttribute('aria-live', 'off');
@@ -16389,7 +16392,7 @@ async function channelAdminMutation(path, options, statusHost) {
     await renderChannelSetup();
     return result;
   } catch (error) {
-    statusHost?.replaceChildren(node('span', 'error', error.message));
+    statusHost?.replaceChildren(node('span', 'ui-status ui-status-danger', error.message));
     throw error;
   }
 }
@@ -18939,7 +18942,7 @@ async function renderAdminScanLists() {
   create.type = 'button';
   create.id = 'admin-create-scan-list';
   create.addEventListener('click', () => openScanListAdminModal(null, revision));
-  const actions = node('div', 'section-title-actions');
+  const actions = node('div', 'section-title-actions ui-section-actions');
   actions.append(anchor('Assign Individual Aliases', href('aliases', { aliasTab: 'configure' }),
     'ui-button ui-button-secondary'), create);
   const body = node('div', 'admin-section-body');

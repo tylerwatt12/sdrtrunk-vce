@@ -338,7 +338,8 @@ async function main() {
     { right: 600, top: 560, bottom: 590 }, { width: 300, height: 300 },
     { width: 800, height: 600 }))), { left: 300, top: 254, maxHeight: 480 },
   'A dropdown may move above its trigger only when there is no usable room below it');
-  assert.match(appCssSource, /button:not\([^\n]+:not\(\.auth-session-button\)/);
+  assert.doesNotMatch(appCssSource, /button:not\([^\n]+:not\(\.auth-session-button\)/);
+  assert.match(appCssSource, /\.ui-button-header \{/);
   assert.match(appCssSource, /\.settings-card-grid \{[^}]*align-items: stretch/s);
   assert.doesNotMatch(appCssSource, /\.settings-card-grid \{[^}]*max-width/s);
   assert.match(appCssSource, /\.settings-card \{[^}]*height: 100%/s);

@@ -185,6 +185,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   background: transparent;
   border: 0;
   border-radius: var(--radius-control);
+  cursor: pointer;
 }
 
 .channels-tab-select {

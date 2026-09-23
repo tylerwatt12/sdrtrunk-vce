@@ -154,7 +154,6 @@
 }
 
 .radioreference-detail-header,
-.radioreference-pager,
 .radioreference-talkgroup-actions,
 .radioreference-detection {
   min-width: 0;
@@ -163,8 +162,7 @@
   gap: var(--space-3);
 }
 
-.radioreference-detail-header,
-.radioreference-pager {
+.radioreference-detail-header {
   justify-content: space-between;
 }
 
@@ -243,10 +241,6 @@
 
 .radioreference-pager {
   flex: none;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .radioreference-directory-pager .radioreference-pager {

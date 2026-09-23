@@ -142,8 +142,8 @@ class StatsWebPresentationUiContractTest
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));
         assertTrue(css.contains("background: var(--surface-2);\n  border: 1px solid var(--line);\n" +
-            "  border-radius: 4px;"));
-        assertTrue(css.contains(".metric span {\n  min-height: 2.5em;"));
+            "  border-radius: var(--radius-control);"));
+        assertTrue(css.contains(".ui-metric > span {\n  min-height: 0;"));
         assertTrue(detail.contains("node('div', 'observed-group-identity-detail-column')"));
         assertTrue(detail.contains("wrapper.append(identityColumn, activityColumn)"));
         assertTrue(css.contains(".observed-group-identity-detail-column {"));

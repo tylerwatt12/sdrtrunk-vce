@@ -1,5 +1,10 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .ui-data-table .activity-row-new > td {
+    background: var(--accent-soft);
+    animation: none;
+  }
+
   .primary-nav,
   .playback-progress.ending {
     transition: none;

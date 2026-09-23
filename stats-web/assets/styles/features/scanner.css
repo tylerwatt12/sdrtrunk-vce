@@ -233,20 +233,10 @@ body[data-view="scanner"] .content {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 0;
   overflow: hidden;
   color: var(--link);
-  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-}
-
-.scanner-field-link:hover,
-.scanner-field-link:focus-visible {
-  text-decoration: underline;
 }
 
 .scanner-field-link::after {
