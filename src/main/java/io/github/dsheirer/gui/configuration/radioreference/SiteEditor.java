@@ -24,7 +24,7 @@ import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
+import io.github.dsheirer.gui.ViewWebChannelRequest;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -604,7 +604,7 @@ public class SiteEditor extends GridPane
 
         if(getGoToChannelEditorCheckBox().isSelected() && gotoChannel != null)
         {
-            MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(gotoChannel));
+            MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(gotoChannel.getConfigurationId()));
         }
     }
 
@@ -664,7 +664,7 @@ public class SiteEditor extends GridPane
 
             if(getGoToChannelEditorCheckBox().isSelected())
             {
-                MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(channel));
+                MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(channel.getConfigurationId()));
             }
         }
     }
@@ -735,7 +735,7 @@ public class SiteEditor extends GridPane
 
                 if(getGoToChannelEditorCheckBox().isSelected())
                 {
-                    MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(channel));
+                    MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(channel.getConfigurationId()));
                 }
             }
             else
@@ -763,7 +763,7 @@ public class SiteEditor extends GridPane
 
                 if(getGoToChannelEditorCheckBox().isSelected() && gotoChannel != null)
                 {
-                    MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(gotoChannel));
+                    MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(gotoChannel.getConfigurationId()));
                 }
             }
         }
@@ -831,7 +831,7 @@ public class SiteEditor extends GridPane
 
                 if(getGoToChannelEditorCheckBox().isSelected())
                 {
-                    MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(channel));
+                    MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(channel.getConfigurationId()));
                 }
             }
             else
@@ -860,7 +860,7 @@ public class SiteEditor extends GridPane
 
                 if(getGoToChannelEditorCheckBox().isSelected() && gotoChannel != null)
                 {
-                    MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(gotoChannel));
+                    MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(gotoChannel.getConfigurationId()));
                 }
             }
         }
@@ -1288,7 +1288,7 @@ public class SiteEditor extends GridPane
     {
         if(mGoToChannelEditorCheckBox == null)
         {
-            mGoToChannelEditorCheckBox = new CheckBox("Go To Channel Editor");
+            mGoToChannelEditorCheckBox = new CheckBox("Open in Web Channel Manager");
             mGoToChannelEditorCheckBox.setDisable(true);
             mGoToChannelEditorCheckBox.setVisible(false);
             mGoToChannelEditorCheckBox.setSelected(mUserPreferences.getRadioReferencePreference()

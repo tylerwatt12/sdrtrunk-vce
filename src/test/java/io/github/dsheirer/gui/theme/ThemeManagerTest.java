@@ -18,8 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
 import java.awt.EventQueue;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JMenuItem;
 import javax.swing.LookAndFeel;
@@ -30,9 +28,6 @@ import org.junit.jupiter.api.Test;
 
 class ThemeManagerTest
 {
-    private static final Path DARK_STYLESHEET = Path.of("src/main/resources/sdrtrunk_dark.css");
-    private static final Path SQUELCH_VIEW =
-            Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java");
 
     @Test
     void stylesheetDataUriUsesPercentEncodedSpaces()
@@ -95,16 +90,4 @@ class ThemeManagerTest
         }
     }
 
-    @Test
-    void darkSquelchLegendUsesTheSixSeriesColours() throws Exception
-    {
-        String css = Files.readString(DARK_STYLESHEET);
-        String view = Files.readString(SQUELCH_VIEW);
-
-        assertTrue(view.contains("getStyleClass().add(\"noise-squelch-chart\")"));
-        for(int series = 0; series < 6; series++)
-        {
-            assertTrue(css.contains(".noise-squelch-chart .default-color" + series + ".chart-line-symbol"));
-        }
-    }
 }

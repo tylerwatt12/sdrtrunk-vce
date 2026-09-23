@@ -452,19 +452,6 @@ public class JavaFxWindowManager extends Application
     @Subscribe
     public void process(ConfigurationEditorRequest request)
     {
-        if(request.getTabName() == ConfigurationEditorRequest.TabName.CHANNEL)
-        {
-            execute(() -> {
-                String configurationId = request instanceof
-                    io.github.dsheirer.gui.configuration.channel.ViewChannelRequest channelRequest &&
-                    channelRequest.getChannel() != null ? channelRequest.getChannel().getConfigurationId() : null;
-                WebAdministratorNavigator navigator =
-                    new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
-                if(configurationId != null) navigator.openChannel(mConfigurationStage, configurationId);
-                else navigator.openChannels(mConfigurationStage);
-            });
-            return;
-        }
         execute(() -> {
             try
             {

@@ -21,7 +21,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
+import io.github.dsheirer.gui.ViewWebChannelRequest;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -338,7 +338,7 @@ public class FrequencyEditor extends VBox
         if(mShowCreatedChannelCheckBox == null)
         {
             boolean show = mUserPreferences.getRadioReferencePreference().getShowChannelEditor(mLevel);
-            mShowCreatedChannelCheckBox = new CheckBox("View Channel Editor After Create");
+            mShowCreatedChannelCheckBox = new CheckBox("Open in Web Channel Manager After Create");
             mShowCreatedChannelCheckBox.setDisable(true);
             mShowCreatedChannelCheckBox.selectedProperty().set(show);
             mShowCreatedChannelCheckBox.selectedProperty()
@@ -378,7 +378,7 @@ public class FrequencyEditor extends VBox
 
                     if(getShowCreatedChannelCheckBox().selectedProperty().get())
                     {
-                        MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(channel));
+                        MyEventBus.getGlobalEventBus().post(new ViewWebChannelRequest(channel.getConfigurationId()));
                     }
                     else
                     {

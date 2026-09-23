@@ -154,7 +154,7 @@ public class StreamingEditor extends SplitPane
 
     private void setBroadcastConfiguration(ConfiguredBroadcast configuredBroadcast)
     {
-        //Prompt the user to save if the contents of the current channel editor have been modified
+        //Prompt the user to save if the current streaming editor has unsaved changes.
         if(getCurrentEditor().modifiedProperty().get())
         {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);

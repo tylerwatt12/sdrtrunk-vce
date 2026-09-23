@@ -59,4 +59,29 @@ class StatsWebChannelAdministrationUiContractTest
         assertFalse(configurationEditor.contains("getChannelsTab()"));
         assertFalse(configurationEditor.contains("new ChannelEditor("));
     }
+
+    @Test
+    void desktopChannelAndSquelchEditorsAreRemoved() throws Exception
+    {
+        Path javaEditors = Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel");
+        String windowManager = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/gui/JavaFxWindowManager.java"));
+        String frequencyEditor = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference/FrequencyEditor.java"));
+        String siteEditor = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference/SiteEditor.java"));
+
+        if(Files.exists(javaEditors))
+        {
+            try(var files = Files.list(javaEditors))
+            {
+                assertFalse(files.anyMatch(path -> path.toString().endsWith(".java")));
+            }
+        }
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java")));
+        assertFalse(windowManager.contains("ViewChannelRequest"));
+        assertTrue(windowManager.contains("process(ViewWebChannelRequest request)"));
+        assertTrue(frequencyEditor.contains("new ViewWebChannelRequest(channel.getConfigurationId())"));
+        assertTrue(siteEditor.contains("new ViewWebChannelRequest(channel.getConfigurationId())"));
+    }
 }
