@@ -13490,6 +13490,17 @@ function tunerSpectrumPanel(snapPresetDocument) {
     waterfall.guide.style.left = `${(ratio * 100).toFixed(3)}%`;
   }
 
+  function setSharedCursorGuides(frequencyHz) {
+    if (!viewport || !Number.isFinite(frequencyHz)) return;
+    const spanHz = viewport.endHz - viewport.startHz;
+    if (!(spanHz > 0)) return;
+    const ratio = Math.max(0, Math.min(1, (frequencyHz - viewport.startHz) / spanHz));
+    setSpectrumCursorGuide(frequencyHz);
+    setWaterfallCursorGuide(ratio);
+    spectrum.guide.hidden = false;
+    waterfall.guide.hidden = false;
+  }
+
   function waterfallRetuneLabel(retune) {
     if (!retune) return '';
     const fromCenter = (retune.fromStartHz + retune.fromEndHz) / 2;
@@ -13504,6 +13515,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     const pointerHz = historyRow ? waterfallFrequencyAt(historyRow, ratio) :
       viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
     if (!Number.isFinite(pointerHz)) {
+      setSharedCursorGuides(viewport.startHz + ratio * (viewport.endHz - viewport.startHz));
       cursorFrequency.textContent = 'No recorded frequency';
       cursorSnap.hidden = true;
       cursorPower.textContent = 'Waiting for a waterfall row';
@@ -13515,8 +13527,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     }
     const snap = snapInput.checked ? tunerSnapFrequency(pointerHz, frequencyScopes) : null;
     const displayHz = snap?.frequencyHz ?? pointerHz;
-    if (viewingHistory) setWaterfallCursorGuide(ratio);
-    else setSpectrumCursorGuide(displayHz);
+    setSharedCursorGuides(displayHz);
 
     cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = true;
@@ -13555,8 +13566,6 @@ function tunerSpectrumPanel(snapPresetDocument) {
     hoverRatio = ratio;
     hoverCanvas = canvas;
     hoverYRatio = yRatio;
-    spectrum.guide.hidden = canvas === waterfall.canvas;
-    waterfall.guide.hidden = canvas !== waterfall.canvas;
     updateCursor(ratio);
   }
 
@@ -13893,9 +13902,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
     hoverRatio = null;
     hoverCanvas = null;
     hoverYRatio = null;
-    setSpectrumCursorGuide(carrier.frequencyHz);
-    spectrum.guide.hidden = false;
-    waterfall.guide.hidden = true;
+    setSharedCursorGuides(carrier.frequencyHz);
     cursorFrequency.textContent = `${(carrier.frequencyHz / 1_000_000).toFixed(6)} MHz`;
     cursorSnap.hidden = false;
     cursorSnap.textContent = TUNER_ACTIVITY_LABELS[carrier.status] || TUNER_ACTIVITY_LABELS.ACTIVE;

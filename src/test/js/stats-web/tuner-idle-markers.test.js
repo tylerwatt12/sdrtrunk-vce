@@ -80,7 +80,7 @@ function harness(liveAllowed = true) {
     },
     decoderLabel: (value) => value || '',
     activeCarrierPower: () => null,
-    setSpectrumCursorGuide: () => {}, positionCursorPopup: () => {},
+    setSharedCursorGuides: () => {}, positionCursorPopup: () => {},
     updateCursor: () => {},
     frequencySelectionForCarrier: (carrier) => carrier,
     openTunerFrequencyActions: () => {},
@@ -189,9 +189,59 @@ function spectrumLifecycleHarness() {
   };
 }
 
+function sharedCursorHarness() {
+  const spectrumCanvas = new Element('canvas');
+  const waterfallCanvas = new Element('canvas');
+  const context = {
+    viewport: { startHz: 100, endHz: 200 },
+    spectrum: { canvas: spectrumCanvas, guide: Object.assign(new Element(), { hidden: true }) },
+    waterfall: { canvas: waterfallCanvas, guide: Object.assign(new Element(), { hidden: true }) },
+    hoverFlag: null, hoverRatio: null, hoverCanvas: null, hoverYRatio: null,
+    waterfallHistoryRow: () => ({ observedAtEpochMs: 1, metadata: {} }),
+    waterfallFrequencyAt: (_row, ratio) => 100 + ratio * 100,
+    waterfallRetuneLabel: () => '',
+    snapInput: { checked: false }, frequencyScopes: [], snapFrequencyHz: null,
+    tunerSnapFrequency: (frequencyHz) => ({ frequencyHz: context.snapFrequencyHz ?? frequencyHz }),
+    cursorFrequency: new Element(), cursorSnap: new Element(), cursorPower: new Element(),
+    cursorChannel: new Element(), cursorPopup: new Element(),
+    refining: true, fftValues: [], positionCursorPopup: () => {}
+  };
+  vm.createContext(context);
+  [
+    'function setSpectrumCursorGuide(frequencyHz)',
+    'function setWaterfallCursorGuide(ratio)',
+    'function setSharedCursorGuides(frequencyHz)',
+    'function updateCursor(ratio)',
+    'function showCursor(ratio, canvas, yRatio)'
+  ].forEach((signature) => vm.runInContext(functionSource(signature), context));
+  return { context, spectrumCanvas, waterfallCanvas,
+    show: (ratio, canvas) => context.showCursor(ratio, canvas, 0.5) };
+}
+
 const row = (status, frequency_hz = 150_250_000, extra = {}) => ({ status, frequency_hz, ...extra });
 const table = (rows) => ({ table_id: 'test', channel_name: 'Dispatch', system_name: 'Local', rows });
 const statuses = (carriers) => Array.from(carriers, (carrier) => carrier.status);
+
+test('frequency cursor stays aligned and visible across FFT and waterfall plots', () => {
+  const h = sharedCursorHarness();
+  h.show(0.25, h.spectrumCanvas);
+  assert.equal(h.context.spectrum.guide.style.left, '25.000%');
+  assert.equal(h.context.waterfall.guide.style.left, '25.000%');
+  assert.equal(h.context.spectrum.guide.hidden, false);
+  assert.equal(h.context.waterfall.guide.hidden, false);
+
+  h.show(0.75, h.waterfallCanvas);
+  assert.equal(h.context.spectrum.guide.style.left, '75.000%');
+  assert.equal(h.context.waterfall.guide.style.left, '75.000%');
+  assert.equal(h.context.spectrum.guide.hidden, false);
+  assert.equal(h.context.waterfall.guide.hidden, false);
+
+  h.context.snapInput.checked = true;
+  h.context.snapFrequencyHz = 160;
+  h.show(0.75, h.waterfallCanvas);
+  assert.equal(h.context.spectrum.guide.style.left, '60.000%');
+  assert.equal(h.context.waterfall.guide.style.left, '60.000%');
+});
 
 test('FFT and waterfall settings are separate and idle markers remain per-user, default off', () => {
   const h = harness();

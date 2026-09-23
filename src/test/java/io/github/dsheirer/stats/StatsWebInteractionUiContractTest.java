@@ -1625,7 +1625,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("function waterfallFrequencyAt(row, ratio)"));
         assertTrue(tuner.contains("const frequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz)"));
         assertTrue(tuner.contains("const historyRow = event.currentTarget === waterfall.canvas ? waterfallHistoryRow(yRatio) : null"));
-        assertTrue(tuner.contains("if (viewingHistory) setWaterfallCursorGuide(ratio)"));
+        assertTrue(tuner.contains("function setSharedCursorGuides(frequencyHz)"));
+        assertTrue(tuner.contains("setSharedCursorGuides(displayHz)"));
+        assertTrue(tuner.contains("spectrum.guide.hidden = false"));
+        assertTrue(tuner.contains("waterfall.guide.hidden = false"));
         assertTrue(tuner.contains("waterfallRetuneRows.forEach((retune, physicalRow) =>"));
         assertTrue(tuner.contains("function waterfallRetuneLabel(retune)"));
         assertTrue(acceptState.contains("pendingWaterfallRetune = {"));
