@@ -255,12 +255,13 @@ public class RadioReferencePreference extends Preference
     }
 
     public record Bookmark(BookmarkKind kind, int id, int parentId, String ownerKind, String name,
-                           String parentName)
+                           String parentName, Long preferredAliasListId)
     {
         public Bookmark
         {
             if(kind == null || id <= 0 || name == null || name.isBlank() || name.length() > 256 ||
-                parentId < 0 || parentName != null && parentName.length() > 256)
+                parentId < 0 || parentName != null && parentName.length() > 256 ||
+                preferredAliasListId != null && preferredAliasListId <= 0)
             {
                 throw new IllegalArgumentException("RadioReference bookmark is invalid");
             }
@@ -277,6 +278,11 @@ public class RadioReferencePreference extends Preference
                 kind == BookmarkKind.TRUNKED_SYSTEM && !ownerKind.isEmpty())
             {
                 throw new IllegalArgumentException("RadioReference bookmark target is invalid");
+            }
+            if(preferredAliasListId != null && kind != BookmarkKind.TRUNKED_SYSTEM &&
+                kind != BookmarkKind.TALKGROUP_CATEGORY)
+            {
+                throw new IllegalArgumentException("Only talkgroup bookmarks can prefer an Alias List");
             }
         }
 
@@ -300,7 +306,9 @@ public class RadioReferencePreference extends Preference
                     result.add(new Bookmark(BookmarkKind.valueOf(entry.get("kind", "")),
                         entry.getInt("id", -1), entry.getInt("parent_id", 0),
                         entry.get("owner_kind", ""), entry.get("name", ""),
-                        entry.get("parent_name", "")));
+                        entry.get("parent_name", ""),
+                        entry.getLong("preferred_alias_list_id", 0) > 0 ?
+                            entry.getLong("preferred_alias_list_id", 0) : null));
                 }
                 catch(IllegalArgumentException ignored)
                 {
@@ -328,6 +336,14 @@ public class RadioReferencePreference extends Preference
             entry.put("owner_kind", bookmark.ownerKind());
             entry.put("name", bookmark.name());
             entry.put("parent_name", bookmark.parentName());
+            if(bookmark.preferredAliasListId() == null)
+            {
+                entry.remove("preferred_alias_list_id");
+            }
+            else
+            {
+                entry.putLong("preferred_alias_list_id", bookmark.preferredAliasListId());
+            }
             entry.flush();
             notifyPreferenceUpdated();
             return getBookmarks();

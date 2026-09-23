@@ -142,11 +142,13 @@ class RadioReferenceHttpControllerTest
 
                 String bookmarkBody = "{\"kind\":\"TRUNKED_SYSTEM\",\"id\":2001," +
                     "\"parent_id\":0,\"owner_kind\":\"\",\"name\":\"State P25\"," +
-                    "\"parent_name\":\"\"}";
+                    "\"parent_name\":\"\",\"preferred_alias_list_id\":12}";
                 assertEquals("TRUNKED_SYSTEM", data(send(client, jsonRequest(origin, "/bookmarks")
                     .PUT(HttpRequest.BodyPublishers.ofString(bookmarkBody)))).at("/0/kind").textValue());
                 assertEquals(2001, data(send(client, request(origin, "/bookmarks").GET()))
                     .at("/0/id").intValue());
+                assertEquals(12, data(send(client, request(origin, "/bookmarks").GET()))
+                    .at("/0/preferred_alias_list_id").intValue());
                 assertEquals(0, data(send(client, jsonRequest(origin, "/bookmarks")
                     .method("DELETE", HttpRequest.BodyPublishers.ofString(bookmarkBody)))).size());
 
