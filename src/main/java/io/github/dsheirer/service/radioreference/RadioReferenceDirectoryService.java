@@ -685,6 +685,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     {
         validateId(systemId);
         validatePage(offset, limit);
+        return page(allTalkgroupCategories(systemId), offset, limit);
+    }
+
+    /** Returns category enrichment with one upstream read, regardless of the number of categories. */
+    public List<RadioReferenceGateway.RemoteTalkgroupCategory> allTalkgroupCategories(int systemId)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(systemId);
         List<RadioReferenceGateway.RemoteTalkgroupCategory> source = invokePremium(
             gateway -> gateway.talkgroupCategories(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
         enforceImportBound(source == null ? 0 : source.size());
@@ -695,7 +703,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     .thenComparingInt(RadioReferenceGateway.RemoteTalkgroupCategory::id))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         enforceImportBound(categories.size());
-        return page(categories, offset, limit);
+        return List.copyOf(categories);
     }
 
     /** Loads conventional frequency categories for one selected agency or county. */

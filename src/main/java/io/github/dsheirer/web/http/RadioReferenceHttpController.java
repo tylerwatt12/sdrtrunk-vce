@@ -264,11 +264,11 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id", "alias_list_id");
+                Map<String,String> query = query(exchange, "system_id", "alias_list_id", "catalog_id");
                 ensureStoredSession();
                 ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupCatalog(
                     positiveInt(query.get("system_id"), "system_id"),
-                    positiveLong(query.get("alias_list_id"), "alias_list_id")));
+                    positiveLong(query.get("alias_list_id"), "alias_list_id"), query.get("catalog_id")));
             }
             else if((PATH + "/conventional/categories").equals(path))
             {
@@ -336,7 +336,7 @@ public final class RadioReferenceHttpController
                     requireImport().previewTalkgroups(new TalkgroupImportRequest(
                         requiredPositive(request.systemId(), "system_id"),
                         requiredPositive(request.aliasListId(), "alias_list_id"),
-                        Boolean.TRUE.equals(request.importAll()), request.talkgroupIds())));
+                        Boolean.TRUE.equals(request.importAll()), request.talkgroupIds(), request.catalogId())));
             }
             else if(isApplyPath(path))
             {
@@ -448,6 +448,10 @@ public final class RadioReferenceHttpController
 
                 if(status.authenticated())
                 {
+                    if(mImportService != null)
+                    {
+                        mImportService.clearSessionData();
+                    }
                     if(Boolean.TRUE.equals(request.remember()))
                     {
                         mSettings.storeCredentials(request.userName().strip(), storedPassword);
@@ -472,6 +476,10 @@ public final class RadioReferenceHttpController
         {
             requireEmptyBody(exchange, "DELETE");
             mService.logout();
+            if(mImportService != null)
+            {
+                mImportService.clearSessionData();
+            }
             mSettings.clearCredentials();
 
             synchronized(mStoredLoginLock)
@@ -1048,7 +1056,7 @@ public final class RadioReferenceHttpController
     }
 
     private record TalkgroupsPreviewRequest(Integer systemId, Long aliasListId, Boolean importAll,
-                                            List<Integer> talkgroupIds)
+                                            List<Integer> talkgroupIds, String catalogId)
     {
     }
 

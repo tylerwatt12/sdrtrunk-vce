@@ -132,17 +132,34 @@ class RadioReferenceImportServiceTest
             fixture.directory.system = p25System();
             RadioReferenceImportService.TalkgroupPage page = fixture.importer.talkgroups(10, p25List, null, null,
                 0, 100);
-            RadioReferenceImportService.TalkgroupPage catalog = fixture.importer.talkgroupCatalog(10, p25List);
+            RadioReferenceImportService.TalkgroupPage catalog = fixture.importer.talkgroupCatalog(10, p25List, null);
+            int categoryReadsAtCatalog = fixture.directory.categoryReads;
             assertEquals(2, catalog.totalItems());
             assertEquals(2, catalog.items().size());
+            assertEquals(catalog.catalogId(), fixture.importer.talkgroupCatalog(10, p25List,
+                catalog.catalogId()).catalogId());
+            assertEquals(1, fixture.directory.catalogReads,
+                "switching Alias Lists must reannotate without another upstream read");
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewTalkgroups(
+                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, false, List.of(1),
+                    "unknown-catalog")));
             assertEquals(List.of(RadioReferenceImportService.TalkgroupStatus.NOT_PRESENT,
                     RadioReferenceImportService.TalkgroupStatus.NOT_PRESENT),
                 page.items().stream().map(RadioReferenceImportService.TalkgroupRow::status).toList());
             RadioReferenceImportService.TalkgroupImportPreview talkgroups = fixture.importer.previewTalkgroups(
-                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, true, List.of()));
+                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, true, List.of(),
+                    catalog.catalogId()));
+            assertEquals(1, fixture.directory.catalogReads,
+                "preview must reuse the loaded upstream talkgroups");
+            assertEquals(categoryReadsAtCatalog, fixture.directory.categoryReads,
+                "preview must reuse loaded category enrichment");
             assertTrue(talkgroups.all());
             assertEquals(2L, talkgroups.counts().get("added"));
             fixture.importer.applyTalkgroups(talkgroups.previewId());
+            assertEquals(1, fixture.directory.catalogReads,
+                "apply must not fetch RadioReference again");
+            assertEquals(categoryReadsAtCatalog, fixture.directory.categoryReads,
+                "apply must not fetch categories again");
             List<AliasAdministrationService.AliasEntry> imported = fixture.aliases.transferSnapshot(p25List).aliases();
             Alias encrypted = imported.stream().filter(entry -> entry.alias().getName().equals("Encrypted"))
                 .findFirst().orElseThrow().alias();
@@ -162,8 +179,14 @@ class RadioReferenceImportServiceTest
             fixture.aliases.replaceAlias(dispatch.getId(), locallyStyled, fixture.aliases.currentRevision());
             fixture.directory.talkgroups.set(0,
                 new RemoteTalkgroup(1, 101, "Dispatch Updated", "Primary dispatch", "D", 0, 50, List.of()));
+            fixture.importer.clearSessionData();
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewTalkgroups(
+                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, false, List.of(1),
+                    catalog.catalogId())));
+            RadioReferenceImportService.TalkgroupPage fresh = fixture.importer.talkgroupCatalog(10, p25List, null);
             RadioReferenceImportService.TalkgroupImportPreview update = fixture.importer.previewTalkgroups(
-                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, false, List.of(1)));
+                new RadioReferenceImportService.TalkgroupImportRequest(10, p25List, false, List.of(1),
+                    fresh.catalogId()));
             assertEquals(1L, update.counts().get("updated"));
             fixture.importer.applyTalkgroups(update.previewId());
             Alias updated = fixture.aliases.getAlias(dispatch.getId()).alias();
@@ -261,17 +284,20 @@ class RadioReferenceImportServiceTest
         private final List<RemoteTalkgroupCategory> categories =
             List.of(new RemoteTalkgroupCategory(50, 10, "Public Safety"));
         private List<ConventionalFrequency> conventional = List.of();
+        private int catalogReads;
+        private int categoryReads;
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId) { return system; }
         @Override public BoundedPage<TrunkedSiteDetails> trunkedSites(int systemId, int offset, int limit)
             { return new BoundedPage<>(List.of(site), 0, null, 1); }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
             int offset, int limit) { return new BoundedPage<>(talkgroups, 0, null, talkgroups.size()); }
-        @Override public List<RemoteTalkgroup> talkgroupsById(int systemId, Collection<Integer> ids)
-            { return ids.stream().map(id -> talkgroups.stream().filter(row -> row.id() == id).findFirst().orElseThrow()).toList(); }
-        @Override public List<RemoteTalkgroup> allTalkgroups(int systemId) { return List.copyOf(talkgroups); }
+        @Override public List<RemoteTalkgroup> allTalkgroups(int systemId)
+            { catalogReads++; return List.copyOf(talkgroups); }
         @Override public BoundedPage<RemoteTalkgroupCategory> talkgroupCategories(int systemId, int offset, int limit)
             { return new BoundedPage<>(categories, 0, null, categories.size()); }
+        @Override public List<RemoteTalkgroupCategory> allTalkgroupCategories(int systemId)
+            { categoryReads++; return categories; }
         @Override public List<ConventionalFrequency> conventionalFrequenciesById(int subCategoryId,
             Collection<Integer> ids)
             { return ids.stream().map(id -> conventional.stream().filter(row -> row.id() == id).findFirst().orElseThrow()).toList(); }
