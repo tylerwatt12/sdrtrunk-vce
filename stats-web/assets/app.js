@@ -2,6 +2,7 @@ import * as routeFoundation from './core/routes.js?v=2';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
+import * as tableDefaults from './core/table-defaults.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -13,7 +14,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=3';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=8';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=9';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -48,7 +49,16 @@ const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
 const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
+const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
 let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
+try {
+  anonymousUserPreferences = preferenceSchema.validate({
+    ...anonymousUserPreferences,
+    tables: JSON.parse(localStorage.getItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY) || '{}')
+  });
+} catch (_error) {
+  // Invalid or unavailable browser storage falls back to the default table layouts.
+}
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
 });
@@ -183,75 +193,6 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
   DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' },
   CWID: { abbreviation: 'CWID', description: 'Base station identification channel' }
 });
-const TABLE_COLUMN_DEFAULT_WIDTHS = {
-  'action': 82,
-  'affiliation': 190,
-  'confirmed-channel': 220,
-  'alias': 170,
-  'band': 54,
-  'calls': 66,
-  'control-frequency': 94,
-  'count': 94,
-  'decoder': 78,
-  'encrypted': 52,
-  'encryption': 92,
-  'signaling': 134,
-  'event': 115,
-  'first-seen': 166,
-  'frequency': 94,
-  'group': 135,
-  'group-identity-description': 240,
-  'group-identity-id': 90,
-  'group-identity-name': 175,
-  'last-active': 166,
-  'last-seen': 166,
-  'lcn': 68,
-  'name': 175,
-  'neighbor-name': 175,
-  'radio': 82,
-  'radio-alias': 165,
-  'recorded': 78,
-  'rfss': 66,
-  'signal': 82,
-  'decode-health': 90,
-  'site': 66,
-  'source': 82,
-  'source-alias': 165,
-  'source-ota-alias': 165,
-  'state': 82,
-  'status': 116,
-  'streamed': 82,
-  'system': 106,
-  'talker-alias': 160,
-  'talkgroup-name': 175,
-  'target': 82,
-  'target-alias': 165,
-  'time': 166,
-  'wacn': 108
-};
-const TABLE_DEFAULT_COLUMN_WIDTHS = Object.freeze({
-  'dashboard-receivers': Object.freeze({
-    name: 442,
-    mode: 180,
-    context: 315,
-    frequency: 237,
-    'last-seen': 419
-  }),
-  'live-events': Object.freeze({
-    time: 92,
-    duration: 78,
-    event: 181,
-    from: 96,
-    to: 164,
-    channel: 92,
-    details: 864
-  }),
-  'live-messages': Object.freeze({
-    time: 95,
-    context: 110,
-    message: 1200
-  })
-});
 const SERVER_TABLE_DEFAULT_SORTS = {
   'radio-system-channels': 'last_seen',
   'group-identities': 'logical_call_count',
@@ -267,9 +208,6 @@ const CHANNEL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
 const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
 const SERVICE_STATUS_RETRY_DELAY_MS = 500;
-const ALIAS_CATALOG_DEFAULT_COLUMNS = Object.freeze([
-  'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
-]);
 const ALIAS_BULK_SELECTION_LIMIT = 10_000;
 const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
@@ -437,17 +375,46 @@ function settleUserPreferenceMutation(mutator, allowRetry = true) {
   return updateUserPreferences(mutator, allowRetry).catch(() => null);
 }
 
+function saveAnonymousTableLayout(tableType, layout = null) {
+  const tables = { ...anonymousUserPreferences.tables };
+  if (layout) tables[tableType] = tableLayouts.persisted(layout);
+  else delete tables[tableType];
+  try {
+    const preferences = preferenceSchema.validate({ ...anonymousUserPreferences, tables });
+    localStorage.setItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY, JSON.stringify(preferences.tables));
+    anonymousUserPreferences = preferences;
+    return preferences;
+  } catch (error) {
+    showUserPreferenceError(error, null, true);
+    return null;
+  }
+}
+
 async function saveTableLayoutPreference(tableType, layout) {
-  if (!userPreferenceController.snapshot().loaded) return null;
+  if (!userPreferenceController.snapshot().loaded) {
+    return accessSession.authenticated ? null : saveAnonymousTableLayout(tableType, layout);
+  }
   return settleUserPreferenceMutation((preferences) => {
     preferences.tables[tableType] = tableLayouts.persisted(layout);
   }, false);
 }
 
+async function resetTableLayoutPreference(tableType) {
+  if (!userPreferenceController.snapshot().loaded) {
+    return accessSession.authenticated ? null : saveAnonymousTableLayout(tableType);
+  }
+  return settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; }, false);
+}
+
 function removeResetTableLayout(tableType) {
-  if (!userPreferenceController.snapshot().loaded || tableLayoutResetPending.has(tableType)) return;
+  if (tableLayoutResetPending.has(tableType)) return;
+  if (!userPreferenceController.snapshot().loaded && !accessSession.authenticated) {
+    saveAnonymousTableLayout(tableType);
+    return;
+  }
+  if (!userPreferenceController.snapshot().loaded) return;
   tableLayoutResetPending.add(tableType);
-  void settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; }, false)
+  void resetTableLayoutPreference(tableType)
     .finally(() => tableLayoutResetPending.delete(tableType));
 }
 
@@ -2245,15 +2212,6 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   return row;
 }
 
-function defaultTableColumnWidth(column) {
-  if (Number.isFinite(Number(column.width))) return Number(column.width);
-  const semanticWidth = TABLE_COLUMN_DEFAULT_WIDTHS[tableColumnKey(column, 0)];
-  if (semanticWidth) return semanticWidth;
-  if (String(column.className || '').includes('alias-cell')) return 190;
-  if (String(column.className || '').includes('numeric')) return 100;
-  return Math.max(90, Math.min(220, String(column.label || '').length * 9 + 34));
-}
-
 function setTableColumnWidths(element, columnElements, widths) {
   const total = widths.reduce((sum, width) => sum + width, 0) || 1;
   widths.forEach((width, index) => {
@@ -2300,12 +2258,13 @@ function measureTableColumnContentWidth(element, header, index) {
   return Math.max(TABLE_WIDTH_MINIMUM, Math.min(TABLE_WIDTH_MAXIMUM, width));
 }
 
-function applyPreferredTableWidths(element, columns, columnElements, layout) {
+function applyPreferredTableWidths(element, columns, columnElements, layout, tableType, variant) {
   const widths = columns.map((column, index) => {
     const savedWidth = layout.column_widths[tableColumnKey(column, index)];
-    const width = Number(savedWidth || defaultTableColumnWidth(column));
+    const fallback = tableDefaults.width(tableType, column, variant);
+    const width = Number(savedWidth || fallback);
     return Number.isFinite(width) && width >= TABLE_WIDTH_MINIMUM && width <= TABLE_WIDTH_MAXIMUM ?
-      Math.round(width) : defaultTableColumnWidth(column);
+      Math.round(width) : fallback;
   });
   setTableColumnWidths(element, columnElements, widths);
 }
@@ -2337,7 +2296,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
       `Resize ${columns[index].label} column; double-click or press Enter to fit visible content`);
     handle.setAttribute('aria-valuemin', String(TABLE_WIDTH_MINIMUM));
     handle.setAttribute('aria-valuemax', String(TABLE_WIDTH_MAXIMUM));
-    handle.setAttribute('aria-valuenow', String(Math.round(Number(columns[index].width) || TABLE_WIDTH_MINIMUM)));
+    handle.setAttribute('aria-valuenow', String(Math.round(header.getBoundingClientRect().width)));
     handle.title = 'Drag to resize. Double-click to fit visible content.';
     handle.tabIndex = 0;
     handle.addEventListener('focus', () => handle.setAttribute('aria-valuenow',
@@ -2412,20 +2371,14 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableController = options.controller || {};
   cleanupTableLayoutMenu(tableController);
   const declaredColumns = columns.slice();
-  const defaultSchema = tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
-  const defaultColumnWidths = Object.fromEntries(Object.entries(TABLE_DEFAULT_COLUMN_WIDTHS[tableType] || {})
-    .filter(([id]) => defaultSchema.includes(id)));
-  const defaultHiddenColumns = Array.isArray(options.defaultHiddenColumns) ?
-    options.defaultHiddenColumns.filter((id) => defaultSchema.includes(id)) : [];
-  const storedLayout = options.layout || activeUserPreferences().tables[tableType] ||
-    (Array.isArray(options.defaultHiddenColumns) || Object.keys(defaultColumnWidths).length ? {
-      schema: defaultSchema,
-      column_order: defaultSchema,
-      column_widths: defaultColumnWidths,
-      hidden_columns: defaultHiddenColumns
-    } : null);
+  tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
+  const defaultLayout = tableDefaults.layout(tableType, declaredColumns);
+  const storedLayout = options.layout || activeUserPreferences().tables[tableType] || defaultLayout;
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
-  if (layout.reset) removeResetTableLayout(tableType);
+  if (layout.reset) {
+    removeResetTableLayout(tableType);
+    layout = tableLayouts.normalize(declaredColumns, defaultLayout);
+  }
   columns = layout.columns;
   if (!columns.length) {
     layout = tableLayouts.normalize(declaredColumns, null);
@@ -2643,7 +2596,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     layout = nextLayout;
     rebuildTable(tableLayouts.persisted(layout), reopenLayoutMenu, restoreLayoutFocus);
   };
-  if (userPreferenceController.snapshot().loaded) {
+  {
     const chooser = node('div', 'table-layout-menu');
     const inline = options.layoutMenuHost instanceof Node;
     if (inline) chooser.classList.add('table-layout-menu-inline');
@@ -2711,8 +2664,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     reset.dataset.layoutFocusKey = 'reset';
     reset.addEventListener('click', async () => {
       if (!beginLayoutMutation()) return;
-      const saved = await settleUserPreferenceMutation(
-        (preferences) => { delete preferences.tables[tableType]; }, false);
+      const saved = await resetTableLayoutPreference(tableType);
       const reopenLayoutMenu = layoutMenuOpen();
       const restoreLayoutFocus = reopenLayoutMenu ? layoutMenuFocus() : null;
       endLayoutMutation();
@@ -2765,7 +2717,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     });
   }
   wrapper.append(element);
-  applyPreferredTableWidths(element, columns, columnElements, layout);
+  applyPreferredTableWidths(element, columns, columnElements, layout, tableType, options.widthVariant);
   addColumnResizers(element, columns, columnElements, headers, tableType,
     () => layout, (nextLayout) => { layout = nextLayout; }, beginLayoutMutation, endLayoutMutation,
     () => rebuildTable(null));
@@ -3204,19 +3156,19 @@ function aliasDetailMetricBand(row, definitions) {
 
 function aliasEditorSourceBreakdownColumns() {
   return [
-    { id: 'source', label: 'Source', width: 230, className: 'alias-cell', render: (row) => {
+    { id: 'source', label: 'Source', className: 'alias-cell', render: (row) => {
       const value = node('div', 'alias-source-identity');
       value.append(node('strong', '', availableValue(row.source_label)));
       if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
       return value;
     } },
-    { id: 'source-calls', label: 'Calls', width: 100, className: 'numeric',
+    { id: 'source-calls', label: 'Calls', className: 'numeric',
       render: (row) => aliasMetricValue(row, 'logical_call_count'),
       sortValue: (row) => Number(row.logical_call_count || 0) },
-    { id: 'source-signaling', label: 'Signaling', width: 110, className: 'numeric',
+    { id: 'source-signaling', label: 'Signaling', className: 'numeric',
       render: (row) => aliasMetricValue(row, 'signaling_observation_count'),
       sortValue: (row) => Number(row.signaling_observation_count || 0) },
-    { id: 'last-seen', label: 'Last Seen', width: 166,
+    { id: 'last-seen', label: 'Last Seen',
       render: (row) => aliasMetricTime(row, 'last_evidence_ms'),
       sortValue: (row) => Number(row.last_evidence_ms || 0) }
   ];
@@ -6350,7 +6302,6 @@ async function renderAliases() {
     return;
   }
 
-  const definitions = [...aliasCustomConfigurationColumns(), ...aliasActivityColumns()];
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   const tableController = {};
   const selectionStatus = node('div', 'alias-form-message alias-selection-status');
@@ -6377,8 +6328,6 @@ async function renderAliases() {
       defaultSort: defaultOrder.sort, defaultDirection: defaultOrder.direction,
       controller: tableController,
       rowKey: (row) => row.alias_id,
-      defaultHiddenColumns: view === 'custom' ? definitions
-        .map((column) => column.id).filter((id) => !ALIAS_CATALOG_DEFAULT_COLUMNS.includes(id)) : [],
       layoutMenuHost: actions,
       onRowClick: (row, _tableRow, event) => {
         const id = Number(row.alias_id);
@@ -14770,48 +14719,48 @@ function liveChannelsSection(onSelectionChange) {
       (percent >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'quality-warn' : 'quality-bad'));
   };
   const columns = [
-    { id: 'status', label: 'Status', width: 145,
+    { id: 'status', label: 'Status',
       render: (row) => showEncryptionDetails && row.status === 'ENCRYPTED' && row.encryption_details ?
         row.encryption_details : row.status,
       className: (row) => `activity-status state-${String(row.status || 'idle').toLowerCase()}`,
       sortValue: (row) => row.status || '' },
-    { id: 'tags', label: 'Tags', width: 180, render: channelTagText, title: channelTagTitle,
+    { id: 'tags', label: 'Tags', render: channelTagText, title: channelTagTitle,
       sortValue: channelTagText },
-    { id: 'channel', label: 'Channel', width: 130, render: (row) =>
+    { id: 'channel', label: 'Channel', render: (row) =>
       channelTagSet(row.tags).has('CONVENTIONAL') ? liveConventionalChannelValue(row) :
         (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`),
       title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
       className: channelStateClass, sortValue: (row) =>
         channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
-    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', width: 100,
+    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: channelStateClass,
       sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'signal', label: 'dBFS', fullLabel: 'Signal dBFS', width: 90,
+    { id: 'signal', label: 'dBFS', fullLabel: 'Signal dBFS',
       render: (row) => row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`,
       className: channelStateClass, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
-    { id: 'decode-health', label: 'Decode %', width: decodeDisplay.mode === 'detailed' ? 260 : 120,
+    { id: 'decode-health', label: 'Decode %',
       render: decodeQualityText, title: decodeQualityTitle, className: decodeQualityClass,
       sortValue: (row) => {
         const values = decodeQualityValues(row);
         return values.length ? Math.min(...values) : -1;
       } },
-    { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias', width: 220,
+    { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias',
       render: (row) => liveAliasValue(row, 'source'), title: (row) => row.source_alias_description || '',
       sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '',
       reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
-    { id: 'source', label: 'Src ID', fullLabel: 'Source ID', width: 105,
+    { id: 'source', label: 'Src ID', fullLabel: 'Source ID',
       render: (row) => liveIdentifierAliasValue(row, 'source'), sortValue: (row) => Number(row.source_id || 0),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'source') },
-    { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias', width: 220,
+    { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias',
       render: (row) => isAnalogChannel(row) ? liveConventionalChannelValue(row) : liveAliasValue(row, 'target'),
       title: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias_description || '',
       sortValue: (row) => isAnalogChannel(row) ? row.channel_name || '' : row.target_alias || '',
       reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
-    { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID', width: 105,
+    { id: 'target', label: 'Tgt ID', fullLabel: 'Target ID',
       render: (row) => isAnalogChannel(row) ? '' : liveIdentifierAliasValue(row, 'target'),
       sortValue: (row) => isAnalogChannel(row) ? 0 : Number(row.target_id || 0),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
-    { id: 'decoder', label: 'Decoder', width: 80, render: (row) => decoderLabel(row.decoder, true),
+    { id: 'decoder', label: 'Decoder', render: (row) => decoderLabel(row.decoder, true),
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
   ];
   const tabBar = node('div', 'channels-live-tabs');
@@ -14832,7 +14781,7 @@ function liveChannelsSection(onSelectionChange) {
   let selectRow = () => {};
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
-    type: 'live-channels', rowKey: (row) => row.key,
+    type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
     sortable: true,
     rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
     onRowClick: (row) => {
@@ -15798,7 +15747,8 @@ function renderTrunkedChannelBandPlans(channel, data) {
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
     overrideActive ? 'state-current' : '');
   return fragment(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
-    'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource),
+    'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
+      'channel-frequency-bands' }, null, bandSource),
   tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
     { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
     { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
@@ -15917,7 +15867,8 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
     trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
     content.append(tableSection('Patches', groups, columns, 'No patches recorded',
-      { type: 'channel-patches' }, trailing));
+      { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
+        'channel-patches' }, trailing));
   } else if (tab === 'activity') {
     await renderActivity({ configuration_id: configurationId });
   } else {
@@ -16482,7 +16433,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
   };
   const columns = [];
   if (editable) columns.push(
-    { id: 'select', label: 'Select', className: 'channel-select-cell', width: 48,
+    { id: 'select', label: 'Select', className: 'channel-select-cell',
       essential: true, fixed: true, renderHeader: renderSelectionHeader, render: (row) => {
       const checkbox = node('input');
       checkbox.type = 'checkbox';
@@ -18735,15 +18686,15 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
   const titleActions = sectionActionHost(create);
   const body = node('div', 'admin-section-body');
   body.append(statusHost, table(users, [
-    { id: 'username', label: 'Username', width: 230, render: userIdentityCell,
+    { id: 'username', label: 'Username', render: userIdentityCell,
       sortValue: (account) => account.username },
-    { id: 'access-tier', label: 'Access tier', width: 150,
+    { id: 'access-tier', label: 'Access tier',
       render: (account) => userTierControl(account, statusHost),
       sortValue: (account) => accessTierRank(account.tier) },
-    { id: 'password-changed', label: 'Password changed', width: 190,
+    { id: 'password-changed', label: 'Password changed',
       render: (account) => dateTime(account.passwordChangedAtEpochMillis),
       sortValue: (account) => account.passwordChangedAtEpochMillis },
-    { id: 'actions', label: 'Actions', width: 230, render: (account) => userActions(account, statusHost),
+    { id: 'actions', label: 'Actions', render: (account) => userActions(account, statusHost),
       sortable: false }
   ], 'No web users have been created', {
     type: 'admin-users', sortable: false, layoutMenuHost: titleActions
@@ -18837,15 +18788,15 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
       'APIs.'), statusHost);
   if (webPolicy) body.append(webAccessControl(webPolicy, statusHost));
   body.append(table(featurePolicies, [
-      { id: 'capability', label: 'Capability', width: 310, render: accessPolicyIdentity,
+      { id: 'capability', label: 'Capability', render: accessPolicyIdentity,
         sortValue: (policy) => policy.displayName || policy.id },
-      { id: 'required-tier', label: 'Required tier', width: 170,
+      { id: 'required-tier', label: 'Required tier',
         render: (policy) => accessPolicyTierControl(policy, statusHost),
         sortValue: (policy) => accessTierRank(policy.requiredTier) },
-      { id: 'default-tier', label: 'Default', width: 120,
+      { id: 'default-tier', label: 'Default',
         render: (policy) => accessTierLabel(policy.defaultTier),
         sortValue: (policy) => accessTierRank(policy.defaultTier) },
-      { id: 'policy-status', label: 'Policy', width: 130,
+      { id: 'policy-status', label: 'Policy',
         render: (policy) => policy.configurable && !policy.id.startsWith('admin-') ? 'Configurable' : 'Fixed' }
     ], 'No feature access capabilities were returned', {
       type: 'admin-access', sortable: false, layoutMenuHost: titleActions
@@ -19063,15 +19014,15 @@ async function renderAdminScanLists() {
     'listeners hear. To include calls that do not match an alias, open that Alias List and choose this Scan List ' +
     'under Call Handling Defaults.'),
     table(scanLists, [
-      { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
+      { id: 'scan-list', label: 'Scan list', render: adminScanListIdentity,
         sortValue: (row) => Number(row.sort_order || 0) },
       { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
-      { id: 'aliases', label: 'Assigned aliases', width: 130, className: 'numeric',
+      { id: 'aliases', label: 'Assigned aliases', className: 'numeric',
         render: adminScanListMemberCount, sortValue: (row) => Number(row.alias_count || 0) },
-      { id: 'unmatched-alias-lists', label: 'Unmatched calls from', width: 260,
+      { id: 'unmatched-alias-lists', label: 'Unmatched calls from',
         render: adminScanListUnmatchedAliasLists,
         sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
-      { id: 'actions', label: 'Actions', width: 360, sortable: false,
+      { id: 'actions', label: 'Actions', sortable: false,
         render: (row) => adminScanListActions(row, revision) }
     ], 'No scan lists are configured', {
       type: 'admin-scan-lists', sortable: false, layoutMenuHost: actions

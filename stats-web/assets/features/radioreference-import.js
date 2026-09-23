@@ -679,6 +679,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
 
   const renderSites = async (system, target, systemDocument) => {
     const toolbar = node('div', 'radioreference-sites-toolbar ui-catalog-toolbar');
+    const tableController = {};
     const searchFrame = node('label', 'ui-search');
     searchFrame.append(iconGlyph('icon-search'));
     const search = input('search');
@@ -745,7 +746,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites` +
           (countyCount ? ` · ${formatNumber(countyCount)} ${state.selectedCountyName} first` : '');
         const rendered = table(values, [
-        { id: 'site', label: 'Site', width: 340, render: (site) => {
+        { id: 'site', label: 'Site', render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
           const open = button(textValue(site, ['name', 'description'],
             `Site ${textValue(site, ['number', 'site_number'], '')}`), 'link-button radioreference-site-import');
@@ -758,7 +759,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           if (context) identity.append(node('small', 'muted', context));
           return identity;
         } },
-        { id: 'system', label: 'System', width: 200, render: (site) => {
+        { id: 'system', label: 'System', render: (site) => {
           const detail = node('span', 'radioreference-row-identity');
           detail.append(uiPill(systemTypeLabel(systemDetails) || 'Trunked', 'protocol'));
           const flavor = textValue(systemDetails, ['flavor']);
@@ -772,7 +773,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           return channels.length ? `${formatNumber(channels.length)} available` : 'Loaded during preview';
         } }
         ], 'No sites match this filter.',
-        { type: 'radioreference-sites', sortable: false, mobileCards: true });
+        { type: 'radioreference-sites', sortable: false, mobileCards: true,
+          controller: tableController, layoutMenuHost: toolbar });
         rendered.querySelector('table')?.classList.add('ui-data-table-quiet');
         list.replaceChildren(rendered, internalPager({
           offset, limit: SITE_LIMIT, visible: values.length, total: matches.length,
@@ -821,6 +823,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
     const tableHost = node('div', 'radioreference-talkgroup-table');
+    const tableController = {};
     let offset = 0;
     let catalog = [];
     const filter = uiSegmentedControl([
@@ -907,7 +910,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       });
       refreshPageToggle();
       const grid = table(values, [
-        { id: 'selected', label: '', width: 54, sortable: false, renderHeader: () => pageToggle,
+        { id: 'selected', label: '', sortable: false, renderHeader: () => pageToggle,
           render: (talkgroup) => {
             const id = talkgroupId(talkgroup);
             const control = node('input', 'ui-selection-check');
@@ -924,23 +927,24 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             });
             return control;
           } },
-        { id: 'talkgroup', label: 'Talkgroup', width: 130,
+        { id: 'talkgroup', label: 'Talkgroup',
           render: (talkgroup) => String(firstValue(talkgroupValue(talkgroup),
             ['value', 'decimal', 'talkgroup_value'], talkgroupId(talkgroup) || 0)) },
-        { id: 'alpha-tag', label: 'Alpha tag', width: 220,
+        { id: 'alpha-tag', label: 'Alpha tag',
           render: (talkgroup) => textValue(talkgroupValue(talkgroup),
             ['alpha_tag', 'alphaTag', 'name'], 'Unnamed') },
         { id: 'description', label: 'Description',
           render: (talkgroup) => textValue(talkgroupValue(talkgroup), ['description'], '—') },
-        { id: 'category', label: 'Category', width: 180, render: talkgroupCategory },
-        { id: 'status', label: 'Import status', width: 150, render: (talkgroup) => {
+        { id: 'category', label: 'Category', render: talkgroupCategory },
+        { id: 'status', label: 'Import status', render: (talkgroup) => {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
           content.append(uiPill(value.label, value.tone));
           return content;
         } }
       ], 'No talkgroups match these filters.',
-      { type: 'radioreference-talkgroups', sortable: false, mobileCards: true });
+      { type: 'radioreference-talkgroups', sortable: false, mobileCards: true,
+        controller: tableController, layoutMenuHost: toolbar });
       grid.querySelector('table')?.classList.add('ui-data-table-quiet');
       tableHost.replaceChildren(grid, internalPager({
         offset, limit: TALKGROUP_LIMIT, visible: values.length, total: filtered.length,
@@ -1232,6 +1236,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (preferredCategoryId && [...category.options].some((value) =>
         value.value === String(preferredCategoryId))) category.value = String(preferredCategoryId);
       const toolbar = node('div', 'radioreference-conventional-toolbar ui-catalog-toolbar');
+      const tableController = {};
       const status = node('div', 'admin-form-message');
       status.setAttribute('role', 'status');
       const categoryStar = node('span', 'radioreference-category-star');
@@ -1256,6 +1261,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       detailHost.replaceChildren(panel);
 
       const load = async (offset = 0) => {
+        tableController.layoutMenuCleanup?.();
         if (!category.value) {
           body.replaceChildren(empty('No conventional categories',
             'RadioReference did not return an importable category for this agency.'));
@@ -1268,9 +1274,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           if (sequence !== state.detailSequence) return;
           const values = rows(response);
           const grid = table(values, [
-            { id: 'frequency', label: 'Frequency', width: 150,
+            { id: 'frequency', label: 'Frequency',
               render: (value) => `${formatFrequency(frequencyHz(value))} MHz` },
-            { id: 'alpha-tag', label: 'Alpha tag', width: 220, render: (value) => {
+            { id: 'alpha-tag', label: 'Alpha tag', render: (value) => {
               const open = button(textValue(value, ['alpha_tag', 'alphaTag', 'name'], 'Unnamed'),
                 'link-button radioreference-conventional-import');
               open.title = 'Review this channel for import';
@@ -1279,10 +1285,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             } },
             { id: 'description', label: 'Description',
               render: (value) => textValue(value, ['description'], '—') },
-            { id: 'mode', label: 'Mode', width: 120,
+            { id: 'mode', label: 'Mode',
               render: (value) => uiPill(textValue(value, ['mode_name', 'mode', 'protocol'], 'Unknown'), 'protocol') }
           ], 'No frequencies were returned for this category.',
-          { type: 'radioreference-conventional', sortable: false, mobileCards: true });
+          { type: 'radioreference-conventional', sortable: false, mobileCards: true,
+            controller: tableController, layoutMenuHost: toolbar });
           grid.querySelector('table')?.classList.add('ui-data-table-quiet');
           const total = totalValue(response, values.length);
           body.replaceChildren(grid, internalPager({ offset, limit: FREQUENCY_LIMIT, visible: values.length, total,

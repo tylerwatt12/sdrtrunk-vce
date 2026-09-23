@@ -6,6 +6,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
   await page.evaluate(async () => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
+    const tableDefaults = await import('/assets/core/table-defaults.js?visual-test=1');
     document.body.replaceChildren();
     document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'light';
     const shell = document.createElement('main');
@@ -71,7 +72,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       const colgroup = node('colgroup');
       columns.forEach((column) => {
         const col = node('col');
-        if (column.width) col.style.width = `${column.width}px`;
+        col.style.width = `${tableDefaults.width(options.type, column)}px`;
         colgroup.append(col);
       });
       const header = node('tr');

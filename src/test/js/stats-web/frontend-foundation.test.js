@@ -158,9 +158,9 @@ function deferred() {
 }
 
 async function main() {
-  const [routes, preferences, preferenceSchema, tableLayouts, pageTitles, entityRefs, playerModule] =
+  const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =
     await Promise.all([
-    'routes', 'user-preferences', 'preference-schema', 'table-layout', 'page-title', 'entity-ref',
+    'routes', 'user-preferences', 'preference-schema', 'table-layout', 'table-defaults', 'page-title', 'entity-ref',
     '../web-call-player'
   ].map(loadModule));
   const stableId = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
@@ -171,8 +171,20 @@ async function main() {
   assert.match(appCssSource, /\.ui-page-nav \{[^}]*flex-wrap: wrap/s);
   assert.doesNotMatch(appCssSource, /\.tabs a\.active/);
   assert.match(appSource, /const tableType = tableLayouts\.tableId\(options\.type\)/);
-  assert.match(appSource,
-    /const defaultSchema = tableLayouts\.registerSchema\(tableSchemaRegistry, tableType, declaredColumns\)/);
+  assert.match(appSource, /tableLayouts\.registerSchema\(tableSchemaRegistry, tableType, declaredColumns\)/);
+  assert.match(appSource, /tableDefaults\.layout\(tableType, declaredColumns\)/);
+  assert.match(appSource, /tableDefaults\.width\(tableType, column, variant\)/);
+  assert.doesNotMatch(appSource, /defaultHiddenColumns|TABLE_DEFAULT_COLUMN_WIDTHS|TABLE_COLUMN_DEFAULT_WIDTHS/);
+  assert.doesNotMatch(appSource, /\{ id: '[^']+'[^\n]*\bwidth: \d+/);
+  const sharedTableSource = appSource.slice(appSource.indexOf('function table('),
+    appSource.indexOf('function tableSection('));
+  assert.match(sharedTableSource, /const chooser = node\('div', 'table-layout-menu'\)/);
+  assert.match(sharedTableSource, /addColumnResizers\(element, columns/);
+  assert.doesNotMatch(sharedTableSource, /if \(userPreferenceController\.snapshot\(\)\.loaded\)/);
+  assert.match(functionBinding(appSource, 'saveAnonymousTableLayout'),
+    /localStorage\.setItem\(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY/);
+  assert.match(appSource, /localStorage\.getItem\(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY\)/);
+  assert.doesNotMatch(radioReferenceImportSource, /\{ id: '[^']+'[^\n]*\bwidth: \d+/);
   assert.match(appSource, /typeof column\.renderHeader === 'function'/);
   assert.match(appSource, /column\.renderHeader\(\{ column, tableType, controller: tableController \}\)/);
   assert.match(appSource, /const wrapper = options\.wrapper \|\| node\('div'\)/);
@@ -952,6 +964,43 @@ async function main() {
     column_widths: {}, hidden_columns: ['name', 'frequency', 'status']
   }).reset_reason, 'all-columns-hidden');
   assert.equal(tableLayouts.tableId('live.channels'), 'live.channels');
+  assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
+  assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 120);
+  assert.equal(tableDefaults.width('radioreference-sites', { id: 'site' }), 340);
+  assert.equal(tableDefaults.width('example', { id: 'calls' }), 66);
+  assert.deepEqual(tableDefaults.layout('example', [{ id: 'calls' }, { id: 'name' }]), {
+    schema: ['calls', 'name'], column_order: ['calls', 'name'],
+    column_widths: {}, hidden_columns: []
+  });
+  const customAliasColumns = [
+    { id: 'select' }, { id: 'alias' }, { id: 'description' }, { id: 'record' }
+  ];
+  assert.deepEqual(tableDefaults.layout('alias-editor-custom', customAliasColumns).hidden_columns, ['record']);
+  assert.deepEqual(tableDefaults.layout('alias-editor-custom', [
+    ...customAliasColumns, { id: 'required', essential: true }
+  ]).hidden_columns, ['record']);
+  const storedAnonymousLayouts = new Map();
+  const anonymousTables = vm.runInNewContext(`(() => {
+    let anonymousUserPreferences = JSON.parse(JSON.stringify(preferenceSchema.defaults));
+    function saveAnonymousTableLayout(tableType, layout = null)
+      ${functionBinding(appSource, 'saveAnonymousTableLayout')}
+    return {
+      save: saveAnonymousTableLayout,
+      current: () => anonymousUserPreferences
+    };
+  })()`, {
+    preferenceSchema, tableLayouts,
+    localStorage: { setItem: (key, value) => storedAnonymousLayouts.set(key, value) },
+    ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY: 'table-test',
+    showUserPreferenceError: (error) => { throw error; }
+  });
+  const personalized = tableLayouts.setHidden(tableLayouts.resize(
+    tableLayouts.move(initialLayout, 'status', 'frequency'), 'name', 144), 'frequency', true);
+  assert.ok(anonymousTables.save('sample', personalized));
+  assert.equal(anonymousTables.current().tables.sample.column_widths.name, 144);
+  assert.deepEqual(JSON.parse(storedAnonymousLayouts.get('table-test')).sample.hidden_columns, ['frequency']);
+  assert.ok(anonymousTables.save('sample'));
+  assert.equal(anonymousTables.current().tables.sample, undefined);
   assert.throws(() => tableLayouts.tableId('Live Channels'), /valid stable ID/);
   assert.throws(() => tableLayouts.schema([{ id: 'same' }, { id: 'same' }]), /unique/);
   assert.throws(() => tableLayouts.schema([{ label: 'No ID' }]), /valid stable ID/);
