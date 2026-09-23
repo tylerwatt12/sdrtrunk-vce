@@ -52,4 +52,7 @@ assert.match(patchRenderer, /renderTrunkedChannelBandPlans\(channel, data\)/);
 const styles = fs.readFileSync('stats-web/assets/styles/features/entity-details.css', 'utf8');
 assert.match(styles, /\.channel-frequency-layout\.two-columns\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(styles, /@media \(max-width: 900px\)[\s\S]*?\.channel-frequency-layout\.two-columns\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
-assert.match(styles, /\.channel-frequency-column \.async-section-content,[\s\S]*?padding: 0/);
+const sharedStyles = fs.readFileSync('stats-web/assets/styles/compositions/workspaces.css', 'utf8');
+assert.match(sharedStyles, /\.async-section-content\.ui-table-content\s*\{\s*padding: 0/);
+assert.match(styles, /\.channel-band-plan-column \.async-section-content\s*\{\s*padding: 0/);
+assert.match(application, /host\.classList\.toggle\('ui-table-content', Boolean\(host\.querySelector\(':scope > \.ui-table-wrap'\)\)\)/);

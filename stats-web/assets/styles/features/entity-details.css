@@ -62,7 +62,6 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
   min-width: 0;
 }
 
-.channel-frequency-column .async-section-content,
 .channel-band-plan-column .async-section-content {
   padding: 0;
 }

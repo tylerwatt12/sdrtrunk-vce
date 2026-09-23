@@ -79,6 +79,16 @@
   box-shadow: var(--shadow-surface-soft);
 }
 
+.async-section-content {
+  min-width: 0;
+  max-width: 100%;
+  padding: 20px;
+}
+
+.async-section-content.ui-table-content {
+  padding: 0;
+}
+
 .ui-section-title {
   min-height: 44px;
   display: flex;

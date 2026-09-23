@@ -305,6 +305,21 @@
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
 
+.radioreference-system-body:has(> .radioreference-sites-list > .table-wrap),
+.radioreference-system-body:has(> .radioreference-talkgroup-table > .table-wrap),
+.radioreference-system-body:has(> .table-wrap) {
+  padding-inline: 0;
+  padding-bottom: 0;
+}
+
+.radioreference-system-body:has(> .table-wrap) {
+  gap: 0;
+}
+
+.radioreference-system-body:has(.table-wrap) > :not(.radioreference-sites-list):not(.radioreference-talkgroup-table):not(.table-wrap):not(.radioreference-pager) {
+  margin-inline: var(--space-4);
+}
+
 .radioreference-sites-toolbar,
 .radioreference-conventional-toolbar {
   flex: none;
@@ -645,6 +660,17 @@
 
   .radioreference-system-body {
     padding: var(--space-3);
+  }
+
+  .radioreference-system-body:has(> .radioreference-sites-list > .table-wrap),
+  .radioreference-system-body:has(> .radioreference-talkgroup-table > .table-wrap),
+  .radioreference-system-body:has(> .table-wrap) {
+    padding-inline: 0;
+    padding-bottom: 0;
+  }
+
+  .radioreference-system-body:has(.table-wrap) > :not(.radioreference-sites-list):not(.radioreference-talkgroup-table):not(.table-wrap):not(.radioreference-pager) {
+    margin-inline: var(--space-3);
   }
 
   .radioreference-browse-fields,

@@ -5,12 +5,6 @@
   padding: 14px;
 }
 
-.async-section-content {
-  min-width: 0;
-  max-width: 100%;
-  padding: 20px;
-}
-
 .activity-refresh-controls {
   font-weight: 400;
 }

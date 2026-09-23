@@ -8047,6 +8047,7 @@ function replaceAsyncContent(host, rendered) {
   const children = (Array.isArray(rendered) ? rendered.flat() : [rendered])
     .filter((child) => child !== null && child !== undefined && child !== false);
   host.replaceChildren(...children);
+  host.classList.toggle('ui-table-content', Boolean(host.querySelector(':scope > .ui-table-wrap')));
 }
 
 function asyncSectionFailure(error, fallbackMessage, retry) {
@@ -8082,6 +8083,7 @@ function createAsyncSection(title, options = {}) {
       onLoading: ({ retry }) => {
         focusAfterAttempt = retry;
         host.setAttribute('aria-busy', 'true');
+        host.classList.remove('ui-table-content');
         const loading = node('div', 'loading', options.loadingMessage || 'Loading…');
         loading.setAttribute('role', 'status');
         if (retry) loading.tabIndex = -1;
@@ -8101,6 +8103,7 @@ function createAsyncSection(title, options = {}) {
       onError: (error, retry) => {
         const failure = asyncSectionFailure(error, options.errorMessage, retry);
         cleanupTableLayoutMenu(tableController);
+        host.classList.remove('ui-table-content');
         host.replaceChildren(failure);
         host.setAttribute('aria-busy', 'false');
         if (focusAfterAttempt) failure.querySelector('.async-section-retry')?.focus();
