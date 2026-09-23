@@ -9789,7 +9789,7 @@ function trunkedChannelTabItems(channel) {
   const items = [
     { id: 'info', label: 'Info', href: href('channel', { ...values, tab: 'info' }) }
   ];
-  if (channelCapability(channel, 'channels')) {
+  if (channelCapability(channel, 'channels') || channelCapability(channel, 'frequency_bands')) {
     items.push({ id: 'frequencies', label: 'Frequencies', href: href('channel', { ...values, tab: 'frequencies' }) });
   }
   if (channelCapability(channel, 'quality')) {
@@ -9797,9 +9797,6 @@ function trunkedChannelTabItems(channel) {
   }
   if (channelCapability(channel, 'neighbors')) {
     items.push({ id: 'neighbors', label: 'Neighbors', href: href('channel', { ...values, tab: 'neighbors' }) });
-  }
-  if (channelCapability(channel, 'frequency_bands')) {
-    items.push({ id: 'band-plan', label: 'Band Plan', href: href('channel', { ...values, tab: 'band-plan' }) });
   }
   if (channelCapability(channel, 'patch_groups')) {
     items.push({ id: 'patches', label: 'Patches', href: href('channel', { ...values, tab: 'patches' }) });
@@ -15617,7 +15614,7 @@ function trunkedChannelFrequencyColumns() {
   ];
 }
 
-async function renderTrunkedChannelFrequencies(channel, renderContext) {
+async function renderTrunkedChannelFrequencies(channel, renderContext, host) {
   const p25 = isP25(channel);
   const directory = createAsyncSection('Frequencies', {
     action: exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id }),
@@ -15625,11 +15622,11 @@ async function renderTrunkedChannelFrequencies(channel, renderContext) {
     errorMessage: 'The channel frequencies could not be loaded.'
   });
   if (!renderIsCurrent(renderContext)) return;
-  content.append(directory.element);
+  host.append(directory.element);
   await directory.load(
     () => apiPage(channelApiPath(channel.configuration_id, 'frequencies'), pageParameters()),
     (page) => fragment(
-      protocolFamily(channel) === 'DMR' ? node('p', 'muted',
+      protocolFamily(channel) === 'DMR' ? node('p', 'muted channel-frequency-note',
         'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') : null,
       pagedTableContent(page, p25 ? p25ChannelFrequencyColumns() : trunkedChannelFrequencyColumns(),
         p25 ? 'channel-frequencies-p25' : 'channel-frequencies-trunked', {
@@ -15782,10 +15779,48 @@ async function renderTrunkedChannelInfo(channel, renderContext) {
   content.append(metrics(summary), layout);
 }
 
+function renderTrunkedChannelBandPlans(channel, data) {
+  const overrideActive = data.band_source === 'P25_OVERRIDE';
+  const homeBandColumns = [
+    { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
+    { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
+    { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
+    { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
+    { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
+    { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
+    { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' }
+  ];
+  if (!overrideActive) homeBandColumns.push(
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+  );
+  const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
+    overrideActive ? 'state-current' : '');
+  return fragment(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
+    'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource),
+  tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
+    { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
+    { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
+    { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
+    { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
+    { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
+    { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
+    { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
+    { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
+    { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
+    { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
+    { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
+}
+
 async function renderTrunkedChannel(channel, configurationId, renderContext) {
   const requestedTab = route.get('tab') || 'info';
   const tabItems = trunkedChannelTabItems(channel);
-  const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
+  const normalizedTab = requestedTab === 'band-plan' ? 'frequencies' : requestedTab;
+  const tab = tabItems.some((item) => item.id === normalizedTab) ? normalizedTab : 'info';
   const display = channelDisplayParts(channel);
   const siteVariant = trunkedVariant({ variant: channel.site_variant });
   const subtitle = [display.secondary, protocolFamily(channel), trunkedVariant(channel) || siteVariant,
@@ -15798,45 +15833,31 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     if (!renderIsCurrent(renderContext)) return;
     content.append(signalHistory);
   } else if (tab === 'frequencies') {
-    await renderTrunkedChannelFrequencies(channel, renderContext);
+    const showFrequencies = channelCapability(channel, 'channels');
+    const showBandPlans = channelCapability(channel, 'frequency_bands');
+    const layout = node('div', `channel-frequency-layout${showFrequencies && showBandPlans ? ' two-columns' : ''}`);
+    content.append(layout);
+    const tasks = [];
+    if (showFrequencies) {
+      const frequencyColumn = node('div', 'channel-frequency-column');
+      layout.append(frequencyColumn);
+      tasks.push(renderTrunkedChannelFrequencies(channel, renderContext, frequencyColumn));
+    }
+    if (showBandPlans) {
+      const bandPlanColumn = node('div', 'channel-band-plan-column');
+      const bands = createAsyncSection('Band Plans', {
+        bare: true,
+        loadingMessage: 'Loading band plans…',
+        errorMessage: 'The band plans could not be loaded.'
+      });
+      bandPlanColumn.append(bands.element);
+      layout.append(bandPlanColumn);
+      tasks.push(bands.load(() => api(channelApiPath(configurationId, 'frequency-bands')),
+        (data) => renderTrunkedChannelBandPlans(channel, data), renderContext));
+    }
+    await Promise.all(tasks);
   } else if (tab === 'neighbors') {
     await renderChannelNeighbors(channel, renderContext);
-  } else if (tab === 'band-plan') {
-    const data = await api(channelApiPath(configurationId, 'frequency-bands'));
-    const overrideActive = data.band_source === 'P25_OVERRIDE';
-    const homeBandColumns = [
-      { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
-      { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
-      { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-      { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
-      { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
-      { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
-      { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' }
-    ];
-    if (!overrideActive) homeBandColumns.push(
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    );
-    const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
-      overrideActive ? 'state-current' : '');
-    content.append(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
-      'No home-system band plan recorded', { type: 'channel-frequency-bands' }, null, bandSource));
-    content.append(tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
-      { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
-      { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
-      { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
-      { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
-      { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
-      { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-      { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
-      { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
-      { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
-      { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
   } else if (tab === 'patches') {
     const data = await api(channelApiPath(configurationId, 'patch-groups'), {
       offset: route.get('offset'), limit: 100

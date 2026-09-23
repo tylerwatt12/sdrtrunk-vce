@@ -46,6 +46,32 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
   margin-bottom: 0;
 }
 
+.channel-frequency-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.channel-frequency-layout.two-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.channel-frequency-column,
+.channel-band-plan-column {
+  min-width: 0;
+}
+
+.channel-frequency-column .async-section-content,
+.channel-band-plan-column .async-section-content {
+  padding: 0;
+}
+
+.channel-frequency-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
 .entity-info-standalone {
   max-width: 1060px;
   margin: 0 auto var(--space-4);
@@ -120,6 +146,10 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 
 @media (max-width: 900px) {
   .entity-info-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-frequency-layout.two-columns {
     grid-template-columns: minmax(0, 1fr);
   }
 }

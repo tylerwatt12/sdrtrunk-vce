@@ -26,6 +26,26 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
   await expect(page.locator('.visual-entity-details-example .ui-metric a')).toHaveText('9');
 });
 
+test('channel frequencies and band plans share a flush responsive layout', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=entity-details');
+  await page.evaluate(() => {
+    document.body.dataset.view = 'channel';
+    document.body.innerHTML = `<main class="content"><div class="channel-frequency-layout two-columns">
+      <div class="channel-frequency-column"><section class="section ui-section"><div class="section-title ui-section-title">Frequencies</div><div class="async-section-content"><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table"><thead><tr><th>Channel</th><th>Down MHz</th></tr></thead><tbody><tr><td>01-01</td><td>851.0125</td></tr></tbody></table></div></div></section></div>
+      <div class="channel-band-plan-column"><div class="async-section-content"><section class="section ui-section"><div class="section-title ui-section-title">Home System Band Plan</div><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table"><thead><tr><th>Band</th><th>Base</th></tr></thead><tbody><tr><td>0</td><td>851.00625</td></tr></tbody></table></div></section></div></div>
+    </div></main>`;
+  });
+  const layout = page.locator('.channel-frequency-layout');
+  const frequency = page.locator('.channel-frequency-column');
+  const bandPlan = page.locator('.channel-band-plan-column');
+  await expect(page.locator('.channel-frequency-column .async-section-content')).toHaveCSS('padding', '0px');
+  expect((await frequency.boundingBox()).y).toBe((await bandPlan.boundingBox()).y);
+  expect((await layout.boundingBox()).width).toBeGreaterThan((await frequency.boundingBox()).width * 1.9);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect((await bandPlan.boundingBox()).y).toBeGreaterThan((await frequency.boundingBox()).y);
+});
+
 test('icon actions share a size and show one hint on hover and focus', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');

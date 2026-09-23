@@ -40,3 +40,16 @@ assert.match(patchRenderer, /omittedMembers\(row, 'talkgroups'\)/);
 assert.match(patchRenderer, /pager\(patchPage, 'bottom', 'Patch groups'\)/);
 assert.match(patchRenderer, /data\.members_truncated/);
 assert.doesNotMatch(patchRenderer, /row\.patch_group|member\.talkgroup_id|member\.radio_id/);
+
+const channelTabs = functionSource('trunkedChannelTabItems', 'trunkedChannelTabs');
+assert.match(channelTabs, /channelCapability\(channel, 'channels'\) \|\| channelCapability\(channel, 'frequency_bands'\)/);
+assert.doesNotMatch(channelTabs, /id: 'band-plan'/);
+assert.match(patchRenderer, /requestedTab === 'band-plan' \? 'frequencies'/);
+assert.match(patchRenderer, /channel-frequency-layout/);
+assert.match(patchRenderer, /renderTrunkedChannelFrequencies\(channel, renderContext, frequencyColumn\)/);
+assert.match(patchRenderer, /renderTrunkedChannelBandPlans\(channel, data\)/);
+
+const styles = fs.readFileSync('stats-web/assets/styles/features/entity-details.css', 'utf8');
+assert.match(styles, /\.channel-frequency-layout\.two-columns\s*\{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+assert.match(styles, /@media \(max-width: 900px\)[\s\S]*?\.channel-frequency-layout\.two-columns\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
+assert.match(styles, /\.channel-frequency-column \.async-section-content,[\s\S]*?padding: 0/);
