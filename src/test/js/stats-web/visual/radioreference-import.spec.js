@@ -66,11 +66,17 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       return group;
     };
     const table = (values, columns, emptyText, options = {}) => {
-      const wrapper = node('div', `table-wrap ${options.wrapperClass || ''}`.trim());
-      const element = node('table', 'data-table');
+      const wrapper = node('div', `table-wrap ui-table-wrap ${options.wrapperClass || ''}`.trim());
+      const element = node('table', 'data-table resizable-table ui-data-table');
       element.dataset.tableType = options.type || 'generic';
       if (options.mobileCards) element.dataset.mobileCards = 'true';
       const head = node('thead');
+      const colgroup = node('colgroup');
+      columns.forEach((column) => {
+        const col = node('col');
+        if (column.width) col.style.width = `${column.width}px`;
+        colgroup.append(col);
+      });
       const header = node('tr');
       columns.forEach((column) => {
         const cell = node('th');
@@ -99,7 +105,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           tableBody.append(row);
         });
       }
-      element.append(head, tableBody);
+      element.append(colgroup, head, tableBody);
       wrapper.append(element);
       return wrapper;
     };
@@ -147,19 +153,21 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       }
       if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio', abbreviation: 'OH' }] };
       if (path.includes('/counties?')) return { items: [{ id: 49, name: 'Franklin County' }] };
-      if (path.includes('/browse?')) return { total_items: 2, items: [
-        { type: 'TRUNKED_SYSTEM', name: 'Central County P25', secondary: 'Franklin County',
+      if (path.includes('/browse/catalog?')) return [
+        { type: 'TRUNKED_SYSTEM', scope: 'COUNTY', name: 'Central County P25', secondary: 'Franklin County',
           updated: 'Today', detail: { id: 2001 } },
-        { type: 'CONVENTIONAL_AGENCY', name: 'County Fire', secondary: 'Franklin County',
+        { type: 'CONVENTIONAL_AGENCY', scope: 'COUNTY', name: 'County Fire', secondary: 'Franklin County',
           detail: { id: 3001, kind: 'AGENCY' } }
-      ] };
+      ];
       if (path.includes('/systems/details?')) return { system: {
-        id: 2001, name: 'Central County P25', type: 'Project 25 Phase II', city: 'Columbus'
+        id: 2001, system_id: '2000', name: 'Central County P25', type: 'Project 25 Phase II', city: 'Columbus'
       }, talkgroup_categories: [{ id: 9, name: 'Fire' }] };
       if (path.includes('/systems/sites/catalog?')) return { items: [{ id: 4001, name: 'Central Simulcast',
         number: 1, county_name: 'Franklin County', tdma_control_channel: false, channels: [
           { frequency_hz: 773081250, primary_control: true },
           { frequency_hz: 773331250, alternate_control: true }
+        ] }, { id: 4002, name: 'Alpha Site', number: 2, county_name: 'Franklin County', channels: [
+          { frequency_hz: 773581250, primary_control: true }
         ] }] };
       if (path.includes('/systems/talkgroups/catalog?') &&
           new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
@@ -232,6 +240,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
 }
 
 async function openSystem(page) {
+  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Ohio (OH)' }).click();
+  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Franklin County' }).click();
   await page.locator('.radioreference-result-open').first().click();
   await expect(page.getByText('Central Simulcast')).toBeVisible();
 }
@@ -240,8 +250,7 @@ test('talkgroup selections persist through searches and clear explicitly', async
   await installWorkspace(page);
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
-  await expect(page.getByRole('link', { name: 'Open Alias' }).first())
-    .toHaveAttribute('href', /view=aliases.*list=7.*aliasTab=configure.*alias=700/);
+  await expect(page.getByRole('link', { name: 'Open Alias' })).toHaveCount(0);
   const fire = page.getByRole('checkbox', { name: 'Select Fire Dispatch' });
   await fire.check();
   await expect(page.getByText('1 selected')).toBeVisible();
@@ -291,6 +300,31 @@ test('sites filter instantly from the loaded catalog', async ({ page }) => {
   const calls = await page.evaluate(() => window.radioReferenceVisual.calls
     .filter(([path]) => path.includes('/systems/sites/catalog?')).length);
   expect(calls).toBe(1);
+});
+
+test('location results are a collapsed tree and bookmarks show their route', async ({ page }) => {
+  await installWorkspace(page);
+  await expect(page.locator('.radioreference-directory-pager')).toHaveCount(0);
+  await expect(page.locator('.radioreference-result-open')).toHaveCount(0);
+  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Ohio (OH)' }).click();
+  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Franklin County' }).click();
+  await expect(page.locator('.radioreference-result-open')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Add bookmark: Central County P25' }).click();
+  await page.getByRole('button', { name: /Bookmarks/ }).click();
+  await expect(page.getByText('Ohio (OH) > Franklin County > Central County P25')).toBeVisible();
+});
+
+test('site sorting and preview use the RadioReference database system ID', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
+  await page.getByLabel('Sort sites').selectOption('alphabetical');
+  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Alpha Site');
+  await page.getByRole('button', { name: 'Import', exact: true }).first().click();
+  await page.getByRole('dialog', { name: /Import Alpha Site/ }).getByRole('button',
+    { name: 'Review Channel' }).click();
+  await expect.poll(async () => page.evaluate(() => window.radioReferenceVisual.calls
+    .find(([path]) => path.endsWith('/imports/site/preview'))?.[1]?.body?.system_id)).toBe(2001);
 });
 
 test('slow talkgroup loading shows a spinner until the catalog arrives', async ({ page }) => {

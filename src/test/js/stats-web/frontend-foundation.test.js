@@ -400,8 +400,8 @@ async function main() {
   assert.match(radioReferenceImportSource, /search\.addEventListener\('input'/);
   assert.doesNotMatch(radioReferenceImportSource, /System, agency, city, or county/);
   assert.match(radioReferenceImportSource, /Preview no longer valid/);
-  assert.match(radioReferenceImportSource, /existingAliasId/);
-  assert.match(radioReferenceImportSource, /aliasTab: 'configure', alias: id/);
+  assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
+  assert.match(radioReferenceImportSource, /browseCatalog/);
   assert.match(radioReferenceImportSource, /RadioReference fields changing/);
   assert.match(radioReferenceImportSource, /mobileCards: true/);
   assert.match(radioReferenceImportSource, /imports\/site\/preview/);

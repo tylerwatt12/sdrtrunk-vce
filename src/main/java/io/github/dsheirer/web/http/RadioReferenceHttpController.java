@@ -176,6 +176,17 @@ public final class RadioReferenceHttpController
                     positiveInt(query.get("state_id"), "state_id"), query.getOrDefault("search", ""),
                     optionalInt(query.get("offset"), 0), optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
             }
+            else if((PATH + "/browse/catalog").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                requireEmptyBody(exchange, "GET");
+                Map<String,String> query = query(exchange, "country_id", "state_id", "county_id");
+                ensureStoredSession();
+                ApiHttpResponse.sendData(exchange, 200, mService.browseCatalog(new LocationSelection(
+                    positiveInt(query.get("country_id"), "country_id"),
+                    optionalPositive(query.get("state_id"), "state_id"),
+                    optionalPositive(query.get("county_id"), "county_id"))));
+            }
             else if((PATH + "/browse").equals(path))
             {
                 requireMethod(exchange, "GET");

@@ -241,6 +241,7 @@ class RadioReferenceDirectoryServiceTest
             BoundedPage<DirectoryEntry> all =
                 service.browse(selection, "", EntryGroup.ALL, ScopeFilter.ALL, 20);
             assertEquals(7, all.items().size());
+            assertEquals(all.items(), service.browseCatalog(selection));
             assertFalse(all.truncated());
             assertEquals(List.of(EntryScope.NATIONAL, EntryScope.STATE, EntryScope.STATE, EntryScope.STATE,
                     EntryScope.COUNTY, EntryScope.COUNTY, EntryScope.COUNTY),
@@ -515,11 +516,13 @@ class RadioReferenceDirectoryServiceTest
             while(true);
 
             assertEquals(3, pageCount);
+            assertEquals(1_206, service.browseCatalog(selection).size(),
+                "the browser catalog includes every scope, beyond the old page limit");
             assertEquals(1_201, ids.size());
             assertEquals(1_201, ids.stream().distinct().count());
             assertEquals(10_000, ids.getFirst());
             assertEquals(11_200, ids.getLast());
-            assertEquals(3, gateway.countyCalls.get(), "each page is a fresh bounded directory request");
+            assertEquals(4, gateway.countyCalls.get(), "each page and the full catalog make a fresh request");
         }
     }
 

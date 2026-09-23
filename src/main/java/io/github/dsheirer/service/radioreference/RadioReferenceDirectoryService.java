@@ -406,14 +406,25 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                                                ScopeFilter scopeFilter, int offset, int limit)
         throws RadioReferenceDirectoryException
     {
+        validatePage(offset, limit);
+        return page(browseEntries(selection, search, group, scopeFilter), offset, limit);
+    }
+
+    /** Returns the complete location result set for the browser's collapsible directory tree. */
+    public List<DirectoryEntry> browseCatalog(LocationSelection selection) throws RadioReferenceDirectoryException
+    {
+        return browseEntries(selection, "", EntryGroup.ALL, ScopeFilter.ALL);
+    }
+
+    private List<DirectoryEntry> browseEntries(LocationSelection selection, String search, EntryGroup group,
+                                                ScopeFilter scopeFilter) throws RadioReferenceDirectoryException
+    {
         validateSelection(selection);
         String normalizedSearch = normalizedSearch(search);
         if(group == null || scopeFilter == null)
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
-
-        validatePage(offset, limit);
 
         LocationSnapshot snapshot = invokePremium(gateway -> locationSnapshot(gateway, selection));
         EntryAccumulator accumulator = new EntryAccumulator(normalizedSearch, group, scopeFilter);
@@ -439,7 +450,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         List<DirectoryEntry> entries = new ArrayList<>(accumulator.entries().values());
         entries.sort(ENTRY_ORDER);
-        return page(entries, offset, limit);
+        return List.copyOf(entries);
     }
 
     /**

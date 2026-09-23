@@ -122,6 +122,8 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/counties?state_id=10").GET())).at("/items/0/name").textValue());
                 assertEquals("State P25", data(send(client,
                     request(origin, "/browse?country_id=1&state_id=10").GET())).at("/items/0/name").textValue());
+                assertEquals("State P25", data(send(client,
+                    request(origin, "/browse/catalog?country_id=1&state_id=10").GET())).at("/0/name").textValue());
                 assertEquals("Project 25", data(send(client,
                     request(origin, "/systems/details?system_id=2001").GET())).at("/type").textValue());
                 assertEquals("Franklin Simulcast", data(send(client,

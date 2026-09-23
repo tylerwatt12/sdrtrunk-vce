@@ -6,6 +6,7 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
   states: `${API_ROOT}/states`,
   counties: `${API_ROOT}/counties`,
   browse: `${API_ROOT}/browse`,
+  browseCatalog: `${API_ROOT}/browse/catalog`,
   systemDetails: `${API_ROOT}/systems/details`,
   systemSites: `${API_ROOT}/systems/sites`,
   siteCatalog: `${API_ROOT}/systems/sites/catalog`,
@@ -20,7 +21,6 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
   apply: (previewId) => `${API_ROOT}/imports/${encodeURIComponent(String(previewId))}/apply`
 });
 
-const DIRECTORY_LIMIT = 30;
 const SITE_LIMIT = 50;
 const TALKGROUP_LIMIT = 50;
 const FREQUENCY_LIMIT = 50;
@@ -94,7 +94,8 @@ function previewId(value) {
 }
 
 function systemId(value) {
-  return integerValue(value?.detail || value, ['system_id', 'systemId', 'id', 'sid']);
+  // System details also contain a radio network's "system_id"; its RadioReference database ID is "id".
+  return integerValue(value?.detail || value, ['id', 'sid', 'system_id', 'systemId']);
 }
 
 function ownerId(value) {
@@ -174,10 +175,6 @@ function talkgroupCategory(value) {
   return category === null || category === undefined || category === '' ? '—' : String(category);
 }
 
-function existingAliasId(value) {
-  return integerValue(value, ['existing_alias_id', 'existingAliasId']);
-}
-
 function talkgroupChanges(value) {
   if (!Array.isArray(value?.changes)) return [];
   const owned = new Set(['name', 'description', 'group']);
@@ -238,7 +235,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     country: null,
     region: null,
     county: null,
-    browseOffset: 0,
     browseRows: [],
     browseDocument: null,
     browseTab: 'browse',
@@ -246,6 +242,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
     siteSearch: '',
+    siteSort: 'number',
     talkgroupStatus: 'ALL',
     browseSequence: 0,
     detailSequence: 0,
@@ -336,7 +333,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       parentId: 0,
       ownerKind: trunked ? '' : textValue(entry?.detail || entry, ['kind', 'owner_kind'], 'AGENCY'),
       name: textValue(entry, ['name'], 'Unnamed'),
-      parentName: ''
+      parentName: textValue(entry, ['breadcrumb', 'parentName', 'parent_name'])
     };
   };
   const toggleBookmark = async (value, control, onChanged) => {
@@ -665,15 +662,26 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       search.setAttribute('aria-label', search.placeholder);
       search.value = state.siteSearch;
       searchFrame.append(search);
+      const sort = select();
+      [['number', 'Site number'], ['alphabetical', 'Alphabetical']].forEach(([value, label]) => {
+        const option = node('option', '', label);
+        option.value = value;
+        sort.append(option);
+      });
+      sort.value = state.siteSort;
       const count = node('span', 'muted');
-      toolbar.append(searchFrame, count);
+      toolbar.append(formField('Search sites & channels', searchFrame),
+        formField('Sort sites', selectFrame(sort)), count);
       const list = node('div', 'radioreference-sites-list');
       target.replaceChildren(toolbar, list);
       let offset = 0;
       const draw = () => {
         const term = search.value.trim().toLowerCase();
         state.siteSearch = search.value;
-        const matches = term ? catalog.filter((value) => value.searchText.includes(term)) : catalog;
+        const matches = (term ? catalog.filter((value) => value.searchText.includes(term)) : catalog).slice();
+        if (sort.value === 'alphabetical') matches.sort((a, b) =>
+          textValue(a.site, ['name', 'description']).localeCompare(textValue(b.site, ['name', 'description']),
+            undefined, { numeric: true }));
         const values = matches.slice(offset, offset + SITE_LIMIT).map((value) => value.site);
         count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites`;
         const rendered = table(values, [
@@ -712,6 +720,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         }));
       };
       search.addEventListener('input', () => { offset = 0; draw(); });
+      sort.addEventListener('change', () => { state.siteSort = sort.value; offset = 0; draw(); });
       draw();
     } catch (error) {
       target.replaceChildren(feedback(error.message, 'error'));
@@ -759,7 +768,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const actions = node('div', 'radioreference-talkgroup-actions');
     actions.append(selectionBadge, clear, importSelected, importAll);
     toolbar.append(formField('Compare with Alias List', selectFrame(aliasList)), categoryField,
-      searchFrame, filter, actions);
+      formField('Search talkgroups', searchFrame), filter, actions);
     target.replaceChildren(toolbar, status, tableHost);
 
     const selected = state.selectedTalkgroups;
@@ -781,7 +790,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const bookmark = {
         kind: 'TALKGROUP_CATEGORY', id: Number(category.value), parentId: systemIdValue,
         ownerKind: 'TRUNKED_SYSTEM', name: category.selectedOptions[0]?.textContent || 'Category',
-        parentName: systemName
+        parentName: [textValue(system, ['breadcrumb']), systemName].filter(Boolean).join(' > ')
       };
       categoryStar.append(starButton(bookmark, () => {
         updateCategoryStar();
@@ -858,12 +867,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
           content.append(uiPill(value.label, value.tone));
-          const id = existingAliasId(talkgroup);
-          if (id && (value.label === 'Identical' || value.label === 'Different')) {
-            content.append(anchor('Open Alias', href('aliases', {
-              list: Number(aliasList.value), aliasTab: 'configure', alias: id
-            }), 'ui-button ui-button-secondary radioreference-open-alias'));
-          }
           return content;
         } }
       ], 'No talkgroups match these filters.',
@@ -1122,7 +1125,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const bookmark = {
           kind: 'CONVENTIONAL_CATEGORY', id: Number(category.value), parentId: id,
           ownerKind: kind, name: category.selectedOptions[0]?.textContent || 'Category',
-          parentName: textValue(entry, ['name'], 'Agency')
+          parentName: [textValue(entry, ['breadcrumb']), textValue(entry, ['name'], 'Agency')]
+            .filter(Boolean).join(' > ')
         };
         categoryStar.append(starButton(bookmark, () => {
           updateCategoryStar();
@@ -1179,24 +1183,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     }
   };
 
-  const renderDirectory = (listHost, pagerHost, detailHost, response, offset, browse) => {
-    const values = rows(response);
-    const total = totalValue(response, values.length);
+  const renderDirectory = (listHost, detailHost, values, location) => {
     if (!values.length) {
       listHost.replaceChildren(empty('No systems or agencies here',
         'Choose a broader country, state, or county to browse.'));
-      pagerHost.replaceChildren();
       return;
     }
-    const fragmentValue = document.createDocumentFragment();
-    let previousScope = '';
-    values.forEach((entry) => {
-      const scope = textValue(entry, ['scope'], 'COUNTY').toUpperCase();
-      if (scope !== previousScope) {
-        const label = { NATIONAL: 'National', STATE: 'Statewide', COUNTY: 'County' }[scope] || scope;
-        fragmentValue.append(node('div', 'radioreference-directory-group', label));
-        previousScope = scope;
-      }
+    const itemFor = (entry, trail) => {
+      entry.breadcrumb = trail;
       const item = node('div', 'radioreference-directory-item');
       const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
       const identity = node('span', 'radioreference-row-identity');
@@ -1208,13 +1202,42 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       open.addEventListener('click', () => entryKind(entry) === 'TRUNKED_SYSTEM' ?
         renderSystem(entry, detailHost) : renderConventional(entry, detailHost));
       item.append(open, starButton(bookmarkForEntry(entry), () => state.onBookmarksChanged?.()));
-      fragmentValue.append(item);
-    });
-    listHost.replaceChildren(fragmentValue);
-    pagerHost.replaceChildren(internalPager({
-      offset, limit: DIRECTORY_LIMIT, visible: values.length, total,
-      more: hasMore(response, offset, DIRECTORY_LIMIT, values.length), label: 'Results', onPage: browse
-    }));
+      return item;
+    };
+    const branch = (label, entries, trail, children = []) => {
+      const group = node('details', 'radioreference-directory-branch');
+      const count = entries.length + children.reduce((sum, child) => sum + Number(child.dataset.count || 0), 0);
+      group.dataset.count = String(count);
+      const summary = node('summary', '', '');
+      summary.append(node('span', '', label), uiPill(formatNumber(count), 'neutral'));
+      group.append(summary, ...children);
+      // Populate only opened branches; large counties need not create thousands of hidden buttons.
+      group.addEventListener('toggle', () => {
+        if (!group.open || group.dataset.populated) return;
+        group.dataset.populated = 'true';
+        if (!entries.length) return;
+        const content = node('div', 'radioreference-directory-branch-content');
+        entries.forEach((entry) => content.append(itemFor(entry, trail)));
+        group.append(content);
+      });
+      return group;
+    };
+    const national = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'NATIONAL');
+    const statewide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'STATE');
+    const countywide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'COUNTY');
+    const tree = node('div', 'radioreference-directory-tree');
+    const countryChildren = [];
+    if (national.length) countryChildren.push(branch('National', national, 'National'));
+    if (statewide.length || countywide.length) {
+      const regionTrail = location.region || 'Statewide';
+      const countyChildren = countywide.length ? [branch(location.county || 'County', countywide,
+        [location.region, location.county].filter(Boolean).join(' > ') || 'County')] : [];
+      countryChildren.push(branch(regionTrail, statewide, regionTrail, countyChildren));
+    }
+    const countryRoot = branch(location.country || 'Country', [], location.country || 'Country', countryChildren);
+    countryRoot.open = true;
+    tree.append(countryRoot);
+    listHost.replaceChildren(tree);
   };
 
   const buildBrowser = async () => {
@@ -1233,8 +1256,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const resultHost = node('div', 'radioreference-directory-results ui-surface');
     const tabHost = node('div', 'radioreference-directory-tabs');
     const listHost = node('div', 'radioreference-directory-list');
-    const pagerHost = node('div', 'radioreference-directory-pager');
-    resultHost.append(tabHost, listHost, pagerHost);
+    resultHost.append(tabHost, listHost);
     const detailHost = node('div', 'radioreference-import-detail');
     detailHost.append(empty('Choose a result', 'Select a system or agency to review.'));
     workbench.append(resultHost, detailHost);
@@ -1242,7 +1264,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     host.replaceChildren(browser);
 
     const showBookmarks = () => {
-      pagerHost.replaceChildren();
       if (!state.bookmarks.length) {
         listHost.replaceChildren(empty('No bookmarks yet',
           'Use a star beside a system, agency, or category to save it here.'));
@@ -1263,23 +1284,35 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const item = node('div', 'radioreference-directory-item');
         const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
         const identity = node('span', 'radioreference-row-identity');
-        identity.append(node('strong', '', bookmark.name));
-        if (bookmark.parentName) identity.append(node('small', 'muted', bookmark.parentName));
+        const parentEntry = state.browseRows.find((entry) =>
+          (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'CONVENTIONAL_AGENCY' ?
+            (bookmark.kind === 'TRUNKED_SYSTEM' ? systemId(entry) : ownerId(entry)) === bookmark.id :
+            (bookmark.kind === 'TALKGROUP_CATEGORY' ? systemId(entry) : ownerId(entry)) === bookmark.parentId) &&
+          entryKind(entry) === (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY' ?
+            'TRUNKED_SYSTEM' : 'CONVENTIONAL_AGENCY'));
+        const savedPath = parentEntry ? [parentEntry.breadcrumb,
+          bookmark.kind.includes('CATEGORY') ? textValue(parentEntry, ['name']) : ''].filter(Boolean).join(' > ') :
+          bookmark.parentName;
+        const trail = [savedPath, bookmark.name].filter(Boolean).join(' > ');
+        identity.append(node('strong', '', trail));
         open.append(identity);
         open.addEventListener('click', () => {
           if (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY') {
             const system = {
               id: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.id : bookmark.parentId,
-              name: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.name : bookmark.parentName,
-              type: 'TRUNKED_SYSTEM'
+              name: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.name :
+                bookmark.parentName.split(' > ').at(-1),
+              type: 'TRUNKED_SYSTEM', breadcrumb: savedPath
             };
             void renderSystem(system, detailHost, bookmark.kind === 'TALKGROUP_CATEGORY' ?
               { categoryId: bookmark.id } : {});
           } else {
             const entry = {
               id: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.id : bookmark.parentId,
-              name: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.name : bookmark.parentName,
+              name: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.name :
+                bookmark.parentName.split(' > ').at(-1),
               type: 'CONVENTIONAL_AGENCY',
+              breadcrumb: savedPath,
               detail: { kind: bookmark.ownerKind,
                 id: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.id : bookmark.parentId }
             };
@@ -1294,8 +1327,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     };
     const showCurrent = () => {
       if (state.browseTab === 'bookmarks') showBookmarks();
-      else if (state.browseDocument) renderDirectory(listHost, pagerHost, detailHost,
-        state.browseDocument, state.browseOffset, browse);
+      else if (state.browseDocument) renderDirectory(listHost, detailHost,
+        state.browseRows, state.browseDocument.location);
     };
     const renderTabs = () => {
       const tabs = uiSegmentedControl([
@@ -1337,23 +1370,31 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       await loadCounties(selectedCounty, sequence);
     };
 
-    const browse = async (offset = 0) => {
+    const browse = async () => {
       if (!country.value) return;
       const sequence = ++state.browseSequence;
-      state.browseOffset = offset;
       message.textContent = 'Loading systems and agencies…';
       if (state.browseTab === 'browse') listHost.replaceChildren(feedback('Loading directory results…', 'loading'));
       try {
-        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.browse, {
-          country_id: country.value, state_id: region.value || null, county_id: county.value || null,
-          group: 'ALL', offset, limit: DIRECTORY_LIMIT
-        }));
+        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.browseCatalog, {
+          country_id: country.value, state_id: region.value || null, county_id: county.value || null
+        }), { timeoutMs: 65_000 });
         if (sequence !== state.browseSequence) return;
-        state.browseDocument = response;
         state.browseRows = rows(response);
-        if (state.browseTab === 'browse') renderDirectory(listHost, pagerHost, detailHost, response, offset, browse);
-        const total = totalValue(response, state.browseRows.length);
-        message.textContent = formatNumber(total) + ' systems and agencies found. Results update with the browse area.';
+        const location = {
+          country: country.selectedOptions[0]?.textContent || '',
+          region: region.value ? region.selectedOptions[0]?.textContent || '' : '',
+          county: county.value ? county.selectedOptions[0]?.textContent || '' : ''
+        };
+        state.browseRows.forEach((entry) => {
+          const scope = textValue(entry, ['scope']).toUpperCase();
+          entry.breadcrumb = scope === 'NATIONAL' ? 'National' : scope === 'STATE' ?
+            location.region || 'Statewide' : [location.region, location.county].filter(Boolean).join(' > ');
+        });
+        state.browseDocument = { location };
+        showCurrent();
+        message.textContent = formatNumber(state.browseRows.length) +
+          ' systems and agencies found. Expand a location to browse.';
       } catch (error) {
         if (sequence !== state.browseSequence) return;
         if (state.browseTab === 'browse') listHost.replaceChildren(feedback(error.message, 'error'));
