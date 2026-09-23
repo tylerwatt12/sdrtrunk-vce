@@ -17,6 +17,82 @@ const COLUMN_WIDTHS = Object.freeze({
 });
 
 const TABLE_DEFAULTS = Object.freeze({
+  'channel-frequencies-p25': {
+    widths: { descriptor: 104, callsign: 110, tags: 78, downlink: 94, uplink: 94,
+      tdma: 60, slots: 56, state: 86, 'voice-observations': 80,
+      'data-observations': 70, 'last-seen': 166 },
+    hidden: ['callsign', 'tdma', 'data-observations'],
+    grow: ['descriptor', 'callsign', 'tags']
+  },
+  'channel-frequency-bands': {
+    widths: { band: 48, base: 94, spacing: 72, bandwidth: 72, offset: 94,
+      tdma: 60, slots: 56, state: 86, observations: 78, 'last-seen': 166 },
+    hidden: ['tdma'], grow: []
+  },
+  'channel-frequency-bands-override': {
+    widths: { band: 48, base: 94, spacing: 72, bandwidth: 72, offset: 94,
+      tdma: 60, slots: 56 },
+    hidden: ['tdma'], grow: []
+  },
+  'channel-catalog-admin-v1': {
+    widths: { select: 48, name: 300, frequency: 260, protocol: 160,
+      status: 112, 'auto-start': 144, 'alias-list': 190 },
+    grow: ['name', 'frequency', 'alias-list']
+  },
+  'channel-catalog-readonly-v1': {
+    widths: { name: 300, frequency: 260, protocol: 160, status: 112, 'alias-list': 190 },
+    grow: ['name', 'frequency', 'alias-list']
+  },
+  'group-identities': {
+    widths: { 'group-identity-id': 64, 'group-identity-kind': 60,
+      'group-identity-name': 160, 'group-identity-description': 240,
+      'alias-group': 200, 'logical-calls': 90, 'recorded-logical-calls': 65,
+      'stream-submitted-logical-calls': 95, 'encrypted-logical-calls': 80,
+      signaling: 100, 'last-seen': 174 },
+    grow: ['group-identity-name', 'group-identity-description', 'alias-group']
+  },
+  radios: {
+    widths: { radio: 90, alias: 175, 'talker-alias': 175,
+      affiliation: 210, 'confirmed-channel': 260, 'logical-calls': 90,
+      'encrypted-logical-calls': 90, 'last-seen': 174 },
+    grow: ['alias', 'talker-alias', 'affiliation', 'confirmed-channel']
+  },
+  'group-identity-radios': {
+    widths: { radio: 90, alias: 175, 'talker-alias': 175,
+      'confirmed-channel': 260, 'logical-calls': 90,
+      'encrypted-logical-calls': 90, 'last-seen': 174 },
+    grow: ['alias', 'talker-alias', 'confirmed-channel']
+  },
+  'alias-coverage-unassigned-v1': {
+    widths: { identity: 230, system: 260, calls: 80, first: 190, last: 190 },
+    grow: ['identity', 'system']
+  },
+  'alias-coverage-configured-v1': {
+    widths: { name: 220, identity: 180, calls: 80, signals: 85, first: 190, heard: 190 },
+    grow: ['name', 'identity']
+  },
+  'action-counts': { widths: { action: 160, count: 110 }, grow: [] },
+  'system-action-observations': { widths: { action: 160, observations: 110 }, grow: [] },
+  'radio-system-channels': {
+    widths: { name: 180, details: 260, 'control-frequency': 100,
+      channels: 56, neighbors: 56, 'last-seen': 174 },
+    grow: ['name', 'details']
+  },
+  'dashboard-call-sources': {
+    widths: { receiver: 300, mode: 80, 'logical-calls': 85,
+      'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90 },
+    grow: ['receiver'], maxWidth: 900
+  },
+  'dashboard-destinations': {
+    widths: { identity: 190, system: 200, mode: 80, 'logical-calls': 85,
+      'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90 },
+    grow: ['identity', 'system']
+  },
+  'dashboard-sources': {
+    widths: { identity: 190, system: 200, mode: 80, 'logical-calls': 85,
+      'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90 },
+    grow: ['identity', 'system']
+  },
   'dashboard-receivers': { widths: {
     name: 442, mode: 180, context: 315, frequency: 237, 'last-seen': 419
   } },
@@ -32,10 +108,15 @@ const TABLE_DEFAULTS = Object.freeze({
     'select', 'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'signaling', 'last-seen'
   ] },
   'live-channels': { widths: {
-    status: 145, tags: 180, channel: 130, frequency: 100, signal: 90,
-    'decode-health': { normal: 120, detailed: 260 }, 'source-alias': 220,
-    source: 105, 'target-alias': 220, target: 105, decoder: 80
-  } },
+    status: 105, tags: 100, channel: 150, frequency: 96, signal: 95,
+    'decode-health': { normal: 105, detailed: 260 }, 'source-alias': 220,
+    source: 90, 'target-alias': 220, target: 90, decoder: 78
+  }, grow: ['channel', 'source-alias', 'target-alias'] },
+  'alias-editor-configure': {
+    widths: { select: 48, alias: 190, description: 260, identifier: 82,
+      matcher: 120, group: 180, behavior: 145, overlap: 92 },
+    grow: ['alias', 'description', 'group', 'behavior']
+  },
   'admin-users': { widths: {
     username: 230, 'access-tier': 150, 'password-changed': 190, actions: 230
   } },
@@ -45,18 +126,25 @@ const TABLE_DEFAULTS = Object.freeze({
   'admin-scan-lists': { widths: {
     'scan-list': 240, aliases: 130, 'unmatched-alias-lists': 260, actions: 360
   } },
-  'radioreference-sites': { widths: { site: 340, system: 200 } },
+  'radioreference-sites': {
+    widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site'], maxWidth: 1050
+  },
   'radioreference-talkgroups': { widths: {
-    selected: 54, talkgroup: 130, 'alpha-tag': 220, category: 180, status: 150
-  } },
+    selected: 54, talkgroup: 90, 'alpha-tag': 190, description: 260,
+    category: 180, status: 150
+  }, grow: ['alpha-tag', 'description', 'category'] },
   'radioreference-conventional': { widths: {
-    frequency: 150, 'alpha-tag': 220, mode: 120
-  } }
+    frequency: 125, 'alpha-tag': 220, description: 260, mode: 120
+  }, grow: ['alpha-tag', 'description'] }
 });
+
+function defaultsFor(tableType) {
+  return TABLE_DEFAULTS[tableType] || TABLE_DEFAULTS[tableType.split('.')[0]] || {};
+}
 
 function layout(tableType, columns) {
   const schema = columns.map((column) => column.id);
-  const defaults = TABLE_DEFAULTS[tableType] || {};
+  const defaults = defaultsFor(tableType);
   const namedOrder = (defaults.order || []).filter((id) => schema.includes(id));
   const order = [...namedOrder, ...schema.filter((id) => !namedOrder.includes(id))];
   const visible = defaults.visible ? new Set(defaults.visible) : null;
@@ -64,13 +152,14 @@ function layout(tableType, columns) {
     schema,
     column_order: order,
     column_widths: {},
-    hidden_columns: visible ? columns.filter((column) =>
-      !visible.has(column.id) && !column.essential).map((column) => column.id) : []
+    hidden_columns: columns.filter((column) => !column.essential &&
+      (visible ? !visible.has(column.id) : (defaults.hidden || []).includes(column.id)))
+      .map((column) => column.id)
   };
 }
 
 function width(tableType, column, variant = 'normal') {
-  const specified = TABLE_DEFAULTS[tableType]?.widths?.[column.id];
+  const specified = defaultsFor(tableType).widths?.[column.id];
   const tableWidth = typeof specified === 'object' ? specified[variant] ?? specified.normal : specified;
   if (Number.isFinite(tableWidth)) return tableWidth;
   const semanticWidth = COLUMN_WIDTHS[column.id];
@@ -80,4 +169,32 @@ function width(tableType, column, variant = 'normal') {
   return Math.max(90, Math.min(220, String(column.label || '').length * 9 + 34));
 }
 
-export { layout, width };
+function fit(tableType) {
+  const defaults = defaultsFor(tableType);
+  return Array.isArray(defaults.grow) ? {
+    grow: defaults.grow,
+    maxWidth: defaults.maxWidth || null
+  } : null;
+}
+
+function fittedWidths(tableType, columns, widths, savedWidths, availableWidth) {
+  const profile = fit(tableType);
+  if (!profile) return widths;
+  const target = Math.min(Math.max(0, availableWidth), profile.maxWidth || Infinity);
+  const extra = Math.max(0, target - widths.reduce((sum, value) => sum + value, 0));
+  const grow = columns.map((column, index) => ({ id: column.id, index }))
+    .filter(({ id }) => profile.grow.includes(id) && !Object.hasOwn(savedWidths, id));
+  if (!extra || !grow.length) return widths;
+  const growTotal = grow.reduce((sum, { index }) => sum + widths[index], 0);
+  let distributed = 0;
+  const fitted = widths.slice();
+  grow.forEach(({ index }, position) => {
+    const share = position === grow.length - 1 ? extra - distributed :
+      Math.round(extra * widths[index] / growTotal);
+    fitted[index] += share;
+    distributed += share;
+  });
+  return fitted;
+}
+
+export { layout, width, fit, fittedWidths };

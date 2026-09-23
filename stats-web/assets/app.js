@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=2';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=1';
+import * as tableDefaults from './core/table-defaults.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -14,7 +14,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=3';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=9';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=10';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -2212,12 +2212,14 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   return row;
 }
 
-function setTableColumnWidths(element, columnElements, widths) {
+function setTableColumnWidths(element, columnElements, widths, fixed = false) {
   const total = widths.reduce((sum, width) => sum + width, 0) || 1;
   widths.forEach((width, index) => {
     columnElements[index].style.width = `${Math.round(width)}px`;
   });
-  element.style.width = '100%';
+  const mobileCards = element.dataset.mobileCards === 'true' &&
+    window.matchMedia('(max-width: 760px)').matches;
+  element.style.width = fixed && !mobileCards ? `${Math.round(total)}px` : '100%';
   if (element.dataset.mobileCards === 'true') {
     element.style.removeProperty('min-width');
     element.style.setProperty('--table-content-min-width', `${Math.round(total)}px`);
@@ -2258,7 +2260,7 @@ function measureTableColumnContentWidth(element, header, index) {
   return Math.max(TABLE_WIDTH_MINIMUM, Math.min(TABLE_WIDTH_MAXIMUM, width));
 }
 
-function applyPreferredTableWidths(element, columns, columnElements, layout, tableType, variant) {
+function applyPreferredTableWidths(element, wrapper, columns, columnElements, layout, tableType, variant) {
   const widths = columns.map((column, index) => {
     const savedWidth = layout.column_widths[tableColumnKey(column, index)];
     const fallback = tableDefaults.width(tableType, column, variant);
@@ -2266,26 +2268,28 @@ function applyPreferredTableWidths(element, columns, columnElements, layout, tab
     return Number.isFinite(width) && width >= TABLE_WIDTH_MINIMUM && width <= TABLE_WIDTH_MAXIMUM ?
       Math.round(width) : fallback;
   });
-  setTableColumnWidths(element, columnElements, widths);
+  const fitted = tableDefaults.fittedWidths(tableType, columns, widths, layout.column_widths,
+    wrapper.clientWidth);
+  setTableColumnWidths(element, columnElements, fitted, Boolean(tableDefaults.fit(tableType)));
 }
 
 function addColumnResizers(element, columns, columnElements, headers, tableType,
-    currentLayout, setCurrentLayout, beginLayoutMutation, endLayoutMutation, onSaveFailure) {
-  const saveWidths = async (widths) => {
-    let nextLayout = currentLayout();
-    columns.forEach((column, index) => {
-      nextLayout = tableLayouts.resize(nextLayout, tableColumnKey(column, index), Math.round(widths[index]));
-    });
+    currentLayout, setCurrentLayout, beginLayoutMutation, endLayoutMutation, onSaveFailure,
+    applyWidths) {
+  const saveWidth = async (index, width) => {
+    const nextLayout = tableLayouts.resize(currentLayout(), tableColumnKey(columns[index], index),
+      Math.round(width));
     setCurrentLayout(nextLayout);
     const saved = await saveTableLayoutPreference(tableType, nextLayout);
     endLayoutMutation();
     if (!saved) onSaveFailure?.();
+    else applyWidths?.();
   };
   const resizeColumns = (index, startingWidths, requestedDelta) => {
     const widths = [...startingWidths];
     widths[index] = Math.max(TABLE_WIDTH_MINIMUM,
       Math.min(TABLE_WIDTH_MAXIMUM, startingWidths[index] + requestedDelta));
-    setTableColumnWidths(element, columnElements, widths);
+    setTableColumnWidths(element, columnElements, widths, Boolean(tableDefaults.fit(tableType)));
     return widths;
   };
   headers.forEach((header, index) => {
@@ -2307,7 +2311,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
       const fittedWidth = measureTableColumnContentWidth(element, header, index);
       const widths = resizeColumns(index, startingWidths, fittedWidth - startingWidths[index]);
       handle.setAttribute('aria-valuenow', String(Math.round(widths[index])));
-      void saveWidths(widths);
+      void saveWidth(index, widths[index]);
     };
     handle.addEventListener('dblclick', (event) => {
       event.preventDefault();
@@ -2326,7 +2330,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
       const startingWidths = headers.map((candidate) => Math.round(candidate.getBoundingClientRect().width));
       const widths = resizeColumns(index, startingWidths, event.key === 'ArrowLeft' ? -10 : 10);
       handle.setAttribute('aria-valuenow', String(Math.round(widths[index])));
-      void saveWidths(widths);
+      void saveWidth(index, widths[index]);
     });
     handle.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
@@ -2350,7 +2354,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
           endLayoutMutation();
           return;
         }
-        void saveWidths(resizedWidths);
+        void saveWidth(index, resizedWidths[index]);
       };
       handle.setPointerCapture(event.pointerId);
       handle.addEventListener('pointermove', pointerMove);
@@ -2370,6 +2374,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableType = tableLayouts.tableId(options.type);
   const tableController = options.controller || {};
   cleanupTableLayoutMenu(tableController);
+  tableController.widthObserver?.disconnect();
   const declaredColumns = columns.slice();
   tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns);
   const defaultLayout = tableDefaults.layout(tableType, declaredColumns);
@@ -2717,10 +2722,18 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     });
   }
   wrapper.append(element);
-  applyPreferredTableWidths(element, columns, columnElements, layout, tableType, options.widthVariant);
+  const applyWidths = () => applyPreferredTableWidths(element, wrapper, columns, columnElements,
+    layout, tableType, options.widthVariant);
+  applyWidths();
+  if (tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
+    tableController.widthObserver = new ResizeObserver(applyWidths);
+    tableController.widthObserver.observe(wrapper);
+    const observer = tableController.widthObserver;
+    activeRenderController?.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+  }
   addColumnResizers(element, columns, columnElements, headers, tableType,
     () => layout, (nextLayout) => { layout = nextLayout; }, beginLayoutMutation, endLayoutMutation,
-    () => rebuildTable(null));
+    () => rebuildTable(null), applyWidths);
   updateSortIndicators();
   renderBody();
   Object.assign(tableController, {
@@ -7585,7 +7598,7 @@ async function channelTopGroupsSection(channel) {
       render: (row) => groupIdentityAliasLink(row),
       className: 'alias-cell', sortValue: aliasLabel },
     { id: 'group', label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
-    { id: 'logical-calls', label: 'Logical Calls',
+    { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls',
       render: (row) => number(row.logical_call_count), className: 'numeric',
       sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'encrypted-logical-calls', label: 'Encrypted',
@@ -9885,7 +9898,7 @@ const dashboardCallSourceColumns = [
     sortValue: callSourceLabel },
   { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
     render: dashboardMode, sortValue: dashboardModeLabel },
-  { id: 'logical-calls', label: 'Logical Calls',
+  { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls',
     render: (row) => number(row.logical_call_count), className: 'numeric',
     sortValue: (row) => Number(row.logical_call_count || 0) },
   { id: 'recorded-logical-calls', label: 'Recorded',
@@ -9904,7 +9917,7 @@ function dashboardIdentityColumns(identityLabel) {
     { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
     { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
       render: dashboardMode, sortValue: dashboardModeLabel },
-    { id: 'logical-calls', label: 'Logical Calls',
+    { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls',
       render: (row) => number(row.logical_call_count), className: 'numeric',
       sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'recorded-logical-calls', label: 'Recorded',
@@ -10317,7 +10330,7 @@ const groupIdentityColumns = [
   { id: 'group-identity-name', label: 'Alias', fullLabel: 'Group Alias', render: (row) => groupIdentityAliasLink(row), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { id: 'group-identity-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
   { id: 'alias-group', label: 'Alias Group', key: 'alias_group', className: 'alias-cell', sort: 'alias_group' },
-  { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+  { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
   { id: 'recorded-logical-calls', label: 'Rec', fullLabel: 'Recorded Logical Calls', render: (row) => number(row.recorded_logical_call_count), className: 'numeric', sort: 'recorded_logical_call_count', sortValue: (row) => Number(row.recorded_logical_call_count || 0) },
   { id: 'stream-submitted-logical-calls', label: 'Submitted', fullLabel: 'Submitted to Streamer', render: (row) => number(row.stream_submitted_logical_call_count), className: 'numeric', sort: 'stream_submitted_logical_call_count', sortValue: (row) => Number(row.stream_submitted_logical_call_count || 0) },
   { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
@@ -10346,7 +10359,7 @@ function radioSystemRadioColumns(system) {
       className: 'alias-cell', sort: 'channel', sortValue: presenceChannelSortValue });
   }
   columns.push(
-    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count),
+    { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls', render: (row) => number(row.logical_call_count),
       className: 'numeric', sort: 'logical_call_count',
       sortValue: (row) => Number(row.logical_call_count || 0) },
     { id: 'encrypted-logical-calls', label: 'Enc',
@@ -15153,7 +15166,7 @@ async function renderRadioSystem() {
     { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.native_id) },
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
       { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, undefined, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
-      { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
@@ -15246,7 +15259,7 @@ async function renderGroupIdentity() {
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ?
         radioLink(row, row.radio_native_id, row.radio_alias_name, row.radio_entity_ref) : '',
         className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
-      { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
+      { id: 'logical-calls', label: 'Calls', fullLabel: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
       { id: 'encrypted-logical-calls', label: 'Enc', render: (row) => number(row.encrypted_logical_call_count), className: 'numeric encrypted', sort: 'encrypted_logical_call_count', sortValue: (row) => Number(row.encrypted_logical_call_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
@@ -15518,7 +15531,7 @@ function channelProtocolDetailRows(channel) {
 
 function p25ChannelFrequencyColumns() {
   return [
-    { id: 'descriptor', label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
+    { id: 'descriptor', label: 'LCN', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
     { id: 'callsign', label: 'Callsign', render: (row) => callsignLink(row.callsign),
       sortValue: (row) => row.callsign || '' },
     { id: 'tags', label: 'Tags', key: 'tags', render: channelTags },
@@ -15614,7 +15627,7 @@ function p25ChannelNeighborColumns() {
     { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
     { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status',
       render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
-    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -15741,7 +15754,7 @@ function renderTrunkedChannelBandPlans(channel, data) {
   ];
   if (!overrideActive) homeBandColumns.push(
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   );
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
@@ -15749,7 +15762,7 @@ function renderTrunkedChannelBandPlans(channel, data) {
   return fragment(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
     'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
       'channel-frequency-bands' }, null, bandSource),
-  tableSection('ISSI Advertised Band Plans', data.foreign_bands || [], [
+  data.foreign_bands?.length ? tableSection('ISSI Advertised Band Plans', data.foreign_bands, [
     { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
     { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
     { id: 'band', label: 'Band', key: 'band', className: 'numeric' },
@@ -15761,9 +15774,10 @@ function renderTrunkedChannelBandPlans(channel, data) {
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
     { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }));
+  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }) :
+    section('ISSI Advertised Band Plans', node('p', 'muted', 'No ISSI-advertised band plans recorded')));
 }
 
 async function renderTrunkedChannel(channel, configurationId, renderContext) {
@@ -16468,7 +16482,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       actions.append(channelInlineNavigation(row, !(editable && row.editable !== false)));
       return actions;
     }, sortValue: (row) => row.name || '' },
-    { id: 'frequency', label: 'Frequencies (MHz)', render: (row) =>
+    { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', render: (row) =>
       channelAdminFrequencyList(row.frequencies_hz), className: 'channel-frequency-cell',
       sortValue: (row) => Number(row.frequencies_hz?.[0] || 0) },
     { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol_label || 'Unknown', 'protocol'),
@@ -16479,7 +16493,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       row.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') }
   );
   if (editable) columns.push(
-    { id: 'auto-start', label: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
+    { id: 'auto-start', label: 'Order', fullLabel: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
       if (!editable) return node('span', 'channel-order-readonly',
         row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');

@@ -759,7 +759,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           if (context) identity.append(node('small', 'muted', context));
           return identity;
         } },
-        { id: 'system', label: 'System', render: (site) => {
+        { id: 'system', label: 'Type', fullLabel: 'System type', render: (site) => {
           const detail = node('span', 'radioreference-row-identity');
           detail.append(uiPill(systemTypeLabel(systemDetails) || 'Trunked', 'protocol'));
           const flavor = textValue(systemDetails, ['flavor']);
@@ -927,7 +927,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             });
             return control;
           } },
-        { id: 'talkgroup', label: 'Talkgroup',
+        { id: 'talkgroup', label: 'TG ID', fullLabel: 'Talkgroup ID',
           render: (talkgroup) => String(firstValue(talkgroupValue(talkgroup),
             ['value', 'decimal', 'talkgroup_value'], talkgroupId(talkgroup) || 0)) },
         { id: 'alpha-tag', label: 'Alpha tag',
@@ -936,7 +936,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         { id: 'description', label: 'Description',
           render: (talkgroup) => textValue(talkgroupValue(talkgroup), ['description'], '—') },
         { id: 'category', label: 'Category', render: talkgroupCategory },
-        { id: 'status', label: 'Import status', render: (talkgroup) => {
+        { id: 'status', label: 'Status', fullLabel: 'Import status', render: (talkgroup) => {
           const value = importStatus(talkgroup);
           const content = node('span', 'radioreference-talkgroup-status');
           content.append(uiPill(value.label, value.tone));

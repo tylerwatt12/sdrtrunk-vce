@@ -965,9 +965,19 @@ async function main() {
   }).reset_reason, 'all-columns-hidden');
   assert.equal(tableLayouts.tableId('live.channels'), 'live.channels');
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
-  assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 120);
+  assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 105);
   assert.equal(tableDefaults.width('radioreference-sites', { id: 'site' }), 340);
   assert.equal(tableDefaults.width('example', { id: 'calls' }), 66);
+  const compactColumns = [{ id: 'descriptor' }, { id: 'downlink' }, { id: 'state' }];
+  assert.deepEqual(tableDefaults.layout('channel-frequencies-p25', [
+    ...compactColumns, { id: 'callsign' }, { id: 'tdma' }, { id: 'data-observations' }
+  ]).hidden_columns, ['callsign', 'tdma', 'data-observations']);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
+    [104, 94, 86], {}, 400), [220, 94, 86]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
+    [130, 94, 86], { descriptor: 130 }, 400), [130, 94, 86]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
+    [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 94]);
   assert.deepEqual(tableDefaults.layout('example', [{ id: 'calls' }, { id: 'name' }]), {
     schema: ['calls', 'name'], column_order: ['calls', 'name'],
     column_widths: {}, hidden_columns: []
