@@ -13,13 +13,9 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     heading.className = 'page-header ui-page-header';
     heading.innerHTML = '<div><h1 class="page-title">RadioReference</h1>' +
       '<div class="page-subtitle">Browse and import channels and talkgroups</div></div>';
-    const section = document.createElement('section');
-    section.className = 'section ui-section';
-    section.innerHTML = '<div class="section-title ui-section-title">Browse and import</div>';
     const body = document.createElement('div');
-    body.className = 'admin-section-body';
-    section.append(body);
-    shell.append(heading, section);
+    body.className = 'radioreference-page';
+    shell.append(heading, body);
     document.body.append(shell);
 
     const node = (tag, className = '', text = null) => {
@@ -240,8 +236,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
 }
 
 async function openSystem(page) {
-  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Ohio (OH)' }).click();
-  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Franklin County' }).click();
+  await expect(page.locator('.radioreference-directory-branch').first()).toHaveAttribute('open', '');
   await page.locator('.radioreference-result-open').first().click();
   await expect(page.getByText('Central Simulcast')).toBeVisible();
 }
@@ -254,12 +249,13 @@ test('talkgroup selections persist through searches and clear explicitly', async
   const fire = page.getByRole('checkbox', { name: 'Select Fire Dispatch' });
   await fire.check();
   await expect(page.getByText('1 selected')).toBeVisible();
+  await expect(page.locator('.radioreference-talkgroup-actions')).toHaveCSS('position', 'sticky');
   await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('fire');
   await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
   await expect(page.getByText('1 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Clear selection' }).click();
-  await expect(page.getByText('0 selected')).toBeVisible();
+  await expect(page.locator('.radioreference-talkgroup-actions')).toBeHidden();
   await expect(page.getByLabel('Compare with Alias List')).toBeEnabled();
 });
 
@@ -268,7 +264,7 @@ test('single changed talkgroup preview shows the RadioReference-owned field chan
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await page.getByRole('checkbox', { name: 'Select Fireground 2' }).check();
-  await page.getByRole('button', { name: 'Import Selected' }).click();
+  await page.getByRole('button', { name: 'Review selected' }).click();
   const preview = page.getByRole('dialog', { name: 'Import 1 talkgroups' });
   await expect(preview.getByText('RadioReference fields changing')).toBeVisible();
   await expect(preview.getByText('Fireground Two')).toBeVisible();
@@ -281,6 +277,10 @@ test('large talkgroup catalogs filter locally without rendering thousands of row
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await expect(page.getByText('10,000 loaded talkgroups', { exact: false })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(50);
+  await page.getByRole('checkbox', { name: 'Select Talkgroup 1', exact: true }).check();
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await expect.poll(() => page.locator('.radioreference-talkgroup-actions').evaluate(
+    (element) => Math.round(element.getBoundingClientRect().top))).toBeLessThan(24);
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('Rare Target');
   await expect(page.getByRole('checkbox', { name: 'Select Rare Target' })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
@@ -302,12 +302,10 @@ test('sites filter instantly from the loaded catalog', async ({ page }) => {
   expect(calls).toBe(1);
 });
 
-test('location results are a collapsed tree and bookmarks show their route', async ({ page }) => {
+test('location results show their scope and bookmarks show their route', async ({ page }) => {
   await installWorkspace(page);
   await expect(page.locator('.radioreference-directory-pager')).toHaveCount(0);
-  await expect(page.locator('.radioreference-result-open')).toHaveCount(0);
-  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Ohio (OH)' }).click();
-  await page.locator('.radioreference-directory-branch > summary').filter({ hasText: 'Franklin County' }).click();
+  await expect(page.getByText('Franklin County results')).toBeVisible();
   await expect(page.locator('.radioreference-result-open')).toHaveCount(2);
   await page.getByRole('button', { name: 'Add bookmark: Central County P25' }).click();
   await page.getByRole('button', { name: /Bookmarks/ }).click();
@@ -320,7 +318,7 @@ test('site sorting and preview use the RadioReference database system ID', async
   await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
   await page.getByLabel('Sort sites').selectOption('alphabetical');
   await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Alpha Site');
-  await page.getByRole('button', { name: 'Import', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Alpha Site' }).click();
   await page.getByRole('dialog', { name: /Import Alpha Site/ }).getByRole('button',
     { name: 'Review Channel' }).click();
   await expect.poll(async () => page.evaluate(() => window.radioReferenceVisual.calls

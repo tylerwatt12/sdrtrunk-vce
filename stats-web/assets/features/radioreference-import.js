@@ -148,17 +148,6 @@ function detectedSiteModulation(system, site, detail = null) {
   return structured.includes('CQPSK') || structured.includes('LSM') ? 'CQPSK' : 'C4FM';
 }
 
-function siteProtocolLabel(system, site, detail = null) {
-  const family = compatibleFamily(system) || compatibleFamily(detail) || compatibleFamily(site);
-  if (family === 'P25') return siteUsesTdmaControl(site, detail) ? 'Project 25 Phase II' : 'Project 25 Phase I';
-  const siteLabel = textValue(site, ['protocol', 'decoder_type', 'protocol_id']);
-  if (siteLabel) return siteLabel;
-  const type = textValue(system, ['type', 'protocol']);
-  const flavor = textValue(system, ['flavor']);
-  return type && flavor && !type.toLowerCase().includes(flavor.toLowerCase()) ? `${type} ${flavor}` :
-    type || flavor || 'Detected';
-}
-
 function talkgroupId(value) {
   return integerValue(value?.talkgroup || value, ['talkgroup_id', 'talkgroupId', 'id']);
 }
@@ -358,7 +347,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
   const starButton = (value, onChanged) => {
     const saved = bookmarked(value);
-    const control = button(saved ? '★' : '☆', 'ui-button ui-button-secondary radioreference-bookmark');
+    const control = button(saved ? '★' : '☆',
+      'ui-button ui-button-secondary ui-icon-button radioreference-bookmark');
     control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
     control.setAttribute('aria-pressed', String(saved));
     control.title = saved ? 'Remove bookmark' : 'Bookmark this item';
@@ -501,6 +491,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             node('p', 'muted', kind === 'talkgroups' ?
               `${formatNumber(Number.isFinite(count) ? count : 0)} talkgroup change${count === 1 ? '' : 's'} applied.` :
               'The channel is ready in Channel Setup.'), completionLink(response, kind, aliasListIdValue));
+          modal.dialog.classList.add('radioreference-import-modal-complete');
+          modal.dialog.querySelector('.modal-header h2').textContent = 'Import complete';
           modal.content.replaceChildren(completed);
           onApplied?.(response);
         } catch (error) {
@@ -685,18 +677,19 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const values = matches.slice(offset, offset + SITE_LIMIT).map((value) => value.site);
         count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites`;
         const rendered = table(values, [
-        { id: 'site', label: 'Site', width: 240, render: (site) => {
+        { id: 'site', label: 'Site', width: 340, render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
-          identity.append(node('strong', '', textValue(site, ['name', 'description'],
-            `Site ${textValue(site, ['number', 'site_number'], '')}`)));
+          const open = button(textValue(site, ['name', 'description'],
+            `Site ${textValue(site, ['number', 'site_number'], '')}`), 'link-button radioreference-site-import');
+          open.title = 'Review this site for import';
+          open.addEventListener('click', () => openSiteImport(systemDetails, site, site));
+          identity.append(open);
           const context = [textValue(site, ['county_name', 'county']),
             textValue(site, ['number', 'site_number']) ? `Site ${textValue(site, ['number', 'site_number'])}` : '']
             .filter(Boolean).join(' · ');
           if (context) identity.append(node('small', 'muted', context));
           return identity;
         } },
-        { id: 'protocol', label: 'Protocol', width: 170, render: (site) =>
-          uiPill(siteProtocolLabel(systemDetails, site), 'protocol') },
         { id: 'modulation', label: 'Detected modulation', width: 170,
           render: (site) => {
             const modulation = detectedSiteModulation(systemDetails, site);
@@ -705,14 +698,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         { id: 'frequencies', label: 'Frequencies', render: (site) => {
           const channels = siteChannels(site);
           return channels.length ? `${formatNumber(channels.length)} available` : 'Loaded during preview';
-        } },
-        { id: 'actions', label: 'Actions', width: 130, sortable: false, render: (site) => {
-          const control = button('Import', 'ui-button ui-button-primary radioreference-site-import');
-          control.addEventListener('click', () => openSiteImport(systemDetails, site, site));
-          return control;
         } }
         ], 'No sites match this filter.',
         { type: 'radioreference-sites', sortable: false, mobileCards: true });
+        rendered.querySelector('table')?.classList.add('ui-data-table-quiet');
         list.replaceChildren(rendered, internalPager({
           offset, limit: SITE_LIMIT, visible: values.length, total: matches.length,
           more: offset + SITE_LIMIT < matches.length, label: 'Sites',
@@ -746,8 +735,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const selectionBadge = uiPill('0 selected', 'blue');
     selectionBadge.classList.add('radioreference-selection-badge');
     const clear = button('Clear selection');
-    const importSelected = button('Import Selected', 'ui-button ui-button-primary');
-    const importAll = button('Import All');
+    const importSelected = button('Review selected', 'ui-button ui-button-primary');
+    const importAll = button('Import all system talkgroups');
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
     const tableHost = node('div', 'radioreference-talkgroup-table');
@@ -765,16 +754,17 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
     filter.classList.add('radioreference-status-filter');
     filter.setAttribute('aria-label', 'Filter by import status');
-    const actions = node('div', 'radioreference-talkgroup-actions');
-    actions.append(selectionBadge, clear, importSelected, importAll);
+    const actions = node('div', 'radioreference-talkgroup-actions ui-selection-bar');
+    actions.append(selectionBadge, clear, importSelected);
     toolbar.append(formField('Compare with Alias List', selectFrame(aliasList)), categoryField,
-      formField('Search talkgroups', searchFrame), filter, actions);
-    target.replaceChildren(toolbar, status, tableHost);
+      formField('Search talkgroups', searchFrame), filter, importAll);
+    target.replaceChildren(toolbar, actions, status, tableHost);
 
     const selected = state.selectedTalkgroups;
     const updateSelection = () => {
       const count = selected.size;
       selectionBadge.querySelector('span').textContent = formatNumber(count) + ' selected';
+      actions.hidden = count === 0;
       clear.disabled = count === 0;
       importSelected.disabled = count === 0 || !aliasList.value;
       importAll.disabled = !aliasList.value;
@@ -871,6 +861,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         } }
       ], 'No talkgroups match these filters.',
       { type: 'radioreference-talkgroups', sortable: false, mobileCards: true });
+      grid.querySelector('table')?.classList.add('ui-data-table-quiet');
       tableHost.replaceChildren(grid, internalPager({
         offset, limit: TALKGROUP_LIMIT, visible: values.length, total: filtered.length,
         more: offset + TALKGROUP_LIMIT < filtered.length, label: 'Talkgroups',
@@ -992,11 +983,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const panel = node('section', 'radioreference-system-workspace ui-surface');
       const header = node('header', 'radioreference-detail-header');
       const title = node('div');
-      title.append(node('span', 'muted', 'Trunked system'),
+      title.append(node('span', 'muted', [textValue(system, ['breadcrumb']), 'Trunked system']
+        .filter(Boolean).join(' · ')),
         node('h2', '', textValue(details, ['name'], textValue(system, ['name'], `System ${id}`))),
-        node('p', 'muted', [textValue(system, ['secondary', 'location']),
-          textValue(details, ['protocol', 'type_name', 'type'])].filter(Boolean).join(' · ')));
+        node('p', 'muted', textValue(details, ['protocol', 'type_name', 'type'])));
       const close = button('Back to results');
+      close.classList.add('radioreference-back');
       close.addEventListener('click', () => {
         ++state.detailSequence;
         detailHost.replaceChildren(empty('Choose a result', 'Select a system or agency to review.'));
@@ -1093,10 +1085,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const panel = node('section', 'radioreference-system-workspace ui-surface');
       const header = node('header', 'radioreference-detail-header');
       const title = node('div');
-      title.append(node('span', 'muted', 'Conventional agency'),
+      title.append(node('span', 'muted', [textValue(entry, ['breadcrumb']), 'Conventional agency']
+        .filter(Boolean).join(' · ')),
         node('h2', '', textValue(entry, ['name'], `Agency ${id}`)),
         node('p', 'muted', textValue(entry, ['secondary', 'location'])));
       const close = button('Back to results');
+      close.classList.add('radioreference-back');
       close.addEventListener('click', () => {
         ++state.detailSequence;
         detailHost.replaceChildren(empty('Choose a result', 'Select a system or agency to review.'));
@@ -1154,19 +1148,20 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const grid = table(values, [
             { id: 'frequency', label: 'Frequency', width: 150,
               render: (value) => `${formatFrequency(frequencyHz(value))} MHz` },
-            { id: 'alpha-tag', label: 'Alpha tag', width: 220,
-              render: (value) => textValue(value, ['alpha_tag', 'alphaTag', 'name'], 'Unnamed') },
+            { id: 'alpha-tag', label: 'Alpha tag', width: 220, render: (value) => {
+              const open = button(textValue(value, ['alpha_tag', 'alphaTag', 'name'], 'Unnamed'),
+                'link-button radioreference-conventional-import');
+              open.title = 'Review this channel for import';
+              open.addEventListener('click', () => openConventionalImport(entry, value, category.value));
+              return open;
+            } },
             { id: 'description', label: 'Description',
               render: (value) => textValue(value, ['description'], '—') },
             { id: 'mode', label: 'Mode', width: 120,
-              render: (value) => uiPill(textValue(value, ['mode_name', 'mode', 'protocol'], 'Unknown'), 'protocol') },
-            { id: 'actions', label: 'Actions', width: 130, sortable: false, render: (value) => {
-              const control = button('Import', 'ui-button ui-button-primary radioreference-conventional-import');
-              control.addEventListener('click', () => openConventionalImport(entry, value, category.value));
-              return control;
-            } }
+              render: (value) => uiPill(textValue(value, ['mode_name', 'mode', 'protocol'], 'Unknown'), 'protocol') }
           ], 'No frequencies were returned for this category.',
           { type: 'radioreference-conventional', sortable: false, mobileCards: true });
+          grid.querySelector('table')?.classList.add('ui-data-table-quiet');
           const total = totalValue(response, values.length);
           body.replaceChildren(grid, internalPager({ offset, limit: FREQUENCY_LIMIT, visible: values.length, total,
             more: hasMore(response, offset, FREQUENCY_LIMIT, values.length), label: 'Frequencies', onPage: load }));
@@ -1192,7 +1187,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const itemFor = (entry, trail) => {
       entry.breadcrumb = trail;
       const item = node('div', 'radioreference-directory-item');
-      const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
+      const open = button('', 'link-button ui-row-action radioreference-result-open');
       const identity = node('span', 'radioreference-row-identity');
       identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
       const secondary = textValue(entry, ['secondary', 'location', 'description']);
@@ -1204,40 +1199,45 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       item.append(open, starButton(bookmarkForEntry(entry), () => state.onBookmarksChanged?.()));
       return item;
     };
-    const branch = (label, entries, trail, children = []) => {
+    const branch = (label, entries, trail, initiallyOpen = false) => {
       const group = node('details', 'radioreference-directory-branch');
-      const count = entries.length + children.reduce((sum, child) => sum + Number(child.dataset.count || 0), 0);
+      const count = entries.length;
       group.dataset.count = String(count);
       const summary = node('summary', '', '');
-      summary.append(node('span', '', label), uiPill(formatNumber(count), 'neutral'));
-      group.append(summary, ...children);
+      summary.append(node('span', 'radioreference-directory-branch-label', label),
+        uiPill(formatNumber(count), 'neutral'));
+      group.append(summary);
       // Populate only opened branches; large counties need not create thousands of hidden buttons.
-      group.addEventListener('toggle', () => {
+      const populate = () => {
         if (!group.open || group.dataset.populated) return;
         group.dataset.populated = 'true';
         if (!entries.length) return;
         const content = node('div', 'radioreference-directory-branch-content');
         entries.forEach((entry) => content.append(itemFor(entry, trail)));
         group.append(content);
-      });
+      };
+      group.addEventListener('toggle', populate);
+      if (initiallyOpen) {
+        group.open = true;
+        populate();
+      }
       return group;
     };
     const national = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'NATIONAL');
     const statewide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'STATE');
     const countywide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'COUNTY');
     const tree = node('div', 'radioreference-directory-tree');
-    const countryChildren = [];
-    if (national.length) countryChildren.push(branch('National', national, 'National'));
-    if (statewide.length || countywide.length) {
-      const regionTrail = location.region || 'Statewide';
-      const countyChildren = countywide.length ? [branch(location.county || 'County', countywide,
-        [location.region, location.county].filter(Boolean).join(' > ') || 'County')] : [];
-      countryChildren.push(branch(regionTrail, statewide, regionTrail, countyChildren));
-    }
-    const countryRoot = branch(location.country || 'Country', [], location.country || 'Country', countryChildren);
-    countryRoot.open = true;
-    tree.append(countryRoot);
-    listHost.replaceChildren(tree);
+    const countyTrail = [location.region, location.county].filter(Boolean).join(' > ') || 'County';
+    if (countywide.length) tree.append(branch(`${location.county || 'County'} results`, countywide,
+      countyTrail, true));
+    if (statewide.length) tree.append(branch(`${location.region || 'State'} statewide`, statewide,
+      location.region || 'Statewide', !countywide.length));
+    if (national.length) tree.append(branch('National', national, 'National',
+      !countywide.length && !statewide.length));
+    const scope = node('div', 'radioreference-directory-scope');
+    scope.append(node('strong', '', location.county || location.region || location.country || 'Results'),
+      node('small', 'muted', 'Results are grouped by coverage area. Select one to review it.'));
+    listHost.replaceChildren(scope, tree);
   };
 
   const buildBrowser = async () => {
@@ -1251,7 +1251,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const fields = node('div', 'radioreference-browse-fields');
     fields.append(formField('Country', selectFrame(country)),
       formField('State or region', selectFrame(region)), formField('County', selectFrame(county)));
-    browseForm.append(fields, message);
+    browseForm.append(node('strong', 'radioreference-browse-title', 'Browse area'), fields, message);
     const workbench = node('div', 'radioreference-workbench-grid');
     const resultHost = node('div', 'radioreference-directory-results ui-surface');
     const tabHost = node('div', 'radioreference-directory-tabs');
@@ -1282,7 +1282,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           previousKind = bookmark.kind;
         }
         const item = node('div', 'radioreference-directory-item');
-        const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
+        const open = button('', 'link-button ui-row-action radioreference-result-open');
         const identity = node('span', 'radioreference-row-identity');
         const parentEntry = state.browseRows.find((entry) =>
           (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'CONVENTIONAL_AGENCY' ?
@@ -1392,9 +1392,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             location.region || 'Statewide' : [location.region, location.county].filter(Boolean).join(' > ');
         });
         state.browseDocument = { location };
+        ++state.detailSequence;
+        state.activeSystemId = null;
+        state.selectedTalkgroups.clear();
+        detailHost.replaceChildren(empty('Choose a result', 'Select a system or agency to review.'));
+        browser.classList.remove('radioreference-detail-open');
         showCurrent();
         message.textContent = formatNumber(state.browseRows.length) +
-          ' systems and agencies found. Expand a location to browse.';
+          ' systems and agencies grouped by coverage area.';
       } catch (error) {
         if (sequence !== state.browseSequence) return;
         if (state.browseTab === 'browse') listHost.replaceChildren(feedback(error.message, 'error'));

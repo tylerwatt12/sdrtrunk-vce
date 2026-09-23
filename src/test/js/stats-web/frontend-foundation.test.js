@@ -387,8 +387,8 @@ async function main() {
   assert.match(radioReferenceImportSource, /selectedTalkgroups: new Set\(\)/);
   assert.match(radioReferenceImportSource, /Selections persist across filters and pages/);
   assert.match(radioReferenceImportSource, /Clear selection/);
-  assert.match(radioReferenceImportSource, /Import Selected/);
-  assert.match(radioReferenceImportSource, /Import All/);
+  assert.match(radioReferenceImportSource, /Review selected/);
+  assert.match(radioReferenceImportSource, /Import all system talkgroups/);
   assert.match(radioReferenceImportSource,
     /\['CONTROL'[\s\S]+\['CONTROL_AND_ALTERNATES'[\s\S]+\['SELECTED'[\s\S]+\['ALL'/);
   assert.match(radioReferenceImportSource, /Create one combined channel/);

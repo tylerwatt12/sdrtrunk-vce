@@ -21,22 +21,7 @@
 }
 
 .channel-selection-bar {
-  position: sticky;
-  top: var(--space-2);
-  z-index: 6;
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  gap: var(--ui-layout-gap);
-  padding: 5px 8px 5px 11px;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
-  border-radius: var(--ui-surface-radius);
-}
-
-.channel-selection-bar .muted {
-  margin-right: auto;
-  font-size: 12px;
+  width: 100%;
 }
 
 .channel-catalog-table-wrap {
@@ -513,15 +498,6 @@
 
   .channel-admin-catalog .ui-segmented-option {
     flex: 1 1 0;
-  }
-
-  .channel-selection-bar {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .channel-selection-bar .muted {
-    width: 100%;
   }
 
   .channel-catalog-table-wrap {

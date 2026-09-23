@@ -31,7 +31,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertFalse(source.contains("focused migration"));
         assertFalse(source.contains("comingSoonPanel('RadioReference')"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
-        assertTrue(settings.contains("Disconnect RadioReference"));
+        assertTrue(settings.contains("Log out and clear saved credentials"));
         assertTrue(html.contains("data-view=\"radioreference\" href=\"/?view=radioreference\""));
     }
 
@@ -51,12 +51,12 @@ class StatsWebFrequencyActionsUiContractTest
         }
 
         assertTrue(source.contains("createRadioReferenceImportWorkspace"));
-        assertTrue(source.contains("Browse and import"));
+        assertTrue(source.contains("Browse systems and agencies, compare changes, and import"));
         assertTrue(importer.contains("selectedTalkgroups: new Set()"));
-        assertTrue(importer.contains("Selections stay checked while paging or filtering"));
+        assertTrue(importer.contains("Selections persist across filters and pages"));
         assertTrue(importer.contains("Clear selection"));
-        assertTrue(importer.contains("Import Selected"));
-        assertTrue(importer.contains("Import All"));
+        assertTrue(importer.contains("Review selected"));
+        assertTrue(importer.contains("Import all system talkgroups"));
         assertTrue(importer.contains("Create one combined channel"));
         assertTrue(importer.contains("Import one channel at a time"));
         assertFalse(importer.contains("For Each Frequency"));
@@ -109,7 +109,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(results.contains("replaceFact('channel-use'"));
         assertTrue(results.contains("loadRadioReferenceDetails(row, frequencyHz"));
         assertTrue(results.contains("'radioreference-result-grid'"));
-        assertTrue(results.contains("'radioreference-result-card'"));
+        assertTrue(source.contains("'radioreference-result-card ui-surface'"));
         assertFalse(results.contains("table(items"));
         assertTrue(source.contains("/api/v1/admin/radioreference/frequencies/details?"));
         assertTrue(source.contains("site_number: String(Number(row.site_number || 0))"));

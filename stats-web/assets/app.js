@@ -12,7 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=4';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=5';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -16845,7 +16845,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
 
     const tableHost = node('div', 'channel-catalog-table-host');
     const tableController = {};
-    const selectedBar = node('div', 'channel-selection-bar');
+    const selectedBar = node('div', 'channel-selection-bar ui-selection-bar');
     selectedBar.hidden = true;
     const selectedSummary = node('strong');
     const hiddenSummary = node('span', 'muted');
@@ -19089,8 +19089,13 @@ async function renderAdminRadioReferenceSettings() {
   gate.append(accountForm);
   let settingsModal = null;
   settingsButton.addEventListener('click', () => {
-    const forms = settingsCardGrid(accountForm, regionForm);
-    forms.classList.add('admin-settings-form-stack');
+    const forms = node('div', 'radioreference-settings-stack');
+    const accountDetails = node('details', 'radioreference-account-details ui-surface');
+    const accountSummary = node('summary');
+    accountSummary.append(node('strong', '', `Connected as ${userName.value || 'RadioReference account'}`),
+      node('span', 'muted', 'Change account or sign out'));
+    accountDetails.append(accountSummary, accountForm);
+    forms.append(accountDetails, regionForm);
     settingsModal = openReadOnlyModal('RadioReference settings', forms, {
       id: 'radioreference-settings', className: 'radioreference-settings-modal',
       returnFocusSelector: '.radioreference-settings-trigger'

@@ -176,6 +176,15 @@
   text-decoration: underline;
 }
 
+.ui-row-action {
+  color: var(--ink);
+}
+
+.ui-row-action:hover,
+.ui-row-action:focus-visible {
+  color: var(--link);
+}
+
 .ui-time-pair {
   min-width: 132px;
   display: grid;

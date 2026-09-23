@@ -44,6 +44,10 @@
     transition: none;
   }
 
+  .radioreference-directory-branch-label::before {
+    transition: none;
+  }
+
   .scanner-audio-wave i {
     transition: none;
   }

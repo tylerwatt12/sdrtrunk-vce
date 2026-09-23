@@ -53,6 +53,18 @@
   border-right: 0;
 }
 
+/* A calmer catalog treatment where vertical gridlines do not aid scanning. */
+.ui-data-table.ui-data-table-quiet th,
+.ui-data-table.ui-data-table-quiet td {
+  padding: 10px 12px;
+  border-right: 0;
+}
+
+.ui-data-table.ui-data-table-quiet th {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .ui-data-table th {
   position: sticky;
   top: 0;

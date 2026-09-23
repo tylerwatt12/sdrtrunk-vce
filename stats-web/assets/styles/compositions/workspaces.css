@@ -327,6 +327,41 @@
   box-shadow: var(--ui-surface-shadow, none);
 }
 
+/* Opt-in selection actions that remain available while a long catalog scrolls. */
+.ui-selection-bar {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 6;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-layout-gap);
+  padding: 5px 8px 5px 11px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: var(--ui-surface-radius);
+}
+
+.ui-selection-bar[hidden] {
+  display: none;
+}
+
+.ui-selection-bar .muted {
+  margin-right: auto;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .ui-selection-bar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .ui-selection-bar .muted {
+    width: 100%;
+  }
+}
+
 .table-layout-menu {
   width: max-content;
   margin: 0 8px 6px auto;
