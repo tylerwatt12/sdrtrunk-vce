@@ -8,7 +8,10 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
   browse: `${API_ROOT}/browse`,
   systemDetails: `${API_ROOT}/systems/details`,
   systemSites: `${API_ROOT}/systems/sites`,
+  siteCatalog: `${API_ROOT}/systems/sites/catalog`,
   systemTalkgroups: `${API_ROOT}/systems/talkgroups`,
+  talkgroupCatalog: `${API_ROOT}/systems/talkgroups/catalog`,
+  bookmarks: `${API_ROOT}/bookmarks`,
   conventionalCategories: `${API_ROOT}/conventional/categories`,
   conventionalFrequencies: `${API_ROOT}/conventional/frequencies`,
   sitePreview: `${API_ROOT}/imports/site/preview`,
@@ -18,7 +21,7 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
 });
 
 const DIRECTORY_LIMIT = 30;
-const SITE_LIMIT = 500;
+const SITE_LIMIT = 50;
 const TALKGROUP_LIMIT = 50;
 const FREQUENCY_LIMIT = 50;
 
@@ -195,6 +198,21 @@ function importStatus(value) {
   return { label: 'Not present', tone: 'neutral' };
 }
 
+function bookmarkKey(value) {
+  return [value?.kind, firstValue(value, ['ownerKind', 'owner_kind'], ''),
+    Number(firstValue(value, ['parentId', 'parent_id'], 0)), Number(value?.id || 0)].join(':');
+}
+
+function normalizeBookmark(value) {
+  return {
+    kind: textValue(value, ['kind']), id: integerValue(value, ['id']),
+    parentId: Number(firstValue(value, ['parent_id', 'parentId'], 0)),
+    ownerKind: textValue(value, ['owner_kind', 'ownerKind']),
+    name: textValue(value, ['name']),
+    parentName: textValue(value, ['parent_name', 'parentName'])
+  };
+}
+
 function resultCount(value, key) {
   const summary = value?.summary || value?.counts || value || {};
   const numeric = Number(firstValue(summary, [key, key === 'add' ? 'added' : key === 'update' ? 'updated' :
@@ -223,6 +241,14 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     browseOffset: 0,
     browseRows: [],
     browseDocument: null,
+    browseTab: 'browse',
+    bookmarks: [],
+    siteCatalogs: new Map(),
+    talkgroupCatalogs: new Map(),
+    siteSearch: '',
+    talkgroupStatus: 'ALL',
+    browseSequence: 0,
+    detailSequence: 0,
     activeSystemId: null,
     selectedTalkgroups: new Set(),
     talkgroupAliasListId: null,
@@ -301,6 +327,47 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     timeoutMs: options.timeoutMs || directoryTimeoutMs,
     ...options
   });
+  const bookmarked = (value) => state.bookmarks.some((entry) => bookmarkKey(entry) === bookmarkKey(value));
+  const bookmarkForEntry = (entry) => {
+    const trunked = entryKind(entry) === 'TRUNKED_SYSTEM';
+    return {
+      kind: trunked ? 'TRUNKED_SYSTEM' : 'CONVENTIONAL_AGENCY',
+      id: trunked ? systemId(entry) : ownerId(entry),
+      parentId: 0,
+      ownerKind: trunked ? '' : textValue(entry?.detail || entry, ['kind', 'owner_kind'], 'AGENCY'),
+      name: textValue(entry, ['name'], 'Unnamed'),
+      parentName: ''
+    };
+  };
+  const toggleBookmark = async (value, control, onChanged) => {
+    if (control.disabled) return;
+    control.disabled = true;
+    try {
+      const next = await api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks, {
+        method: bookmarked(value) ? 'DELETE' : 'PUT', body: value
+      });
+      state.bookmarks = rows(next).map(normalizeBookmark);
+      const saved = bookmarked(value);
+      control.textContent = saved ? '★' : '☆';
+      control.setAttribute('aria-pressed', String(saved));
+      control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
+      control.title = saved ? 'Remove bookmark' : 'Bookmark this item';
+      control.disabled = false;
+      onChanged?.();
+    } catch (error) {
+      control.disabled = false;
+      control.title = `Bookmark failed: ${error.message}`;
+    }
+  };
+  const starButton = (value, onChanged) => {
+    const saved = bookmarked(value);
+    const control = button(saved ? '★' : '☆', 'ui-button ui-button-secondary radioreference-bookmark');
+    control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
+    control.setAttribute('aria-pressed', String(saved));
+    control.title = saved ? 'Remove bookmark' : 'Bookmark this item';
+    control.addEventListener('click', () => toggleBookmark(value, control, onChanged));
+    return control;
+  };
 
   const internalPager = ({ offset, limit, visible, total, more, label, onPage }) => {
     const pager = node('nav', 'radioreference-pager');
@@ -571,13 +638,45 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     target.replaceChildren(feedback('Loading RadioReference sites…', 'loading'));
     try {
       const id = systemId(system);
-      const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.systemSites,
-        { system_id: id, limit: SITE_LIMIT }));
-      const values = rows(response);
+      if (!state.siteCatalogs.has(id)) {
+        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.siteCatalog,
+          { system_id: id }), { timeoutMs: 65_000 });
+        state.siteCatalogs.set(id, rows(response).map((site) => ({
+          site,
+          searchText: [
+            textValue(site, ['name', 'description']), textValue(site, ['number', 'site_number']),
+            textValue(site, ['county_name', 'county']),
+            ...siteChannels(site).flatMap((channel) => [
+              textValue(channel, ['channel_id', 'channelId']),
+              textValue(channel, ['name', 'alpha_tag', 'description', 'use']),
+              formatFrequency(frequencyHz(channel))
+            ])
+          ].join(' ').toLowerCase()
+        })));
+      }
+      if (state.activeSystemId !== id || target.dataset.rrTab !== 'sites') return;
+      const catalog = state.siteCatalogs.get(id);
       const systemDetails = systemDocument?.system || systemDocument || system;
-      const detailById = new Map(rows(systemDocument?.sites).map((value) =>
-        [integerValue(value, ['site_id', 'siteId', 'id']), value]));
-      const rendered = table(values, [
+      const toolbar = node('div', 'radioreference-sites-toolbar ui-catalog-toolbar');
+      const searchFrame = node('label', 'ui-search');
+      searchFrame.append(iconGlyph('icon-search'));
+      const search = input('search');
+      search.placeholder = 'Filter site or channel name';
+      search.setAttribute('aria-label', search.placeholder);
+      search.value = state.siteSearch;
+      searchFrame.append(search);
+      const count = node('span', 'muted');
+      toolbar.append(searchFrame, count);
+      const list = node('div', 'radioreference-sites-list');
+      target.replaceChildren(toolbar, list);
+      let offset = 0;
+      const draw = () => {
+        const term = search.value.trim().toLowerCase();
+        state.siteSearch = search.value;
+        const matches = term ? catalog.filter((value) => value.searchText.includes(term)) : catalog;
+        const values = matches.slice(offset, offset + SITE_LIMIT).map((value) => value.site);
+        count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites`;
+        const rendered = table(values, [
         { id: 'site', label: 'Site', width: 240, render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
           identity.append(node('strong', '', textValue(site, ['name', 'description'],
@@ -589,27 +688,31 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           return identity;
         } },
         { id: 'protocol', label: 'Protocol', width: 170, render: (site) =>
-          uiPill(siteProtocolLabel(systemDetails, site,
-            detailById.get(integerValue(site, ['site_id', 'siteId', 'id']))), 'protocol') },
+          uiPill(siteProtocolLabel(systemDetails, site), 'protocol') },
         { id: 'modulation', label: 'Detected modulation', width: 170,
           render: (site) => {
-            const modulation = detectedSiteModulation(systemDetails, site,
-              detailById.get(integerValue(site, ['site_id', 'siteId', 'id'])));
+            const modulation = detectedSiteModulation(systemDetails, site);
             return uiPill(modulation, modulation === 'CQPSK' ? 'blue' : 'neutral');
           } },
         { id: 'frequencies', label: 'Frequencies', render: (site) => {
-          const channels = siteChannels(site, detailById.get(integerValue(site, ['site_id', 'siteId', 'id'])));
+          const channels = siteChannels(site);
           return channels.length ? `${formatNumber(channels.length)} available` : 'Loaded during preview';
         } },
         { id: 'actions', label: 'Actions', width: 130, sortable: false, render: (site) => {
           const control = button('Import', 'ui-button ui-button-primary radioreference-site-import');
-          control.addEventListener('click', () => openSiteImport(systemDetails, site,
-            detailById.get(integerValue(site, ['site_id', 'siteId', 'id'])) || response));
+          control.addEventListener('click', () => openSiteImport(systemDetails, site, site));
           return control;
         } }
-      ], 'No sites were returned for this system.',
-      { type: 'radioreference-sites', sortable: false, mobileCards: true });
-      target.replaceChildren(rendered);
+        ], 'No sites match this filter.',
+        { type: 'radioreference-sites', sortable: false, mobileCards: true });
+        list.replaceChildren(rendered, internalPager({
+          offset, limit: SITE_LIMIT, visible: values.length, total: matches.length,
+          more: offset + SITE_LIMIT < matches.length, label: 'Sites',
+          onPage: (next) => { offset = next; draw(); }
+        }));
+      };
+      search.addEventListener('input', () => { offset = 0; draw(); });
+      draw();
     } catch (error) {
       target.replaceChildren(feedback(error.message, 'error'));
     }
@@ -617,34 +720,52 @@ export function createRadioReferenceImportWorkspace(dependencies) {
 
   const renderTalkgroups = async (system, target, systemDocument) => {
     const systemIdValue = systemId(system);
+    const systemName = textValue(systemDocument?.system || systemDocument || system, ['name'], 'System');
     const toolbar = node('div', 'radioreference-talkgroup-toolbar ui-catalog-toolbar');
-    const aliasList = aliasSelect(compatibleFamily(systemDocument?.system || systemDocument) || compatibleFamily(system),
-      state.talkgroupAliasListId);
+    const aliasList = aliasSelect(compatibleFamily(systemDocument?.system || systemDocument) ||
+      compatibleFamily(system), state.talkgroupAliasListId);
     const category = select();
+    const categoryStar = node('span', 'radioreference-category-star');
+    const categoryField = node('div', 'radioreference-category-field');
+    categoryField.append(formField('Category', selectFrame(category)), categoryStar);
     const search = input('search');
-    search.placeholder = 'Search talkgroups';
-    search.setAttribute('aria-label', 'Search talkgroups');
-    const searchFrame = node('label', 'ui-search');
-    searchFrame.classList.add('radioreference-talkgroup-search');
+    search.placeholder = 'Filter talkgroup ID, name, or description';
+    search.setAttribute('aria-label', search.placeholder);
+    search.value = state.talkgroupSearch;
+    const searchFrame = node('label', 'ui-search radioreference-talkgroup-search');
     searchFrame.append(iconGlyph('icon-search'), search);
     const selectionBadge = uiPill('0 selected', 'blue');
     selectionBadge.classList.add('radioreference-selection-badge');
     const clear = button('Clear selection');
     const importSelected = button('Import Selected', 'ui-button ui-button-primary');
     const importAll = button('Import All');
-    const tableHost = node('div', 'radioreference-talkgroup-table');
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
+    const tableHost = node('div', 'radioreference-talkgroup-table');
+    let offset = 0;
+    let catalog = [];
+    const filter = uiSegmentedControl([
+      { value: 'ALL', label: 'All' },
+      { value: 'NOT_PRESENT', label: 'Not in list' },
+      { value: 'DIFFERENT', label: 'Different' },
+      { value: 'IDENTICAL', label: 'Identical' }
+    ], state.talkgroupStatus, (value) => {
+      state.talkgroupStatus = value;
+      offset = 0;
+      draw();
+    });
+    filter.classList.add('radioreference-status-filter');
+    filter.setAttribute('aria-label', 'Filter by import status');
     const actions = node('div', 'radioreference-talkgroup-actions');
     actions.append(selectionBadge, clear, importSelected, importAll);
-    toolbar.append(formField('Alias List', selectFrame(aliasList)), formField('Category', selectFrame(category)),
-      searchFrame, actions);
+    toolbar.append(formField('Compare with Alias List', selectFrame(aliasList)), categoryField,
+      searchFrame, filter, actions);
     target.replaceChildren(toolbar, status, tableHost);
 
     const selected = state.selectedTalkgroups;
     const updateSelection = () => {
       const count = selected.size;
-      selectionBadge.querySelector('span').textContent = `${formatNumber(count)} selected`;
+      selectionBadge.querySelector('span').textContent = formatNumber(count) + ' selected';
       clear.disabled = count === 0;
       importSelected.disabled = count === 0 || !aliasList.value;
       importAll.disabled = !aliasList.value;
@@ -654,10 +775,110 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const categoryRows = rows(systemDocument?.talkgroup_categories || systemDocument?.categories ||
       systemDocument?.talkgroupCategories);
     setOptions(category, categoryRows, state.talkgroupCategoryId, 'All categories', true);
+    const updateCategoryStar = () => {
+      categoryStar.replaceChildren();
+      if (!category.value) return;
+      const bookmark = {
+        kind: 'TALKGROUP_CATEGORY', id: Number(category.value), parentId: systemIdValue,
+        ownerKind: 'TRUNKED_SYSTEM', name: category.selectedOptions[0]?.textContent || 'Category',
+        parentName: systemName
+      };
+      categoryStar.append(starButton(bookmark, () => {
+        updateCategoryStar();
+        state.onBookmarksChanged?.();
+      }));
+    };
+    updateCategoryStar();
     updateSelection();
 
-    const load = async (offset = 0) => {
+    const draw = () => {
+      if (!aliasList.value || !catalog.length) {
+        tableHost.replaceChildren(empty(catalog.length ? 'Choose an Alias List' : 'No talkgroups',
+          catalog.length ? 'Choose a compatible destination Alias List.' :
+            'RadioReference returned no talkgroups for this system.'));
+        return;
+      }
+      const term = search.value.trim().toLowerCase();
+      const categoryId = Number(category.value) || null;
+      const filtered = catalog.filter((item) =>
+        (!categoryId || item.categoryId === categoryId) &&
+        (state.talkgroupStatus === 'ALL' || item.status === state.talkgroupStatus) &&
+        (!term || item.searchText.includes(term)));
+      if (offset >= filtered.length) offset = Math.max(0,
+        Math.floor(Math.max(0, filtered.length - 1) / TALKGROUP_LIMIT) * TALKGROUP_LIMIT);
       state.talkgroupOffset = offset;
+      const values = filtered.slice(offset, offset + TALKGROUP_LIMIT).map((item) => item.row);
+      const pageToggle = node('input', 'ui-selection-check');
+      pageToggle.type = 'checkbox';
+      pageToggle.setAttribute('aria-label', 'Select every compatible talkgroup on this page');
+      const pageIds = values.filter((value) => importStatus(value).tone !== 'danger')
+        .map(talkgroupId).filter(Boolean);
+      const refreshPageToggle = () => {
+        const checked = pageIds.filter((id) => selected.has(id)).length;
+        pageToggle.checked = pageIds.length > 0 && checked === pageIds.length;
+        pageToggle.indeterminate = checked > 0 && checked < pageIds.length;
+      };
+      pageToggle.addEventListener('change', () => {
+        pageIds.forEach((id) => pageToggle.checked ? selected.add(id) : selected.delete(id));
+        tableHost.querySelectorAll('tbody input[type="checkbox"]').forEach((control) => {
+          control.checked = selected.has(Number(control.dataset.talkgroupId));
+        });
+        refreshPageToggle();
+        updateSelection();
+      });
+      refreshPageToggle();
+      const grid = table(values, [
+        { id: 'selected', label: '', width: 54, sortable: false, renderHeader: () => pageToggle,
+          render: (talkgroup) => {
+            const id = talkgroupId(talkgroup);
+            const control = node('input', 'ui-selection-check');
+            control.type = 'checkbox';
+            control.checked = selected.has(id);
+            control.disabled = !id || importStatus(talkgroup).tone === 'danger';
+            control.dataset.talkgroupId = String(id || '');
+            control.setAttribute('aria-label', 'Select ' + textValue(talkgroupValue(talkgroup),
+              ['alpha_tag', 'alphaTag', 'name'], 'talkgroup ' + (id || '')));
+            control.addEventListener('change', () => {
+              if (control.checked) selected.add(id); else selected.delete(id);
+              updateSelection();
+              refreshPageToggle();
+            });
+            return control;
+          } },
+        { id: 'talkgroup', label: 'Talkgroup', width: 130,
+          render: (talkgroup) => formatNumber(firstValue(talkgroupValue(talkgroup),
+            ['value', 'decimal', 'talkgroup_value'], talkgroupId(talkgroup) || 0)) },
+        { id: 'alpha-tag', label: 'Alpha tag', width: 220,
+          render: (talkgroup) => textValue(talkgroupValue(talkgroup),
+            ['alpha_tag', 'alphaTag', 'name'], 'Unnamed') },
+        { id: 'description', label: 'Description',
+          render: (talkgroup) => textValue(talkgroupValue(talkgroup), ['description'], '—') },
+        { id: 'category', label: 'Category', width: 180, render: talkgroupCategory },
+        { id: 'status', label: 'Import status', width: 150, render: (talkgroup) => {
+          const value = importStatus(talkgroup);
+          const content = node('span', 'radioreference-talkgroup-status');
+          content.append(uiPill(value.label, value.tone));
+          const id = existingAliasId(talkgroup);
+          if (id && (value.label === 'Identical' || value.label === 'Different')) {
+            content.append(anchor('Open Alias', href('aliases', {
+              list: Number(aliasList.value), aliasTab: 'configure', alias: id
+            }), 'ui-button ui-button-secondary radioreference-open-alias'));
+          }
+          return content;
+        } }
+      ], 'No talkgroups match these filters.',
+      { type: 'radioreference-talkgroups', sortable: false, mobileCards: true });
+      tableHost.replaceChildren(grid, internalPager({
+        offset, limit: TALKGROUP_LIMIT, visible: values.length, total: filtered.length,
+        more: offset + TALKGROUP_LIMIT < filtered.length, label: 'Talkgroups',
+        onPage: (next) => { offset = next; draw(); }
+      }));
+      status.textContent = formatNumber(filtered.length) + ' matching of ' +
+        formatNumber(catalog.length) + ' loaded talkgroups. Selections persist across filters and pages.';
+      updateSelection();
+    };
+
+    const load = async (force = false) => {
       if (!aliasList.value) {
         tableHost.replaceChildren(empty('Choose an Alias List',
           'Talkgroup status is calculated against one compatible destination Alias List.'));
@@ -665,89 +886,38 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         updateSelection();
         return;
       }
-      tableHost.replaceChildren(feedback('Loading talkgroups…', 'loading'));
+      const key = systemIdValue + ':' + aliasList.value;
+      tableHost.replaceChildren(feedback('Loading all talkgroups for instant filtering…', 'loading'));
       status.textContent = '';
       try {
-        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.systemTalkgroups, {
-          system_id: systemIdValue, alias_list_id: aliasList.value || null,
-          category_id: category.value || null, search: search.value.trim(), offset, limit: TALKGROUP_LIMIT
-        }));
-        if (!categoryRows.length) {
-          const responseCategories = Array.isArray(response?.categories) ? response.categories : [];
-          if (responseCategories.length && category.options.length <= 1) {
-            setOptions(category, responseCategories, state.talkgroupCategoryId, 'All categories', true);
-          }
-        }
-        const values = rows(response);
-        const pageToggle = node('input', 'ui-selection-check');
-        pageToggle.type = 'checkbox';
-        pageToggle.setAttribute('aria-label', 'Select every talkgroup on this page');
-        const pageIds = values.map(talkgroupId).filter(Boolean);
-        const refreshPageToggle = () => {
-          const checked = pageIds.filter((id) => selected.has(id)).length;
-          pageToggle.checked = pageIds.length > 0 && checked === pageIds.length;
-          pageToggle.indeterminate = checked > 0 && checked < pageIds.length;
-        };
-        pageToggle.addEventListener('change', () => {
-          pageIds.forEach((id) => pageToggle.checked ? selected.add(id) : selected.delete(id));
-          tableHost.querySelectorAll('tbody input[type="checkbox"]').forEach((control) => {
-            control.checked = selected.has(Number(control.dataset.talkgroupId));
+        if (force || !state.talkgroupCatalogs.has(key)) {
+          const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
+            system_id: systemIdValue, alias_list_id: aliasList.value
+          }), { timeoutMs: 65_000 });
+          state.talkgroupCatalogs.set(key, {
+            categories: Array.isArray(response?.categories) ? response.categories : [],
+            items: rows(response).map((row) => {
+              const talkgroup = talkgroupValue(row);
+              return {
+                row,
+                categoryId: Number(firstValue(talkgroup, ['category_id', 'categoryId'])) || null,
+                status: textValue(row, ['status', 'import_status', 'importStatus']).toUpperCase(),
+                searchText: [firstValue(talkgroup, ['value', 'decimal', 'talkgroup_value']),
+                  textValue(talkgroup, ['alpha_tag', 'alphaTag', 'name']),
+                  textValue(talkgroup, ['description']), talkgroupCategory(row)].join(' ').toLowerCase()
+              };
+            })
           });
-          refreshPageToggle();
-          updateSelection();
-        });
-        refreshPageToggle();
-        const grid = table(values, [
-          { id: 'selected', label: '', width: 54, sortable: false, renderHeader: () => pageToggle,
-            render: (talkgroup) => {
-              const id = talkgroupId(talkgroup);
-              const control = node('input', 'ui-selection-check');
-              control.type = 'checkbox';
-              control.checked = selected.has(id);
-              control.disabled = !id || importStatus(talkgroup).tone === 'danger';
-              control.dataset.talkgroupId = String(id || '');
-              control.setAttribute('aria-label', `Select ${textValue(talkgroupValue(talkgroup),
-                ['alpha_tag', 'alphaTag', 'name'],
-                `talkgroup ${id || ''}`)}`);
-              control.addEventListener('change', () => {
-                if (control.checked) selected.add(id); else selected.delete(id);
-                updateSelection();
-                refreshPageToggle();
-              });
-              return control;
-            } },
-          { id: 'talkgroup', label: 'Talkgroup', width: 130,
-            render: (talkgroup) => formatNumber(firstValue(talkgroupValue(talkgroup),
-              ['value', 'decimal', 'talkgroup_value'],
-              talkgroupId(talkgroup) || 0)) },
-          { id: 'alpha-tag', label: 'Alpha tag', width: 220,
-            render: (talkgroup) => textValue(talkgroupValue(talkgroup),
-              ['alpha_tag', 'alphaTag', 'name'], 'Unnamed') },
-          { id: 'description', label: 'Description',
-            render: (talkgroup) => textValue(talkgroupValue(talkgroup), ['description'], '—') },
-          { id: 'category', label: 'Category', width: 180,
-            render: talkgroupCategory },
-          { id: 'status', label: 'Import status', width: 150, render: (talkgroup) => {
-            const statusValue = importStatus(talkgroup);
-            const content = node('span', 'radioreference-talkgroup-status');
-            content.append(uiPill(statusValue.label, statusValue.tone));
-            const id = existingAliasId(talkgroup);
-            if (id && (statusValue.label === 'Identical' || statusValue.label === 'Different')) {
-              content.append(anchor('Open Alias', href('aliases', {
-                list: Number(aliasList.value), aliasTab: 'configure', alias: id
-              }), 'ui-button ui-button-secondary radioreference-open-alias'));
-            }
-            return content;
-          } }
-        ], 'No talkgroups match these filters.',
-        { type: 'radioreference-talkgroups', sortable: false, mobileCards: true });
-        const total = totalValue(response, values.length);
-        const pager = internalPager({ offset, limit: TALKGROUP_LIMIT, visible: values.length, total,
-          more: hasMore(response, offset, TALKGROUP_LIMIT, values.length), label: 'Talkgroups', onPage: load });
-        tableHost.replaceChildren(grid, pager);
-        status.textContent = `${formatNumber(total)} talkgroup${total === 1 ? '' : 's'} available. ` +
-          'Selections stay checked while paging or filtering.';
-        updateSelection();
+        }
+        if (state.activeSystemId !== systemIdValue || target.dataset.rrTab !== 'talkgroups') return;
+        const saved = state.talkgroupCatalogs.get(key);
+        catalog = saved.items;
+        if (!categoryRows.length && saved.categories.length && category.options.length <= 1) {
+          setOptions(category, saved.categories, state.talkgroupCategoryId, 'All categories', true);
+        }
+        updateCategoryStar();
+        offset = 0;
+        draw();
       } catch (error) {
         tableHost.replaceChildren(feedback(error.message, 'error'));
       }
@@ -762,7 +932,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const selectedIds = [...selected];
       if (!all && !selectedIds.length) return;
       openPreview({
-        title: all ? 'Import all system talkgroups' : `Import ${formatNumber(selectedIds.length)} talkgroups`,
+        title: all ? 'Import all system talkgroups' : 'Import ' + formatNumber(selectedIds.length) + ' talkgroups',
         path: RADIO_REFERENCE_IMPORT_PATHS.talkgroupsPreview,
         kind: 'talkgroups',
         returnFocusSelector: all ? '.radioreference-import-all' : '.radioreference-import-selected',
@@ -771,43 +941,50 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           import_all: all, talkgroup_ids: all ? [] : selectedIds },
         onApplied: () => {
           selected.clear();
+          state.talkgroupCatalogs.delete(systemIdValue + ':' + aliasList.value);
           updateSelection();
-          load(state.talkgroupOffset);
+          load(true);
         }
       });
     };
-    clear.addEventListener('click', () => { selected.clear(); load(state.talkgroupOffset); });
+    clear.addEventListener('click', () => { selected.clear(); draw(); });
     importSelected.classList.add('radioreference-import-selected');
     importAll.classList.add('radioreference-import-all');
     importSelected.addEventListener('click', () => previewTalkgroups(false));
     importAll.addEventListener('click', () => previewTalkgroups(true));
     aliasList.addEventListener('change', () => {
       state.talkgroupAliasListId = Number(aliasList.value) || null;
-      load(0);
+      load();
     });
     category.addEventListener('change', () => {
       state.talkgroupCategoryId = Number(category.value) || null;
-      load(0);
+      updateCategoryStar();
+      offset = 0;
+      draw();
     });
-    search.addEventListener('search', () => { state.talkgroupSearch = search.value.trim(); load(0); });
-    search.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      state.talkgroupSearch = search.value.trim();
-      load(0);
+    search.addEventListener('input', () => {
+      state.talkgroupSearch = search.value;
+      offset = 0;
+      draw();
     });
-    await load(0);
+    await load();
   };
 
-  const renderSystem = async (system, detailHost) => {
+  const renderSystem = async (system, detailHost, options = {}) => {
     const id = systemId(system);
+    const sequence = ++state.detailSequence;
     state.activeSystemId = id;
     state.selectedTalkgroups.clear();
     state.talkgroupAliasListId = null;
-    state.talkgroupCategoryId = null;
+    state.talkgroupCategoryId = Number(options.categoryId) || null;
+    state.talkgroupStatus = 'ALL';
+    state.talkgroupSearch = '';
+    state.siteSearch = '';
+    detailHost.closest('.radioreference-browser')?.classList.add('radioreference-detail-open');
     detailHost.replaceChildren(feedback('Loading system details…', 'loading'));
     try {
       const documentValue = await api(query(RADIO_REFERENCE_IMPORT_PATHS.systemDetails, { system_id: id }));
+      if (sequence !== state.detailSequence) return;
       const details = documentValue?.system || documentValue;
       const panel = node('section', 'radioreference-system-workspace ui-surface');
       const header = node('header', 'radioreference-detail-header');
@@ -816,25 +993,32 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         node('h2', '', textValue(details, ['name'], textValue(system, ['name'], `System ${id}`))),
         node('p', 'muted', [textValue(system, ['secondary', 'location']),
           textValue(details, ['protocol', 'type_name', 'type'])].filter(Boolean).join(' · ')));
-      const close = button('Close');
-      close.addEventListener('click', () => detailHost.replaceChildren());
-      header.append(title, close);
+      const close = button('Back to results');
+      close.addEventListener('click', () => {
+        ++state.detailSequence;
+        detailHost.replaceChildren(empty('Choose a result', 'Select a system or agency to review.'));
+        detailHost.closest('.radioreference-browser')?.classList.remove('radioreference-detail-open');
+      });
+      header.append(title, starButton(bookmarkForEntry(system), () => state.onBookmarksChanged?.()), close);
+      const initialTab = options.categoryId ? 'talkgroups' : 'sites';
       const tabs = uiSegmentedControl([
         { value: 'sites', label: 'Sites & Channels' },
         { value: 'talkgroups', label: 'Talkgroups & Aliases' }
-      ], 'sites', (value) => {
-        if (value === 'sites') renderSites(system, body, documentValue);
-        else renderTalkgroups(system, body, documentValue);
+      ], initialTab, (value) => {
+        body.dataset.rrTab = value;
+        if (value === 'sites') void renderSites(system, body, documentValue);
+        else void renderTalkgroups(system, body, documentValue);
       });
       tabs.classList.add('radioreference-system-tabs');
       tabs.setAttribute('aria-label', 'System import sections');
       const body = node('div', 'radioreference-system-body');
+      body.dataset.rrTab = initialTab;
       panel.append(header, tabs, body);
       detailHost.replaceChildren(panel);
-      await renderSites(system, body, documentValue);
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (initialTab === 'sites') await renderSites(system, body, documentValue);
+      else await renderTalkgroups(system, body, documentValue);
     } catch (error) {
-      detailHost.replaceChildren(feedback(error.message, 'error'));
+      if (sequence === state.detailSequence) detailHost.replaceChildren(feedback(error.message, 'error'));
     }
   };
 
@@ -891,13 +1075,17 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
   };
 
-  const renderConventional = async (entry, detailHost) => {
+  const renderConventional = async (entry, detailHost, preferredCategoryId = null) => {
     const id = ownerId(entry);
     const kind = textValue(entry?.detail || entry, ['owner_kind', 'kind'], 'AGENCY');
+    const sequence = ++state.detailSequence;
+    state.activeSystemId = null;
+    detailHost.closest('.radioreference-browser')?.classList.add('radioreference-detail-open');
     detailHost.replaceChildren(feedback('Loading conventional categories…', 'loading'));
     try {
       const categoriesDocument = await api(query(RADIO_REFERENCE_IMPORT_PATHS.conventionalCategories,
         { owner_kind: kind, owner_id: id, offset: 0, limit: 500 }));
+      if (sequence !== state.detailSequence) return;
       const categories = rows(categoriesDocument);
       const panel = node('section', 'radioreference-system-workspace ui-surface');
       const header = node('header', 'radioreference-detail-header');
@@ -905,9 +1093,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       title.append(node('span', 'muted', 'Conventional agency'),
         node('h2', '', textValue(entry, ['name'], `Agency ${id}`)),
         node('p', 'muted', textValue(entry, ['secondary', 'location'])));
-      const close = button('Close');
-      close.addEventListener('click', () => detailHost.replaceChildren());
-      header.append(title, close);
+      const close = button('Back to results');
+      close.addEventListener('click', () => {
+        ++state.detailSequence;
+        detailHost.replaceChildren(empty('Choose a result', 'Select a system or agency to review.'));
+        detailHost.closest('.radioreference-browser')?.classList.remove('radioreference-detail-open');
+      });
+      header.append(title, starButton(bookmarkForEntry(entry), () => state.onBookmarksChanged?.()), close);
       const category = select();
       categories.forEach((value) => {
         const categoryId = integerValue(value, ['sub_category_id', 'subCategoryId', 'category_id', 'id']);
@@ -918,10 +1110,27 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         option.value = String(categoryId);
         category.append(option);
       });
+      if (preferredCategoryId && [...category.options].some((value) =>
+        value.value === String(preferredCategoryId))) category.value = String(preferredCategoryId);
       const toolbar = node('div', 'radioreference-conventional-toolbar ui-catalog-toolbar');
       const status = node('div', 'admin-form-message');
       status.setAttribute('role', 'status');
-      toolbar.append(formField('Category', selectFrame(category)), status);
+      const categoryStar = node('span', 'radioreference-category-star');
+      const updateCategoryStar = () => {
+        categoryStar.replaceChildren();
+        if (!category.value) return;
+        const bookmark = {
+          kind: 'CONVENTIONAL_CATEGORY', id: Number(category.value), parentId: id,
+          ownerKind: kind, name: category.selectedOptions[0]?.textContent || 'Category',
+          parentName: textValue(entry, ['name'], 'Agency')
+        };
+        categoryStar.append(starButton(bookmark, () => {
+          updateCategoryStar();
+          state.onBookmarksChanged?.();
+        }));
+      };
+      toolbar.append(formField('Category', selectFrame(category)), categoryStar, status);
+      updateCategoryStar();
       const body = node('div', 'radioreference-system-body');
       panel.append(header, toolbar, body);
       detailHost.replaceChildren(panel);
@@ -936,6 +1145,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         try {
           const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.conventionalFrequencies,
             { sub_category_id: category.value, offset, limit: FREQUENCY_LIMIT }));
+          if (sequence !== state.detailSequence) return;
           const values = rows(response);
           const grid = table(values, [
             { id: 'frequency', label: 'Frequency', width: 150,
@@ -962,157 +1172,243 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           body.replaceChildren(feedback(error.message, 'error'));
         }
       };
-      category.addEventListener('change', () => load(0));
+      category.addEventListener('change', () => { updateCategoryStar(); load(0); });
       await load(0);
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
-      detailHost.replaceChildren(feedback(error.message, 'error'));
+      if (sequence === state.detailSequence) detailHost.replaceChildren(feedback(error.message, 'error'));
     }
   };
 
-  const renderDirectory = (resultHost, detailHost, response, offset, reload) => {
+  const renderDirectory = (listHost, pagerHost, detailHost, response, offset, browse) => {
     const values = rows(response);
     const total = totalValue(response, values.length);
     if (!values.length) {
-      resultHost.replaceChildren(empty('No matching systems or agencies',
-        'Try a broader location, clear the search field, or include both result types.'));
+      listHost.replaceChildren(empty('No systems or agencies here',
+        'Choose a broader country, state, or county to browse.'));
+      pagerHost.replaceChildren();
       return;
     }
-    const grid = table(values, [
-      { id: 'name', label: 'System or agency', render: (entry) => {
-        const identity = node('span', 'radioreference-row-identity');
-        identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
-        const secondary = textValue(entry, ['secondary', 'location', 'description']);
-        if (secondary) identity.append(node('small', 'muted', secondary));
-        return identity;
-      } },
-      { id: 'type', label: 'Type', width: 180,
-        render: (entry) => uiPill(entryKind(entry) === 'TRUNKED_SYSTEM' ? 'Trunked system' :
-          'Conventional agency', entryKind(entry) === 'TRUNKED_SYSTEM' ? 'blue' : 'neutral') },
-      { id: 'actions', label: 'Actions', width: 130, sortable: false, render: (entry) => {
-        const control = button('Open', 'ui-button ui-button-primary radioreference-open-result');
-        control.addEventListener('click', () => entryKind(entry) === 'TRUNKED_SYSTEM' ?
-          renderSystem(entry, detailHost) : renderConventional(entry, detailHost));
-        return control;
-      } }
-    ], 'No RadioReference results.',
-    { type: 'radioreference-directory', sortable: false, mobileCards: true });
-    resultHost.replaceChildren(grid, internalPager({ offset, limit: DIRECTORY_LIMIT, visible: values.length, total,
-      more: hasMore(response, offset, DIRECTORY_LIMIT, values.length), label: 'Results', onPage: reload }));
+    const fragmentValue = document.createDocumentFragment();
+    let previousScope = '';
+    values.forEach((entry) => {
+      const scope = textValue(entry, ['scope'], 'COUNTY').toUpperCase();
+      if (scope !== previousScope) {
+        const label = { NATIONAL: 'National', STATE: 'Statewide', COUNTY: 'County' }[scope] || scope;
+        fragmentValue.append(node('div', 'radioreference-directory-group', label));
+        previousScope = scope;
+      }
+      const item = node('div', 'radioreference-directory-item');
+      const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
+      const identity = node('span', 'radioreference-row-identity');
+      identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
+      const secondary = textValue(entry, ['secondary', 'location', 'description']);
+      if (secondary) identity.append(node('small', 'muted', secondary));
+      open.append(identity, uiPill(entryKind(entry) === 'TRUNKED_SYSTEM' ? 'Trunked' : 'Conventional',
+        entryKind(entry) === 'TRUNKED_SYSTEM' ? 'blue' : 'neutral'));
+      open.addEventListener('click', () => entryKind(entry) === 'TRUNKED_SYSTEM' ?
+        renderSystem(entry, detailHost) : renderConventional(entry, detailHost));
+      item.append(open, starButton(bookmarkForEntry(entry), () => state.onBookmarksChanged?.()));
+      fragmentValue.append(item);
+    });
+    listHost.replaceChildren(fragmentValue);
+    pagerHost.replaceChildren(internalPager({
+      offset, limit: DIRECTORY_LIMIT, visible: values.length, total,
+      more: hasMore(response, offset, DIRECTORY_LIMIT, values.length), label: 'Results', onPage: browse
+    }));
   };
 
   const buildBrowser = async () => {
     const browser = node('div', 'radioreference-browser');
-    const browseForm = node('form', 'radioreference-browse-form ui-surface');
+    const browseForm = node('div', 'radioreference-browse-form ui-surface');
     const country = select();
     const region = select();
     const county = select();
-    const group = select();
-    [['ALL', 'Systems and conventional'], ['TRUNKED_SYSTEMS', 'Trunked systems'],
-      ['CONVENTIONAL_AGENCIES', 'Conventional agencies']].forEach(([value, label]) => {
-      const option = node('option', '', label);
-      option.value = value;
-      group.append(option);
-    });
-    const search = input('search');
-    search.placeholder = 'System, agency, city, or county';
-    const submit = button('Search RadioReference', 'ui-button ui-button-primary');
-    submit.type = 'submit';
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'status');
     const fields = node('div', 'radioreference-browse-fields');
-    fields.append(formField('Country', selectFrame(country)), formField('State or region', selectFrame(region)),
-      formField('County', selectFrame(county)), formField('Show', selectFrame(group)),
-      formField('Search', search));
-    const footer = node('div', 'radioreference-browse-footer');
-    footer.append(message, submit);
-    browseForm.append(fields, footer);
-    const resultHost = node('div', 'radioreference-directory-results');
+    fields.append(formField('Country', selectFrame(country)),
+      formField('State or region', selectFrame(region)), formField('County', selectFrame(county)));
+    browseForm.append(fields, message);
+    const workbench = node('div', 'radioreference-workbench-grid');
+    const resultHost = node('div', 'radioreference-directory-results ui-surface');
+    const tabHost = node('div', 'radioreference-directory-tabs');
+    const listHost = node('div', 'radioreference-directory-list');
+    const pagerHost = node('div', 'radioreference-directory-pager');
+    resultHost.append(tabHost, listHost, pagerHost);
     const detailHost = node('div', 'radioreference-import-detail');
-    browser.append(browseForm, resultHost, detailHost);
+    detailHost.append(empty('Choose a result', 'Select a system or agency to review.'));
+    workbench.append(resultHost, detailHost);
+    browser.append(browseForm, workbench);
     host.replaceChildren(browser);
 
-    const loadCounties = async (selected = null) => {
-      county.disabled = true;
-      setOptions(county, [], null, 'All counties', true);
-      if (!region.value) return;
-      try {
-        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.counties,
-          { state_id: region.value, offset: 0, limit: 500 }));
-        setOptions(county, rows(response), selected, 'All counties', true);
-      } finally {
-        county.disabled = false;
+    const showBookmarks = () => {
+      pagerHost.replaceChildren();
+      if (!state.bookmarks.length) {
+        listHost.replaceChildren(empty('No bookmarks yet',
+          'Use a star beside a system, agency, or category to save it here.'));
+        return;
       }
+      const fragmentValue = document.createDocumentFragment();
+      let previousKind = '';
+      const labels = {
+        TRUNKED_SYSTEM: 'Trunked systems', CONVENTIONAL_AGENCY: 'Conventional agencies',
+        TALKGROUP_CATEGORY: 'Talkgroup categories', CONVENTIONAL_CATEGORY: 'Conventional categories'
+      };
+      state.bookmarks.forEach((bookmark) => {
+        if (bookmark.kind !== previousKind) {
+          fragmentValue.append(node('div', 'radioreference-directory-group',
+            labels[bookmark.kind] || 'Bookmarks'));
+          previousKind = bookmark.kind;
+        }
+        const item = node('div', 'radioreference-directory-item');
+        const open = button('', 'ui-button ui-button-secondary radioreference-result-open');
+        const identity = node('span', 'radioreference-row-identity');
+        identity.append(node('strong', '', bookmark.name));
+        if (bookmark.parentName) identity.append(node('small', 'muted', bookmark.parentName));
+        open.append(identity);
+        open.addEventListener('click', () => {
+          if (bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY') {
+            const system = {
+              id: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.id : bookmark.parentId,
+              name: bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.name : bookmark.parentName,
+              type: 'TRUNKED_SYSTEM'
+            };
+            void renderSystem(system, detailHost, bookmark.kind === 'TALKGROUP_CATEGORY' ?
+              { categoryId: bookmark.id } : {});
+          } else {
+            const entry = {
+              id: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.id : bookmark.parentId,
+              name: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.name : bookmark.parentName,
+              type: 'CONVENTIONAL_AGENCY',
+              detail: { kind: bookmark.ownerKind,
+                id: bookmark.kind === 'CONVENTIONAL_AGENCY' ? bookmark.id : bookmark.parentId }
+            };
+            void renderConventional(entry, detailHost,
+              bookmark.kind === 'CONVENTIONAL_CATEGORY' ? bookmark.id : null);
+          }
+        });
+        item.append(open, starButton(bookmark, () => state.onBookmarksChanged?.()));
+        fragmentValue.append(item);
+      });
+      listHost.replaceChildren(fragmentValue);
     };
-    const loadStates = async (selectedRegion = null, selectedCounty = null) => {
+    const showCurrent = () => {
+      if (state.browseTab === 'bookmarks') showBookmarks();
+      else if (state.browseDocument) renderDirectory(listHost, pagerHost, detailHost,
+        state.browseDocument, state.browseOffset, browse);
+    };
+    const renderTabs = () => {
+      const tabs = uiSegmentedControl([
+        { value: 'browse', label: 'Browse' },
+        { value: 'bookmarks', label: '★ Bookmarks (' + formatNumber(state.bookmarks.length) + ')' }
+      ], state.browseTab, (value) => {
+        state.browseTab = value;
+        showCurrent();
+      });
+      tabs.setAttribute('aria-label', 'Browse or open RadioReference bookmarks');
+      tabHost.replaceChildren(tabs);
+    };
+    state.onBookmarksChanged = () => { renderTabs(); showCurrent(); };
+    renderTabs();
+
+    let locationSequence = 0;
+    const loadCounties = async (selected = null, sequence = locationSequence) => {
+      county.disabled = true;
+      setOptions(county, [], null, 'Loading counties…', true);
+      if (!region.value) {
+        setOptions(county, [], null, 'All counties', true);
+        county.disabled = false;
+        return;
+      }
+      const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.counties,
+        { state_id: region.value, offset: 0, limit: 500 }));
+      if (sequence !== locationSequence) return;
+      setOptions(county, rows(response), selected, 'All counties', true);
+      county.disabled = false;
+    };
+    const loadStates = async (selectedRegion = null, selectedCounty = null, sequence = locationSequence) => {
       region.disabled = true;
       county.disabled = true;
       setOptions(region, [], null, 'Loading regions…', true);
       const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.states, { country_id: country.value }));
+      if (sequence !== locationSequence) return;
       setOptions(region, rows(response), selectedRegion, 'All states or regions', true);
       region.disabled = false;
-      await loadCounties(selectedCounty);
+      await loadCounties(selectedCounty, sequence);
     };
-    setOptions(country, state.countries, state.configuration?.country_id, 'Choose a country');
-    await loadStates(state.configuration?.state_id, state.configuration?.county_id);
-    country.addEventListener('change', () => loadStates());
-    region.addEventListener('change', () => loadCounties());
 
     const browse = async (offset = 0) => {
       if (!country.value) return;
+      const sequence = ++state.browseSequence;
       state.browseOffset = offset;
-      submit.disabled = true;
-      message.textContent = 'Searching RadioReference…';
-      resultHost.replaceChildren(feedback('Loading directory results…', 'loading'));
-      detailHost.replaceChildren();
+      message.textContent = 'Loading systems and agencies…';
+      if (state.browseTab === 'browse') listHost.replaceChildren(feedback('Loading directory results…', 'loading'));
       try {
-        if (region.value && (Number(country.value) !== Number(state.configuration?.country_id) ||
-            Number(region.value) !== Number(state.configuration?.state_id) ||
-            Number(county.value || 0) !== Number(state.configuration?.county_id || 0))) {
-          const updated = await api(`${API_ROOT}/location`, { method: 'PUT',
-            body: { countryId: Number(country.value), stateId: Number(region.value),
-              countyId: Number(county.value) || 0 } });
-          state.configuration = updated || state.configuration;
-          onLocationSaved?.(state.configuration);
-        }
         const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.browse, {
           country_id: country.value, state_id: region.value || null, county_id: county.value || null,
-          group: group.value, search: search.value.trim(), offset, limit: DIRECTORY_LIMIT
+          group: 'ALL', offset, limit: DIRECTORY_LIMIT
         }));
+        if (sequence !== state.browseSequence) return;
         state.browseDocument = response;
         state.browseRows = rows(response);
-        renderDirectory(resultHost, detailHost, response, offset, browse);
+        if (state.browseTab === 'browse') renderDirectory(listHost, pagerHost, detailHost, response, offset, browse);
         const total = totalValue(response, state.browseRows.length);
-        message.textContent = `${formatNumber(total)} result${total === 1 ? '' : 's'} found.`;
+        message.textContent = formatNumber(total) + ' systems and agencies found. Results update with the browse area.';
       } catch (error) {
-        resultHost.replaceChildren(feedback(error.message, 'error'));
-        message.textContent = 'RadioReference search failed.';
-      } finally {
-        submit.disabled = false;
+        if (sequence !== state.browseSequence) return;
+        if (state.browseTab === 'browse') listHost.replaceChildren(feedback(error.message, 'error'));
+        message.textContent = 'RadioReference directory could not be loaded.';
       }
     };
-    browseForm.addEventListener('submit', (event) => { event.preventDefault(); browse(0); });
-    resultHost.replaceChildren(empty('Choose where to browse',
-      'Search a region to find trunked systems and conventional agencies available to import.'));
+    setOptions(country, state.countries, state.configuration?.country_id, 'Choose a country');
+    try {
+      await loadStates(state.configuration?.state_id, state.configuration?.county_id);
+      await browse();
+    } catch (error) {
+      listHost.replaceChildren(feedback(error.message, 'error'));
+    }
+    country.addEventListener('change', async () => {
+      const sequence = ++locationSequence;
+      message.textContent = 'Loading browse area…';
+      try {
+        await loadStates(null, null, sequence);
+        if (sequence === locationSequence) await browse();
+      } catch (error) {
+        if (sequence === locationSequence) listHost.replaceChildren(feedback(error.message, 'error'));
+      }
+    });
+    region.addEventListener('change', async () => {
+      const sequence = ++locationSequence;
+      message.textContent = 'Loading counties…';
+      try {
+        await loadCounties(null, sequence);
+        if (sequence === locationSequence) await browse();
+      } catch (error) {
+        if (sequence === locationSequence) listHost.replaceChildren(feedback(error.message, 'error'));
+      }
+    });
+    county.addEventListener('change', () => void browse());
   };
 
   const initialize = async () => {
     if (state.initializing || state.initialized) return;
     if (state.configuration?.account?.state !== 'VALID_PREMIUM') {
       host.replaceChildren(empty('Connect RadioReference to import',
-        'Use the account form above. A current Premium account is required for directory browsing and imports.'));
+        'A current Premium account is required for directory browsing and imports.'));
       return;
     }
     state.initializing = true;
     host.replaceChildren(feedback('Loading the RadioReference directory…', 'loading'));
     try {
-      const [aliasesDocument, countriesDocument] = await Promise.all([
+      const [aliasesDocument, countriesDocument, bookmarksDocument] = await Promise.all([
         requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }),
-        api(RADIO_REFERENCE_IMPORT_PATHS.countries)
+        api(RADIO_REFERENCE_IMPORT_PATHS.countries),
+        api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks)
       ]);
       state.aliasLists = Array.isArray(aliasesDocument?.alias_lists) ? aliasesDocument.alias_lists :
         rows(aliasesDocument);
       state.countries = rows(countriesDocument);
+      state.bookmarks = rows(bookmarksDocument).map(normalizeBookmark);
       state.initialized = true;
       await buildBrowser();
     } catch (error) {
@@ -1131,8 +1427,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (!connected) {
         state.initialized = false;
         state.selectedTalkgroups.clear();
+        state.siteCatalogs.clear();
+        state.talkgroupCatalogs.clear();
+        state.bookmarks = [];
         host.replaceChildren(empty('Connect RadioReference to import',
-          'Use the account form above. A current Premium account is required for directory browsing and imports.'));
+          'A current Premium account is required for directory browsing and imports.'));
         return;
       }
       if (!wasConnected || !state.initialized) void initialize();

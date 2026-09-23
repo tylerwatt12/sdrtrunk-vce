@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js';
+import * as routeFoundation from './core/routes.js?v=2';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -12,7 +12,7 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=2';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=1';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=2';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -2014,7 +2014,7 @@ function detailedHistoryNotice() {
 
 function liveActivityHistoryNotice() {
   const message = node('span', '', 'Live shows data received after this page was opened. For earlier activity, ');
-  const link = anchor('browse saved activity', href('radio-systems'));
+  const link = anchor('browse saved activity', href('dashboard', { tab: 'health' }));
   const detail = node('span', '', '. Saved activity is available when Store Detailed Event History is enabled in ' +
     'Stats & Web > Stats Server.');
   const copy = node('span', 'live-activity-history-notice-copy');
@@ -2032,7 +2032,7 @@ function liveActivityHistoryNotice() {
     select(selection) {
       if (!selection?.configurationId) {
         link.textContent = 'browse saved activity';
-        link.href = href('radio-systems');
+        link.href = href('dashboard', { tab: 'health' });
         link.removeAttribute('title');
         return;
       }
@@ -10390,24 +10390,35 @@ function radioTableType(baseType, columns) {
 
 async function renderDashboard() {
   const renderContext = captureRenderContext();
-  const dashboard = await api('/api/v1/dashboard');
-  const callActivity = dashboard.call_activity || {};
-  const callTotals = callActivity.totals || {};
   const requestedTab = route.get('tab') || 'health';
   const tab = ['health', 'calls', 'activity'].includes(requestedTab) ? requestedTab : 'health';
+  const dashboard = tab === 'health' ? {} : await api('/api/v1/dashboard');
+  const callActivity = dashboard.call_activity || {};
+  const callTotals = callActivity.totals || {};
   if (!beginPage(renderContext,
-    pageHeader('Dashboard', dashboard.last_seen_ms ?
-      fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
+    pageHeader(tab === 'health' ? 'Main' : 'Dashboard', tab === 'health' ?
+      'Signal quality and radio directory' : dashboard.last_seen_ms ?
+        fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
     tabs([
-      { id: 'health', label: 'Signal quality', href: href('dashboard', { tab: 'health' }) },
+      { id: 'health', label: 'Main', href: href('dashboard', { tab: 'health' }) },
       { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
       { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
     ], tab))) return;
 
   if (tab === 'health') {
-    const signalHealth = await signalHealthSection();
-    if (!renderIsCurrent(renderContext)) return;
-    content.append(signalHealth);
+    const signalHost = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
+    content.append(signalHost);
+    const signalPromise = signalHealthSection();
+    const directoryPromise = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+      renderNestedRadioDirectory(renderContext, true) : Promise.resolve();
+    try {
+      const signalHealth = await signalPromise;
+      if (renderIsCurrent(renderContext)) signalHost.replaceWith(signalHealth);
+    } catch (error) {
+      if (renderIsCurrent(renderContext)) signalHost.replaceWith(
+        node('div', 'ui-feedback ui-feedback-error', error.message));
+    }
+    await directoryPromise;
     return;
   }
 
@@ -16654,21 +16665,24 @@ function radioDirectoryPerspectiveControl(activeView) {
   const control = uiSegmentedControl([
     { value: 'systems', label: 'Systems & channels' },
     { value: 'coverage', label: 'Alias coverage' }
-  ], activeView, (value) => navigateTo(href('radio-systems', value === 'coverage' ?
-    { directory_view: 'coverage' } : {})));
+  ], activeView, (value) => navigateTo(href('dashboard', value === 'coverage' ?
+    { tab: 'health', directory_view: 'coverage' } : { tab: 'health' })));
   control.classList.add('radio-directory-perspective');
   control.setAttribute('aria-label', 'Radio Directory view');
   return control;
 }
 
-function renderNestedRadioDirectory(renderContext) {
-  if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext);
+function renderNestedRadioDirectory(renderContext, embedded = false) {
+  if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, embedded);
   const loading = createAsyncSection('Radio Directory', {
     bare: true,
     loadingMessage: 'Loading radio systems and channels…',
     errorMessage: 'The radio directory could not be loaded.'
   });
-  if (!beginPage(renderContext, pageHeader('Radio Directory',
+  if (embedded) {
+    content.append(section('Radio directory',
+      fragment(radioDirectoryPerspectiveControl('systems'), loading.element)));
+  } else if (!beginPage(renderContext, pageHeader('Radio Directory',
     'Browse systems, sites, and conventional channels'),
     radioDirectoryPerspectiveControl('systems'), loading.element)) return;
 
@@ -16703,7 +16717,7 @@ function renderNestedRadioDirectory(renderContext) {
     const exportLink = exportCsvLink('channels');
     exportLink.classList.add('ui-button', 'ui-button-secondary');
     exportLink.prepend(iconGlyph('icon-download'));
-    const refresh = uiActionButton('', 'icon-refresh', () => renderRadioSystems(),
+    const refresh = uiActionButton('', 'icon-refresh', () => embedded ? renderDashboard() : renderRadioSystems(),
       'ui-button ui-button-secondary ui-icon-button');
     refresh.title = 'Refresh radio directory';
     refresh.setAttribute('aria-label', refresh.title);
@@ -18026,14 +18040,17 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
     selectedRange, activeTab, aliasStatus };
 }
 
-async function renderAliasCoverageDirectory(renderContext) {
+async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   const directory = createAsyncSection('Alias coverage', {
     bare: true,
     loadingMessage: 'Loading Alias Lists and coverage…',
     errorMessage: 'Alias coverage could not be loaded.'
   });
   directory.host.classList.add('alias-coverage-loader');
-  if (!beginPage(renderContext, pageHeader('Radio Directory',
+  if (embedded) {
+    content.append(section('Radio directory',
+      fragment(radioDirectoryPerspectiveControl('coverage'), directory.element)));
+  } else if (!beginPage(renderContext, pageHeader('Radio Directory',
     'Compare configured aliases with heard activity across every channel that uses them'),
     radioDirectoryPerspectiveControl('coverage'), directory.element)) return;
 
@@ -18123,7 +18140,7 @@ async function renderAliasCoverageDirectory(renderContext) {
       const link = event.target.closest('a[href]');
       if (!link || !tableSection.contains(link)) return;
       const target = routeFoundation.localTarget(window.location, link.href);
-      if (target?.searchParams.get('view') !== 'radio-systems' ||
+      if (target?.searchParams.get('view') !== 'dashboard' ||
           target.searchParams.get('directory_view') !== 'coverage') return;
       event.preventDefault();
       navigateCoverage(link.href, { scrollToTable: Boolean(link.closest('.pager')) });
@@ -18989,8 +19006,26 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
   if (!beginPage(renderContext, pageHeader('RadioReference',
-    'Connect an account and choose the region used for frequency lookups'))) return;
-  const body = node('div', 'admin-section-body radioreference-settings');
+    'Browse systems and agencies, compare changes, and import'))) return;
+  const page = node('div', 'radioreference-page');
+  const loadingState = node('div', 'ui-feedback ui-feedback-loading',
+    'Checking saved RadioReference sign-in…');
+  loadingState.setAttribute('role', 'status');
+  const gate = node('div', 'radioreference-login-gate ui-surface');
+  gate.hidden = true;
+  gate.append(node('h2', '', 'Connect to continue'),
+    node('p', 'muted', 'Sign in with a RadioReference Premium account to browse and import.'));
+  const workspace = node('div', 'radioreference-connected-page');
+  workspace.hidden = true;
+  const workspaceHeader = node('div', 'radioreference-workspace-header');
+  const accountStatus = uiPill('Connected · Premium', 'success');
+  const settingsButton = node('button', 'ui-button ui-button-secondary radioreference-settings-trigger',
+    'RadioReference settings');
+  settingsButton.type = 'button';
+  workspaceHeader.append(accountStatus, settingsButton);
+  workspace.append(workspaceHeader);
+  page.append(loadingState, gate, workspace);
+  content.append(page);
   const accountForm = node('form',
     'admin-form admin-settings-form settings-card settings-card-form radioreference-account-form');
   const userName = node('input', 'ui-input');
@@ -19012,9 +19047,10 @@ async function renderAdminRadioReferenceSettings() {
   accountMessage.setAttribute('role', 'status');
   const connect = node('button', 'ui-button ui-button-primary', 'Connect RadioReference');
   connect.type = 'submit';
-  const signOut = node('button', 'ui-button ui-button-danger', 'Disconnect RadioReference');
+  const signOut = node('button', 'ui-button ui-button-danger', 'Log out and clear saved credentials');
   signOut.type = 'button';
   signOut.disabled = true;
+  signOut.hidden = true;
   const accountActions = node('div', 'admin-form-actions');
   accountActions.append(signOut, connect);
   accountForm.append(node('h3', 'admin-settings-form-title', 'Account'),
@@ -19043,35 +19079,25 @@ async function renderAdminRadioReferenceSettings() {
     node('p', 'settings-card-description', 'Choose the region used for exact-frequency spectrum lookups.'),
     formField('Country', country), formField('State or region', state), regionMessage, regionActions);
 
-  const settingsForms = settingsCardGrid(accountForm, regionForm);
-  settingsForms.classList.add('admin-settings-form-stack');
-  body.append(node('p', 'admin-section-intro',
-    'Connect the receiver to RadioReference’s database API, then choose the state searched when a frequency is ' +
-    'clicked in Tuner Spectrum. Use your own current Premium account.'), settingsForms);
-  content.append(section('RadioReference lookup', body));
+  gate.append(accountForm);
+  let settingsModal = null;
+  settingsButton.addEventListener('click', () => {
+    const forms = settingsCardGrid(accountForm, regionForm);
+    forms.classList.add('admin-settings-form-stack');
+    settingsModal = openReadOnlyModal('RadioReference settings', forms, {
+      id: 'radioreference-settings', className: 'radioreference-settings-modal',
+      returnFocusSelector: '.radioreference-settings-trigger'
+    });
+  });
 
   const importWorkspace = createRadioReferenceImportWorkspace({
     node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
     href, anchor, modalFooter: aliasModalFooter,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
-    mutationTimeoutMs: 65_000,
-    onLocationSaved: async (next) => {
-      configuration = next || configuration;
-      if (String(country.value) !== String(configuration?.country_id || '')) {
-        country.value = String(configuration?.country_id || '');
-        await loadStates(country.value, configuration?.state_id);
-      } else {
-        state.value = String(configuration?.state_id || state.value);
-      }
-      regionMessage.textContent = 'RadioReference lookup and import region saved.';
-    }
+    mutationTimeoutMs: 65_000
   });
-  const importBody = node('div', 'admin-section-body');
-  importBody.append(node('p', 'admin-section-intro',
-    'Browse systems and conventional agencies, review exactly what will change, then import channels or aliases ' +
-    'into this receiver.'), importWorkspace.element);
-  content.append(section('Browse and import', importBody));
+  workspace.append(importWorkspace.element);
 
   let configuration = null;
 
@@ -19085,10 +19111,16 @@ async function renderAdminRadioReferenceSettings() {
     }
     setUiToggle(remember, configuration?.credentials_stored === true);
     signOut.disabled = account.state === 'SIGNED_OUT';
+    signOut.hidden = !connected;
+    connect.textContent = connected ? 'Update account' : 'Connect RadioReference';
     country.disabled = !connected;
     state.disabled = !connected || !country.value;
     saveRegion.disabled = !connected || !state.value;
     importWorkspace.setConfiguration(configuration);
+    loadingState.hidden = true;
+    gate.hidden = connected;
+    workspace.hidden = !connected;
+    if (!connected) gate.append(accountForm);
     return connected;
   };
 
@@ -19113,6 +19145,11 @@ async function renderAdminRadioReferenceSettings() {
     if (available) await loadStates(country.value, configuration?.state_id);
   };
 
+  [accountForm, regionForm].forEach((form) => {
+    form.addEventListener('input', () => settingsModal?.setDirty(true));
+    form.addEventListener('change', () => settingsModal?.setDirty(true));
+  });
+
   accountForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!accountForm.reportValidity() || connect.disabled) return;
@@ -19126,6 +19163,7 @@ async function renderAdminRadioReferenceSettings() {
       });
       radioReferenceDetailCache.clear();
       password.value = '';
+      settingsModal?.setDirty(false);
       if (updateAccount(next)) await loadRegions();
     } catch (error) {
       password.value = '';
@@ -19146,6 +19184,10 @@ async function renderAdminRadioReferenceSettings() {
       radioReferenceDetailCache.clear();
       password.value = '';
       userName.value = '';
+      settingsModal?.setDirty(false);
+      closeReadOnlyModal(true);
+      settingsModal = null;
+      gate.append(accountForm);
       updateAccount(next);
       replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
       replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
@@ -19154,6 +19196,7 @@ async function renderAdminRadioReferenceSettings() {
       accountMessage.textContent = error.message;
     } finally {
       connect.disabled = false;
+      signOut.disabled = configuration?.account?.state !== 'VALID_PREMIUM';
     }
   });
 
@@ -19176,7 +19219,7 @@ async function renderAdminRadioReferenceSettings() {
       configuration = await requestJson('/api/v1/admin/radioreference/location', {
         method: 'PUT', body: { countryId: Number(country.value), stateId: Number(state.value) }
       });
-      importWorkspace.reload();
+      settingsModal?.setDirty(false);
       regionMessage.textContent = 'RadioReference lookup region saved.';
     } catch (error) {
       regionMessage.textContent = error.message;
@@ -19190,6 +19233,9 @@ async function renderAdminRadioReferenceSettings() {
     if (updateAccount(initial, true)) await loadRegions();
   } catch (error) {
     accountMessage.textContent = error.message;
+    loadingState.hidden = true;
+    gate.hidden = false;
+    gate.append(accountForm);
     connect.disabled = false;
   }
 }
@@ -21368,17 +21414,19 @@ applicationRoutes = routeFoundation.createRegistry({
 async function render() {
   setNavigationOpen(false);
   let view = routeFoundation.requestedView(route);
-  if (view === 'channels') {
-    route.set('view', 'radio-systems');
+  if (view === 'channels' || view === 'radio-systems') {
+    route.set('view', 'dashboard');
+    route.set('tab', 'health');
     route.delete('channel');
     window.history.replaceState({}, '', currentHref());
-    view = 'radio-systems';
+    view = 'dashboard';
   }
   if (view === 'identities') {
-    route.set('view', 'radio-systems');
+    route.set('view', 'dashboard');
+    route.set('tab', 'health');
     route.set('directory_view', 'coverage');
     window.history.replaceState({}, '', currentHref());
-    view = 'radio-systems';
+    view = 'dashboard';
   }
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;

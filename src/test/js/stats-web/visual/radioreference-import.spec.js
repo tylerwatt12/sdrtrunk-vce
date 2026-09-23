@@ -1,7 +1,7 @@
 const { expect, test } = require('@playwright/test');
 
-async function installWorkspace(page, theme = 'light') {
-  await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+async function installWorkspace(page, theme = 'light', large = false, slow = false) {
+  await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}${slow ? '&slow=1' : ''}`);
   await page.evaluate(async () => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
@@ -141,6 +141,10 @@ async function installWorkspace(page, theme = 'light') {
         { alias_list_id: 8, name: 'Regional Conventional', family: 'ANALOG' }
       ] };
       if (path.endsWith('/countries')) return { items: [{ id: 1, name: 'United States', abbreviation: 'US' }] };
+      if (path.endsWith('/bookmarks')) {
+        if (options.method === 'PUT') return [options.body];
+        return [];
+      }
       if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio', abbreviation: 'OH' }] };
       if (path.includes('/counties?')) return { items: [{ id: 49, name: 'Franklin County' }] };
       if (path.includes('/browse?')) return { total_items: 2, items: [
@@ -152,16 +156,30 @@ async function installWorkspace(page, theme = 'light') {
       if (path.includes('/systems/details?')) return { system: {
         id: 2001, name: 'Central County P25', type: 'Project 25 Phase II', city: 'Columbus'
       }, talkgroup_categories: [{ id: 9, name: 'Fire' }] };
-      if (path.includes('/systems/sites?')) return { items: [{ id: 4001, name: 'Central Simulcast',
+      if (path.includes('/systems/sites/catalog?')) return { items: [{ id: 4001, name: 'Central Simulcast',
         number: 1, county_name: 'Franklin County', tdma_control_channel: false, channels: [
           { frequency_hz: 773081250, primary_control: true },
           { frequency_hz: 773331250, alternate_control: true }
         ] }] };
-      if (path.includes('/systems/talkgroups?')) return { total_items: 2, categories: [{ id: 9, name: 'Fire' }],
+      if (path.includes('/systems/talkgroups/catalog?') &&
+          new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (path.includes('/systems/talkgroups/catalog?') &&
+          new URLSearchParams(location.search).has('large')) return {
+        total_items: 10000, categories: [{ id: 9, name: 'Fire' }],
+        items: Array.from({ length: 10000 }, (_, index) => ({
+          talkgroup: { id: index + 1, value: index + 1, category_id: 9,
+            alpha_tag: index === 9999 ? 'Rare Target' : `Talkgroup ${index + 1}`,
+            description: 'Fire operations' },
+          category: 'Fire', status: index === 9999 ? 'DIFFERENT' : 'IDENTICAL'
+        }))
+      };
+      if (path.includes('/systems/talkgroups/catalog?')) return { total_items: 2, categories: [{ id: 9, name: 'Fire' }],
         items: [
-          { talkgroup: { id: 101, value: 101, alpha_tag: 'Fire Dispatch', description: 'Countywide fire' },
+          { talkgroup: { id: 101, value: 101, category_id: 9, alpha_tag: 'Fire Dispatch',
+            description: 'Countywide fire' },
             category: 'Fire', status: 'IDENTICAL', existing_alias_id: 700 },
-          { talkgroup: { id: 102, value: 102, alpha_tag: 'Fireground 2', description: 'Fireground operations' },
+          { talkgroup: { id: 102, value: 102, category_id: 9, alpha_tag: 'Fireground 2',
+            description: 'Fireground operations' },
             category: 'Fire', status: 'DIFFERENT', existing_alias_id: 701,
             changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }] }
         ] };
@@ -210,12 +228,11 @@ async function installWorkspace(page, theme = 'light') {
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
   });
-  await expect(page.getByRole('button', { name: 'Search RadioReference' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }
 
 async function openSystem(page) {
-  await page.getByRole('button', { name: 'Search RadioReference' }).click();
-  await page.getByRole('button', { name: 'Open' }).first().click();
+  await page.locator('.radioreference-result-open').first().click();
   await expect(page.getByText('Central Simulcast')).toBeVisible();
 }
 
@@ -228,14 +245,13 @@ test('talkgroup selections persist through searches and clear explicitly', async
   const fire = page.getByRole('checkbox', { name: 'Select Fire Dispatch' });
   await fire.check();
   await expect(page.getByText('1 selected')).toBeVisible();
-  await expect(page.getByLabel('Alias List')).toBeDisabled();
-  await page.getByLabel('Search talkgroups').fill('fire');
-  await page.getByLabel('Search talkgroups').press('Enter');
+  await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
+  await page.getByLabel('Filter talkgroup ID, name, or description').fill('fire');
   await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
   await expect(page.getByText('1 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Clear selection' }).click();
   await expect(page.getByText('0 selected')).toBeVisible();
-  await expect(page.getByLabel('Alias List')).toBeEnabled();
+  await expect(page.getByLabel('Compare with Alias List')).toBeEnabled();
 });
 
 test('single changed talkgroup preview shows the RadioReference-owned field changes', async ({ page }) => {
@@ -248,6 +264,41 @@ test('single changed talkgroup preview shows the RadioReference-owned field chan
   await expect(preview.getByText('RadioReference fields changing')).toBeVisible();
   await expect(preview.getByText('Fireground Two')).toBeVisible();
   await expect(preview.getByText('Fireground 2', { exact: true })).toBeVisible();
+});
+
+test('large talkgroup catalogs filter locally without rendering thousands of rows', async ({ page }) => {
+  await installWorkspace(page, 'light', true);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByText('10,000 loaded talkgroups', { exact: false })).toBeVisible();
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(50);
+  await page.getByLabel('Filter talkgroup ID, name, or description').fill('Rare Target');
+  await expect(page.getByRole('checkbox', { name: 'Select Rare Target' })).toBeVisible();
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => path.includes('/systems/talkgroups/catalog?')).length);
+  expect(calls).toBe(1);
+});
+
+test('sites filter instantly from the loaded catalog', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  const search = page.getByLabel('Filter site or channel name');
+  await search.fill('missing');
+  await expect(page.getByText('No sites match this filter.')).toBeVisible();
+  await search.fill('simulcast');
+  await expect(page.getByText('Central Simulcast')).toBeVisible();
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => path.includes('/systems/sites/catalog?')).length);
+  expect(calls).toBe(1);
+});
+
+test('slow talkgroup loading shows a spinner until the catalog arrives', async ({ page }) => {
+  await installWorkspace(page, 'light', false, true);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.locator('.radioreference-talkgroup-table .ui-feedback-loading')).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeVisible();
 });
 
 for (const [name, theme, viewport] of [

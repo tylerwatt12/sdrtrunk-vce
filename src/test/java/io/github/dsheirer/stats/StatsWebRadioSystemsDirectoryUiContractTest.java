@@ -57,7 +57,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     void rendersEqualWidthSystemAndConventionalCardsFromSharedComponents() throws Exception
     {
         String app = readText(APP_JAVASCRIPT);
-        String directory = function(app, "function renderNestedRadioDirectory(renderContext)");
+        String directory = function(app, "function renderNestedRadioDirectory(renderContext, embedded = false)");
         String systemCard = function(app, "function radioDirectorySystemCard(row)");
         String channelCard = function(app, "function radioDirectoryConventionalCard(row)");
 
@@ -104,12 +104,13 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     void separatesTheReadOnlyDirectoryFromAdministrativeChannelSetup() throws Exception
     {
         String html = readText(INDEX_HTML);
-        int directory = html.indexOf("data-view=\"radio-systems\" class=\"nav-direct\"");
+        int directory = html.indexOf("data-view=\"dashboard\"");
         int manageGroup = html.indexOf("data-nav-group=\"configuration\"");
         int channelSetup = html.indexOf("data-view=\"channel-setup\"", manageGroup);
         int manageGroupEnd = html.indexOf("</details>", manageGroup);
 
         assertTrue(directory >= 0);
+        assertFalse(html.contains("data-view=\"radio-systems\""));
         assertFalse(html.contains("data-nav-group=\"radio\""));
         assertTrue(manageGroup > directory);
         assertTrue(channelSetup > manageGroup);

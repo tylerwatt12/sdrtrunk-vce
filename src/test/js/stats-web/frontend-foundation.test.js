@@ -380,9 +380,11 @@ async function main() {
   assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
     /ui-button ui-button-primary[\s\S]+ui-button ui-button-danger/);
   assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
-    /createRadioReferenceImportWorkspace\([\s\S]+Browse and import/);
+    /createRadioReferenceImportWorkspace\([\s\S]+workspace\.append\(importWorkspace\.element\)/);
+  assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
+    /openReadOnlyModal\('RadioReference settings'[\s\S]+gate\.hidden = connected/);
   assert.match(radioReferenceImportSource, /selectedTalkgroups: new Set\(\)/);
-  assert.match(radioReferenceImportSource, /Selections stay checked while paging or filtering/);
+  assert.match(radioReferenceImportSource, /Selections persist across filters and pages/);
   assert.match(radioReferenceImportSource, /Clear selection/);
   assert.match(radioReferenceImportSource, /Import Selected/);
   assert.match(radioReferenceImportSource, /Import All/);
@@ -392,7 +394,10 @@ async function main() {
   assert.match(radioReferenceImportSource, /Import one channel at a time/);
   assert.match(radioReferenceImportSource, /detectedSiteModulation/);
   assert.match(radioReferenceImportSource, /description\.includes\('simul'\)/);
-  assert.match(radioReferenceImportSource, /const SITE_LIMIT = 500/);
+  assert.match(radioReferenceImportSource, /const SITE_LIMIT = 50/);
+  assert.match(radioReferenceImportSource, /siteCatalog[\s\S]+talkgroupCatalog[\s\S]+bookmarks/);
+  assert.match(radioReferenceImportSource, /search\.addEventListener\('input'/);
+  assert.doesNotMatch(radioReferenceImportSource, /System, agency, city, or county/);
   assert.match(radioReferenceImportSource, /Preview no longer valid/);
   assert.match(radioReferenceImportSource, /existingAliasId/);
   assert.match(radioReferenceImportSource, /aliasTab: 'configure', alias: id/);
@@ -431,7 +436,7 @@ async function main() {
   assert.match(coverageSource, /bare: true/);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /bare: true/);
-  assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext\)/);
+  assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext, embedded\)/);
   assert.match(radioDirectorySource,
     /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);
   assert.match(radioDirectorySource,
@@ -842,8 +847,8 @@ async function main() {
   assert.equal(routes.resolve(registry, '?view=scanner').id, 'scanner');
   assert.equal(routes.resolve(registry, '?view=missing'), null);
   assert.equal(registry.admin.allowed(), false);
-  assert.equal(registry['radio-system'].parent, 'radio-systems');
-  assert.equal(registry.channel.parent, 'radio-systems');
+  assert.equal(registry['radio-system'].parent, 'dashboard');
+  assert.equal(registry.channel.parent, 'dashboard');
   assert.equal(registry['channel-setup'].allowed(), true);
   assert.throws(() => routes.createRegistry({ ...handlers, extra: () => {} }, () => true), /Unknown route/);
   assert.throws(() => routes.createRegistry({ ...handlers, scanner: null }, () => true), /Missing route/);

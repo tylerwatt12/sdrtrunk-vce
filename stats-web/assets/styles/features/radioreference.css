@@ -1,36 +1,65 @@
-.radioreference-import-workspace {
-  min-width: 0;
-  padding: var(--space-4) 18px 20px;
-  background: var(--surface-2);
-}
-
-.radioreference-browser,
-.radioreference-import-detail,
-.radioreference-system-body,
-.radioreference-talkgroup-table,
-.radioreference-preview,
-.radioreference-import-complete {
+.radioreference-page,
+.radioreference-connected-page,
+.radioreference-browser {
   min-width: 0;
   display: grid;
   gap: var(--space-3);
+}
+
+.radioreference-login-gate {
+  width: min(460px, 100%);
+  margin: var(--space-5) auto;
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.radioreference-login-gate[hidden],
+.radioreference-connected-page[hidden] {
+  display: none;
+}
+
+.radioreference-login-gate :where(h2, p) {
+  margin: 0;
+}
+
+.radioreference-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.read-only-modal.radioreference-settings-modal {
+  width: min(760px, 96vw);
+}
+
+.radioreference-settings-modal .admin-settings-form-stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.radioreference-import-workspace {
+  min-width: 0;
 }
 
 .radioreference-browse-form {
+  min-width: 0;
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
 }
 
 .radioreference-browse-fields,
 .radioreference-form-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
-.radioreference-browse-fields {
-  grid-template-columns: repeat(4, minmax(130px, 1fr)) minmax(220px, 1.5fr);
+.radioreference-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .radioreference-browse-fields .admin-form-field,
@@ -40,9 +69,92 @@
   min-width: 0;
 }
 
-.radioreference-browse-footer,
-.radioreference-pager,
+.radioreference-workbench-grid {
+  min-width: 0;
+  height: min(68vh, 710px);
+  min-height: 440px;
+  display: grid;
+  grid-template-columns: minmax(255px, 31%) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.radioreference-directory-results,
+.radioreference-import-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.radioreference-directory-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.radioreference-directory-tabs {
+  flex: none;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.radioreference-directory-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.radioreference-directory-pager {
+  flex: none;
+}
+
+.radioreference-directory-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-weight: 700;
+}
+
+.radioreference-directory-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.radioreference-result-open {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.radioreference-bookmark {
+  width: 38px;
+  min-width: 38px;
+}
+
+.radioreference-import-detail {
+  overflow: auto;
+}
+
+.radioreference-system-workspace {
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .radioreference-detail-header,
+.radioreference-pager,
 .radioreference-talkgroup-actions,
 .radioreference-detection {
   min-width: 0;
@@ -51,26 +163,78 @@
   gap: var(--space-3);
 }
 
-.radioreference-browse-footer,
-.radioreference-pager,
-.radioreference-detail-header {
+.radioreference-detail-header,
+.radioreference-pager {
   justify-content: space-between;
 }
 
-.radioreference-browse-footer .admin-form-message {
+.radioreference-detail-header {
+  flex: none;
+  padding: var(--space-3);
+  background: var(--section-header);
+  border-bottom: 1px solid var(--line);
+}
+
+.radioreference-detail-header > div {
+  min-width: 0;
   flex: 1 1 auto;
 }
 
-.radioreference-directory-results {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-2);
+.radioreference-detail-header :where(h2, p) {
+  margin: 0;
 }
 
-.radioreference-directory-results > .table-wrap,
-.radioreference-system-body > .table-wrap,
-.radioreference-talkgroup-table > .table-wrap {
-  border-radius: var(--radius-control);
+.radioreference-detail-header h2 {
+  margin-block: 2px;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+}
+
+.radioreference-system-tabs {
+  flex: none;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: var(--space-2) var(--space-3);
+}
+
+.radioreference-system-body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.radioreference-sites-toolbar,
+.radioreference-conventional-toolbar {
+  flex: none;
+  display: flex;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.radioreference-sites-toolbar .ui-search {
+  flex: 1 1 auto;
+}
+
+.radioreference-sites-list,
+.radioreference-talkgroup-table {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.radioreference-sites-list > .table-wrap,
+.radioreference-talkgroup-table > .table-wrap,
+.radioreference-system-body > .table-wrap {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .data-table[data-table-type^="radioreference-"][data-mobile-cards="true"] {
@@ -78,10 +242,15 @@
 }
 
 .radioreference-pager {
+  flex: none;
   padding: var(--space-2) var(--space-3);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+}
+
+.radioreference-directory-pager .radioreference-pager {
+  border-width: 1px 0 0;
 }
 
 .radioreference-row-identity {
@@ -97,66 +266,39 @@
   white-space: nowrap;
 }
 
-.radioreference-system-workspace {
-  scroll-margin-top: var(--space-4);
-  overflow: hidden;
-}
-
-.radioreference-detail-header {
-  padding: var(--space-4) 18px;
-  background: var(--section-header);
-  border-bottom: 1px solid var(--line);
-}
-
-.radioreference-detail-header > div {
-  min-width: 0;
-}
-
-.radioreference-detail-header :where(h2, p) {
-  margin: 0;
-}
-
-.radioreference-detail-header h2 {
-  margin-block: 2px;
-  overflow-wrap: anywhere;
-  font-size: 20px;
-}
-
-.radioreference-system-tabs {
-  width: fit-content;
-  max-width: calc(100% - 36px);
-  margin: var(--space-3) 18px 0;
-}
-
-.radioreference-system-body {
-  padding: 0 18px 18px;
-}
-
-.radioreference-talkgroup-toolbar,
-.radioreference-conventional-toolbar {
-  border-width: 0 0 1px;
-  border-radius: 0;
-  box-shadow: none;
-}
-
 .radioreference-talkgroup-toolbar {
+  flex: none;
   display: grid;
-  grid-template-columns: minmax(190px, .8fr) minmax(180px, .7fr) minmax(240px, 1.3fr);
+  grid-template-columns: minmax(165px, .9fr) minmax(165px, .8fr) minmax(190px, 1.2fr);
+  gap: var(--space-2);
+}
+
+.radioreference-category-field {
+  min-width: 0;
+  display: flex;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.radioreference-category-field > .admin-form-field {
+  flex: 1 1 auto;
+}
+
+.radioreference-category-star {
+  flex: none;
+}
+
+.radioreference-status-filter,
+.radioreference-talkgroup-actions {
+  grid-column: 1 / -1;
 }
 
 .radioreference-talkgroup-actions {
-  grid-column: 1 / -1;
   justify-content: flex-end;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
 }
 
 .radioreference-selection-badge {
   margin-right: auto;
-}
-
-.radioreference-conventional-toolbar {
-  justify-content: flex-start;
 }
 
 .radioreference-conventional-toolbar .admin-form-field {
@@ -336,13 +478,40 @@
   justify-content: center;
 }
 
-@media (max-width: 1000px) {
-  .radioreference-browse-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 760px) {
+  .radioreference-workbench-grid {
+    height: auto;
+    min-height: 0;
+    display: block;
   }
 
-  .radioreference-browse-fields > :last-child {
-    grid-column: 1 / -1;
+  .radioreference-directory-results {
+    max-height: min(65vh, 610px);
+  }
+
+  .radioreference-import-detail {
+    display: none;
+  }
+
+  .radioreference-detail-open .radioreference-directory-results {
+    display: none;
+  }
+
+  .radioreference-detail-open .radioreference-import-detail {
+    display: block;
+  }
+
+  .radioreference-system-workspace {
+    min-height: 0;
+  }
+
+  .radioreference-system-body {
+    min-height: 360px;
+    max-height: 65vh;
+  }
+
+  .radioreference-browse-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .radioreference-talkgroup-toolbar {
@@ -355,7 +524,6 @@
 }
 
 @media (max-width: 640px) {
-  .radioreference-import-workspace,
   .radioreference-browse-form,
   .radioreference-system-body {
     padding: var(--space-3);
@@ -369,19 +537,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .radioreference-browse-fields > :last-child,
   .radioreference-talkgroup-search {
     grid-column: auto;
   }
 
-  .radioreference-browse-footer,
   .radioreference-pager,
   .radioreference-detail-header {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .radioreference-browse-footer > button,
   .radioreference-detail-header > button,
   .radioreference-talkgroup-actions > button {
     width: 100%;

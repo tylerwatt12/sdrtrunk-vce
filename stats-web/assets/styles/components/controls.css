@@ -770,9 +770,31 @@
 .quality-bad { color: var(--danger); }
 
 .ui-feedback-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+}
+
+.ui-feedback-loading::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ui-feedback-spin .75s linear infinite;
+}
+
+@keyframes ui-feedback-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-feedback-loading::before { animation: none; }
 }
 
 .ui-feedback-error {

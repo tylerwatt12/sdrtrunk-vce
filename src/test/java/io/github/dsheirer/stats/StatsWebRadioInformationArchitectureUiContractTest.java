@@ -26,21 +26,23 @@ class StatsWebRadioInformationArchitectureUiContractTest
         String routes = readText(ROUTES);
         String index = readText(INDEX);
 
+        assertTrue(routes.contains("id: 'dashboard', label: 'Main'"));
         assertTrue(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
         assertFalse(routes.contains("id: 'identities', label: 'Identities'"));
         assertTrue(routes.contains("id: 'channel-setup', label: 'Channel Setup'"));
         assertTrue(routes.contains("access: 'admin-channels'"));
-        assertTrue(index.contains("data-view=\"radio-systems\""));
-        assertTrue(index.contains("data-view=\"radio-systems\" class=\"nav-direct\""));
+        assertTrue(index.contains("data-view=\"dashboard\""));
+        assertFalse(index.contains("data-view=\"radio-systems\""));
         assertFalse(index.contains("data-nav-group=\"radio\""));
         assertFalse(index.contains("data-view=\"identities\""));
         assertTrue(index.contains("data-view=\"channel-setup\""));
         assertTrue(index.contains("<summary>Manage</summary>"));
         assertFalse(index.contains("data-view=\"channels\""));
-        assertTrue(app.contains("if (view === 'channels')"));
+        assertTrue(app.contains("if (view === 'channels' || view === 'radio-systems')"));
         assertTrue(app.contains("if (view === 'identities')"));
         assertTrue(app.contains("route.set('directory_view', 'coverage')"));
-        assertTrue(app.contains("route.set('view', 'radio-systems')"));
+        assertTrue(app.contains("route.set('view', 'dashboard')"));
+        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, true)"));
         assertTrue(app.contains("editable ? 'Channel Setup' : 'Radio Directory'"));
         assertTrue(app.contains("if (editable) columns.push"));
     }
@@ -54,7 +56,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("apiPage('/api/v1/identities/lists'"));
         assertTrue(app.contains("/overview`"));
         assertTrue(app.contains("/unassigned`"));
-        assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext)"));
+        assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext, embedded = false)"));
         assertFalse(app.contains("See aliases that activity-only views cannot show"));
         assertFalse(app.contains("Where this Alias List is used"));
         assertTrue(app.contains("node('h2', '', 'Configuration scope')"));

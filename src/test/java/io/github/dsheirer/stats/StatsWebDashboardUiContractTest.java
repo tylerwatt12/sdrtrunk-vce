@@ -27,17 +27,18 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
         assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
-        assertTrue(dashboard.contains("{ id: 'health', label: 'Signal quality'"));
+        assertTrue(dashboard.contains("{ id: 'health', label: 'Main'"));
         assertTrue(dashboard.contains("{ id: 'activity', label: 'Activity'"));
-        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Signal quality'") <
+        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Main'") <
             dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
             dashboard.indexOf("{ id: 'activity', label: 'Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, true)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
         assertTrue(dashboard.indexOf("if (tab === 'health')") <
-            dashboard.indexOf("await signalHealthSection()"));
+            dashboard.indexOf("const signalPromise = signalHealthSection()"));
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
         assertFalse(dashboard.contains("dashboard.recent_channels"));
@@ -282,9 +283,6 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".dashboard-summary-section .summary-band"));
         assertTrue(css.contains(".dashboard-identity-context"));
-        assertTrue(css.contains(".dashboard-mode"));
-        assertTrue(css.contains(".identity-summary"));
-        assertTrue(css.contains(".identity-summary-context"));
         assertTrue(css.contains(".dashboard-activity-layout"));
         assertTrue(css.contains(".dashboard-activity-donut"));
         assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));
