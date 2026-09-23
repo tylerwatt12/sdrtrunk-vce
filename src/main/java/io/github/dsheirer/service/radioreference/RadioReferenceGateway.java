@@ -11,6 +11,7 @@
 package io.github.dsheirer.service.radioreference;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * JavaFX-independent boundary around the RadioReference client library.
@@ -28,6 +29,11 @@ public interface RadioReferenceGateway extends AutoCloseable
     }
 
     List<Country> countries() throws RadioReferenceGatewayException;
+
+    default Map<Integer,String> systemTypes() throws RadioReferenceGatewayException
+    {
+        return Map.of();
+    }
 
     CountryDirectory country(int countryId) throws RadioReferenceGatewayException;
 

@@ -74,6 +74,117 @@ class RadioReferenceImportServiceTest
                 RadioReferenceImportService.FrequencySet.ALL, List.of()));
         assertThrows(IllegalArgumentException.class, () -> RadioReferenceImportService.selectSiteFrequencies(site,
             RadioReferenceImportService.FrequencySet.CONTROL, List.of(851_100_000L)));
+        TrunkedSiteDetails alternatesOnly = site("No primary", "", List.of(
+            channel(851_200_000L, "a", false, true)));
+        assertThrows(IllegalArgumentException.class, () -> RadioReferenceImportService.selectSiteFrequencies(
+            alternatesOnly, RadioReferenceImportService.FrequencySet.CONTROL_AND_ALTERNATES, List.of()));
+    }
+
+    @Test
+    void controlFreeSitesUseAllUniqueFrequenciesWithoutInventingAControlChannel() throws Exception
+    {
+        TrunkedSiteDetails site = site("Ford Plant Primary", "", List.of(
+            new TrunkedSiteChannel(861_112_500L, 1, "01", "", "1", false, false),
+            new TrunkedSiteChannel(861_112_500L, 2, "01", "", "1", false, false),
+            new TrunkedSiteChannel(861_512_500L, 3, "02", "", "1", false, false),
+            new TrunkedSiteChannel(861_887_500L, 5, "03", "", "1", false, false),
+            new TrunkedSiteChannel(861_712_500L, 9, "05", "", "1", false, false),
+            new TrunkedSiteChannel(861_962_500L, 11, "06", "", "1", false, false)));
+        assertThrows(IllegalArgumentException.class, () -> RadioReferenceImportService.selectSiteFrequencies(site,
+            RadioReferenceImportService.FrequencySet.CONTROL_AND_ALTERNATES, List.of()));
+        assertEquals(5, RadioReferenceImportService.selectSiteFrequencies(site,
+            RadioReferenceImportService.FrequencySet.ALL, List.of()).size());
+
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.directory.system = new TrunkedSystemDetails(10, "Ford Plant", "", "DMR",
+                "Motorola Capacity Plus Single Site (TRBO)", "DMR", "", "");
+            fixture.directory.site = site;
+            long dmrList = aliasList(fixture, AliasListFamily.DMR);
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewSite(
+                new RadioReferenceImportService.SiteImportRequest(10, 20, dmrList,
+                    RadioReferenceImportService.FrequencySet.CONTROL_AND_ALTERNATES, List.of(),
+                    null, null, null)));
+            RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewSite(
+                new RadioReferenceImportService.SiteImportRequest(10, 20, dmrList,
+                    RadioReferenceImportService.FrequencySet.ALL, List.of(), null, null, null));
+            assertEquals("dmr", preview.channel().protocolId());
+            assertEquals("TRUNKED", preview.channel().settings().get("channel_mode"));
+            assertEquals(5, preview.channel().source().frequenciesHz().size());
+            assertEquals(List.of(1, 2, 3, 5, 6), preview.channel().frequencyMap().stream()
+                .map(ChannelDefinition.FrequencyMapEntry::number).toList());
+        }
+    }
+
+    @Test
+    void supportedTrunkedFlavorsChooseTheirDecoderAndSettings() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            record Case(String type, String flavor, AliasListFamily family, String protocol, String mode) {}
+            List<Case> cases = List.of(
+                new Case("Project 25", "Phase I", AliasListFamily.P25, "p25-phase1", null),
+                new Case("Project 25", "Phase II", AliasListFamily.P25, "p25-phase2", null),
+                new Case("DMR", "Motorola Capacity Plus Single Site (TRBO)", AliasListFamily.DMR, "dmr", null),
+                new Case("DMR", "Motorola Capacity Plus Multi Site (TRBO)", AliasListFamily.DMR, "dmr", null),
+                new Case("DMR", "Motorola Connect Plus (TRBO)", AliasListFamily.DMR, "dmr", null),
+                new Case("DMR", "Motorola Capacity Max", AliasListFamily.DMR, "dmr", null),
+                new Case("DMR", "Tier 3 Standard", AliasListFamily.DMR, "dmr", null),
+                new Case("DMR", "Conventional Networked", AliasListFamily.DMR, "dmr", null),
+                new Case("NXDN", "NEXEDGE 4800", AliasListFamily.NXDN, "nxdn", "M4800"),
+                new Case("NXDN", "NEXEDGE 9600", AliasListFamily.NXDN, "nxdn", "M9600"),
+                new Case("NXDN", "Conventional Networked", AliasListFamily.NXDN, "nxdn", "M9600"),
+                new Case("NXDN", "Icom IDAS Type C", AliasListFamily.NXDN, "nxdn", "M4800"),
+                new Case("NXDN", "Icom IDAS Type D", AliasListFamily.NXDN, "nxdn", "TYPE_D"),
+                new Case("NXDN", "Kenwood Type D", AliasListFamily.NXDN, "nxdn", "TYPE_D"));
+            fixture.directory.site = new TrunkedSiteDetails(20, 10, 1, "Test Site", 1, 0, 1, "321", 0,
+                "C4FM", true, List.of(channel(851_100_000L, "", false, false)));
+            for(Case value: cases)
+            {
+                fixture.directory.system = new TrunkedSystemDetails(10, "Test System", "", value.type(),
+                    value.flavor(), "Digital", "BEE00", "123");
+                RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewSite(
+                    new RadioReferenceImportService.SiteImportRequest(10, 20, aliasList(fixture, value.family()),
+                        RadioReferenceImportService.FrequencySet.ALL, List.of(), null, null, null));
+                assertEquals(value.protocol(), preview.channel().protocolId(), value.toString());
+                if(value.family() == AliasListFamily.DMR || value.family() == AliasListFamily.NXDN)
+                {
+                    assertEquals(value.flavor().equals("Conventional Networked") ? "CONVENTIONAL" : "TRUNKED",
+                        preview.channel().settings().get("channel_mode"), value.toString());
+                    if(value.flavor().equals("Conventional Networked"))
+                    {
+                        assertTrue(preview.channel().frequencyMap().isEmpty(), value.toString());
+                    }
+                }
+                if(value.mode() != null)
+                {
+                    assertEquals(value.mode(), preview.channel().settings().get("transmission_mode"),
+                        value.toString());
+                }
+            }
+            fixture.directory.system = new TrunkedSystemDetails(10, "Mixed Phase II", "", "Project 25",
+                "Phase II", "Digital", "BEE00", "123");
+            fixture.directory.site = site("Phase I control", "C4FM",
+                List.of(channel(851_100_000L, "d", true, false)));
+            RadioReferenceImportService.ChannelPreview phaseOneSite = fixture.importer.previewSite(
+                new RadioReferenceImportService.SiteImportRequest(10, 20,
+                    aliasList(fixture, AliasListFamily.P25), RadioReferenceImportService.FrequencySet.ALL,
+                    List.of(), null, null, null));
+            assertEquals("p25-phase1", phaseOneSite.channel().protocolId(),
+                "Phase II systems may still have a Phase I control site");
+            fixture.directory.system = new TrunkedSystemDetails(10, "Legacy system", "", "EDACS",
+                "Standard", "Analog", "", "");
+            assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewSite(
+                new RadioReferenceImportService.SiteImportRequest(10, 20,
+                    aliasList(fixture, AliasListFamily.P25), RadioReferenceImportService.FrequencySet.ALL,
+                    List.of(), null, null, null)), "Unsupported system types must not silently choose a decoder");
+        }
+    }
+
+    private static long aliasList(Fixture fixture, AliasListFamily family)
+    {
+        return fixture.aliases.catalog().aliasLists().stream().filter(list -> list.getFamily() == family)
+            .findFirst().orElseThrow().getId();
     }
 
     @Test
@@ -132,7 +243,12 @@ class RadioReferenceImportServiceTest
             fixture.directory.system = p25System();
             RadioReferenceImportService.TalkgroupPage page = fixture.importer.talkgroups(10, p25List, null, null,
                 0, 100);
-            RadioReferenceImportService.TalkgroupPage catalog = fixture.importer.talkgroupCatalog(10, p25List, null);
+            RadioReferenceImportService.TalkgroupPage raw = fixture.importer.talkgroupCatalog(10, null, null);
+            assertEquals(2, raw.items().size());
+            assertEquals(RadioReferenceImportService.TalkgroupStatus.UNCOMPARED, raw.items().getFirst().status());
+            RadioReferenceImportService.TalkgroupPage catalog = fixture.importer.talkgroupCatalog(10, p25List,
+                raw.catalogId());
+            assertEquals(raw.catalogId(), catalog.catalogId());
             int categoryReadsAtCatalog = fixture.directory.categoryReads;
             assertEquals(2, catalog.totalItems());
             assertEquals(2, catalog.items().size());

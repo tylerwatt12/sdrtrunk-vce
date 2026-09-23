@@ -268,7 +268,8 @@ public final class RadioReferenceHttpController
                 ensureStoredSession();
                 ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupCatalog(
                     positiveInt(query.get("system_id"), "system_id"),
-                    positiveLong(query.get("alias_list_id"), "alias_list_id"), query.get("catalog_id")));
+                    query.containsKey("alias_list_id") ? positiveLong(query.get("alias_list_id"), "alias_list_id") :
+                        null, query.get("catalog_id")));
             }
             else if((PATH + "/conventional/categories").equals(path))
             {

@@ -334,7 +334,7 @@ class RrapiRadioReferenceGatewayTransportTest
         List<String> responses = List.of(response(systemResponse), response(typesResponse),
             response(flavorsResponse), response(voicesResponse), response(sitesResponse),
             response(talkgroupsResponse), response(categoriesResponse), response(frequenciesResponse),
-            response(modesResponse), response(feedsResponse));
+            response(modesResponse), response(feedsResponse), response(typesResponse));
         AtomicInteger requestIndex = new AtomicInteger();
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
@@ -379,6 +379,9 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("audio.example.test", feed.host());
             assertEquals("feed-secret", feed.password());
             assertFalse(feed.toString().contains("feed-secret"));
+            assertEquals("Project 25", gateway.systemTypes().get(1));
+            assertEquals("Project 25", gateway.systemTypes().get(1),
+                "Directory type labels should reuse the first type-catalog request");
         }
 
         assertEquals(responses.size(), requestIndex.get());

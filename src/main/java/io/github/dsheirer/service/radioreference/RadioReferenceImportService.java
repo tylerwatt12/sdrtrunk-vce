@@ -112,6 +112,12 @@ public final class RadioReferenceImportService
 
         FrequencySet frequencySet = Objects.requireNonNull(request.frequencySet(),
             "Frequency selection is required");
+        if((normalized(system.flavor()).contains("capacity plus") ||
+            normalized(system.flavor()).contains("conventional networked")) &&
+            (frequencySet == FrequencySet.CONTROL || frequencySet == FrequencySet.CONTROL_AND_ALTERNATES))
+        {
+            throw new IllegalArgumentException("This system has no dedicated control channel; choose All or Selected");
+        }
         List<Long> frequencies = selectSiteFrequencies(site, frequencySet, request.selectedFrequenciesHz());
         List<Long> allFrequencies = allSiteFrequencies(site);
         long minimum = allFrequencies.stream().mapToLong(Long::longValue).min().orElseThrow();
@@ -220,8 +226,8 @@ public final class RadioReferenceImportService
             categories);
     }
 
-    /** Annotates the bounded catalog once so browser searches do not repeat an upstream request. */
-    public TalkgroupPage talkgroupCatalog(int systemId, long aliasListId, String catalogId)
+    /** Loads the catalog independently, then optionally annotates it against an Alias List. */
+    public TalkgroupPage talkgroupCatalog(int systemId, Long aliasListId, String catalogId)
         throws RadioReferenceDirectoryException
     {
         positive(systemId, "system_id");
@@ -229,6 +235,15 @@ public final class RadioReferenceImportService
             requireTalkgroupCatalog(catalogId, systemId);
         DecoderPlan decoder = systemDecoder(catalog.system());
         requireSupported(decoder);
+        if(aliasListId == null)
+        {
+            Map<Integer,String> categoryNames = new HashMap<>();
+            catalog.categories().forEach(category -> categoryNames.put(category.id(), textOrNull(category.name())));
+            List<TalkgroupRow> items = catalog.talkgroups().stream()
+                .map(talkgroup -> new TalkgroupRow(talkgroup, categoryNames.get(talkgroup.categoryId()),
+                    TalkgroupStatus.UNCOMPARED, null, List.of())).toList();
+            return new TalkgroupPage(0, items, 0, null, items.size(), catalog.categories(), catalog.id());
+        }
         requireCompatibleTalkgroupList(aliasListId, decoder.decoderType());
         AliasRows rows = aliasRows(aliasListId, decoder.protocol(), catalog.talkgroups(), catalog.categories());
         return new TalkgroupPage(rows.revision(), rows.items(), 0, null, rows.items().size(),
@@ -437,13 +452,21 @@ public final class RadioReferenceImportService
                 settings.put("scramble_nac", parseHex(site.nac()));
             }
             case DMR -> {
-                settings.put("channel_mode", "TRUNKED");
-                frequencyMap = frequencyMap(site, false);
+                boolean conventional = normalized(system.flavor()).contains("conventional networked");
+                settings.put("channel_mode", conventional ? "CONVENTIONAL" : "TRUNKED");
+                if(!conventional)
+                {
+                    frequencyMap = frequencyMap(site, false);
+                }
             }
             case NXDN -> {
-                settings.put("channel_mode", "TRUNKED");
+                boolean conventional = normalized(system.flavor()).contains("conventional networked");
+                settings.put("channel_mode", conventional ? "CONVENTIONAL" : "TRUNKED");
                 settings.put("transmission_mode", nxdnTransmissionMode(system.flavor()));
-                frequencyMap = frequencyMap(site, true);
+                if(!conventional)
+                {
+                    frequencyMap = frequencyMap(site, true);
+                }
             }
             default -> throw new IllegalArgumentException("Unsupported trunked decoder " + decoder.decoderType());
         }
@@ -537,6 +560,10 @@ public final class RadioReferenceImportService
             case CONTROL -> available.stream().filter(RadioReferenceImportService::isPrimaryControl)
                 .map(TrunkedSiteChannel::frequencyHz).filter(value -> value > 0).forEach(selected::add);
             case CONTROL_AND_ALTERNATES -> {
+                if(available.stream().noneMatch(RadioReferenceImportService::isPrimaryControl))
+                {
+                    throw new IllegalArgumentException("The RadioReference site has no primary control frequency");
+                }
                 available.stream().filter(RadioReferenceImportService::isPrimaryControl)
                     .map(TrunkedSiteChannel::frequencyHz).filter(value -> value > 0).forEach(selected::add);
                 available.stream().filter(RadioReferenceImportService::isAlternateControl)
@@ -952,12 +979,13 @@ public final class RadioReferenceImportService
 
     private static String nxdnTransmissionMode(String flavor)
     {
-        return switch(text(flavor))
+        String normalized = normalized(flavor);
+        if(normalized.contains("type d"))
         {
-            case "NEXEDGE 9600", "Conventional Networked" -> "M9600";
-            case "Icom IDAS Type D", "Kenwood Type D" -> "TYPE_D";
-            default -> "M4800";
-        };
+            return "TYPE_D";
+        }
+        return normalized.contains("9600") || normalized.contains("conventional networked") ?
+            "M9600" : "M4800";
     }
 
     private static String fallback(String requested, String fallback)
@@ -1011,6 +1039,7 @@ public final class RadioReferenceImportService
 
     public enum TalkgroupStatus
     {
+        UNCOMPARED,
         NOT_PRESENT,
         IDENTICAL,
         DIFFERENT

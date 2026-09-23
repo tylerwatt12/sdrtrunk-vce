@@ -80,6 +80,13 @@ function compatibleFamily(value) {
   return '';
 }
 
+function systemTypeLabel(value) {
+  const type = textValue(value, ['system_type', 'systemType', 'type_name']) ||
+    (entryKind(value) === 'TRUNKED_SYSTEM' ? '' : textValue(value, ['type']));
+  const family = compatibleFamily({ type });
+  return family === 'P25' || family === 'DMR' || family === 'NXDN' ? family : type;
+}
+
 function query(path, values) {
   const parameters = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -123,7 +130,7 @@ function siteChannels(site, detail = null) {
 function siteModulation(site) {
   const modulation = textValue(site, ['detected_modulation', 'detectedModulation', 'p25_modulation',
     'p25Modulation', 'modulation']);
-  return modulation || 'Not applicable';
+  return modulation;
 }
 
 function siteUsesTdmaControl(site, detail = null) {
@@ -140,7 +147,7 @@ function siteUsesTdmaControl(site, detail = null) {
 
 function detectedSiteModulation(system, site, detail = null) {
   const family = compatibleFamily(system) || compatibleFamily(detail) || compatibleFamily(site);
-  if (family !== 'P25' || siteUsesTdmaControl(site, detail)) return 'Not applicable';
+  if (family !== 'P25' || siteUsesTdmaControl(site, detail)) return '';
   const description = [textValue(site, ['name', 'description']),
     textValue(detail?.site || detail, ['name', 'description'])].join(' ').toLowerCase();
   if (description.includes('simul')) return 'CQPSK';
@@ -175,7 +182,8 @@ function frequencyId(value) {
 }
 
 function importStatus(value) {
-  const status = textValue(value, ['import_status', 'importStatus', 'status'], 'NOT_PRESENT').toUpperCase();
+  const status = textValue(value, ['import_status', 'importStatus', 'status'], 'UNCOMPARED').toUpperCase();
+  if (status === 'UNCOMPARED') return { label: 'Choose Alias List', tone: 'neutral' };
   if (status === 'IDENTICAL') return { label: 'Identical', tone: 'success' };
   if (status === 'DIFFERENT') return { label: 'Different', tone: 'warning' };
   if (status === 'NOT_COMPATIBLE' || status === 'INCOMPATIBLE') {
@@ -231,9 +239,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     bookmarks: [],
     siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
+    talkgroupLoads: new Map(),
     talkgroupCatalogId: null,
     siteSearch: '',
     siteSort: 'number',
+    selectedCountyId: null,
+    selectedCountyName: '',
     talkgroupStatus: 'ALL',
     browseSequence: 0,
     detailSequence: 0,
@@ -528,14 +539,24 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const siteFrequencyDescription = (value) => {
     const use = textValue(value, ['use', 'description', 'channel_use']);
     const tags = [];
-    if (value?.primary_control === true || value?.primaryControl === true) tags.push('Control');
-    if (value?.alternate_control === true || value?.alternateControl === true) tags.push('Alternate');
+    if (value?.primary_control === true || value?.primaryControl === true || use.toLowerCase() === 'd')
+      tags.push('Control');
+    if (value?.alternate_control === true || value?.alternateControl === true || use.toLowerCase() === 'a')
+      tags.push('Alternate');
     return tags.join(' · ') || use || 'Frequency';
   };
+
+  const hasPrimaryControl = (value) => value?.primary_control === true || value?.primaryControl === true ||
+    textValue(value, ['use']).toLowerCase() === 'd';
+
+  const capacityPlus = (system) => textValue(system, ['flavor']).toLowerCase().includes('capacity plus');
+  const conventionalNetworked = (system) => textValue(system, ['flavor']).toLowerCase()
+    .includes('conventional networked');
 
   const openSiteImport = (system, site, detail) => {
     const family = compatibleFamily(detail) || compatibleFamily(system);
     const channels = siteChannels(site, detail).filter((value) => frequencyHz(value) > 0);
+    const uniqueChannels = [...new Map(channels.map((value) => [frequencyHz(value), value])).values()];
     const form = node('form', 'radioreference-site-form editor-workspace');
     const systemName = input();
     const siteName = input();
@@ -546,26 +567,39 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
     const aliases = aliasSelect(family, integerValue(detail, ['default_alias_list_id', 'defaultAliasListId']));
     const modulation = detectedSiteModulation(system, site, detail);
+    const hasControl = !capacityPlus(system) && !conventionalNetworked(system) &&
+      channels.some(hasPrimaryControl);
+    const defaultMode = hasControl ? 'CONTROL_AND_ALTERNATES' : 'ALL';
     const modeInputs = new Map();
     const modeGrid = node('div', 'radioreference-frequency-modes');
-    [
-      ['CONTROL', 'Control', 'Use only the primary control frequency.'],
-      ['CONTROL_AND_ALTERNATES', 'Control + alternates', 'Recommended for normal trunked operation.'],
-      ['SELECTED', 'Selected', 'Choose an exact set of site frequencies.'],
-      ['ALL', 'All', 'Use every listed frequency for this site.']
-    ].forEach(([value, label, description]) => {
+    const modeDetails = new Map([
+      ['CONTROL', ['Control', 'Use only the primary control frequency.']],
+      ['CONTROL_AND_ALTERNATES', ['Control + alternates', 'Use marked control and alternate frequencies.']],
+      ['SELECTED', ['Selected', 'Choose an exact set of site frequencies.']],
+      ['ALL', ['All', 'Use every listed frequency for this site.']]
+    ]);
+    const modeOrder = hasControl ? ['CONTROL_AND_ALTERNATES', 'CONTROL', 'SELECTED', 'ALL'] :
+      ['ALL', 'SELECTED', 'CONTROL', 'CONTROL_AND_ALTERNATES'];
+    modeOrder.forEach((value) => {
+      const [label, description] = modeDetails.get(value);
       const choice = node('label', 'ui-choice-card radioreference-frequency-mode');
       const radio = node('input', 'ui-choice-radio');
       radio.type = 'radio';
       radio.name = 'frequency-mode';
       radio.value = value;
-      radio.checked = value === 'CONTROL_AND_ALTERNATES';
-      choice.append(radio, node('span', '', label), node('small', 'muted', description));
+      radio.checked = value === defaultMode;
+      radio.disabled = !hasControl && (value === 'CONTROL' || value === 'CONTROL_AND_ALTERNATES');
+      if (radio.disabled) choice.title = capacityPlus(system) ?
+        'Capacity Plus uses a moving rest channel, not a dedicated control channel.' :
+        conventionalNetworked(system) ? 'Conventional networked systems do not use a control channel.' :
+        'RadioReference does not identify a primary control frequency for this site.';
+      choice.append(radio, node('span', '', label), node('small', 'muted', radio.disabled ?
+        'Unavailable: no dedicated control frequency.' : description));
       modeInputs.set(value, radio);
       modeGrid.append(choice);
     });
     const selectedFrequencies = node('div', 'radioreference-frequency-choices');
-    channels.forEach((value) => {
+    uniqueChannels.forEach((value) => {
       const choice = node('label', 'radioreference-frequency-choice');
       const checkbox = node('input', 'ui-selection-check');
       checkbox.type = 'checkbox';
@@ -581,9 +615,22 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       frequencyPanel.hidden = !modeInputs.get('SELECTED').checked;
     });
     const detection = node('div', 'radioreference-detection');
-    detection.append(node('span', 'muted', 'Detected P25 modulation'), uiPill(modulation,
-      modulation.toUpperCase().includes('CQPSK') || modulation.toUpperCase().includes('LSM') ? 'blue' : 'neutral'));
-    if (modulation !== 'Not applicable') detection.append(node('small', 'muted',
+    const flavor = textValue(system, ['flavor']);
+    const voice = textValue(system, ['voice']);
+    detection.append(node('span', 'muted', 'System'), uiPill(systemTypeLabel(system) || family || 'Trunked',
+      'protocol'));
+    if (flavor) detection.append(node('span', '', flavor));
+    if (voice && voice.toLowerCase() !== (systemTypeLabel(system) || '').toLowerCase())
+      detection.append(node('span', 'muted', `Voice: ${voice}`));
+    detection.append(node('span', 'muted', `${uniqueChannels.length} frequencies`));
+    if (!hasControl) detection.append(node('small', 'muted', capacityPlus(system) ?
+      'Capacity Plus uses a moving rest channel. All site frequencies are selected by default.' :
+      conventionalNetworked(system) ?
+        'This conventional networked system has no control channel. All site frequencies are selected by default.' :
+      'No primary control frequency is marked for this site. All site frequencies are selected by default.'));
+    if (modulation) detection.append(node('span', 'muted', 'Detected P25 modulation'), uiPill(modulation,
+      modulation.toUpperCase().includes('CQPSK') || modulation.toUpperCase().includes('LSM') ? 'blue' : 'neutral'),
+      node('small', 'muted',
       'Detection uses RadioReference modulation hints and “simul” in the site name or description. Change it later ' +
       'in Channel Setup if needed.'));
     const message = node('div', 'admin-form-message');
@@ -683,11 +730,20 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const term = search.value.trim().toLowerCase();
         state.siteSearch = search.value;
         const matches = (term ? catalog.filter((value) => value.searchText.includes(term)) : catalog).slice();
-        if (sort.value === 'alphabetical') matches.sort((a, b) =>
-          textValue(a.site, ['name', 'description']).localeCompare(textValue(b.site, ['name', 'description']),
-            undefined, { numeric: true }));
+        const matchingCounty = (value) => state.selectedCountyId &&
+          integerValue(value.site, ['county_id', 'countyId']) === state.selectedCountyId;
+        matches.sort((a, b) => {
+          const countyOrder = Number(Boolean(matchingCounty(b))) - Number(Boolean(matchingCounty(a)));
+          if (countyOrder) return countyOrder;
+          if (sort.value === 'alphabetical') return textValue(a.site, ['name', 'description'])
+            .localeCompare(textValue(b.site, ['name', 'description']), undefined, { numeric: true });
+          return (Number(firstValue(a.site, ['number', 'site_number'], 0)) || 0) -
+            (Number(firstValue(b.site, ['number', 'site_number'], 0)) || 0);
+        });
         const values = matches.slice(offset, offset + SITE_LIMIT).map((value) => value.site);
-        count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites`;
+        const countyCount = state.selectedCountyId ? matches.filter(matchingCounty).length : 0;
+        count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites` +
+          (countyCount ? ` · ${formatNumber(countyCount)} ${state.selectedCountyName} first` : '');
         const rendered = table(values, [
         { id: 'site', label: 'Site', width: 340, render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
@@ -702,11 +758,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           if (context) identity.append(node('small', 'muted', context));
           return identity;
         } },
-        { id: 'modulation', label: 'Detected modulation', width: 170,
-          render: (site) => {
-            const modulation = detectedSiteModulation(systemDetails, site);
-            return uiPill(modulation, modulation === 'CQPSK' ? 'blue' : 'neutral');
-          } },
+        { id: 'system', label: 'System', width: 200, render: (site) => {
+          const detail = node('span', 'radioreference-row-identity');
+          detail.append(uiPill(systemTypeLabel(systemDetails) || 'Trunked', 'protocol'));
+          const flavor = textValue(systemDetails, ['flavor']);
+          if (flavor) detail.append(node('small', 'muted', flavor));
+          const modulation = detectedSiteModulation(systemDetails, site);
+          if (modulation) detail.append(node('small', 'muted', `${modulation} control`));
+          return detail;
+        } },
         { id: 'frequencies', label: 'Frequencies', render: (site) => {
           const channels = siteChannels(site);
           return channels.length ? `${formatNumber(channels.length)} available` : 'Loaded during preview';
@@ -789,8 +849,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       clear.disabled = count === 0;
       importSelected.disabled = count === 0 || !aliasList.value || !state.talkgroupCatalogId;
       importAll.disabled = !aliasList.value || !state.talkgroupCatalogId;
-      aliasList.disabled = count > 0;
-      aliasList.title = count > 0 ? 'Clear the current selection before changing Alias Lists.' : '';
+      aliasList.disabled = count > 0 && Boolean(aliasList.value);
+      aliasList.title = aliasList.disabled ? 'Clear the current selection before changing Alias Lists.' : '';
     };
     const categoryRows = rows(systemDocument?.talkgroup_categories || systemDocument?.categories ||
       systemDocument?.talkgroupCategories);
@@ -812,10 +872,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     updateSelection();
 
     const draw = () => {
-      if (!aliasList.value || !catalog.length) {
-        tableHost.replaceChildren(empty(catalog.length ? 'Choose an Alias List' : 'No talkgroups',
-          catalog.length ? 'Choose a compatible destination Alias List.' :
-            'RadioReference returned no talkgroups for this system.'));
+      if (!catalog.length) {
+        tableHost.replaceChildren(empty('No talkgroups',
+          'RadioReference returned no talkgroups for this system.'));
         return;
       }
       const term = search.value.trim().toLowerCase();
@@ -866,7 +925,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             return control;
           } },
         { id: 'talkgroup', label: 'Talkgroup', width: 130,
-          render: (talkgroup) => formatNumber(firstValue(talkgroupValue(talkgroup),
+          render: (talkgroup) => String(firstValue(talkgroupValue(talkgroup),
             ['value', 'decimal', 'talkgroup_value'], talkgroupId(talkgroup) || 0)) },
         { id: 'alpha-tag', label: 'Alpha tag', width: 220,
           render: (talkgroup) => textValue(talkgroupValue(talkgroup),
@@ -889,27 +948,34 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         onPage: (next) => { offset = next; draw(); }
       }));
       status.textContent = formatNumber(filtered.length) + ' matching of ' +
-        formatNumber(catalog.length) + ' loaded talkgroups. Selections persist across filters and pages.';
+        formatNumber(catalog.length) + ' loaded talkgroups. ' +
+        (aliasList.value ? 'Selections persist across filters and pages.' :
+          'Choose an Alias List to compare import status; you can select talkgroups now.');
       updateSelection();
     };
 
     const load = async (force = false) => {
-      if (!aliasList.value) {
-        tableHost.replaceChildren(empty('Choose an Alias List',
-          'Talkgroup status is calculated against one compatible destination Alias List.'));
-        status.textContent = '';
-        updateSelection();
-        return;
-      }
-      const key = systemIdValue + ':' + aliasList.value;
-      tableHost.replaceChildren(feedback('Loading all talkgroups for instant filtering…', 'loading'));
+      const key = systemIdValue + ':' + (aliasList.value || 'raw');
+      aliasList.disabled = true;
+      tableHost.replaceChildren(feedback(aliasList.value ? 'Comparing talkgroups with Alias List…' :
+        'Loading all talkgroups for instant filtering…', 'loading'));
       status.textContent = '';
       try {
         if (force || !state.talkgroupCatalogs.has(key)) {
-          const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
-            system_id: systemIdValue, alias_list_id: aliasList.value,
-            catalog_id: state.talkgroupCatalogId || undefined
-          }), { timeoutMs: 65_000 });
+          let pending = state.talkgroupLoads.get(key);
+          if (!pending) {
+            pending = api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
+              system_id: systemIdValue, alias_list_id: aliasList.value || undefined,
+              catalog_id: state.talkgroupCatalogId || undefined
+            }), { timeoutMs: 65_000 });
+            state.talkgroupLoads.set(key, pending);
+          }
+          let response;
+          try {
+            response = await pending;
+          } finally {
+            if (state.talkgroupLoads.get(key) === pending) state.talkgroupLoads.delete(key);
+          }
           const loadedCatalogId = textValue(response, ['catalog_id', 'catalogId']) || null;
           state.talkgroupCatalogs.set(key, {
             catalogId: loadedCatalogId,
@@ -931,6 +997,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const saved = state.talkgroupCatalogs.get(key);
         state.talkgroupCatalogId = saved.catalogId;
         catalog = saved.items;
+        filter.querySelectorAll('button').forEach((control) => {
+          control.disabled = !aliasList.value && control.textContent !== 'All';
+        });
         if (!categoryRows.length && saved.categories.length && category.options.length <= 1) {
           setOptions(category, saved.categories, state.talkgroupCategoryId, 'All categories', true);
         }
@@ -945,6 +1014,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           return;
         }
         tableHost.replaceChildren(feedback(error.message, 'error'));
+        updateSelection();
       }
     };
 
@@ -991,6 +1061,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           state.onBookmarksChanged?.();
         })
           .catch((error) => { status.textContent = `Alias List preference could not be saved: ${error.message}`; });
+      }
+      if (!aliasList.value) {
+        state.talkgroupStatus = 'ALL';
+        filter.querySelectorAll('button').forEach((control) => {
+          control.classList.toggle('active', control.textContent === 'All');
+        });
       }
       load();
     });
@@ -1239,8 +1315,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
       const secondary = textValue(entry, ['secondary', 'location', 'description']);
       if (secondary) identity.append(node('small', 'muted', secondary));
-      open.append(identity, uiPill(entryKind(entry) === 'TRUNKED_SYSTEM' ? 'Trunked' : 'Conventional',
-        entryKind(entry) === 'TRUNKED_SYSTEM' ? 'blue' : 'neutral'));
+      const trunked = entryKind(entry) === 'TRUNKED_SYSTEM';
+      const kindLabel = trunked ? [systemTypeLabel(entry), 'Trunked'].filter(Boolean).join(' · ') :
+        'Conventional';
+      open.append(identity, uiPill(kindLabel, trunked ? 'blue' : 'neutral'));
       open.addEventListener('click', () => {
         listHost.querySelectorAll('.radioreference-directory-item.is-active').forEach((value) => {
           value.classList.remove('is-active');
@@ -1449,6 +1527,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           region: region.value ? region.selectedOptions[0]?.textContent || '' : '',
           county: county.value ? county.selectedOptions[0]?.textContent || '' : ''
         };
+        state.selectedCountyId = Number(county.value) || null;
+        state.selectedCountyName = location.county;
         state.browseRows.forEach((entry) => {
           const scope = textValue(entry, ['scope']).toUpperCase();
           entry.breadcrumb = scope === 'NATIONAL' ? 'National' : scope === 'STATE' ?
@@ -1538,6 +1618,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         state.initialized = false;
         state.siteCatalogs.clear();
         state.talkgroupCatalogs.clear();
+        state.talkgroupLoads.clear();
         state.talkgroupCatalogId = null;
         state.selectedTalkgroups.clear();
       }
@@ -1546,6 +1627,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         state.selectedTalkgroups.clear();
         state.siteCatalogs.clear();
         state.talkgroupCatalogs.clear();
+        state.talkgroupLoads.clear();
         state.talkgroupCatalogId = null;
         state.bookmarks = [];
         host.replaceChildren(empty('Connect RadioReference to import',
@@ -1558,6 +1640,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       state.initialized = false;
       state.siteCatalogs.clear();
       state.talkgroupCatalogs.clear();
+      state.talkgroupLoads.clear();
       state.talkgroupCatalogId = null;
       state.selectedTalkgroups.clear();
       void initialize();

@@ -57,6 +57,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private static final int DEFAULT_REMOTE_CONCURRENCY = 1;
     private static final int DEFAULT_WAITING_REQUESTS = 8;
     private static final Duration DEFAULT_REQUEST_DEADLINE = Duration.ofSeconds(10);
+    private static final Duration TYPE_LABEL_REQUEST_DEADLINE = Duration.ofSeconds(3);
     private static final Duration DEFAULT_DETAIL_REQUEST_DEADLINE = Duration.ofSeconds(60);
     private static final Duration DEFAULT_SHUTDOWN_WAIT = Duration.ofSeconds(1);
     private static final DateTimeFormatter EXPIRATION_FORMAT =
@@ -427,7 +428,26 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         LocationSnapshot snapshot = invokePremium(gateway -> locationSnapshot(gateway, selection));
-        EntryAccumulator accumulator = new EntryAccumulator(normalizedSearch, group, scopeFilter);
+        Map<Integer,String> systemTypes = Map.of();
+        if(snapshot.state() != null || snapshot.county() != null)
+        {
+            try
+            {
+                systemTypes = invokePremium(RadioReferenceGateway::systemTypes,
+                    Math.min(mRequestDeadlineNanos, TYPE_LABEL_REQUEST_DEADLINE.toNanos()));
+            }
+            catch(RadioReferenceDirectoryException exception)
+            {
+                if(exception.code() != RadioReferenceDirectoryException.Code.BUSY &&
+                    exception.code() != RadioReferenceDirectoryException.Code.TIMEOUT &&
+                    exception.code() != RadioReferenceDirectoryException.Code.UNAVAILABLE)
+                {
+                    throw exception;
+                }
+                //Type labels enrich the directory; transient lookup failures must not block browsing.
+            }
+        }
+        EntryAccumulator accumulator = new EntryAccumulator(normalizedSearch, group, scopeFilter, systemTypes);
         accumulator.addAgencies(snapshot.country().agencies(), EntryScope.NATIONAL);
 
         if(snapshot.state() != null)
@@ -1675,15 +1695,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         private final String mSearch;
         private final EntryGroup mGroup;
         private final ScopeFilter mScopeFilter;
+        private final Map<Integer,String> mSystemTypes;
         private final Map<EntryKey,DirectoryEntry> mEntries = new LinkedHashMap<>();
         private int mScanned;
         private boolean mOverflowed;
 
-        private EntryAccumulator(String search, EntryGroup group, ScopeFilter scopeFilter)
+        private EntryAccumulator(String search, EntryGroup group, ScopeFilter scopeFilter,
+                                 Map<Integer,String> systemTypes)
         {
             mSearch = search;
             mGroup = group;
             mScopeFilter = scopeFilter;
+            mSystemTypes = systemTypes;
         }
 
         private void addSystems(List<RadioReferenceGateway.TrunkedSystem> systems, EntryScope scope)
@@ -1705,7 +1728,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                         RadioReferenceGateway.DetailKind.TRUNKED_SYSTEM, system.id());
                     put(new DirectoryEntry(text(system.name()), text(system.city()), EntryType.TRUNKED_SYSTEM,
-                        scope, detail, system.typeId(), system.flavorId(), system.voiceId()));
+                        scope, detail, system.typeId(), system.flavorId(), system.voiceId(),
+                        mSystemTypes.getOrDefault(system.typeId(), "")));
                 }
             }
         }
@@ -1729,7 +1753,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                         RadioReferenceGateway.DetailKind.AGENCY, agency.id());
                     put(new DirectoryEntry(text(agency.name()), "", EntryType.CONVENTIONAL_AGENCY, scope,
-                        detail, agency.type(), 0, 0));
+                        detail, agency.type(), 0, 0, ""));
                 }
             }
         }
@@ -1751,7 +1775,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                     RadioReferenceGateway.DetailKind.COUNTY, county.id());
                 put(new DirectoryEntry(allName, "All county conventional frequencies",
-                    EntryType.CONVENTIONAL_AGENCY, EntryScope.COUNTY, detail, 0, 0, 0));
+                    EntryType.CONVENTIONAL_AGENCY, EntryScope.COUNTY, detail, 0, 0, 0, ""));
             }
         }
 
@@ -2015,7 +2039,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public record DirectoryEntry(String name, String secondary, EntryType type, EntryScope scope,
                                  RadioReferenceGateway.DetailReference detail, int nativeTypeId,
-                                 int nativeFlavorId, int nativeVoiceId)
+                                 int nativeFlavorId, int nativeVoiceId, String systemType)
     {
     }
 

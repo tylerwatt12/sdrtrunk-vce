@@ -57,6 +57,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -252,6 +253,7 @@ class RadioReferenceDirectoryServiceTest
             assertTrue(all.items().stream().anyMatch(entry ->
                 entry.name().equals("County P25") &&
                     entry.type() == EntryType.TRUNKED_SYSTEM &&
+                    entry.systemType().equals("Project 25") &&
                     entry.detail().kind() == DetailKind.TRUNKED_SYSTEM));
 
             BoundedPage<DirectoryEntry> countyAgencies = service.browse(selection, "county",
@@ -761,6 +763,7 @@ class RadioReferenceDirectoryServiceTest
         private CountyDirectory county =
             new CountyDirectory(new County(1, "", ""), List.of(), List.of());
         private List<FrequencyResult> frequencyResults = List.of();
+        private Map<Integer,String> systemTypes = Map.of(1, "Project 25", 4, "DMR");
         private List<Mode> modes = List.of(new Mode(4, "Project 25 Phase I"));
         private List<Site> sites = List.of(new Site(3001, 2001, 12, "Franklin Simulcast", 100,
             List.of(new SiteChannel(853.1625, "c", true, false))));
@@ -792,6 +795,12 @@ class RadioReferenceDirectoryServiceTest
             }
 
             return account;
+        }
+
+        @Override
+        public Map<Integer,String> systemTypes()
+        {
+            return systemTypes;
         }
 
         @Override

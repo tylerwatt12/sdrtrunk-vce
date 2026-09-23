@@ -1,7 +1,8 @@
 const { expect, test } = require('@playwright/test');
 
-async function installWorkspace(page, theme = 'light', large = false, slow = false) {
-  await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}${slow ? '&slow=1' : ''}`);
+async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '') {
+  await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}` +
+    `${slow ? '&slow=1' : ''}${scenario ? `&scenario=${scenario}` : ''}`);
   await page.evaluate(async () => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
@@ -136,10 +137,16 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     };
     const calls = [];
     window.radioReferenceVisual = { calls };
+    const scenario = new URLSearchParams(location.search).get('scenario');
+    const dmr = scenario === 'dmr';
+    const nxdn = scenario === 'nxdn';
     const requestJson = async (path, options = {}) => {
       calls.push([path, options]);
       if (path.startsWith('/api/v1/admin/alias-lists')) return { alias_lists: [
         { alias_list_id: 7, name: 'County Public Safety', family: 'P25' },
+        { alias_list_id: 10, name: 'Regional P25', family: 'P25' },
+        { alias_list_id: 9, name: 'Plant DMR', family: 'DMR' },
+        { alias_list_id: 11, name: 'Regional NXDN', family: 'NXDN' },
         { alias_list_id: 8, name: 'Regional Conventional', family: 'ANALOG' }
       ] };
       if (path.endsWith('/countries')) return { items: [{ id: 1, name: 'United States', abbreviation: 'US' }] };
@@ -150,25 +157,38 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio', abbreviation: 'OH' }] };
       if (path.includes('/counties?')) return { items: [{ id: 49, name: 'Franklin County' }] };
       if (path.includes('/browse/catalog?')) return [
-        { type: 'TRUNKED_SYSTEM', scope: 'COUNTY', name: 'Central County P25', secondary: 'Franklin County',
+        { type: 'TRUNKED_SYSTEM', scope: 'COUNTY',
+          name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
+          secondary: 'Franklin County', system_type: dmr ? 'DMR' : nxdn ? 'NXDN' : 'Project 25',
           updated: 'Today', detail: { id: 2001 } },
         { type: 'CONVENTIONAL_AGENCY', scope: 'COUNTY', name: 'County Fire', secondary: 'Franklin County',
           detail: { id: 3001, kind: 'AGENCY' } }
       ];
       if (path.includes('/systems/details?')) return { system: {
-        id: 2001, system_id: '2000', name: 'Central County P25', type: 'Project 25 Phase II', city: 'Columbus'
+        id: 2001, system_id: '2000', name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
+        type: dmr ? 'DMR' : nxdn ? 'NXDN' : 'Project 25',
+        flavor: dmr ? 'Motorola Capacity Plus Single Site (TRBO)' : nxdn ? 'NEXEDGE 9600' : 'Phase II',
+        voice: dmr ? 'DMR' : nxdn ? 'NXDN Digital' : 'Digital', city: 'Columbus'
       }, talkgroup_categories: [{ id: 9, name: 'Fire' }] };
       if (path.includes('/systems/sites/catalog?') &&
           new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (path.includes('/systems/sites/catalog?') && dmr) return { items: [{
+        id: 4001, name: 'Ford Plant Primary', number: 1, county_id: 49, channels: [
+          { frequency_hz: 861112500, channel_id: '01' }, { frequency_hz: 861512500, channel_id: '02' },
+          { frequency_hz: 861887500, channel_id: '03' }, { frequency_hz: 861712500, channel_id: '05' },
+          { frequency_hz: 861962500, channel_id: '06' }
+        ] }] };
       if (path.includes('/systems/sites/catalog?')) return { items: [{ id: 4001, name: 'Central Simulcast',
-        number: 1, county_name: 'Franklin County', tdma_control_channel: false, channels: [
+        number: 2, county_id: 49, county_name: 'Franklin County', tdma_control_channel: false, channels: [
           { frequency_hz: 773081250, primary_control: true },
           { frequency_hz: 773331250, alternate_control: true }
-        ] }, { id: 4002, name: 'Alpha Site', number: 2, county_name: 'Franklin County', channels: [
+        ] }, { id: 4002, name: 'Alpha Site', number: 1, county_id: 50, county_name: 'Outside County', channels: [
           { frequency_hz: 773581250, primary_control: true }
         ] }] };
       if (path.includes('/systems/talkgroups/catalog?') &&
           new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
+      const rawCatalog = path.includes('/systems/talkgroups/catalog?') &&
+        !new URL(path, location.href).searchParams.has('alias_list_id');
       if (path.includes('/systems/talkgroups/catalog?') &&
           new URLSearchParams(location.search).has('large')) return {
         catalog_id: 'loaded-catalog', total_items: 10000, categories: [{ id: 9, name: 'Fire' }],
@@ -176,7 +196,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           talkgroup: { id: index + 1, value: index + 1, category_id: 9,
             alpha_tag: index === 9999 ? 'Rare Target' : `Talkgroup ${index + 1}`,
             description: 'Fire operations' },
-          category: 'Fire', status: index === 9999 ? 'DIFFERENT' : 'IDENTICAL'
+          category: 'Fire', status: rawCatalog ? 'UNCOMPARED' :
+            index === 9999 ? 'DIFFERENT' : 'IDENTICAL'
         }))
       };
       if (path.includes('/systems/talkgroups/catalog?')) return { catalog_id: 'loaded-catalog',
@@ -184,10 +205,10 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         items: [
           { talkgroup: { id: 101, value: 101, category_id: 9, alpha_tag: 'Fire Dispatch',
             description: 'Countywide fire' },
-            category: 'Fire', status: 'IDENTICAL', existing_alias_id: 700 },
+            category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'IDENTICAL', existing_alias_id: 700 },
           { talkgroup: { id: 102, value: 102, category_id: 9, alpha_tag: 'Fireground 2',
             description: 'Fireground operations' },
-            category: 'Fire', status: 'DIFFERENT', existing_alias_id: 701,
+            category: 'Fire', status: rawCatalog ? 'UNCOMPARED' : 'DIFFERENT', existing_alias_id: 701,
             changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }] }
         ] };
       if (path.includes('/conventional/categories?')) return { items: [
@@ -204,7 +225,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
           changes: [{ field: 'name', before: 'Fireground Two', after: 'Fireground 2' }]
         }] };
       if (path.endsWith('/imports/site/preview')) return { preview_id: 'site-preview', action: 'CREATE',
-        detected_modulation: 'CQPSK', channel: { name: options.body.channel_name, protocol_id: 'p25-phase2',
+        detected_modulation: dmr ? null : 'CQPSK',
+        channel: { name: options.body.channel_name, protocol_id: dmr ? 'dmr' : 'p25-phase2',
           source: { frequencies_hz: [773081250, 773331250] } } };
       if (path.endsWith('/imports/conventional/preview')) return { preview_id: 'frequency-preview', action: 'CREATE',
         channel: { name: options.body.channel_name, protocol_id: 'nbfm',
@@ -254,6 +276,10 @@ test('talkgroup selections persist through searches and clear explicitly', async
   await fire.check();
   await expect(page.getByText('1 selected')).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-actions')).toHaveCSS('position', 'sticky');
+  await expect(page.getByText('Choose Alias List', { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel('Compare with Alias List')).toBeEnabled();
+  await page.getByLabel('Compare with Alias List').selectOption('7');
+  await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
   await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('fire');
   await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
@@ -267,6 +293,7 @@ test('single changed talkgroup preview shows the RadioReference-owned field chan
   await installWorkspace(page);
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await page.getByLabel('Compare with Alias List').selectOption('7');
   await page.getByRole('checkbox', { name: 'Select Fireground 2' }).check();
   await page.getByRole('button', { name: 'Review selected' }).click();
   const preview = page.getByRole('dialog', { name: 'Import 1 talkgroups' });
@@ -282,7 +309,7 @@ test('a talkgroup bookmark remembers its preferred Alias List', async ({ page })
   await installWorkspace(page);
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
-  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('7');
+  await page.getByLabel('Compare with Alias List').selectOption('7');
   await page.locator('.radioreference-import-detail .radioreference-bookmark').first().click();
   const saved = await page.evaluate(() => window.radioReferenceVisual.calls.findLast(
     ([path, options]) => path.endsWith('/bookmarks') && options.method === 'PUT'));
@@ -302,6 +329,8 @@ test('large talkgroup catalogs filter locally without rendering thousands of row
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('Rare Target');
   await expect(page.getByRole('checkbox', { name: 'Select Rare Target' })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr td[data-label="Talkgroup"]'))
+    .toHaveText('10000');
   const calls = await page.evaluate(() => window.radioReferenceVisual.calls
     .filter(([path]) => path.includes('/systems/talkgroups/catalog?')).length);
   expect(calls).toBe(1);
@@ -325,6 +354,7 @@ test('location results show their scope and bookmarks show their route', async (
   await expect(page.locator('.radioreference-directory-pager')).toHaveCount(0);
   await expect(page.getByText('Franklin County results')).toBeVisible();
   await expect(page.locator('.radioreference-result-open')).toHaveCount(2);
+  await expect(page.locator('.radioreference-result-open').first()).toContainText('P25 · Trunked');
   await page.getByRole('button', { name: 'Add bookmark: Central County P25' }).click();
   await page.getByRole('button', { name: /Bookmarks/ }).click();
   await expect(page.getByText('Ohio (OH) > Franklin County > Central County P25')).toBeVisible();
@@ -335,16 +365,56 @@ test('site sorting and preview use the RadioReference database system ID', async
   await openSystem(page);
   await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
   await page.getByLabel('Sort sites').selectOption('alphabetical');
+  await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Central Simulcast');
+  await page.locator('.radioreference-browse-fields > label:nth-child(3) select').selectOption('');
+  await openSystem(page);
   await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Alpha Site');
   await page.getByRole('button', { name: 'Alpha Site' }).click();
-  await page.getByRole('dialog', { name: /Import Alpha Site/ }).getByRole('button',
-    { name: 'Review Channel' }).click();
+  const importModal = page.getByRole('dialog', { name: /Import Alpha Site/ });
+  await importModal.getByLabel('Alias List').selectOption('7');
+  await importModal.getByRole('button', { name: 'Review Channel' }).click();
   await expect.poll(async () => page.evaluate(() => window.radioReferenceVisual.calls
     .find(([path]) => path.endsWith('/imports/site/preview'))?.[1]?.body?.system_id)).toBe(2001);
   await page.getByRole('dialog', { name: /Review Central County P25 · Alpha Site/ }).getByRole('button',
     { name: 'Apply Channel' }).click();
   await expect(page.getByRole('link', { name: 'Open channel' }))
     .toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');
+});
+
+test('Capacity Plus defaults to all frequencies without P25-only labels', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'dmr');
+  await expect(page.locator('.radioreference-result-open').first()).toContainText('DMR · Trunked');
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Ford Plant Primary' }).click();
+  const modal = page.getByRole('dialog', { name: /Import Ford Plant Primary/ });
+  await expect(modal.getByText('Motorola Capacity Plus Single Site (TRBO)')).toBeVisible();
+  await expect(modal.getByText('Detected P25 modulation')).toHaveCount(0);
+  await expect(modal.locator('input[value="CONTROL_AND_ALTERNATES"]')).toBeDisabled();
+  await expect(modal.locator('input[value="ALL"]')).toBeChecked();
+  await modal.getByRole('button', { name: 'Review Channel' }).click();
+  const request = await page.evaluate(() => window.radioReferenceVisual.calls.find(
+    ([path]) => path.endsWith('/imports/site/preview')));
+  expect(request[1].body.frequency_mode).toBe('ALL');
+});
+
+test('NXDN sites use marked controls without showing P25 modulation', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'nxdn');
+  await expect(page.locator('.radioreference-result-open').first()).toContainText('NXDN · Trunked');
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const modal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(modal.getByText('NEXEDGE 9600')).toBeVisible();
+  await expect(modal.getByText('Detected P25 modulation')).toHaveCount(0);
+  await expect(modal.locator('input[value="CONTROL_AND_ALTERNATES"]')).toBeChecked();
+});
+
+test('Capacity Plus import modal fits on a dark mobile viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installWorkspace(page, 'dark', false, false, 'dmr');
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Ford Plant Primary' }).click();
+  await expect(page.getByRole('dialog', { name: /Import Ford Plant Primary/ }))
+    .toHaveScreenshot('radioreference-capacity-plus-import-dark-mobile.png');
 });
 
 test('site loading retains the system heading and filter context', async ({ page }) => {
@@ -362,7 +432,13 @@ test('slow talkgroup loading shows a spinner until the catalog arrives', async (
   await openSystem(page);
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await expect(page.locator('.radioreference-talkgroup-table .ui-feedback-loading')).toBeVisible();
+  await expect(page.getByLabel('Compare with Alias List')).toBeDisabled();
+  await page.getByRole('button', { name: 'Sites & Channels' }).click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeVisible();
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => path.includes('/systems/talkgroups/catalog?')).length);
+  expect(calls).toBe(1);
 });
 
 for (const [name, theme, viewport] of [

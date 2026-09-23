@@ -60,6 +60,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 {
     static final String APPLICATION_KEY = "88969092";
     private SecureRadioReferenceSoapClient mClient;
+    private Map<Integer,String> mSystemTypes;
 
     RrapiRadioReferenceGateway(String userName, char[] password) throws RadioReferenceGatewayException
     {
@@ -84,6 +85,35 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
+    }
+
+    @Override
+    public synchronized Map<Integer,String> systemTypes() throws RadioReferenceGatewayException
+    {
+        if(mSystemTypes == null)
+        {
+            try
+            {
+                Map<Integer,String> types = new LinkedHashMap<>();
+                GetTypesResponse response = client().execute(GetTypes::create, GetTypesResponse.class);
+                if(response.getTypes() != null)
+                {
+                    for(io.github.dsheirer.rrapi.type.Type type: response.getTypes())
+                    {
+                        if(type != null && type.getTypeId() > 0)
+                        {
+                            types.put(type.getTypeId(), text(type.getName()));
+                        }
+                    }
+                }
+                mSystemTypes = Map.copyOf(types);
+            }
+            catch(RuntimeException exception)
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            }
+        }
+        return mSystemTypes;
     }
 
     @Override
