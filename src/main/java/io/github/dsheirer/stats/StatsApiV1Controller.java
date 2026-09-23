@@ -20,6 +20,7 @@ import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -121,6 +122,24 @@ final class StatsApiV1Controller
                 request.requireOnly();
                 return mReceiverHealthSupplier.get();
             }));
+        //A scalar, loopback-only probe lets the local deployment helper verify server-accepted calls without
+        //borrowing an administrator session or exposing the full receiver-health document to unauthenticated peers.
+        server.createContext(StatsApiV1.LOCAL_RADIORESOLVE_UPLOAD_COUNTER, exchange -> {
+            if(!isLoopbackPeer(exchange.getRemoteAddress()))
+            {
+                ApiHttpResponse.sendError(exchange, 403, "local_only", "This endpoint is available only locally");
+                return;
+            }
+
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            handleJson(exchange, StatsApiV1.LOCAL_RADIORESOLVE_UPLOAD_COUNTER, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly();
+                Map<String,Object> health = mReceiverHealthSupplier.get();
+                return Map.of("accepted_calls", counterValue(health.get("radioresolve_accepted_calls")),
+                    "started_at_ms", counterValue(health.get("started_at_ms")));
+            });
+        });
 
         if(mTunerDiagnosticService != null)
         {
@@ -401,6 +420,21 @@ final class StatsApiV1Controller
             LOGGER.warn("Stats API request failed [{}]", exchange.getRequestURI().getPath(), exception);
             ApiHttpResponse.sendError(exchange, 500, "internal_error", "The request could not be completed");
         }
+    }
+
+    private static long counterValue(Object value)
+    {
+        if(value instanceof Number number && number.longValue() >= 0)
+        {
+            return number.longValue();
+        }
+
+        throw new IllegalStateException("Receiver upload counter is unavailable");
+    }
+
+    static boolean isLoopbackPeer(InetSocketAddress address)
+    {
+        return address != null && address.getAddress() != null && address.getAddress().isLoopbackAddress();
     }
 
     private void handleCsvExport(HttpExchange exchange) throws IOException

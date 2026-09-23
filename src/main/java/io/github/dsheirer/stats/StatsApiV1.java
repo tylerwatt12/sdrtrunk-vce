@@ -35,6 +35,7 @@ public final class StatsApiV1
     public static final String EXPORTS = ROOT + "/exports";
     public static final String TUNER_DIAGNOSTICS = ROOT + "/diagnostics/tuners";
     public static final String RECEIVER_HEALTH = ROOT + "/receiver-health";
+    public static final String LOCAL_RADIORESOLVE_UPLOAD_COUNTER = ROOT + "/local/radioresolve-upload-counter";
     public static final String LIVE_MULTIPLEX = ROOT + "/live/multiplex";
     public static final String LIVE_MULTIPLEX_CONTROL = ROOT + "/live/multiplex/control";
     public static final String CALLS = ROOT + "/calls";

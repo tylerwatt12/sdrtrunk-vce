@@ -8,6 +8,7 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -40,6 +41,15 @@ class StatsWebReceiverHealthAccessTest
     Path mTemporaryDirectory;
 
     @Test
+    void uploadCounterProbeRejectsNonLoopbackPeers()
+    {
+        assertTrue(StatsApiV1Controller.isLoopbackPeer(new InetSocketAddress("127.0.0.1", 8090)));
+        assertTrue(StatsApiV1Controller.isLoopbackPeer(new InetSocketAddress("::1", 8090)));
+        assertFalse(StatsApiV1Controller.isLoopbackPeer(new InetSocketAddress("192.0.2.1", 8090)));
+        assertFalse(StatsApiV1Controller.isLoopbackPeer(null));
+    }
+
+    @Test
     void exposesReceiverHealthOnlyToAnAuthenticatedAdministrator() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("sdrtrunk.sqlite");
@@ -67,7 +77,8 @@ class StatsWebReceiverHealthAccessTest
         server.setExecutor(executor);
         new WebSessionHttpController(accessService, authenticationService, requestSecurity).register(server);
         new StatsApiV1Controller(null, Map::of, requestSecurity, null,
-            () -> Map.of("summary", Map.of("severity", "healthy"))).register(server);
+            () -> Map.of("summary", Map.of("severity", "healthy"),
+                "radioresolve_accepted_calls", 3L, "started_at_ms", 1234L)).register(server);
         server.start();
 
         try
@@ -76,6 +87,17 @@ class StatsWebReceiverHealthAccessTest
             URI target = origin.resolve(StatsApiV1.RECEIVER_HEALTH);
             HttpClient client = HttpClient.newHttpClient();
             assertEquals(401, client.send(HttpRequest.newBuilder(target).GET().build(),
+                HttpResponse.BodyHandlers.discarding()).statusCode());
+            URI localCounter = origin.resolve(StatsApiV1.LOCAL_RADIORESOLVE_UPLOAD_COUNTER);
+            HttpResponse<String> counterResponse = client.send(HttpRequest.newBuilder(localCounter).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, counterResponse.statusCode(), counterResponse.body());
+            assertEquals("no-store", counterResponse.headers().firstValue("Cache-Control").orElse(null));
+            assertEquals(3L, OBJECT_MAPPER.readTree(counterResponse.body()).at("/data/accepted_calls").longValue());
+            assertEquals(1234L, OBJECT_MAPPER.readTree(counterResponse.body()).at("/data/started_at_ms").longValue());
+            assertEquals(2, OBJECT_MAPPER.readTree(counterResponse.body()).at("/data").size());
+            assertEquals(405, client.send(HttpRequest.newBuilder(localCounter)
+                .POST(HttpRequest.BodyPublishers.noBody()).build(),
                 HttpResponse.BodyHandlers.discarding()).statusCode());
             String userCookie = login(client, origin, "listener", "receiver-health-user-password");
             assertEquals(403, client.send(HttpRequest.newBuilder(target).header("Cookie", userCookie).GET().build(),
