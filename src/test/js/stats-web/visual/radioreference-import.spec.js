@@ -330,7 +330,7 @@ test('large talkgroup catalogs filter locally without rendering thousands of row
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('Rare Target');
   await expect(page.getByRole('checkbox', { name: 'Select Rare Target' })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
-  await expect(page.locator('.radioreference-talkgroup-table tbody tr td[data-label="Talkgroup"]'))
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr td[data-label="Talkgroup ID"]'))
     .toHaveText('10000');
   const calls = await page.evaluate(() => window.radioReferenceVisual.calls
     .filter(([path]) => path.includes('/systems/talkgroups/catalog?')).length);
