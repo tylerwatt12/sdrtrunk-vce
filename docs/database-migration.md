@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -278,6 +278,14 @@ The format 16-to-17 step preserves every row and adds two indexes to the existin
 Alias List scans in stable ID order; the other supports case-insensitive name sorting inside one list. No activity rows,
 caches, or per-call records are added. The indexes are rebuilt naturally when administrator-owned aliases change and
 are removed automatically with the database; they have no separate retention policy.
+
+The format 22-to-23 step upgrades every exact version-6 per-user browser preference document to version 7. It adds
+one bounded, sparse `collapsed_groups` list to each saved table layout and leaves it empty so every row group remains
+expanded until that user collapses it. It preserves accounts, credentials, access policy, receiver settings, table
+column order, visibility, and widths. Each usable preference revision is incremented. Only a malformed, oversized, or
+revision-exhausted user's preference document is replaced with version-7 defaults. This semantic-only format shares
+the format-22 DDL fingerprint, so the authoritative global marker is required when row invariants cannot distinguish
+an otherwise markerless database.
 
 ## Schema-Change Rule
 

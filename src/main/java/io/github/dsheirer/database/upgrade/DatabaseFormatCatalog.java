@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 22;
+    public static final int CURRENT_VERSION = 23;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -78,6 +78,7 @@ public final class DatabaseFormatCatalog
         "1a99f9cf678ae68cc38248dc4eaf34c41ce32088341c264c8f79f8cd4b9b1dad";
     private static final String FORMAT_22_FINGERPRINT =
         "918d6a5d9530af078d94ef4827397e4d6c6d52f36f1e3306f0a43987424f0e7b";
+    private static final String FORMAT_23_FINGERPRINT = FORMAT_22_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -291,10 +292,19 @@ public final class DatabaseFormatCatalog
             "Keep the durable indexed Alias Activity summary unchanged",
             "Keep talkgroup zero unavailable to Alias matching and editing"));
 
+    private static final FormatDescriptor FORMAT_23 = new FormatDescriptor(23, "table-row-group-preferences-v7",
+        "Per-user expandable table row-group preference format", FORMAT_23_FINGERPRINT, Map.of(),
+        List.of("main format 23"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format23TestDatabase.java", List.of(
+            "Preserve every account, credential, access policy, receiver setting, and table column preference",
+            "Add an empty bounded collapsed row-group list to every saved table layout",
+            "Keep all table row groups expanded until each user explicitly collapses one",
+            "Default only a malformed, oversized, or revision-exhausted per-user preference document"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22);
+            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -421,8 +431,21 @@ public final class DatabaseFormatCatalog
         {
             try
             {
-                validateMetadata(connection, candidate);
-                validateInvariants(connection, candidate, allowRecoverableLegacyData);
+                if(!allowRecoverableLegacyData || candidate.version() != CURRENT_VERSION)
+                {
+                    validateMetadata(connection, candidate);
+                }
+                //A marker is the only safe authority for fully relaxed current-format repair when semantic formats
+                //share one DDL fingerprint. Without it, require the frozen current preference generation that
+                //distinguishes this semantic format, while leaving unrelated bounded current components repairable.
+                if(allowRecoverableLegacyData && candidate.version() == CURRENT_VERSION)
+                {
+                    validateWebPreferenceGeneration(connection, candidate);
+                }
+                else
+                {
+                    validateInvariants(connection, candidate, allowRecoverableLegacyData);
+                }
                 matches.add(candidate);
             }
             catch(FormatRejectionException e)
@@ -450,7 +473,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_22;
+        return FORMAT_23;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -674,9 +697,13 @@ public final class DatabaseFormatCatalog
         {
             try
             {
-                if(descriptor.version() >= 15)
+                if(descriptor.version() == CURRENT_VERSION)
                 {
                     Format5WebStateValidator.validate(connection);
+                }
+                else if(descriptor.version() >= 15)
+                {
+                    Format5WebStateValidator.validateCurrentPolicy(connection, webPreferenceVersion(descriptor));
                 }
                 else
                 {
@@ -704,6 +731,20 @@ public final class DatabaseFormatCatalog
         }
     }
 
+    private static void validateWebPreferenceGeneration(Connection connection, FormatDescriptor descriptor)
+        throws SQLException
+    {
+        try
+        {
+            Format5WebStateValidator.validatePreferenceDocuments(connection, webPreferenceVersion(descriptor));
+        }
+        catch(SQLException exception)
+        {
+            throw new FormatRejectionException("SQLite schema format [" + descriptor.id() + "] " +
+                exception.getMessage(), exception);
+        }
+    }
+
     /** Keeps historical database-format validation independent from future preference revisions. */
     private static int webPreferenceVersion(FormatDescriptor descriptor)
     {
@@ -714,6 +755,8 @@ public final class DatabaseFormatCatalog
             case 8 -> 3;
             case 9, 10, 11 -> 4;
             case 12, 13, 14 -> 5;
+            case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
+            case 23 -> 7;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

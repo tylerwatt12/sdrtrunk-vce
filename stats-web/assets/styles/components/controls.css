@@ -271,6 +271,11 @@
   flex: 0 0 auto;
 }
 
+.ui-icon-button-compact {
+  --icon-action-size: var(--control-height-compact);
+  --icon-action-radius: var(--radius-control);
+}
+
 .ui-icon-button svg {
   width: var(--icon-glyph-size);
   height: var(--icon-glyph-size);

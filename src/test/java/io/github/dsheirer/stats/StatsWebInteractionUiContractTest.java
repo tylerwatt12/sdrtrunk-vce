@@ -1129,7 +1129,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".live-filter-tree {\n    max-height: none;"));
         assertTrue(modal.contains("dialog.setAttribute('aria-modal', 'true')"));
         assertTrue(modal.contains("if (event.key === 'Escape')"));
-        assertTrue(modal.contains("if (event.target === backdrop) dismiss()"));
+        assertTrue(modal.contains("event.target === backdrop ? event.pointerId : null"));
+        assertTrue(modal.contains("const shouldDismiss = backdropRelease && event.target === backdrop"));
+        assertFalse(modal.contains("if (event.target === backdrop) dismiss()"));
         assertTrue(modal.contains("returnFocusSelector"));
     }
 

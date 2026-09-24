@@ -8,6 +8,27 @@
   overflow-y: hidden;
 }
 
+.ui-table-titlebar {
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  color: var(--ink);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--font-size-label);
+}
+
+.ui-table-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
 .ui-data-table.resizable-table {
   table-layout: fixed;
 }
@@ -36,13 +57,60 @@
 
 .ui-data-table .ui-table-row-group > th {
   position: static;
-  padding: 9px 12px;
+  padding: 0;
   color: var(--ink);
   background: color-mix(in srgb, var(--accent-soft) 48%, var(--surface-2));
   border-top: 1px solid var(--line-dark);
   border-bottom: 1px solid var(--line-dark);
   font-size: 12px;
   letter-spacing: .02em;
+}
+
+.ui-data-table tr.ui-table-row-group-item[hidden] {
+  display: none;
+}
+
+.table-row-group-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height-compact);
+  padding: var(--space-2) var(--space-3);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.table-row-group-disclosure:hover {
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+}
+
+.table-row-group-disclosure:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.table-row-group-disclosure:disabled {
+  color: inherit;
+  opacity: 1;
+  cursor: default;
+}
+
+.table-row-group-disclosure > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.table-row-group-disclosure[aria-expanded="false"] > svg {
+  transform: rotate(-90deg);
 }
 
 .ui-data-table .ui-table-row-group:first-child > th {
@@ -54,7 +122,7 @@
 }
 
 .table-row-group-count {
-  float: right;
+  margin-left: auto;
   font-size: 11px;
   font-weight: 600;
 }
@@ -308,11 +376,8 @@
     border-radius: 0;
   }
   .ui-data-table.ui-mobile-cards .ui-table-row-group > th {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    display: block;
+    padding: 0;
     border: 1px solid var(--line);
     border-radius: var(--radius-control);
   }

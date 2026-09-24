@@ -55,7 +55,7 @@ public final class Format5WebStateValidator
     private static final int MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     private static final int MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15_000;
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
-    private static final int LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION = 5;
+    private static final int LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION = 7;
     private static final ObjectMapper STRICT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -82,6 +82,50 @@ public final class Format5WebStateValidator
             throw invalid("unsupported historical preference-document version " + preferenceDocumentVersion);
         }
         validate(connection, preferenceDocumentVersion, LEGACY_POLICY_REGISTRY, SITE_SETTINGS_REVISION_KEY);
+    }
+
+    /** Validates a historical preference generation that already uses the current access-policy registry. */
+    static void validateCurrentPolicy(Connection connection, int preferenceDocumentVersion) throws SQLException
+    {
+        if(preferenceDocumentVersion < 1 ||
+            preferenceDocumentVersion > LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION)
+        {
+            throw invalid("unsupported historical preference-document version " + preferenceDocumentVersion);
+        }
+        validate(connection, preferenceDocumentVersion, currentPolicyRegistry(), RECEIVER_SETTINGS_REVISION_KEY);
+    }
+
+    /** Validates only the bounded preference generation used to disambiguate markerless semantic formats. */
+    static void validatePreferenceDocuments(Connection connection, int preferenceDocumentVersion) throws SQLException
+    {
+        if(preferenceDocumentVersion < 1 ||
+            preferenceDocumentVersion > LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION)
+        {
+            throw invalid("unsupported historical preference-document version " + preferenceDocumentVersion);
+        }
+        long maximumRows = WebAccessService.MAXIMUM_USERS + 1L;
+        long total = 0;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT CASE WHEN typeof(preferences_json)='text'
+                              AND length(CAST(preferences_json AS BLOB)) <= 131072
+                        THEN preferences_json END AS preferences_json,
+                   typeof(preferences_json) AS preferences_json_type
+            FROM web_user ORDER BY id LIMIT ?
+            """))
+        {
+            statement.setLong(1, maximumRows + 1);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    if(++total > maximumRows)
+                    {
+                        throw invalid("user count exceeds the bounded preference-generation inspection limit");
+                    }
+                    validateUserPreferenceDocument(resultSet, preferenceDocumentVersion);
+                }
+            }
+        }
     }
 
     private static void validate(Connection connection, int preferenceDocumentVersion,
@@ -349,9 +393,17 @@ public final class Format5WebStateValidator
             {
                 Format12WebUserPreferencesCodec.validate(preferencesJson);
             }
+            else if(preferenceDocumentVersion == 6)
+            {
+                Format22WebUserPreferencesCodec.validate(preferencesJson);
+            }
             else if(preferenceDocumentVersion == WebUserPreferences.CURRENT_VERSION)
             {
                 WebUserPreferencesCodec.decode(preferencesJson);
+            }
+            else if(preferenceDocumentVersion == 7)
+            {
+                Format23WebUserPreferencesCodec.validate(preferencesJson);
             }
             else
             {

@@ -167,7 +167,8 @@ function layout(tableType, columns) {
     column_widths: {},
     hidden_columns: columns.filter((column) => !column.essential &&
       (visible ? !visible.has(column.id) : (defaults.hidden || []).includes(column.id)))
-      .map((column) => column.id)
+      .map((column) => column.id),
+    collapsed_groups: []
   };
 }
 

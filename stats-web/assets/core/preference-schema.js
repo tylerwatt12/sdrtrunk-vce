@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 6,
+    version: 7,
     appearance: Object.freeze({ theme: 'light' }),
     page_titles: Object.freeze({ prepend_playing_call: false }),
     playback: Object.freeze({
@@ -96,7 +96,7 @@
   }
 
   function table(value, name) {
-    exact(value, ['schema', 'column_order', 'column_widths', 'hidden_columns'], name);
+    exact(value, ['schema', 'column_order', 'column_widths', 'hidden_columns', 'collapsed_groups'], name);
     const schema = columnIds(value.schema, `${name}.schema`);
     if (schema.length === 0) {
       throw invalid(`${name}.schema must contain at least one column.`);
@@ -116,13 +116,15 @@
     if (hidden.length === schema.length) {
       throw invalid(`${name} must keep at least one visible column.`);
     }
-    return { schema, column_order: order, column_widths: columnWidths, hidden_columns: hidden };
+    const collapsedGroups = columnIds(value.collapsed_groups, `${name}.collapsed_groups`);
+    return { schema, column_order: order, column_widths: columnWidths, hidden_columns: hidden,
+      collapsed_groups: collapsedGroups };
   }
 
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 6) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 7) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'target_grouping',
@@ -151,7 +153,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 6,
+      version: 7,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme') },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },

@@ -21,10 +21,11 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 6;
+    public static final int CURRENT_VERSION = 7;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
     public static final int MAXIMUM_TABLES = 128;
     public static final int MAXIMUM_COLUMNS_PER_TABLE = 128;
+    public static final int MAXIMUM_COLLAPSED_GROUPS_PER_TABLE = 128;
     public static final int MAXIMUM_SELECTED_SCAN_LISTS = 16;
     public static final int MINIMUM_LIVE_DETAIL_ROW_LIMIT = 25;
     public static final int MAXIMUM_LIVE_DETAIL_ROW_LIMIT = 500;
@@ -209,13 +210,14 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     }
 
     public record TableLayout(List<String> schema, List<String> columnOrder, Map<String,Integer> columnWidths,
-                              List<String> hiddenColumns)
+                              List<String> hiddenColumns, List<String> collapsedGroups)
     {
         public TableLayout
         {
             schema = canonicalIds(schema, "table.schema");
             columnOrder = canonicalIds(columnOrder, "table.column_order");
             hiddenColumns = canonicalIds(hiddenColumns, "table.hidden_columns");
+            collapsedGroups = canonicalGroupIds(collapsedGroups);
             Objects.requireNonNull(columnWidths, "table.column_widths is required");
 
             if(schema.size() > MAXIMUM_COLUMNS_PER_TABLE || !new HashSet<>(schema).equals(new HashSet<>(columnOrder)))
@@ -246,6 +248,28 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             });
             columnWidths = Map.copyOf(canonicalWidths);
         }
+    }
+
+    private static List<String> canonicalGroupIds(List<String> ids)
+    {
+        Objects.requireNonNull(ids, "table.collapsed_groups is required");
+        if(ids.size() > MAXIMUM_COLLAPSED_GROUPS_PER_TABLE)
+        {
+            throw new IllegalArgumentException("table.collapsed_groups exceeds the row-group bound");
+        }
+        Set<String> unique = new HashSet<>();
+        List<String> canonical = ids.stream()
+            .map(id -> requireStableId(id, "Row group identifier"))
+            .sorted()
+            .toList();
+        for(String id: canonical)
+        {
+            if(!unique.add(id))
+            {
+                throw new IllegalArgumentException("table.collapsed_groups contains duplicate row-group identifiers");
+            }
+        }
+        return List.copyOf(canonical);
     }
 
     private static List<String> canonicalIds(List<String> ids, String label)

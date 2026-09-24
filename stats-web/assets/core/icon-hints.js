@@ -59,7 +59,17 @@ export function installIconHints(root = document) {
   root.addEventListener('pointerout', (event) => {
     if (active && active.contains(event.target) && !active.contains(event.relatedTarget)) hide();
   });
-  root.addEventListener('focusin', (event) => activate(controlFor(event.target), 0));
+  root.addEventListener('focusin', (event) => {
+    const control = controlFor(event.target);
+    if (!control?.matches(':focus-visible')) return;
+    if (control === active) {
+      clearTimeout(timer);
+      timer = null;
+      show(control);
+      return;
+    }
+    activate(control, 0);
+  });
   root.addEventListener('focusout', (event) => {
     if (active && active.contains(event.target) && !active.contains(event.relatedTarget)) hide();
   });

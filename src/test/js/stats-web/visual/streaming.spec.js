@@ -94,9 +94,9 @@ async function install(page, theme = 'light', empty = false) {
       }
       element.append(colgroup, head, tableBody);
       if (options.layoutMenuHost) {
-        const layoutMenu = node('div', 'table-layout-menu table-layout-menu-inline');
+        const layoutMenu = node('div', 'table-layout-menu');
         const columnsButton = iconButton('icon-columns', 'Choose table columns',
-          'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
+          'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
         layoutMenu.append(columnsButton);
         options.layoutMenuHost.append(layoutMenu);
         if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();

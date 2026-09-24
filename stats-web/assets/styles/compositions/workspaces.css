@@ -520,13 +520,9 @@
 
 .table-layout-menu {
   width: max-content;
-  margin: 0 8px 6px auto;
-  padding-top: var(--space-2);
-}
-
-.table-layout-menu-inline {
-  margin: 0;
-  padding: 0;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
 }
 
 .table-layout-panel {

@@ -179,6 +179,10 @@ async function main() {
   const sharedTableSource = appSource.slice(appSource.indexOf('function table('),
     appSource.indexOf('function tableSection('));
   assert.match(sharedTableSource, /const chooser = node\('div', 'table-layout-menu'\)/);
+  assert.match(sharedTableSource, /options\.layoutMenuHost instanceof Node/);
+  assert.match(sharedTableSource, /options\.layoutMenuHost\.append\(chooser\)/);
+  assert.doesNotMatch(sharedTableSource, /options\.layoutMenuHost \|\| wrapper/);
+  assert.doesNotMatch(sharedTableSource, /table-layout-menu-inline/);
   assert.match(sharedTableSource, /addColumnResizers\(element, columns/);
   assert.doesNotMatch(sharedTableSource, /if \(userPreferenceController\.snapshot\(\)\.loaded\)/);
   assert.match(functionBinding(appSource, 'saveAnonymousTableLayout'),
@@ -206,7 +210,8 @@ async function main() {
   assert.match(appCssSource, /\.ui-choice-card:has\(\.ui-choice-radio:checked\)/);
   assert.match(appCssSource, /\.ui-toggle-field-compact \{/);
   assert.match(appSource,
-    /ui-button ui-button-secondary ui-icon-button table-layout-trigger/);
+    /ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger/);
+  assert.match(appCssSource, /\.ui-icon-button-compact \{[^}]*--icon-action-size: var\(--control-height-compact\)/s);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
   assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(\)/);
@@ -382,7 +387,9 @@ async function main() {
   assert.match(dropdownBinding, /setAttribute\('aria-expanded'/);
   assert.match(dropdownBinding, /panel\.style\.maxHeight = ''/);
   assert.match(dropdownBinding, /panel\.hidePopover\(\)/);
-  assert.match(appCssSource, /\.table-layout-menu \{[^}]*margin: 0 8px 6px auto[^}]*padding-top: var\(--space-2\)/s);
+  assert.match(appCssSource, /\.table-layout-menu \{[^}]*display: flex[^}]*flex: 0 0 auto/s);
+  assert.doesNotMatch(appCssSource, /\.table-layout-menu-inline/);
+  assert.match(appCssSource, /\.ui-table-titlebar \{[^}]*min-height: var\(--control-height-compact\)/s);
   assert.match(appCssSource, /\.ui-popover \{[^}]*position: fixed[^}]*inset: auto[^}]*margin: 0/s);
   assert.match(appCssSource, /\.table-layout-panel \{[^}]*--ui-popover-max-height:/s);
   assert.doesNotMatch(appCssSource, /\.admin-toggle-control input\s*\{/);
@@ -522,6 +529,9 @@ async function main() {
   assert.doesNotMatch(coverageSource, /aliasCoverageGuidance\(\)/);
   assert.match(coverageSource, /aliasCoverageScope\(overview\)/);
   assert.match(coverageSource, /alias-coverage-table-header/);
+  assert.match(coverageSource, /const tableActions = sectionActionHost\(\)/);
+  assert.match(coverageSource, /tableHeader\.append\(tableHeading, tabs, tableActions\)/);
+  assert.match(coverageSource, /layoutMenuHost: tableActions/);
   assert.match(coverageSource, /directory\.host\.replaceChildren\(present\(model\)\)/);
   assert.match(coverageSource, /bare: true/);
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
@@ -531,19 +541,26 @@ async function main() {
   assert.match(radioDirectorySource,
     /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);
   assert.match(radioDirectorySource,
-    /radioDirectoryCardSection\('Conventional Channels', conventionalRows, 'channel'/);
+    /radioDirectoryCardSection\('Conventional Channels', conventionalSystems, 'conventional'/);
+  assert.match(radioDirectorySource, /radioDirectoryConventionalGroups\(conventionalRows\)/);
   assert.doesNotMatch(radioDirectorySource, /\btable\s*\(/,
     'The read-only Radio Directory must render quiet cards instead of a data table');
+  const aliasTransferSource = functionBinding(appSource, 'openAliasTransferModal');
+  assert.match(aliasTransferSource, /node\('div', 'ui-table-actions'\)/);
+  assert.match(aliasTransferSource, /node\('header', 'ui-table-titlebar'\)/);
+  assert.match(aliasTransferSource, /layoutMenuHost: changeActions/);
   assert.match(functionBinding(appSource, 'radioDirectorySystemCard'),
     /ui-surface radio-directory-system-card[\s\S]+uiIconTile\('icon-trunked'\)/);
-  assert.match(functionBinding(appSource, 'radioDirectoryConventionalCard'),
-    /ui-surface radio-directory-channel-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
+  assert.match(functionBinding(appSource, 'radioDirectoryConventionalSystemCard'),
+    /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
+  assert.match(functionBinding(appSource, 'radioDirectoryConventionalRow'),
+    /radio-directory-site-row radio-directory-conventional-row/);
   assert.match(functionBinding(appSource, 'radioDirectoryStatus'), /uiStatus\(/);
   assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
   assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
   assert.match(appCssSource,
-    /\.radio-directory-system-grid,[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+    /\.radio-directory-system-grid \{[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');
   assert.match(liveHistoryNotice, /live-activity-history-notice ui-notice ui-notice-warning/);
   assert.match(liveHistoryNotice, /storeLiveUiState\(\{ historyNoticeDismissed: true \}\)/);
@@ -962,7 +979,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 6,
+    version: 7,
     appearance: { theme: 'light' },
     page_titles: { prepend_playing_call: false },
     playback: {
@@ -986,6 +1003,11 @@ async function main() {
   assert.deepEqual(decodedDefaults.playback.selected_scan_list_ids, []);
   assert.equal(decodedDefaults.playback.target_grouping, true);
   assert.equal(decodedDefaults.playback.target_burst_limit, 4);
+  const upgradedAnonymousTables = vm.runInNewContext(
+    `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {
+      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
+    } })`);
+  assert.deepEqual(JSON.parse(JSON.stringify(upgradedAnonymousTables.sample.collapsed_groups)), []);
   const sixteenScanLists = Array.from({ length: 16 }, (_unused, index) => index + 1);
   assert.deepEqual(preferenceSchema.validate({ ...decodedDefaults, playback: {
     ...decodedDefaults.playback, selected_scan_list_ids: sixteenScanLists
@@ -1002,12 +1024,13 @@ async function main() {
     playback: { ...decodedDefaults.playback, target_burst_limit: 21 } }), /target_burst_limit/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, tables: {
     sample: {
-      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: ['name']
+      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: ['name'],
+      collapsed_groups: []
     }
   } }), /at least one visible column/);
   assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, tables: {
     sample: {
-      schema: [], column_order: [], column_widths: {}, hidden_columns: []
+      schema: [], column_order: [], column_widths: {}, hidden_columns: [], collapsed_groups: []
     }
   } }), /at least one column/);
 
@@ -1020,6 +1043,10 @@ async function main() {
   assert.deepEqual(changedLayout.column_order, ['name', 'status', 'frequency']);
   assert.equal(changedLayout.column_widths.name, 48);
   assert.deepEqual(changedLayout.hidden_columns, ['frequency']);
+  const collapsedLayout = tableLayouts.setGroupCollapsed(changedLayout, 'p25-phase1', true);
+  assert.deepEqual(collapsedLayout.collapsed_groups, ['p25-phase1']);
+  assert.deepEqual(tableLayouts.setGroupCollapsed(collapsedLayout, 'p25-phase1', false).collapsed_groups, []);
+  assert.throws(() => tableLayouts.setGroupCollapsed(changedLayout, 'P25 Phase 1', true), /valid stable ID/);
   const restored = tableLayouts.normalize(columns, tableLayouts.persisted(changedLayout));
   assert.deepEqual(restored.columns.map(({ id }) => id), ['name', 'status']);
   const reset = tableLayouts.normalize([...columns, { id: 'new-column' }], tableLayouts.persisted(changedLayout));
@@ -1028,12 +1055,12 @@ async function main() {
   assert.equal(reset.reset_reason, 'schema-changed');
   const invalidWidth = tableLayouts.normalize(columns, {
     schema: ['name', 'frequency', 'status'], column_order: ['name', 'frequency', 'status'],
-    column_widths: { name: 12 }, hidden_columns: []
+    column_widths: { name: 12 }, hidden_columns: [], collapsed_groups: []
   });
   assert.equal(invalidWidth.reset_reason, 'invalid-widths');
   assert.equal(tableLayouts.normalize(columns, {
     schema: ['name', 'frequency', 'status'], column_order: ['name', 'frequency', 'status'],
-    column_widths: {}, hidden_columns: ['name', 'frequency', 'status']
+    column_widths: {}, hidden_columns: ['name', 'frequency', 'status'], collapsed_groups: []
   }).reset_reason, 'all-columns-hidden');
   assert.equal(tableLayouts.tableId('live.channels'), 'live.channels');
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
@@ -1070,7 +1097,7 @@ async function main() {
   assert.equal(tableDefaults.width('channel-frequency-bands', { id: 'band' }), 64);
   assert.deepEqual(tableDefaults.layout('example', [{ id: 'calls' }, { id: 'name' }]), {
     schema: ['calls', 'name'], column_order: ['calls', 'name'],
-    column_widths: {}, hidden_columns: []
+    column_widths: {}, hidden_columns: [], collapsed_groups: []
   });
   const customAliasColumns = [
     { id: 'select' }, { id: 'alias' }, { id: 'description' }, { id: 'record' }
@@ -1099,6 +1126,7 @@ async function main() {
   assert.ok(anonymousTables.save('sample', personalized));
   assert.equal(anonymousTables.current().tables.sample.column_widths.name, 144);
   assert.deepEqual(JSON.parse(storedAnonymousLayouts.get('table-test')).sample.hidden_columns, ['frequency']);
+  assert.deepEqual(JSON.parse(storedAnonymousLayouts.get('table-test')).sample.collapsed_groups, []);
   assert.ok(anonymousTables.save('sample'));
   assert.equal(anonymousTables.current().tables.sample, undefined);
   assert.throws(() => tableLayouts.tableId('Live Channels'), /valid stable ID/);
@@ -1137,11 +1165,11 @@ async function main() {
     ['select', 'status', 'name']);
   assert.equal(tableLayouts.normalize(constrainedColumns, {
     schema: ['select', 'name', 'status'], column_order: ['name', 'select', 'status'],
-    column_widths: {}, hidden_columns: []
+    column_widths: {}, hidden_columns: [], collapsed_groups: []
   }).reset_reason, 'fixed-column-moved');
   assert.equal(tableLayouts.normalize(constrainedColumns, {
     schema: ['select', 'name', 'status'], column_order: ['select', 'name', 'status'],
-    column_widths: {}, hidden_columns: ['select']
+    column_widths: {}, hidden_columns: ['select'], collapsed_groups: []
   }).reset_reason, 'essential-column-hidden');
 
   assert.equal(pageTitles.derive({ routeId: 'scanner', pageTitle: 'Scanner',
@@ -1281,7 +1309,7 @@ async function main() {
   });
   const layoutSave = controller.update((profile) => {
     profile.tables.sample = {
-      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
+      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: [], collapsed_groups: []
     };
   });
   const settingsSave = controller.update((profile) => {
@@ -1290,7 +1318,7 @@ async function main() {
   slowLayoutSave.resolve(response(200, { revision: 7, preferences: {
     ...controller.snapshot().preferences,
     tables: { sample: {
-      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
+      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: [], collapsed_groups: []
     } }
   } }));
   await Promise.all([layoutSave, settingsSave]);

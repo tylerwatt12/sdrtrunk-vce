@@ -63,6 +63,7 @@
       column_order: defaults.slice(),
       column_widths: {},
       hidden_columns: [],
+      collapsed_groups: [],
       groups,
       essential_columns: essentialColumns.slice(),
       fixed_columns: fixedColumns.slice(),
@@ -100,6 +101,13 @@
     if (widthEntries.some(([, value]) => !Number.isInteger(value) || value < MINIMUM_WIDTH ||
         value > MAXIMUM_WIDTH)) return fresh(true, 'invalid-widths');
     const normalizedWidths = Object.fromEntries(widthEntries);
+    const collapsedGroups = Array.isArray(saved.collapsed_groups) ? saved.collapsed_groups.slice() : [];
+    if (collapsedGroups.length > 128 || new Set(collapsedGroups).size !== collapsedGroups.length ||
+        collapsedGroups.some((id) => {
+          try { stableId(id, 'Every collapsed row group'); return false; } catch (_error) { return true; }
+        })) {
+      return fresh(true, 'invalid-collapsed-groups');
+    }
     const hiddenSet = new Set(hidden);
     return {
       schema: exactSchema.slice(),
@@ -107,6 +115,7 @@
       column_order: saved.column_order.slice(),
       column_widths: normalizedWidths,
       hidden_columns: hidden,
+      collapsed_groups: collapsedGroups,
       groups,
       essential_columns: essentialColumns.slice(),
       fixed_columns: fixedColumns.slice(),
@@ -166,16 +175,26 @@
     return { ...layout, hidden_columns: layout.column_order.filter((column) => values.has(column)) };
   }
 
+  function setGroupCollapsed(layout, id, collapsed) {
+    const groupId = stableId(id, 'Every collapsed row group');
+    const values = new Set(layout.collapsed_groups || []);
+    if (collapsed) values.add(groupId);
+    else values.delete(groupId);
+    if (values.size > 128) throw new Error('A table cannot store more than 128 collapsed row groups.');
+    return { ...layout, collapsed_groups: [...values].sort() };
+  }
+
   function persisted(layout) {
     return {
       schema: layout.schema.slice(),
       column_order: layout.column_order.slice(),
       column_widths: { ...layout.column_widths },
-      hidden_columns: layout.hidden_columns.slice()
+      hidden_columns: layout.hidden_columns.slice(),
+      collapsed_groups: (layout.collapsed_groups || []).slice()
     };
   }
 
 export {
   MINIMUM_WIDTH, MAXIMUM_WIDTH, columnId, tableId, schema, registerSchema,
-  normalize, move, canMove, resize, setHidden, persisted
+  normalize, move, canMove, resize, setHidden, setGroupCollapsed, persisted
 };

@@ -38,8 +38,6 @@ import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.settings.SpectrumSnapSettings;
-import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -2067,7 +2065,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     }
                     catch(IOException | RuntimeException exception)
                     {
-                        preferences = WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
+                        preferences = Format22WebUserPreferencesCodec.format6Defaults();
                         preferenceDefaulted = true;
                     }
 

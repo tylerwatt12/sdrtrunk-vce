@@ -111,9 +111,9 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       element.style.width = `${contentWidth}px`;
       element.style.setProperty('--table-content-min-width', `${contentWidth}px`);
       if (options.layoutMenuHost) {
-        const layoutMenu = node('div', 'table-layout-menu table-layout-menu-inline');
+        const layoutMenu = node('div', 'table-layout-menu');
         const columnsButton = node('button',
-          'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
+          'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
         columnsButton.type = 'button';
         columnsButton.setAttribute('aria-label', 'Choose table columns');
         columnsButton.append(iconGlyph('icon-columns'));

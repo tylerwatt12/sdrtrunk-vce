@@ -98,6 +98,8 @@ assert.doesNotMatch(channelColumns, /id: 'protocol'/,
 const channelCatalog = functionSource('async function renderModernChannelCatalog(');
 assert.match(channelCatalog, /channel-catalog-admin-v2/);
 assert.match(channelCatalog, /rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'/);
+assert.match(channelCatalog, /revealRowGroups: \(\) => Boolean\(search\.value\.trim\(\)\)/);
+assert.match(channelCatalog, /Select all matching channels/);
 assert.match(channelCatalog, /label: 'All statuses'/);
 assert.match(channelCatalog, /Filter channels by status/);
 assert.doesNotMatch(channelCatalog, /value: 'trunked'|value: 'conventional'/,
@@ -109,13 +111,32 @@ vm.runInContext(`
   ${functionSource('function channelProtocolOrder(left, right)')}
 `, protocolContext);
 assert.deepEqual(JSON.parse(vm.runInContext(
-  "JSON.stringify(channelProtocolGroup({ protocol_label: 'P25 Phase 2' }))", protocolContext)),
-{ key: 'p25 phase 2', label: 'P25 Phase 2' });
+  "JSON.stringify(channelProtocolGroup({ protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2' }))",
+  protocolContext)),
+{ key: 'p25-phase2', label: 'P25 Phase 2' });
+assert.deepEqual(JSON.parse(vm.runInContext(
+  "JSON.stringify(channelProtocolGroup({ protocol_id: 'unsupported', protocol_label: 'Legacy Decoder' }))",
+  protocolContext)), { key: 'unsupported.legacy-decoder', label: 'Legacy Decoder' });
 assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify([
-  { name: 'Zulu', protocol_label: 'P25 Phase 2' },
-  { name: 'Bravo', protocol_label: 'NBFM' },
-  { name: 'Alpha', protocol_label: 'NBFM' }
+  { name: 'Zulu', protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2' },
+  { name: 'Bravo', protocol_id: 'nbfm', protocol_label: 'NBFM' },
+  { name: 'Alpha', protocol_id: 'nbfm', protocol_label: 'NBFM' }
 ].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Alpha', 'Bravo', 'Zulu']);
+vm.runInContext(`${functionSource('function radioDirectoryConventionalGroups(rows)')}`, protocolContext);
+const conventionalGroups = JSON.parse(vm.runInContext(`JSON.stringify(radioDirectoryConventionalGroups([
+  { name: 'Dispatch 2', system: 'County Radio', site: 'West', protocol_label: 'NBFM',
+    frequencies_hz: [155200000], alias_list_id: 7, alias_list_name: 'Default Analog', processing_state: 'RUNNING' },
+  { name: 'Dispatch 10', system: 'County Radio', site: 'East', protocol_label: 'NBFM',
+    frequencies_hz: [155100000], alias_list_id: 7, alias_list_name: 'Default Analog', processing_state: 'STOPPED' },
+  { name: 'Untitled', system: '', site: '', protocol_label: 'AM', frequencies_hz: [121900000],
+    alias_list_id: 8, alias_list_name: 'Airport', processing_state: 'STOPPED' }
+]))`, protocolContext));
+assert.deepEqual(conventionalGroups.map((group) => group.system_name), ['County Radio', 'Other channels'],
+  'Conventional channels should group by system and keep unassigned channels together at the end');
+assert.deepEqual(conventionalGroups[0].children.map((row) => row.name), ['Dispatch 10', 'Dispatch 2'],
+  'Conventional channels should sort by site, then channel name, then frequency within a system');
+assert.equal(conventionalGroups[0].running_count, 1);
+assert.deepEqual(conventionalGroups[0].alias_lists, [{ id: 7, name: 'Default Analog' }]);
 const channelModal = functionSource('async function openChannelEditorModal(');
 assert.match(channelModal, /if \(!editing\) channel = channelCreationDefaults\(channel, profile, options\)/,
   'Creation defaults must not alter an existing channel');

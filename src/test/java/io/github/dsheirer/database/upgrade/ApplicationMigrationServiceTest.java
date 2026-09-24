@@ -819,6 +819,7 @@ class ApplicationMigrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("markerless-current-foreign-key-source"));
         SdrTrunkTestDatabase.create(database);
+        new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -930,7 +931,7 @@ class ApplicationMigrationServiceTest
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.completedWithRepairsOrSkippedItems());
         assertCurrentFormat(targetDatabase);
-        assertEquals("1", scalar(targetDatabase,
+        assertEquals("2", scalar(targetDatabase,
             "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
         assertEquals("1", scalar(targetDatabase, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -986,6 +987,7 @@ class ApplicationMigrationServiceTest
 
         Path markerless = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("markerless-startup"));
         SdrTrunkTestDatabase.create(markerless);
+        new WebAccessService(markerless).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
         try(Connection connection = open(markerless); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");

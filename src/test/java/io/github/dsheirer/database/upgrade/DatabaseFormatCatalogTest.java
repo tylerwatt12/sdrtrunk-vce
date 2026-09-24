@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -79,7 +80,7 @@ class DatabaseFormatCatalogTest
         assertTrue(DatabaseFormatCatalog.requireVersion(19).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("exact saved channel")));
         assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
-            .anyMatch(policy -> policy.contains("Alias Activity")));
+            .anyMatch(policy -> policy.contains("collapsed row-group")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -458,10 +459,45 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
+    void exactUnmarkedFormat22UsesItsFrozenPreferenceSemantics() throws Exception
+    {
+        Path database = Format22TestDatabase.create(mTemporaryFolder.resolve("unmarked-format-22.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(22, detected.version());
+            assertFalse(detected.markerPresent());
+        }
+    }
+
+    @Test
+    void damagedUnmarkedFormat22IsNotGuessedAsCurrentFormat23() throws Exception
+    {
+        Path database = Format22TestDatabase.create(mTemporaryFolder.resolve("damaged-unmarked-format-22.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            assertEquals(1, statement.executeUpdate("""
+                UPDATE web_user
+                SET preferences_json=json_remove(preferences_json, '$.playback.target_grouping')
+                WHERE id=3
+                """));
+            SQLException exception = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(exception.getMessage().contains("does not satisfy any matching catalog entry"),
+                exception::getMessage);
+        }
+    }
+
+    @Test
     void exactUnmarkedCurrentLayoutRequiresOnlyGlobalMarkerAdoption() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database);
             var statement = connection.prepareStatement("DELETE FROM database_metadata WHERE key=?"))
@@ -484,6 +520,7 @@ class DatabaseFormatCatalogTest
     {
         Path database = mTemporaryFolder.resolve("unmarked-current-with-retired-metadata.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {

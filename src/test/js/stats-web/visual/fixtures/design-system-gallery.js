@@ -13,6 +13,38 @@ document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
 document.querySelectorAll('.radioreference-detail-header').forEach((header) =>
   header.classList.add('ui-surface-header'));
+document.querySelectorAll('.ui-table-row-group > th').forEach((heading, index) => {
+  const groupRow = heading.parentElement;
+  const button = document.createElement('button');
+  const groupId = `gallery-group-${index + 1}`;
+  button.type = 'button';
+  button.className = 'table-row-group-disclosure';
+  button.dataset.rowGroup = groupId;
+  button.setAttribute('aria-expanded', 'true');
+  button.setAttribute('aria-label', `Collapse ${heading.querySelector('.table-row-group-label')?.textContent || 'group'}`);
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#visual-icon-chevron');
+  icon.append(use);
+  button.append(icon, ...heading.childNodes);
+  heading.append(button);
+  groupRow.dataset.rowGroup = groupId;
+  const items = [];
+  for(let row = groupRow.nextElementSibling; row && !row.classList.contains('ui-table-row-group');
+      row = row.nextElementSibling) {
+    row.classList.add('ui-table-row-group-item');
+    row.dataset.rowGroup = groupId;
+    items.push(row);
+  }
+  button.addEventListener('click', () => {
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    button.setAttribute('aria-label', `${expanded ? 'Expand' : 'Collapse'} ${
+      button.querySelector('.table-row-group-label')?.textContent || 'group'}`);
+    items.forEach((row) => { row.hidden = expanded; });
+  });
+});
 if(view === 'radio-directory-panel') {
   const example = document.querySelector('.visual-radio-directory-coverage-example');
   const panel = document.createElement('section');

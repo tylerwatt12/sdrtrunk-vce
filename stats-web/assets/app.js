@@ -6,7 +6,7 @@ import * as tableDefaults from './core/table-defaults.js?v=6';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints } from './core/icon-hints.js?v=1';
+import { installIconHints } from './core/icon-hints.js?v=2';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -64,10 +64,17 @@ const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
 let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
+function upgradeAnonymousTableLayouts(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([id, layout]) => [id,
+    layout && typeof layout === 'object' && !Array.isArray(layout) && !Array.isArray(layout.collapsed_groups) ?
+      { ...layout, collapsed_groups: [] } : layout]));
+}
 try {
   anonymousUserPreferences = preferenceSchema.validate({
     ...anonymousUserPreferences,
-    tables: JSON.parse(localStorage.getItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY) || '{}')
+    tables: upgradeAnonymousTableLayouts(
+      JSON.parse(localStorage.getItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY) || '{}'))
   });
 } catch (_error) {
   // Invalid or unavailable browser storage falls back to the default table layouts.
@@ -1889,8 +1896,24 @@ function openReadOnlyModal(title, body, options = {}) {
     }
   };
   close.addEventListener('click', dismiss);
+  let backdropPointerId = null;
+  let backdropRelease = false;
+  const resetBackdropGesture = () => {
+    backdropPointerId = null;
+    backdropRelease = false;
+  };
+  backdrop.addEventListener('pointerdown', (event) => {
+    backdropPointerId = event.isPrimary && event.button === 0 && event.target === backdrop ? event.pointerId : null;
+    backdropRelease = false;
+  });
+  backdrop.addEventListener('pointerup', (event) => {
+    backdropRelease = event.pointerId === backdropPointerId && event.target === backdrop;
+  });
+  backdrop.addEventListener('pointercancel', resetBackdropGesture);
   backdrop.addEventListener('click', (event) => {
-    if (event.target === backdrop) dismiss();
+    const shouldDismiss = backdropRelease && event.target === backdrop;
+    resetBackdropGesture();
+    if (shouldDismiss) dismiss();
   });
   let dirty = false;
   let busy = false;
@@ -2250,14 +2273,30 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   return row;
 }
 
-function renderTableRowGroup(group, count, columnCount, noun = 'row') {
+function renderTableRowGroup(group, count, columnCount, noun = 'row', collapsed = false,
+    temporarilyExpanded = false, onToggle = null) {
   const row = node('tr', 'ui-table-row-group');
+  row.dataset.rowGroup = group.key;
   const heading = node('th');
   heading.colSpan = columnCount;
   heading.scope = 'rowgroup';
-  heading.append(node('strong', 'table-row-group-label', group.label),
+  const disclosure = node('button', 'table-row-group-disclosure');
+  disclosure.type = 'button';
+  disclosure.dataset.rowGroup = group.key;
+  disclosure.setAttribute('aria-expanded', String(!collapsed || temporarilyExpanded));
+  disclosure.setAttribute('aria-label', `${collapsed && !temporarilyExpanded ? 'Expand' : 'Collapse'} ${group.label}`);
+  disclosure.append(iconGlyph('icon-chevron-down'),
+    node('strong', 'table-row-group-label', group.label),
     node('span', 'table-row-group-count muted',
       `${number(count)} ${count === 1 ? noun : `${noun}s`}`));
+  if (temporarilyExpanded) {
+    disclosure.disabled = true;
+    disclosure.title = 'Matching groups stay expanded while searching';
+    disclosure.setAttribute('aria-label', `${group.label} is expanded while searching`);
+  } else if (typeof onToggle === 'function') {
+    disclosure.addEventListener('click', () => onToggle(group.key, !collapsed, disclosure));
+  }
+  heading.append(disclosure);
   row.append(heading);
   return row;
 }
@@ -2446,6 +2485,9 @@ function cleanupTableLayoutMenu(controller) {
 
 function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableType = tableLayouts.tableId(options.type);
+  if (!(options.layoutMenuHost instanceof Node)) {
+    throw new Error(`Table ${tableType} requires an owning title or action host`);
+  }
   const tableController = options.controller || {};
   cleanupTableLayoutMenu(tableController);
   tableController.widthObserver?.disconnect();
@@ -2515,7 +2557,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       const key = String(value?.key ?? value ?? '');
       groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
     });
+    const revealGroups = typeof options.revealRowGroups === 'function' && options.revealRowGroups();
+    const collapsedGroups = new Set(layout.collapsed_groups || []);
     let previousGroup = null;
+    let activeGroup = null;
     orderedRows.forEach((data) => {
       if (typeof options.rowGroup === 'function') {
         const value = options.rowGroup(data);
@@ -2523,12 +2568,20 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
           { key: String(value.key ?? value.label ?? ''), label: String(value.label ?? value.key ?? '') } :
           { key: String(value ?? ''), label: String(value ?? '') };
         if (group.key !== previousGroup) {
+          const collapsed = collapsedGroups.has(group.key);
           body.append(renderTableRowGroup(group, groupCounts.get(group.key) || 0, columns.length,
-            options.rowGroupNoun));
+            options.rowGroupNoun, collapsed, collapsed && revealGroups, toggleRowGroup));
           previousGroup = group.key;
         }
+        activeGroup = group;
       }
-      body.append(renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick));
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
+      if (activeGroup) {
+        rendered.classList.add('ui-table-row-group-item');
+        rendered.dataset.rowGroup = activeGroup.key;
+        rendered.hidden = collapsedGroups.has(activeGroup.key) && !revealGroups;
+      }
+      body.append(rendered);
     });
   };
 
@@ -2698,14 +2751,28 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     layout = nextLayout;
     rebuildTable(tableLayouts.persisted(layout), reopenLayoutMenu, restoreLayoutFocus);
   };
+  const toggleRowGroup = async (groupId, collapsed, source) => {
+    if (!beginLayoutMutation()) return;
+    const nextLayout = tableLayouts.setGroupCollapsed(layout, groupId, collapsed);
+    layout = nextLayout;
+    renderBody();
+    const saved = await saveTableLayoutPreference(tableType, nextLayout);
+    endLayoutMutation();
+    if (!wrapper.isConnected) return;
+    if (!saved) {
+      const restored = activeUserPreferences().tables[tableType] || defaultLayout;
+      layout = tableLayouts.normalize(declaredColumns, restored);
+      renderBody();
+    }
+    const focusTarget = body.querySelector(`.table-row-group-disclosure[data-row-group="${CSS.escape(groupId)}"]`);
+    if (source === document.activeElement || source instanceof HTMLElement) focusTarget?.focus();
+  };
   {
     const chooser = node('div', 'table-layout-menu');
-    const inline = options.layoutMenuHost instanceof Node;
-    if (inline) chooser.classList.add('table-layout-menu-inline');
     chooser.dataset.tableType = tableType;
     const panelId = `table-layout-panel-${++tableLayoutPanelSequence}`;
     const trigger = iconButton('icon-columns', 'Choose table columns',
-      'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
+      'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact table-layout-trigger');
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', panelId);
@@ -2804,7 +2871,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       dropdownCleanup();
       chooser.remove();
     };
-    (options.layoutMenuHost || wrapper).append(chooser);
+    options.layoutMenuHost.append(chooser);
     if (options.layoutMenuOpen) window.requestAnimationFrame(() => {
       if (!panel.isConnected || typeof panel.showPopover !== 'function') return;
       panel.showPopover();
@@ -5534,11 +5601,16 @@ function openAliasTransferModal(selectedList, action = 'Import') {
           const detail = node('details', `alias-transfer-row alias-transfer-row-${row.result}`);
           detail.append(node('summary', '', `${countLabels[row.result] || row.result} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`));
           if (row.error) detail.append(node('p', 'ui-feedback ui-feedback-error', row.error));
-          if (row.changes.length) detail.append(table(row.changes, [
-            { id: 'field', label: 'Field', render: (change) => change.field.replaceAll('_', ' ') },
-            { id: 'before', label: 'Current', render: (change) => change.before || '—' },
-            { id: 'after', label: 'Proposed', render: (change) => change.after || '—' }
-          ], '', { type: 'alias-import-changes', sortable: false }));
+          if (row.changes.length) {
+            const changeActions = node('div', 'ui-table-actions');
+            const changeHeader = node('header', 'ui-table-titlebar');
+            changeHeader.append(node('strong', '', 'Changes'), changeActions);
+            detail.append(changeHeader, table(row.changes, [
+              { id: 'field', label: 'Field', render: (change) => change.field.replaceAll('_', ' ') },
+              { id: 'before', label: 'Current', render: (change) => change.before || '—' },
+              { id: 'after', label: 'Proposed', render: (change) => change.after || '—' }
+            ], '', { type: 'alias-import-changes', sortable: false, layoutMenuHost: changeActions }));
+          }
           rowsHost.append(detail);
         });
         if (!visibleRows.length) rowsHost.append(node('div', 'empty', 'No matching aliases on this review page.'));
@@ -16649,12 +16721,19 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
 
 function channelProtocolGroup(row) {
   const label = String(row.protocol_label || protocolFamily(row) || 'Other').trim() || 'Other';
-  return { key: label.toLowerCase(), label };
+  const protocolId = String(row.protocol_id || '').trim().toLowerCase();
+  if (protocolId && protocolId !== 'unsupported') return { key: protocolId, label };
+  const unsupportedLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 51).replace(/-+$/g, '') || 'other';
+  return { key: `unsupported.${unsupportedLabel}`, label };
 }
 
 function channelProtocolOrder(left, right) {
-  const byProtocol = channelProtocolGroup(left).label.localeCompare(
-    channelProtocolGroup(right).label, undefined, { numeric: true, sensitivity: 'base' });
+  const leftGroup = channelProtocolGroup(left);
+  const rightGroup = channelProtocolGroup(right);
+  const byProtocol = leftGroup.label.localeCompare(
+    rightGroup.label, undefined, { numeric: true, sensitivity: 'base' }) ||
+    leftGroup.key.localeCompare(rightGroup.key);
   if (byProtocol) return byProtocol;
   return String(left.name || '').localeCompare(String(right.name || ''), undefined,
     { numeric: true, sensitivity: 'base' });
@@ -16727,6 +16806,51 @@ function radioDirectoryTrunkedGroups(catalog, systems) {
     String(right.system_name || radioSystemLabel(right))));
 }
 
+function radioDirectoryConventionalGroups(rows) {
+  const groups = new Map();
+  (rows || []).forEach((row) => {
+    const configuredSystem = String(row.system || row.system_name || '').trim();
+    const systemName = configuredSystem && configuredSystem.toLowerCase() !== 'unknown' ?
+      configuredSystem : 'Other channels';
+    const key = systemName.toLowerCase();
+    const group = groups.get(key) || {
+      directory_type: 'conventional_system', system_name: systemName, children: []
+    };
+    group.children.push({ ...row, directory_type: 'channel' });
+    groups.set(key, group);
+  });
+  const compareText = (left, right) => String(left || '').localeCompare(String(right || ''), undefined,
+    { numeric: true, sensitivity: 'base' });
+  const compareOptionalText = (left, right) => {
+    const leftEmpty = !String(left || '').trim();
+    const rightEmpty = !String(right || '').trim();
+    return leftEmpty || rightEmpty ? (leftEmpty === rightEmpty ? 0 : leftEmpty ? 1 : -1) :
+      compareText(left, right);
+  };
+  const firstFrequency = (row) => {
+    const values = Array.isArray(row.frequencies_hz) ? row.frequencies_hz.map(Number).filter(Number.isFinite) : [];
+    return values.length ? Math.min(...values) : Number.MAX_SAFE_INTEGER;
+  };
+  return [...groups.values()].map((group) => {
+    group.children.sort((left, right) => compareOptionalText(left.site || left.site_name,
+      right.site || right.site_name) ||
+      compareText(left.name, right.name) || firstFrequency(left) - firstFrequency(right));
+    group.child_count = group.children.length;
+    group.running_count = group.children.filter((row) => row.processing_state === 'RUNNING').length;
+    group.alias_lists = [...new Map(group.children.filter((row) => row.alias_list_name).map((row) => [
+      String(row.alias_list_id || row.alias_list_name), { id: row.alias_list_id, name: row.alias_list_name }
+    ])).values()];
+    group.protocol_labels = [...new Set(group.children.map((row) =>
+      row.protocol_label || protocolFamily(row) || 'Unknown protocol'))]
+      .sort(compareText);
+    return group;
+  }).sort((left, right) => {
+    if (left.system_name === 'Other channels') return 1;
+    if (right.system_name === 'Other channels') return -1;
+    return compareText(left.system_name, right.system_name);
+  });
+}
+
 function radioDirectoryLiveLink(row) {
   const link = anchor('Live', href('live', { channel: row.configuration_id }),
     'ui-button ui-button-secondary radio-directory-live-action');
@@ -16788,36 +16912,61 @@ function radioDirectorySystemCard(row) {
   return card;
 }
 
-function radioDirectoryConventionalCard(row) {
-  const card = node('article', 'ui-surface radio-directory-channel-card');
+function radioDirectoryConventionalRow(row) {
+  const channel = node('div', 'radio-directory-site-row radio-directory-conventional-row');
   const identity = node('div', 'radio-directory-item-identity');
   identity.append(anchor(row.name || 'Unnamed channel', href('channel', {
     configuration_id: row.configuration_id
-  }), 'channel-name-link'), node('span', 'channel-row-context',
-    [row.system, row.site].filter(Boolean).join(' · ') || 'No system or site'));
+  }), 'channel-name-link'), node('span', 'channel-row-context', row.site || row.site_name || 'Site not specified'));
   const aliases = node('span', 'radio-directory-channel-alias');
   aliases.append('Alias List: ', aliasListLink(row.alias_list_name, row.alias_list_id) || '—');
   identity.append(aliases);
-  const identityGroup = node('div', 'radio-directory-channel-identity');
-  identityGroup.append(uiIconTile('icon-conventional', 'blue'), identity);
   const technical = node('span', 'radio-directory-channel-technical');
   technical.append(node('span', 'radio-directory-frequency-list',
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequency'),
     node('span', 'radio-directory-meta-separator', '·'),
     node('span', '', row.protocol_label || protocolFamily(row) || 'Unknown protocol'));
-  card.append(identityGroup, technical, radioDirectoryStatus(row), radioDirectoryLiveLink(row));
+  channel.append(identity, technical, radioDirectoryStatus(row), radioDirectoryLiveLink(row));
+  return channel;
+}
+
+function radioDirectoryConventionalSystemCard(row) {
+  const card = node('article', 'ui-surface radio-directory-system-card radio-directory-conventional-card');
+  const header = node('header', 'radio-directory-system-header');
+  const identity = node('div', 'radio-directory-system-identity');
+  identity.append(node('h3', '', row.system_name || 'Other channels'));
+  const metadata = node('div', 'radio-directory-system-meta');
+  metadata.append(
+    node('span', '', `${number(row.child_count || 0)} ${Number(row.child_count) === 1 ? 'channel' : 'channels'}`),
+    node('span', 'radio-directory-meta-separator', '·'),
+    node('span', '', (row.protocol_labels || []).join(', ') || 'Unknown protocol'),
+    node('span', 'radio-directory-meta-separator', '·'));
+  const aliases = node('span', 'radio-directory-system-aliases');
+  aliases.append(`${(row.alias_lists || []).length === 1 ? 'Alias List' : 'Alias Lists'}: `,
+    radioDirectoryAliasLists(row));
+  metadata.append(aliases);
+  identity.append(metadata);
+  const headingGroup = node('div', 'radio-directory-system-heading');
+  headingGroup.append(uiIconTile('icon-conventional', 'blue'), identity);
+  const total = Number(row.child_count || row.children?.length || 0);
+  const running = Number(row.running_count || 0);
+  const statusLabel = running === total && total > 0 ? `${number(running)} running` :
+    running > 0 ? `${number(running)} of ${number(total)} running` : 'Stopped';
+  header.append(headingGroup, uiStatus(statusLabel, running > 0 ? 'success' : 'neutral'));
+  const channels = node('div', 'radio-directory-site-list');
+  (row.children || []).forEach((channel) => channels.append(radioDirectoryConventionalRow(channel)));
+  card.append(header, channels);
   return card;
 }
 
-function radioDirectoryCardSection(title, rows, kind, emptyText) {
+function radioDirectoryCardSection(title, rows, kind, emptyText, summary = null) {
   const sectionElement = node('section', 'radio-directory-section');
   const header = node('header', 'radio-directory-section-header');
-  header.append(node('h2', '', title), node('span', 'muted',
-    `${number(rows.length)} ${kind === 'system' ? (rows.length === 1 ? 'system' : 'systems') :
-      (rows.length === 1 ? 'channel' : 'channels')} shown`));
-  const grid = node('div', `radio-directory-${kind}-grid`);
-  if (rows.length) rows.forEach((row) => grid.append(kind === 'system' ?
-    radioDirectorySystemCard(row) : radioDirectoryConventionalCard(row)));
+  const countLabel = summary || `${number(rows.length)} ${rows.length === 1 ? 'system' : 'systems'} shown`;
+  header.append(node('h2', '', title), node('span', 'muted', countLabel));
+  const grid = node('div', 'radio-directory-system-grid');
+  if (rows.length) rows.forEach((row) => grid.append(kind === 'conventional' ?
+    radioDirectoryConventionalSystemCard(row) : radioDirectorySystemCard(row)));
   else grid.append(node('div', 'empty radio-directory-empty', emptyText));
   sectionElement.append(header, grid);
   return sectionElement;
@@ -16909,14 +17058,16 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
         }
       });
       const conventionalRows = (directory.catalog.channels || []).filter((row) =>
-        String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term))
-        .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+        String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term));
+      const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
       summaryHost.replaceChildren(channelSummaryCards(directory.catalog, false));
       directoryHost.replaceChildren(
         radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
           'No trunked systems or sites match this search'),
-        radioDirectoryCardSection('Conventional Channels', conventionalRows, 'channel',
-          'No conventional channels match this search')
+        radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
+          'No conventional channels match this search',
+          `${number(conventionalSystems.length)} ${conventionalSystems.length === 1 ? 'system' : 'systems'} · ` +
+          `${number(conventionalRows.length)} ${conventionalRows.length === 1 ? 'channel' : 'channels'} shown`)
       );
     };
     search.addEventListener('input', draw);
@@ -17031,7 +17182,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const renderSelectionHeader = () => {
       const checkbox = node('input', 'ui-selection-check');
       checkbox.type = 'checkbox';
-      checkbox.setAttribute('aria-label', 'Select all visible channels');
+      checkbox.setAttribute('aria-label', 'Select all matching channels');
       checkbox.addEventListener('change', () => {
         state.selectionAnchor = null;
         state.visibleRows.forEach((row) => checkbox.checked ? selected.add(row.configuration_id) :
@@ -17098,6 +17249,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
         type: editable ? 'channel-catalog-admin-v2' : 'channel-catalog-readonly-v1',
         sortable: false, controller: tableController,
         rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
+        revealRowGroups: () => Boolean(search.value.trim()),
         rowKey: (row) => row.configuration_id,
         rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
         tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
@@ -18324,9 +18476,11 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     tabs.setAttribute('aria-label', 'Alias coverage inventory');
     const tableSection = node('section', 'ui-surface alias-coverage-table-section');
     const tableHeader = node('header', 'alias-coverage-table-header');
-    const tableHeading = node('div');
+    const tableHeading = node('div', 'alias-coverage-table-heading');
+    const tableActions = sectionActionHost();
+    tableActions.classList.add('alias-coverage-table-actions');
     tableHeading.append(node('h2', '', 'Alias inventory'));
-    tableHeader.append(tableHeading, tabs);
+    tableHeader.append(tableHeading, tabs, tableActions);
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
       'Search unassigned observations' : 'Search configured aliases', navigateCoverage));
@@ -18349,11 +18503,12 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     tableSection.append(tableHeader, tableToolbar, activeTab === 'unassigned' ?
       pagedTableContent(unassigned, aliasCoverageUnassignedColumns(), 'alias-coverage-unassigned-v1', {
         itemLabel: 'Observations', emptyText: 'Every observed identity is assigned in this Alias List',
-        tableOptions: { defaultSort: 'logical_call_count', defaultDirection: 'desc' } }) :
+        tableOptions: { defaultSort: 'logical_call_count', defaultDirection: 'desc',
+          layoutMenuHost: tableActions } }) :
       pagedTableContent(aliases, aliasCoverageAliasesColumns(), 'alias-coverage-configured-v1', {
         itemLabel: 'Aliases', emptyText: 'No configured aliases match these filters',
         tableOptions: { defaultSort: aliasStatus === 'recent' ? 'last_evidence' : 'name',
-          defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc' } }));
+          defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc', layoutMenuHost: tableActions } }));
 
     tableSection.addEventListener('click', (event) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey ||
@@ -18378,7 +18533,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const oldTop = tableSection?.getBoundingClientRect().top;
     const status = uiStatus('Updating…', 'neutral');
     status.setAttribute('role', 'status');
-    tableSection?.querySelector('.alias-coverage-table-header')?.append(status);
+    tableSection?.querySelector('.alias-coverage-table-actions')?.append(status);
     tableSection?.setAttribute('aria-busy', 'true');
     directory.host.querySelector('.alias-coverage-refresh-error')?.remove();
     try {

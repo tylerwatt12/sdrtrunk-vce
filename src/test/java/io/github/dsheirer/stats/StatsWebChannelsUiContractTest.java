@@ -75,22 +75,29 @@ class StatsWebChannelsUiContractTest
         String protocolGroup = function(source, "function channelProtocolGroup(row)");
         String protocolOrder = function(source, "function channelProtocolOrder(left, right)");
         String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
-        String groupRow = function(source, "function renderTableRowGroup(group, count, columnCount, noun = 'row')");
+        String groupRow = function(source,
+            "function renderTableRowGroup(group, count, columnCount, noun = 'row', collapsed = false,");
 
         assertTrue(catalog.contains("pageHeader(editable ? 'Channels' : 'Radio Directory'"));
         assertTrue(catalog.contains("label: 'All statuses'"));
         assertTrue(catalog.contains("statusFilter.setAttribute('aria-label', 'Filter channels by status')"));
         assertTrue(catalog.contains("rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'"));
+        assertTrue(catalog.contains("revealRowGroups: () => Boolean(search.value.trim())"));
+        assertTrue(catalog.contains("Select all matching channels"));
         assertTrue(catalog.contains(".sort(channelProtocolOrder)"));
         assertFalse(catalog.contains("value: 'trunked'"));
         assertFalse(catalog.contains("value: 'conventional'"));
         assertFalse(catalog.contains("uiSegmentedControl(filterEntries"));
         assertTrue(protocolGroup.contains("row.protocol_label"));
-        assertTrue(protocolGroup.contains("label.toLowerCase()"));
-        assertTrue(protocolOrder.contains("channelProtocolGroup(left).label.localeCompare"));
+        assertTrue(protocolGroup.contains("row.protocol_id"));
+        assertTrue(protocolGroup.contains("unsupported.${unsupportedLabel}"));
+        assertTrue(protocolOrder.contains("leftGroup.label.localeCompare"));
+        assertTrue(protocolOrder.contains("leftGroup.key.localeCompare(rightGroup.key)"));
         assertTrue(table.contains("typeof options.rowGroup === 'function'"));
         assertTrue(table.contains("renderTableRowGroup(group"));
         assertTrue(groupRow.contains("heading.scope = 'rowgroup'"));
+        assertTrue(groupRow.contains("disclosure.setAttribute('aria-expanded'"));
+        assertTrue(groupRow.contains("table-row-group-disclosure"));
         assertTrue(groupRow.contains("count === 1 ? noun : `${noun}s`"));
     }
 
@@ -110,7 +117,7 @@ class StatsWebChannelsUiContractTest
         assertFalse(catalog.contains("positionSelectionBar"));
         assertTrue(css.contains(".ui-selection-bar {\n  position: sticky;\n" +
             "  top: calc(var(--app-header-offset, 0px) + var(--space-2));"));
-        assertTrue(css.contains(".channel-catalog-section.ui-section {\n  overflow: clip;"));
+        assertTrue(css.contains(".channel-catalog-section {\n  overflow: clip;"));
     }
 
     @Test
@@ -163,7 +170,7 @@ class StatsWebChannelsUiContractTest
             "  max-width: 100%;\n  overflow-x: auto;\n  overflow-y: visible;"));
         assertFalse(css.contains("max-height: min(70dvh, 720px);"));
         assertTrue(css.contains("@media (max-width: 720px)"));
-        assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-admin-catalog .link-button"));
+        assertTrue(css.contains(".channel-name-actions .link-button"));
     }
 
     @Test

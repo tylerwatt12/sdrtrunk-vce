@@ -154,7 +154,7 @@ test('column auto-fit measures intrinsic table content off screen', async ({ pag
   });
 });
 
-test('icon actions share a size and show one hint on hover and focus', async ({ page }) => {
+test('icon actions show hints on hover and keyboard-visible focus only', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');
   const action = page.locator('.visual-icon-button');
@@ -166,7 +166,15 @@ test('icon actions share a size and show one hint on hover and focus', async ({ 
   await expect(hint).toHaveText('Receiver health');
   await page.mouse.move(0, 0);
   await expect(hint).toBeHidden();
-  await action.focus();
+
+  await page.getByRole('button', { name: 'Cancel', exact: true }).first().click();
+  await action.evaluate((element) => element.focus());
+  await expect(action).toBeFocused();
+  await expect(hint).toBeHidden();
+
+  await page.getByRole('button', { name: 'Remove', exact: true }).first().click();
+  await page.keyboard.press('Tab');
+  await expect(action).toBeFocused();
   await expect(hint).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(hint).toBeHidden();
@@ -195,6 +203,35 @@ test('disabled icon hint stays visible outside a table', async ({ page }) => {
   await page.mouse.move(0, 0);
   await deleteDefault.hover();
   await expect(hint).toBeVisible();
+});
+
+test('table columns action is compact and stays in the owning title bar', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=admin-scan-lists');
+  const titleBar = page.locator('.visual-admin-scan-lists-example .ui-section-title');
+  const menu = titleBar.locator('.table-layout-menu');
+  const trigger = menu.getByRole('button', { name: 'Choose table columns' });
+  await expect(trigger).toHaveCSS('width', '36px');
+  await expect(trigger).toHaveCSS('height', '36px');
+  await expect(menu).toHaveCSS('margin-top', '0px');
+  await expect(menu).toHaveCSS('padding-top', '0px');
+
+  await page.goto('/design-system.html?theme=light&view=radio-directory-coverage');
+  const coverage = page.locator('.visual-radio-directory-coverage-example .alias-coverage-table-section');
+  await expect(coverage.locator('.alias-coverage-table-header .table-layout-trigger')).toHaveCount(1);
+  expect(await coverage.locator('.ui-table-wrap').evaluate((element) =>
+    element.previousElementSibling?.classList.contains('alias-coverage-table-toolbar'))).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const mobileActions = page.locator(
+    '.visual-radio-directory-coverage-example .alias-coverage-table-header .ui-section-actions');
+  expect(await mobileActions.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  const mobileHeading = page.locator(
+    '.visual-radio-directory-coverage-example .alias-coverage-table-heading');
+  const [headingBox, triggerBox] = await Promise.all([mobileHeading.boundingBox(),
+    mobileActions.getByRole('button', { name: 'Choose table columns' }).boundingBox()]);
+  expect(Math.abs((headingBox.y + headingBox.height / 2) -
+    (triggerBox.y + triggerBox.height / 2))).toBeLessThan(4);
 });
 
 test('app-chrome-light-desktop', async ({ page }) => {
@@ -426,6 +463,18 @@ test('channels-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=light&view=channels');
   await expect(page.locator('body')).toHaveScreenshot('channels-light-mobile.png', { fullPage: true });
+});
+
+test('channel protocol groups expose an accessible full-width disclosure', async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 720 });
+  await page.goto('/design-system.html?theme=light&view=channels');
+  const disclosure = page.locator('.table-row-group-disclosure[data-row-group="gallery-group-1"]');
+  await expect(disclosure).toHaveAccessibleName('Collapse NBFM');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await disclosure.click();
+  await expect(disclosure).toHaveAccessibleName('Expand NBFM');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('tr[data-row-group="gallery-group-1"].ui-table-row-group-item')).toBeHidden();
 });
 
 test('selected channel actions remain below the app header while scrolling', async ({ page }) => {

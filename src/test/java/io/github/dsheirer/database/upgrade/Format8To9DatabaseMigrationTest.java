@@ -67,14 +67,14 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=6
+                WHERE json_extract(preferences_json, '$.version')=7
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
                   AND json_extract(preferences_json,
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=6
+                  AND preferences_revision=7
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore, securityDigest(connection));
@@ -197,7 +197,7 @@ class Format8To9DatabaseMigrationTest
                 "unusable per-user browser preferences", 1);
             assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
                 metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals("6", scalar(connection,
+            assertEquals("7", scalar(connection,
                 "SELECT json_extract(preferences_json, '$.version') FROM web_user WHERE id=1"));
         }
     }

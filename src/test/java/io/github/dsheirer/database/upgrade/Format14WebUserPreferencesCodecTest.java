@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +25,7 @@ class Format14WebUserPreferencesCodecTest
         assertEquals(4, migrated.path("playback").path("target_burst_limit").asInt());
         assertFalse(migrated.path("playback").has("conversation_grouping"));
         assertFalse(migrated.path("playback").has("conversation_burst_limit"));
-        WebUserPreferencesCodec.decode(migrated.toString());
+        Format22WebUserPreferencesCodec.validate(migrated.toString());
     }
 
     @Test

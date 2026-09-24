@@ -99,7 +99,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-21-to-22", report.steps().getLast().id());
+            assertEquals("format-22-to-23", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -196,7 +196,7 @@ class Format14To15DatabaseMigrationTest
 
             Map<Long,Preference> afterPreferences = preferences(connection);
             assertEquals(beforeCredentials, credentials(connection));
-            assertPreferencesMigrated(beforePreferences, afterPreferences);
+            assertPreferencesMigratedToCurrent(beforePreferences, afterPreferences);
             assertEquals(expectedPolicies(beforePolicies), policies(connection));
             assertEquals(beforePolicies.get("site-access"), policies(connection).get("web-access"));
             assertApplicationSettingsMigrated(beforeApplicationSettings, applicationSettings(connection));
@@ -780,6 +780,8 @@ class Format14To15DatabaseMigrationTest
             new Format20To21DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, 21);
             new Format21To22DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stampForMigration(connection, 22);
+            new Format22To23DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stampForMigration(connection, DatabaseFormatCatalog.CURRENT_VERSION);
             connection.commit();
 
@@ -993,7 +995,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(WebAccessService.MAXIMUM_USERS + 1L,
                 number(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
     }
@@ -1040,7 +1042,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(1, number(connection,
                 "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
     }
@@ -1404,7 +1406,7 @@ class Format14To15DatabaseMigrationTest
             assertPreferencesMigrated(beforePreferences, preferences(connection));
             assertEquals(expectedPolicies(beforePolicies), policies(connection));
             assertApplicationSettingsMigrated(beforeSettings, applicationSettings(connection));
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
     }
@@ -1437,7 +1439,7 @@ class Format14To15DatabaseMigrationTest
                 "password_changed_at_ms>0 AND created_at_ms>0 AND updated_at_ms>=created_at_ms"));
             assertEquals(baselineDefaults + 1, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
                 "recoverable web account values").affectedRows());
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
     }
@@ -1462,7 +1464,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals("required", scalar(connection,
                 "SELECT value FROM database_metadata WHERE key='initial_admin_setup'"));
             assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
     }
@@ -1489,7 +1491,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(users, number(connection, "SELECT COUNT(*) FROM web_user"));
             assertEquals(0, number(connection,
                 "SELECT COUNT(*) FROM database_metadata WHERE key='initial_admin_setup'"));
-            Format5WebStateValidator.validate(connection);
+            Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             DatabaseFormatCatalog.stamp(connection, 15);
             connection.commit();
         }
@@ -2526,6 +2528,21 @@ class Format14To15DatabaseMigrationTest
             Preference current = after.get(entry.getKey());
             assertEquals(Format14WebUserPreferencesCodec.migrate(prior.json()), current.json());
             assertEquals(prior.revision() + 1, current.revision());
+            assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
+        }
+    }
+
+    private static void assertPreferencesMigratedToCurrent(Map<Long,Preference> before, Map<Long,Preference> after)
+        throws Exception
+    {
+        assertEquals(before.keySet(), after.keySet());
+        for(Map.Entry<Long,Preference> entry: before.entrySet())
+        {
+            Preference prior = entry.getValue();
+            Preference current = after.get(entry.getKey());
+            assertEquals(Format22WebUserPreferencesCodec.migrateToFormat23(
+                Format14WebUserPreferencesCodec.migrate(prior.json())), current.json());
+            assertEquals(prior.revision() + 2, current.revision());
             assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
         }
     }
