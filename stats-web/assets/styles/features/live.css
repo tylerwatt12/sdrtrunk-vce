@@ -1054,3 +1054,211 @@ body[data-view="live"] .channel-diagnostic-readouts {
     gap: var(--space-3);
   }
 }
+
+/* Live activity becomes a compact master/detail workspace on narrow screens. */
+@media (max-width: 760px) {
+  .live-right-workspace {
+    position: relative;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+  }
+
+  .channels-live .table-scroll {
+    overflow-x: hidden;
+    overscroll-behavior-block: contain;
+  }
+
+  .channels-live-table {
+    min-width: 0;
+  }
+
+  .channels-live-table tbody {
+    display: block;
+  }
+
+  .channels-live-table tbody > tr {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    overflow: visible;
+    cursor: pointer;
+    background: var(--surface);
+    border: 0;
+    border-bottom: 1px solid var(--table-rule);
+    border-radius: 0;
+  }
+
+  .channels-live-table tbody > tr:last-child {
+    border-bottom: 0;
+  }
+
+  .channels-live-table tbody > tr:focus-visible {
+    z-index: 1;
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+  }
+
+  .channels-live-table tbody > tr.selected {
+    background: var(--accent-soft);
+    box-shadow: var(--shadow-selection-inset);
+  }
+
+  .channels-live-table tr.selected td {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .channels-live-table tbody td {
+    display: block;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    font-size: var(--font-size-label);
+    line-height: var(--line-height-control);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .channels-live-table tbody td:empty {
+    display: none;
+  }
+
+  .channels-live-table tbody td::before {
+    display: none;
+  }
+
+  .channels-live-table td[data-column="status"] {
+    grid-column: span 4;
+    order: 10;
+    justify-self: start;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-compact);
+    font-weight: var(--font-weight-control);
+  }
+
+  .channels-live-table td[data-column="tags"] {
+    grid-column: span 4;
+    order: 11;
+    color: var(--muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .channels-live-table td[data-column="decoder"] {
+    grid-column: span 4;
+    order: 12;
+    color: var(--muted);
+    font-size: var(--font-size-meta);
+    font-weight: var(--font-weight-medium);
+    text-align: right;
+  }
+
+  .channels-live-table td[data-column="source-alias"],
+  .channels-live-table td[data-column="target-alias"] {
+    grid-column: span 4;
+    order: 20;
+    font-size: var(--font-size-body);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .channels-live-table td[data-column="source"],
+  .channels-live-table td[data-column="target"] {
+    grid-column: span 2;
+    order: 20;
+    color: var(--muted);
+    font-size: var(--font-size-meta);
+  }
+
+  .channels-live-table td[data-column="source-alias"]::before,
+  .channels-live-table td[data-column="target-alias"]::before,
+  .channels-live-table td[data-column="source"]::before,
+  .channels-live-table td[data-column="target"]::before,
+  .channels-live-table td[data-column="signal"]::before,
+  .channels-live-table td[data-column="decode-health"]::before {
+    display: inline;
+    margin-right: var(--space-1);
+    color: var(--muted);
+    font-size: var(--font-size-meta);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .channels-live-table td[data-column="source-alias"]::before { content: "From"; }
+  .channels-live-table td[data-column="target-alias"]::before { content: "To"; }
+  .channels-live-table td[data-column="source"]::before,
+  .channels-live-table td[data-column="target"]::before { content: "#"; }
+
+  .channels-live-table td[data-column="channel"],
+  .channels-live-table td[data-column="frequency"] {
+    grid-column: span 6;
+    order: 30;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .channels-live-table td[data-column="frequency"] {
+    text-align: right;
+  }
+
+  .channels-live-table td[data-column="frequency"]:not(:empty)::after {
+    content: " MHz";
+  }
+
+  .channels-live-table td[data-column="signal"],
+  .channels-live-table td[data-column="decode-health"] {
+    grid-column: span 6;
+    order: 40;
+    color: var(--muted);
+    font-size: var(--font-size-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .channels-live-table td[data-column="signal"]::before { content: "Signal"; }
+  .channels-live-table td[data-column="decode-health"] {
+    text-align: right;
+  }
+  .channels-live-table td[data-column="decode-health"]::before { content: "Quality"; }
+
+  .live-details {
+    position: sticky;
+    z-index: 2;
+    bottom: 0;
+    height: min(46dvh, 420px);
+    box-shadow: var(--shadow-raised);
+  }
+
+  .live-details.collapsed {
+    height: auto;
+  }
+
+  .live-details-summary {
+    display: none;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .live-details.collapsed .live-details-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: center;
+  }
+
+  .live-details.collapsed .live-details-tabs,
+  .live-details.collapsed .live-details-pause {
+    display: none;
+  }
+
+  .live-details.collapsed .live-details-summary {
+    display: block;
+  }
+
+  .live-details.collapsed .live-details-controls {
+    margin: 0;
+  }
+}

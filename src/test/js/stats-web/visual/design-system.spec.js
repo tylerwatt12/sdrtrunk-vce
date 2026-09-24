@@ -653,11 +653,29 @@ test('live-picker-collapsed-dark-desktop', async ({ page }) => {
 });
 
 test('live-notice-light-mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/design-system.html?theme=light&view=live-notice');
-  await page.locator('.live-picker-collapse').click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=live-notice');
   await expect(page.locator('body')).toHaveScreenshot('live-notice-light-mobile.png');
+});
+
+test('mobile Live activity uses compact cards and a collapsible details tray', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=live-notice');
+  const table = page.locator('.channels-live-table');
+  const rows = table.locator('tbody > tr');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'true');
+  await expect(rows.first().locator('[data-column="source-alias"]')).toHaveCount(1);
+  const horizontalOverflow = await table.locator('xpath=..').evaluate((element) =>
+    element.scrollWidth - element.clientWidth);
+  expect(horizontalOverflow).toBeLessThanOrEqual(1);
+
+  const details = page.locator('.live-details');
+  await expect(details).toHaveClass(/collapsed/);
+  await expect(details.locator('.live-details-body')).toBeHidden();
+  await details.locator('.live-details-collapse').click();
+  await expect(details).not.toHaveClass(/collapsed/);
+  await expect(details.locator('.live-details-body')).toBeVisible();
 });
 
 test('live-filter-dark-desktop', async ({ page }) => {

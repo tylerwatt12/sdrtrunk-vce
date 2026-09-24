@@ -2241,7 +2241,7 @@ function compareTableValues(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
+function renderTableRow(data, columns, rowKey, rowClass, onRowClick, rowSelected) {
   const row = node('tr');
   row.tableRowData = data;
   const classes = typeof rowClass === 'function' ? rowClass(data) : rowClass;
@@ -2254,6 +2254,7 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
     const className = typeof column.className === 'function' ? column.className(data) : column.className;
     const cell = node('td', className || '');
     cell.dataset.label = column.fullLabel || column.label || '';
+    cell.dataset.column = column.id;
     const title = typeof column.title === 'function' ? column.title(data) : column.title;
     if (title) cell.title = String(title);
     const value = column.render ? column.render(data) : data[column.key];
@@ -2264,10 +2265,41 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
     row.append(cell);
   });
   if (typeof onRowClick === 'function') {
+    row.dataset.rowInteractive = 'true';
+    row.tabIndex = -1;
+    if (typeof rowSelected === 'function') {
+      row.setAttribute('aria-selected', String(Boolean(rowSelected(data))));
+    }
+    const activate = (event) => {
+      const body = row.parentElement;
+      const key = row.dataset.id;
+      onRowClick(row.tableRowData, row, event);
+      if (!key || !body) return;
+      window.requestAnimationFrame(() => [...body.children]
+        .find((candidate) => candidate.dataset.id === key)?.focus({ preventScroll: true }));
+    };
     row.addEventListener('click', (event) => {
       if (!event.target.closest('a, button, input, select, textarea, label')) {
-        onRowClick(row.tableRowData, row, event);
+        activate(event);
       }
+    });
+    row.addEventListener('keydown', (event) => {
+      if (event.target !== row) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        activate(event);
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const rows = [...row.parentElement.children]
+        .filter((candidate) => candidate.dataset.rowInteractive === 'true' && !candidate.hidden);
+      const index = rows.indexOf(row);
+      const next = event.key === 'Home' ? rows[0] : (event.key === 'End' ? rows.at(-1) :
+        rows[index + (event.key === 'ArrowDown' ? 1 : -1)]);
+      if (!next) return;
+      event.preventDefault();
+      rows.forEach((candidate) => { candidate.tabIndex = candidate === next ? 0 : -1; });
+      next.focus();
     });
   }
   return row;
@@ -2532,6 +2564,18 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     tableController.clientSortEnabled : options.sortable !== false;
   const clientSortControls = [];
 
+  const syncInteractiveRows = () => {
+    const rows = [...body.children]
+      .filter((row) => row.dataset.rowInteractive === 'true' && !row.hidden);
+    if (!rows.length) return;
+    if (typeof options.rowSelected === 'function') rows.forEach((row) =>
+      row.setAttribute('aria-selected', String(Boolean(options.rowSelected(row.tableRowData)))));
+    const focused = rows.includes(document.activeElement) ? document.activeElement : null;
+    const selected = rows.find((row) => row.getAttribute('aria-selected') === 'true');
+    const tabStop = focused || selected || rows.find((row) => row.tabIndex === 0) || rows[0];
+    rows.forEach((row) => { row.tabIndex = row === tabStop ? 0 : -1; });
+  };
+
   const orderedDataRows = () => {
     const orderedRows = clientSort ? [...dataRows].sort((left, right) => {
       const result = compareTableValues(tableSortValue(left, clientSort.column),
@@ -2575,7 +2619,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         }
         activeGroup = group;
       }
-      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick,
+        options.rowSelected);
       if (activeGroup) {
         rendered.classList.add('ui-table-row-group-item');
         rendered.dataset.rowGroup = activeGroup.key;
@@ -2607,7 +2652,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     orderedRows.forEach((data, index) => {
       const key = String(incomingKeys[index]);
       const replacement = renderTableRow(data, columns, options.rowKey, options.rowClass,
-        options.onRowClick);
+        options.onRowClick, options.rowSelected);
       let current = existing.get(key);
       if (current) {
         retained.add(current);
@@ -2639,6 +2684,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const orderedRows = orderedDataRows();
     if (reconcile) reconcileBody(orderedRows);
     else replaceBody(orderedRows);
+    syncInteractiveRows();
   };
 
   const updateSortIndicators = () => {
@@ -2658,6 +2704,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
 
   columns.forEach((column, index) => {
     const header = node('th', column.className || '');
+    header.dataset.column = column.id;
     const fullLabel = column.fullLabel || column.label;
     if (fullLabel) header.title = fullLabel;
     const serverSortable = options.serverSort && column.sort;
@@ -2914,7 +2961,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         renderBody();
         return;
       }
-      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick,
+        options.rowSelected);
       if (body.querySelector('.empty')) body.replaceChildren(rendered);
       else if (prepend) body.prepend(rendered);
       else body.append(rendered);
@@ -2922,6 +2970,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         if (prepend) body.lastElementChild.remove();
         else body.firstElementChild.remove();
       }
+      syncInteractiveRows();
     },
     upsertRow(data, settings = {}) {
       const key = options.rowKey ? options.rowKey(data) : null;
@@ -14317,7 +14366,9 @@ function liveEventsPanel(onCollapse) {
   let selection = null;
   let paused = false;
   let eventsActive = true;
-  let collapsed = savedUiState.details_collapsed === true;
+  const storedCollapsePreference = savedUiState.details_collapsed;
+  let collapsed = typeof storedCollapsePreference === 'boolean' ? storedCollapsePreference :
+    window.matchMedia('(max-width: 760px)').matches;
   let activePaneId = LIVE_DETAIL_TAB_IDS.has(savedUiState.details_active_tab) ?
     savedUiState.details_active_tab : 'events';
   let stream = null;
@@ -14335,6 +14386,7 @@ function liveEventsPanel(onCollapse) {
   tabBar.setAttribute('role', 'tablist');
   tabBar.setAttribute('aria-label', 'Live details');
   const controls = node('div', 'live-details-controls');
+  const mobileSummary = node('strong', 'live-details-summary', 'Select a live row');
   const pause = node('button', 'ui-button ui-button-secondary live-details-pause', 'Pause');
   pause.type = 'button';
   pause.setAttribute('aria-label', 'Pause Events, Messages, and Channel');
@@ -14343,7 +14395,7 @@ function liveEventsPanel(onCollapse) {
   collapse.type = 'button';
   collapse.setAttribute('aria-expanded', 'true');
   controls.append(pause, collapse);
-  header.append(tabBar, controls);
+  header.append(tabBar, mobileSummary, controls);
 
   const body = node('div', 'live-details-body');
   const eventPane = node('div', 'live-details-pane live-events-pane');
@@ -14528,6 +14580,7 @@ function liveEventsPanel(onCollapse) {
     const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
     selectionLabel.textContent = selection?.label || 'Select a live row above';
+    mobileSummary.textContent = selection?.label || 'Select a live row';
     if (logicalChanged) {
       closeStream();
       clearSession();
@@ -15022,11 +15075,13 @@ function liveChannelsSection(onSelectionChange) {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
     sortable: true,
     rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
+    rowSelected: (row) => selection?.rowKey === row.key,
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
     },
-    wrapperClass: 'table-scroll', tableClass: 'channels-live-table', layoutMenuHost: titleActions
+    wrapperClass: 'table-scroll', tableClass: 'channels-live-table', mobileCards: true,
+    layoutMenuHost: titleActions
   });
   const host = node('div', 'channels-live');
   host.id = 'live-channel-table-panel';

@@ -480,6 +480,10 @@ body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-exam
   flex-direction: column;
 }
 
+.visual-live-example .live-details.collapsed .live-details-body {
+  display: none;
+}
+
 .visual-live-filter-depth-0 { --filter-indent: 6px; }
 .visual-live-filter-depth-1 { --filter-indent: 24px; }
 

@@ -72,6 +72,18 @@ if(view === 'live-notice') {
     collapse.setAttribute('aria-label', label);
     collapse.title = label;
   });
+  const details = split?.querySelector('.live-details');
+  const detailsCollapse = details?.querySelector('.live-details-collapse');
+  const setDetailsCollapsed = (collapsed) => {
+    details?.classList.toggle('collapsed', collapsed);
+    split?.classList.toggle('details-collapsed', collapsed);
+    if (detailsCollapse) {
+      detailsCollapse.textContent = collapsed ? 'Expand' : 'Collapse';
+      detailsCollapse.setAttribute('aria-expanded', String(!collapsed));
+    }
+  };
+  detailsCollapse?.addEventListener('click', () => setDetailsCollapsed(!details.classList.contains('collapsed')));
+  if(window.matchMedia('(max-width: 760px)').matches) setDetailsCollapsed(true);
 }
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';

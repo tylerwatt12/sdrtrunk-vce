@@ -214,3 +214,27 @@ assert.match(channels, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \
   'The desktop picker collapse preference must persist across Live visits');
 assert.match(channels, /picker\.closest\('\.live-split'\)\?\.classList\.toggle\('picker-collapsed', pickerCollapsed\)/,
   'Collapsing the picker must release its grid width to the selected channel workspace');
+assert.match(channels, /mobileCards: true/,
+  'Live activity must opt into its responsive card presentation');
+assert.match(channels, /rowSelected: \(row\) => selection\?\.rowKey === row\.key/,
+  'Live activity exposes selected-row semantics to the shared table');
+
+const renderRow = functionSource('renderTableRow');
+assert.match(renderRow, /cell\.dataset\.column = column\.id/,
+  'Table cells expose stable semantic column identifiers for responsive layouts');
+assert.match(renderRow, /row\.setAttribute\('aria-selected'/,
+  'Selectable rows expose their selected state');
+assert.match(renderRow, /event\.key === 'Enter' \|\| event\.key === ' '/,
+  'Selectable rows support keyboard activation');
+assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
+  'Selectable rows support roving keyboard navigation');
+
+const details = functionSource('liveEventsPanel');
+assert.match(details, /live-details-summary/,
+  'The mobile details tray keeps selected-channel context when collapsed');
+assert.match(details, /mobileSummary\.textContent = selection\?\.label/,
+  'The collapsed tray summary follows the active Live row');
+assert.match(details, /typeof storedCollapsePreference === 'boolean'/,
+  'An explicit details-tray preference must override the responsive default');
+assert.match(details, /matchMedia\('\(max-width: 760px\)'\)\.matches/,
+  'The details tray starts collapsed on a narrow screen when no preference exists');
