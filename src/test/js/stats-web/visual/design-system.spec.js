@@ -15,6 +15,51 @@ for(const [name, theme, viewport] of galleryCases) {
   });
 }
 
+test('interface guidance demonstrates the current composition rules', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  await expect(page.locator('.visual-guidance-grid article')).toHaveCount(4);
+  const dataWorkspace = page.locator('.visual-section').filter({
+    has: page.locator('h2:text-is("Data workspace")')
+  });
+  await expect(dataWorkspace.locator('.ui-section-title [aria-label="Choose table columns"]')).toBeVisible();
+  await expect(dataWorkspace.getByRole('button', { name: 'Columns', exact: true })).toHaveCount(0);
+  const exampleTable = dataWorkspace.locator('.ui-table-content table');
+  await expect(exampleTable).toBeVisible();
+  await expect(exampleTable).toHaveClass(/resizable-table/);
+  await expect(exampleTable).toHaveAttribute('data-table-type', 'interface-guidance-channels');
+  await expect(exampleTable).toHaveAttribute('data-mobile-cards', 'true');
+  await expect(exampleTable.locator('colgroup col')).toHaveCount(3);
+  await expect(exampleTable.locator('.column-resizer')).toHaveCount(3);
+  const channelResize = exampleTable.locator('[data-column="channel"] .column-resizer');
+  const initialWidth = Number(await channelResize.getAttribute('aria-valuenow'));
+  await channelResize.focus();
+  await channelResize.press('ArrowRight');
+  await expect(exampleTable.locator('[data-column="channel"] .column-resizer'))
+    .toHaveAttribute('aria-valuenow', String(initialWidth + 12));
+  await dataWorkspace.getByRole('button', { name: 'Choose table columns' }).click();
+  await expect(page.getByRole('dialog', { name: 'Table columns' })).toBeVisible();
+  await page.getByRole('button', { name: 'Move State left' }).click();
+  await expect(exampleTable.locator('thead th')).toHaveText(['Channel', 'State', 'Protocol']);
+  await dataWorkspace.getByRole('button', { name: 'Choose table columns' }).click();
+  await page.getByLabel('Show Protocol column').uncheck();
+  await expect(exampleTable.locator('thead th')).toHaveText(['Channel', 'State']);
+  await page.reload();
+  const restoredTable = dataWorkspace.locator('.ui-table-content table');
+  await expect(restoredTable.locator('thead th')).toHaveText(['Channel', 'State']);
+  await expect(restoredTable.locator('[data-column="channel"] .column-resizer'))
+    .toHaveAttribute('aria-valuenow', String(initialWidth + 12));
+  await expect(page.locator('.ui-inline-create-trigger')).toHaveAttribute('aria-controls',
+    'visual-inline-alias-create');
+  await expect(page.getByLabel('Alias List', { exact: true })).toHaveValue('Default P25');
+  const unlabeledIconControls = await page.locator([
+    '.ui-icon-button', '.icon-button', '.ui-header-indicator', '.playback-command',
+    '.playback-control-menu > summary', '.channels-tab-close'
+  ].join(', ')).evaluateAll((controls) => controls.filter((control) =>
+    !control.getAttribute('aria-label') && !control.getAttribute('title')).map((control) => control.outerHTML));
+  expect(unlabeledIconControls).toEqual([]);
+});
+
 test('stat counters share a rounded tile with a decorative landmark icon', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=entity-details');
@@ -157,7 +202,7 @@ test('column auto-fit measures intrinsic table content off screen', async ({ pag
 test('icon actions show hints on hover and keyboard-visible focus only', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');
-  const action = page.locator('.visual-icon-button');
+  const action = page.getByRole('button', { name: 'Receiver health' });
   await expect(action).toHaveCSS('width', '40px');
   await expect(action).toHaveCSS('height', '40px');
   await action.hover();
@@ -253,6 +298,14 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await page.goto('/design-system.html?theme=light&view=app-chrome');
   await expect(navigation).toBeHidden();
   await expect(playbackMenu).toHaveAttribute('open', '');
+  const header = page.locator('.visual-app-chrome-example .app-header');
+  await expect(header.getByText('RadioReference', { exact: true })).toBeAttached();
+  await expect(header.getByText('Streaming', { exact: true })).toBeAttached();
+  await expect(header.getByText('Hardware', { exact: true })).toBeAttached();
+  await expect(header.getByText('Administration', { exact: true })).toBeAttached();
+  await expect(header.getByText('About', { exact: true })).toBeAttached();
+  await expect(header.getByRole('button', { name: 'Replay last call' })).toBeAttached();
+  await expect(header.getByRole('button', { name: 'Clear queued calls' })).toBeAttached();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
@@ -676,6 +729,28 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   await details.locator('.live-details-collapse').click();
   await expect(details).not.toHaveClass(/collapsed/);
   await expect(details.locator('.live-details-body')).toBeVisible();
+
+  const sparse = rows.nth(1);
+  await sparse.locator('[data-column="source-alias"], [data-column="target-alias"]')
+    .evaluateAll((cells) => cells.forEach((cell) => { cell.textContent = ''; }));
+  expect(await sparse.locator('[data-column="source"]').evaluate((cell) =>
+    getComputedStyle(cell).gridColumnStart)).toBe('5');
+  expect(await sparse.locator('[data-column="target"]').evaluate((cell) =>
+    getComputedStyle(cell).gridColumnStart)).toBe('11');
+
+  await table.locator('tbody').evaluate((body) => {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.className = 'empty';
+    cell.colSpan = 11;
+    cell.textContent = 'No channels observed';
+    row.append(cell);
+    body.replaceChildren(row);
+  });
+  const emptyRow = table.locator('tbody > tr');
+  const emptyCell = emptyRow.locator('.empty');
+  expect(await emptyCell.evaluate((cell) => getComputedStyle(cell).gridColumnEnd)).toBe('-1');
+  expect(await emptyRow.evaluate((row) => getComputedStyle(row).cursor)).toBe('default');
 });
 
 test('live-filter-dark-desktop', async ({ page }) => {

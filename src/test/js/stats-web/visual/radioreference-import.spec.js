@@ -160,35 +160,36 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     const dmr = scenario === 'dmr';
     const nxdn = scenario === 'nxdn';
     let nextAliasListId = 100;
+    let aliasRevision = 41;
     const createInlineAliasListCreator = (options) => {
       const record = {
         family: options.family,
         triggerLabel: options.triggerLabel,
         submitLabel: options.submitLabel,
-        helperText: options.helperText,
-        initialRevision: options.getRevision()
+        helperText: options.helperText
       };
       inlineCreators.push(record);
       const host = node('div', 'ui-inline-alias-list-create');
       host.hidden = scenario !== 'alias-create';
       const trigger = node('button', 'ui-button ui-button-secondary', options.triggerLabel);
       trigger.type = 'button';
-      trigger.addEventListener('click', () => {
-        const beforeRevision = options.getRevision();
+      trigger.addEventListener('click', async () => {
+        const beforeRevision = await options.getRevision();
         const family = String(options.family || '').toUpperCase();
         const aliasList = {
           id: nextAliasListId++, name: family === 'NBFM' ? 'New Analog List' : `New ${family} List`,
           family: family.toLowerCase()
         };
-        options.onCreated({ aliasList, revision: beforeRevision + 1 });
-        record.created = { aliasList, beforeRevision, afterRevision: options.getRevision() };
+        await options.onCreated({ aliasList, revision: beforeRevision + 1 });
+        aliasRevision = beforeRevision + 1;
+        record.created = { aliasList, beforeRevision, afterRevision: aliasRevision };
       });
       host.append(trigger);
       return host;
     };
     const requestJson = async (path, options = {}) => {
       calls.push([path, options]);
-      if (path.startsWith('/api/v1/admin/alias-lists')) return { revision: 41, alias_lists: [
+      if (path.startsWith('/api/v1/admin/alias-lists')) return { revision: aliasRevision, alias_lists: [
         { alias_list_id: 7, name: 'County Public Safety', family: 'P25' },
         { alias_list_id: 10, name: 'Regional P25', family: 'P25' },
         { alias_list_id: 9, name: 'Plant DMR', family: 'DMR' },
@@ -338,7 +339,7 @@ test('inline Alias List creation updates every import picker without losing talk
   await page.getByRole('button', { name: 'Central Simulcast' }).click();
   const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
   await expect(siteModal.getByLabel('Alias List')).toHaveValue('12');
-  await expect(siteModal.getByRole('button', { name: '+ New list' })).toBeVisible();
+  await expect(siteModal.getByRole('button', { name: 'New list' })).toBeVisible();
   await siteModal.getByRole('button', { name: 'Close' }).click();
 
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
@@ -346,7 +347,7 @@ test('inline Alias List creation updates every import picker without losing talk
   await expect(talkgroupList).toHaveValue('12');
   const fire = page.getByRole('checkbox', { name: 'Select Fire Dispatch' });
   await fire.check();
-  await page.getByRole('button', { name: '+ New list' }).click();
+  await page.getByRole('button', { name: 'New list' }).click();
   await expect(talkgroupList).toHaveValue('100');
   await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
   await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.calls.some(([path]) => {
@@ -359,7 +360,7 @@ test('inline Alias List creation updates every import picker without losing talk
   const conventionalModal = page.getByRole('dialog', { name: /Import Fire Dispatch/ });
   const conventionalList = conventionalModal.getByLabel('Alias List');
   await expect(conventionalList).toHaveValue('13');
-  await conventionalModal.getByRole('button', { name: '+ New list' }).click();
+  await conventionalModal.getByRole('button', { name: 'New list' }).click();
   await expect(conventionalList).toHaveValue('101');
   await conventionalModal.getByRole('button', { name: 'Review Channel' }).click();
   const previewModal = page.getByRole('dialog', { name: /Review Fire Dispatch/ });
@@ -380,9 +381,9 @@ test('inline Alias List creation updates every import picker without losing talk
   expect(result.applyBody).toEqual({});
   expect(result.creators.map(({ family, triggerLabel, submitLabel }) =>
     ({ family, triggerLabel, submitLabel }))).toEqual([
-    { family: 'P25', triggerLabel: '+ New list', submitLabel: 'Create and use' },
-    { family: 'P25', triggerLabel: '+ New list', submitLabel: 'Create and use' },
-    { family: 'NBFM', triggerLabel: '+ New list', submitLabel: 'Create and use' }
+    { family: 'P25', triggerLabel: 'New list', submitLabel: 'Create and use' },
+    { family: 'P25', triggerLabel: 'New list', submitLabel: 'Create and use' },
+    { family: 'NBFM', triggerLabel: 'New list', submitLabel: 'Create and use' }
   ]);
   expect(result.creators.every(({ helperText }) =>
     helperText.includes('immediately') && helperText.includes('selects it'))).toBe(true);

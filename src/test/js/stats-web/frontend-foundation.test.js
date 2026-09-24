@@ -13,6 +13,8 @@ const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
 const radioReferenceImportSource = fs.readFileSync(
   path.resolve(core, '../features/radioreference-import.js'), 'utf8');
+const aliasListCreateSource = fs.readFileSync(
+  path.resolve(core, '../features/alias-list-create.js'), 'utf8');
 
 function closingDelimiter(source, start, open = '(', close = ')') {
   let depth = 0;
@@ -491,7 +493,10 @@ async function main() {
   assert.match(radioReferenceImportSource, /catalog_id: state\.talkgroupCatalogId/);
   assert.match(radioReferenceImportSource, /preferredAliasListId/);
   assert.match(radioReferenceImportSource, /aliasListRevision: 0/);
-  assert.match(radioReferenceImportSource, /getRevision: \(\) => state\.aliasListRevision/);
+  assert.match(radioReferenceImportSource, /getRevision: currentAliasListRevision/);
+  assert.match(radioReferenceImportSource,
+    /currentAliasListRevision[\s\S]+admin\/alias-lists\?include_counts=false/,
+    'Inline creation must refresh the Alias List revision after other import mutations');
   assert.match(radioReferenceImportSource,
     /onCreated: \(\{ aliasList, revision \}\)[\s\S]+dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
   assert.equal((radioReferenceImportSource.match(/aliasListField\('/g) || []).length, 3,
@@ -500,6 +505,19 @@ async function main() {
   assert.match(radioReferenceImportSource,
     /kind: 'conventional'[\s\S]+alias_list_id: Number\(aliases\.value\)/);
   assert.doesNotMatch(radioReferenceImportSource, /use the compatible default Alias List/);
+  assert.match(aliasListCreateSource, /export async function createAliasList/);
+  assert.match(aliasListCreateSource, /family: normalized\.toLowerCase\(\)/,
+    'Alias List creation must use the API lowercase family contract');
+  assert.match(aliasListCreateSource, /panel\.addEventListener\('input', \(event\) => event\.stopPropagation\(\)\)/,
+    'Typing an inline Alias List name must not dirty or submit the parent editor');
+  assert.match(aliasListCreateSource, /event\.key === 'Enter'/,
+    'The inline creator must intercept Enter instead of submitting its parent form');
+  assert.doesNotMatch(aliasListCreateSource, /name\.required\s*=\s*true/,
+    'The inline creator name must not participate in parent-form validation while collapsed');
+  assert.match(aliasListCreateSource, /panel\.addEventListener\('keydown'/,
+    'Escape must close the inline creator from any of its controls');
+  assert.doesNotMatch(aliasListCreateSource, /node\('form'/,
+    'The inline creator must not nest a form inside channel or import forms');
   assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
   assert.match(radioReferenceImportSource, /browseCatalog/);
   assert.match(radioReferenceImportSource,

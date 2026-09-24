@@ -37,35 +37,55 @@
     <symbol id="visual-icon-recording" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="12" cy="12" r="3"></circle></symbol>
     <symbol id="visual-icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></symbol>
     <symbol id="visual-icon-identities" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"></circle><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 9h5M16 13h5"></path></symbol>
+    <symbol id="visual-icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></symbol>
+    <symbol id="visual-icon-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="5" height="16" rx="1"></rect><rect x="10" y="4" width="4" height="16" rx="1"></rect><rect x="16" y="4" width="5" height="16" rx="1"></rect></symbol>
+    <symbol id="visual-icon-moon" viewBox="0 0 24 24"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path></symbol>
+    <symbol id="visual-icon-admin" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-3Z"></path><path d="M9 12l2 2 4-4"></path></symbol>
+    <symbol id="visual-icon-about" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7h.01"></path></symbol>
+    <symbol id="visual-icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></symbol>
+    <symbol id="visual-icon-scanner" viewBox="0 0 24 24"><path d="M8 4l7-2M9 4h7a3 3 0 0 1 3 3v13H6V7a3 3 0 0 1 3-3Z"></path><rect x="9" y="7" width="7" height="4" rx="1"></rect><circle cx="12.5" cy="15.5" r="2.5"></circle></symbol>
+    <symbol id="visual-icon-aliases" viewBox="0 0 24 24"><path d="M3 5h8l10 10-6 6L5 11Z"></path><circle cx="8" cy="8" r="1.5"></circle></symbol>
+    <symbol id="visual-icon-scan-lists" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"></path></symbol>
+    <symbol id="visual-icon-radioreference" viewBox="0 0 24 24"><path d="M12 4v16M7 20h10M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"></path></symbol>
+    <symbol id="visual-icon-streaming" viewBox="0 0 24 24"><path d="M12 19v-8M9 19h6M8.5 8.5a5 5 0 0 1 7 0M5.5 5.5a9 9 0 0 1 13 0"></path><circle cx="12" cy="8" r="1.5"></circle></symbol>
+    <symbol id="visual-icon-tuner" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="15" cy="12" r="3"></circle><path d="M6 10h4M6 14h3"></path></symbol>
+    <symbol id="visual-icon-spectrum" viewBox="0 0 24 24"><path d="M2 18h20M3 15l3-2 2 3 3-10 3 8 3-5 4 6"></path></symbol>
+    <symbol id="visual-icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"></path></symbol>
+    <symbol id="visual-icon-pause" viewBox="0 0 24 24"><path d="M7 5h3v14H7zM14 5h3v14h-3z"></path></symbol>
+    <symbol id="visual-icon-skip" viewBox="0 0 24 24"><path d="M5 5v14l10-7ZM19 5v14"></path></symbol>
+    <symbol id="visual-icon-replay" viewBox="0 0 24 24"><path d="M7 7H3v-4M3.5 7A9 9 0 1 1 3 16"></path></symbol>
+    <symbol id="visual-icon-clear-queue" viewBox="0 0 24 24"><path d="M4 6h10M4 12h8M4 18h6M16 14l5 5M21 14l-5 5"></path></symbol>
   </svg>
 
   <main class="visual-mobile-table-example visual-feature-example">
-    <header class="ui-page-header"><div><h1 class="page-title">Responsive destination table</h1><p class="page-subtitle">Shared table rows become labeled cards on small screens.</p></div></header>
+    <header class="ui-page-header"><div><h1 class="page-title">Responsive channel activity</h1><p class="page-subtitle">Genuinely tabular data becomes labeled cards when the columns no longer fit.</p></div></header>
     <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet ui-mobile-cards" data-mobile-cards="true">
-      <thead><tr><th>Destination</th><th>Status</th><th>Queued</th><th>Sent / Uploaded</th></tr></thead>
-      <tbody><tr><td data-label="Destination">County Calls</td><td data-label="Status"><span class="ui-status ui-status-success">Connected</span></td><td data-label="Queued">3</td><td data-label="Sent / Uploaded">128</td></tr>
-      <tr><td data-label="Destination">Regional Archive</td><td data-label="Status"><span class="ui-status ui-status-danger">Network unavailable</span></td><td data-label="Queued">12</td><td data-label="Sent / Uploaded">842</td></tr></tbody>
+      <thead><tr><th>Channel</th><th>Protocol</th><th>State</th><th>Last heard</th></tr></thead>
+      <tbody><tr><td data-label="Channel">County Dispatch</td><td data-label="Protocol">P25</td><td data-label="State"><span class="ui-status ui-status-success">Running</span></td><td data-label="Last heard">Now</td></tr>
+      <tr><td data-label="Channel">Regional Interop</td><td data-label="Protocol">NBFM</td><td data-label="State"><span class="ui-status ui-status-neutral">Stopped</span></td><td data-label="Last heard">12 minutes ago</td></tr></tbody>
     </table></div>
   </main>
   <div class="visual-app-chrome-example">
     <div class="app-header">
       <header class="topbar">
-        <button class="navigation-toggle icon-button ui-button ui-button-header" type="button" aria-label="Open navigation"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></button>
+        <button class="navigation-toggle icon-button ui-button ui-button-header" type="button" aria-label="Open navigation"><svg aria-hidden="true"><use href="#visual-icon-menu"></use></svg></button>
         <a class="brand" href="#">sdrtrunk-vce</a>
         <nav class="primary-nav" aria-label="Primary navigation">
-          <details class="nav-group"><summary>Listen</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Dashboard</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Live</span></a></div></details>
-          <a class="nav-direct active" href="#">Radio</a>
-          <details class="nav-group"><summary>Manage</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Scan Lists</span></a></div></details>
+          <details class="nav-group"><summary>Listen</summary><div class="nav-group-links"><a class="active" href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Main</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-live"></use></svg><span>Live</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-scanner"></use></svg><span>Scanner</span></a></div></details>
+          <details class="nav-group"><summary>Manage</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-channel"></use></svg><span>Channels</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-aliases"></use></svg><span>Aliases</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg><span>Scan Lists</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radioreference"></use></svg><span>RadioReference</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-streaming"></use></svg><span>Streaming</span></a></div></details>
+          <details class="nav-group"><summary>Hardware</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-tuner"></use></svg><span>Tuners</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-tuner"></use></svg><span>RF Planner</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-spectrum"></use></svg><span>Spectrum</span></a></div></details>
+          <a class="nav-direct" href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-admin"></use></svg><span>Administration</span></a>
+          <a class="nav-direct" href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-about"></use></svg><span>About</span></a>
         </nav>
         <div class="header-controls">
-          <button class="auth-action ui-button ui-button-header" type="button">Signed in</button>
-          <button class="theme-toggle icon-button ui-button ui-button-header" type="button" aria-label="Use dark theme"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg></button>
+          <div class="auth-controls"><button class="auth-session-label auth-session-button ui-button ui-button-header" type="button">admin</button><button class="auth-action ui-button ui-button-header" type="button">Sign Out</button></div>
+          <button class="theme-toggle icon-button ui-button ui-button-header" type="button" aria-label="Use dark theme" title="Use dark theme"><svg aria-hidden="true"><use href="#visual-icon-moon"></use></svg></button>
         </div>
       </header>
       <button class="navigation-backdrop" type="button" aria-label="Close navigation" hidden></button>
       <div id="desktop-playback-slot" class="desktop-playback-slot">
         <section class="playback-bar" aria-label="Web call playback">
-          <details class="playback-control-menu" open><summary aria-label="Playback controls"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button class="playback-command playback-icon-command active" type="button" aria-label="Playing" aria-pressed="true">▶</button><button class="playback-command playback-icon-command" type="button" aria-label="Pause">Ⅱ</button><button class="playback-command playback-icon-command" type="button" aria-label="Skip">»</button><button class="playback-command playback-letter-command" type="button" aria-label="Hold">H</button><button class="playback-command playback-letter-command" type="button" disabled aria-label="Avoid">A</button></div><label class="playback-volume"><span class="playback-volume-label">VOL</span><input type="range" value="75" aria-label="Browser playback volume"></label></div></details>
+          <details class="playback-control-menu" open><summary aria-label="Playback controls" title="Playback controls"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button class="playback-command playback-icon-command active" type="button" aria-label="Playing" title="Playing" aria-pressed="true"><svg aria-hidden="true"><use href="#visual-icon-play"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Pause" title="Pause"><svg aria-hidden="true"><use href="#visual-icon-pause"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#visual-icon-skip"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Replay last call" title="Replay last call"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button><button class="playback-command playback-letter-command" type="button" aria-label="Hold current target" title="Hold current target">H</button><div class="playback-command-group" role="group" aria-label="Avoid controls"><button class="playback-command playback-letter-command" type="button" disabled aria-label="Avoid current target" title="Avoid current target">A</button><button class="playback-command playback-menu-command" type="button" aria-label="Open avoid list" title="Open avoid list"><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></button></div><button class="playback-command playback-icon-command" type="button" aria-label="Clear queued calls" title="Clear queued calls"><svg aria-hidden="true"><use href="#visual-icon-clear-queue"></use></svg></button></div><label class="playback-volume" title="Browser playback volume"><span class="playback-volume-label">VOL</span><input type="range" value="75" aria-label="Browser playback volume"></label></div></details>
           <div class="playback-now"><div class="playback-current"><strong class="playback-current-primary">County Fire · Dispatch</strong><span class="playback-current-secondary">Engine 4 → Fire Dispatch</span></div></div>
           <details class="playback-subscriptions"><summary><span class="playback-scan-list-label">Scan Lists:</span> <strong>2 selected</strong></summary><div class="playback-subscription-panel">Fire and EMS</div></details>
           <details class="playback-queue"><summary><span class="playback-field">Queued</span> <strong>3</strong></summary><div class="playback-queue-list">3 calls</div></details>
@@ -73,28 +93,44 @@
         </section>
       </div>
     </div>
-    <div class="visual-app-chrome-context"><h1>Radio</h1><p>The application chrome remains consistent above page content.</p></div>
+    <div class="visual-app-chrome-context"><h1>Main</h1><p>The shared application chrome stays consistent while each page uses the layout its work requires.</p></div>
   </div>
 
   <main class="design-system-gallery">
     <header class="visual-gallery-header">
       <div>
         <h1>sdrtrunk-vce interface system</h1>
-        <p>Shared primitives are the required starting point for new web features.</p>
+        <p>One modern visual language, composed around the job each page needs to do.</p>
       </div>
       <span class="visual-theme-label" id="visual-theme-label">Light theme</span>
     </header>
 
     <div class="visual-grid">
+      <section class="visual-section visual-section-wide visual-guidance">
+        <h2>Composition guidance</h2>
+        <p class="visual-section-copy">Start with shared tokens and primitives, then choose the layout that best supports the workflow.</p>
+        <div class="visual-guidance-grid">
+          <article><span class="ui-icon-tile ui-icon-tile-accent"><svg aria-hidden="true"><use href="#visual-icon-channel"></use></svg></span><div><strong>Consistent language, flexible pages</strong><p>Keep controls, surfaces, type, and states consistent. A monitoring workspace, editor, and directory do not need the same layout.</p></div></article>
+          <article><span class="ui-icon-tile ui-icon-tile-blue"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg></span><div><strong>Put tools where they act</strong><p>Place compact table controls in the owning section header and let populated tables meet panel edges.</p></div></article>
+          <article><span class="ui-icon-tile ui-icon-tile-accent"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div><strong>Design the narrow view intentionally</strong><p>Turn dense rows into semantic cards or focused selectors; do not make phone users pan across desktop tables.</p></div></article>
+          <article><span class="ui-icon-tile ui-icon-tile-blue"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg></span><div><strong>Keep related work in context</strong><p>Use inline creation, selection bars, and expandable trays when leaving the workflow would discard useful state.</p></div></article>
+        </div>
+      </section>
+
       <section class="visual-section">
         <h2>Actions</h2>
-        <p class="visual-section-copy">Shared sizes, states, icon geometry, and semantic emphasis.</p>
+        <p class="visual-section-copy">Use one control geometry and semantic hierarchy. Icon-only actions always need an accessible hover/focus hint.</p>
         <div class="visual-row">
           <button class="ui-button ui-button-primary" type="button">Save changes</button>
           <button class="ui-button ui-button-secondary" type="button">Cancel</button>
           <button class="ui-button ui-button-danger" type="button">Remove</button>
-          <button class="ui-button ui-icon-button visual-icon-button" type="button" aria-label="Receiver health">
-            <svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg>
+          <button class="ui-button ui-button-secondary ui-icon-button visual-icon-button" type="button"
+                  aria-label="Receiver health" title="Receiver health">
+            <svg aria-hidden="true"><use href="#visual-icon-live"></use></svg>
+          </button>
+          <button class="ui-button ui-button-secondary ui-icon-button ui-icon-button-compact visual-icon-button"
+                  type="button" aria-label="Choose table columns" title="Choose table columns">
+            <svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg>
           </button>
           <button class="ui-button" type="button" disabled>Unavailable</button>
         </div>
@@ -106,7 +142,7 @@
 
       <section class="visual-section">
         <h2>Status and choices</h2>
-        <p class="visual-section-copy">Use semantic variants rather than feature-owned colors.</p>
+        <p class="visual-section-copy">Use restrained semantic color plus text or icons; color is a landmark, never the only meaning.</p>
         <div class="visual-row">
           <span class="ui-pill ui-pill-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><span>Running</span></span>
           <span class="ui-pill ui-pill-blue"><span>P25 Phase 2</span></span>
@@ -151,7 +187,7 @@
           <label class="ui-field">
             <span class="ui-field-label">Decoder</span>
             <span class="ui-select-frame">
-              <select class="ui-select"><option>P25 Phase 2</option></select>
+              <select class="ui-select"><option>P25 Phase 2 TDMA Control Channel (Uncommon)</option></select>
               <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
             </span>
             <small class="ui-field-detail">Available values depend on the channel type.</small>
@@ -161,29 +197,68 @@
             <textarea class="ui-textarea" rows="3">Primary dispatch channel for county public safety.</textarea>
           </label>
         </div>
+        <div class="ui-field">
+          <label class="ui-field-label" for="visual-alias-list">Alias List</label>
+          <span class="ui-select-frame">
+            <select class="ui-select" id="visual-alias-list"><option>Default P25</option></select>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
+          </span>
+          <div class="ui-inline-create">
+            <button class="ui-button ui-button-secondary ui-inline-create-trigger" type="button"
+                    aria-expanded="true" aria-controls="visual-inline-alias-create"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg><span>New list</span></button>
+            <div class="ui-inline-create-panel" id="visual-inline-alias-create" role="group" aria-labelledby="visual-inline-alias-heading">
+              <div class="ui-inline-create-heading"><h3 id="visual-inline-alias-heading">Create Alias List</h3></div>
+              <label class="ui-field"><span class="ui-field-label">Name</span>
+                <input class="ui-input" value="Lorain Public Safety"></label>
+              <div class="ui-inline-create-context"><span>Protocol family</span>
+                <span class="ui-pill ui-pill-neutral"><span>P25</span></span></div>
+              <small class="ui-field-detail">The list is created immediately and selected for this workflow.</small>
+              <div class="ui-inline-create-status" role="alert"></div>
+              <div class="ui-inline-create-actions"><button class="ui-button ui-button-secondary" type="button">Cancel</button>
+                <button class="ui-button ui-button-primary" type="button">Create and use</button></div>
+            </div>
+            <div class="ui-inline-create-status" role="status" aria-live="polite"></div>
+          </div>
+        </div>
       </section>
 
       <section class="visual-section visual-section-wide data-workspace">
         <h2>Data workspace</h2>
-        <p class="visual-section-copy">Catalog pages use compact controls and shared surfaces.</p>
+        <p class="visual-section-copy">Use compact density for catalogs, keep table actions in the owning header, and reserve flexible width for descriptive data.</p>
+        <strong class="visual-pattern-label">Page summary</strong>
         <div class="visual-summary-grid">
           <div class="ui-summary-card"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg><strong>24</strong><span>Configured channels</span></div>
           <div class="ui-summary-card ui-summary-success"><svg aria-hidden="true"><use href="#visual-icon-check"></use></svg><strong>7</strong><span>Running now</span></div>
           <div class="ui-summary-card ui-summary-blue"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg><strong>12</strong><span>Auto-start enabled</span></div>
         </div>
+        <strong class="visual-pattern-label">Detailed statistics</strong>
         <div class="summary-band ui-metric-grid">
           <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Logical Calls</span><strong>1,887</strong></div></div>
           <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-recording"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Recorded</span><strong>108</strong></div></div>
           <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-lock"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Encrypted</span><strong>54</strong></div></div>
         </div>
-        <div class="ui-catalog-toolbar">
-          <label class="ui-search">
-            <svg aria-hidden="true"><use href="#visual-icon-search"></use></svg>
-            <input class="ui-input" type="search" value="dispatch" aria-label="Search channels">
-          </label>
-          <button class="ui-button ui-button-primary" type="button">Add channel</button>
-          <button class="ui-button" type="button">Columns</button>
-        </div>
+        <section class="section ui-section visual-data-panel">
+          <div class="section-title ui-section-title">
+            <div class="visual-section-heading"><strong>Configured channels</strong><span>24 total · 7 running</span></div>
+            <div class="section-title-actions ui-section-actions visual-data-layout-host">
+              <button class="ui-button ui-button-secondary ui-icon-button ui-icon-button-compact" type="button"
+                      aria-label="Choose table columns" title="Choose table columns"><svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg></button>
+            </div>
+          </div>
+          <div class="ui-catalog-toolbar visual-data-toolbar">
+            <label class="ui-search">
+              <svg aria-hidden="true"><use href="#visual-icon-search"></use></svg>
+              <input class="ui-input" type="search" value="dispatch" aria-label="Search channels">
+            </label>
+            <button class="ui-button ui-button-primary" type="button">Add channel</button>
+          </div>
+          <div class="async-section-content ui-table-content">
+            <div class="table-wrap ui-table-wrap"><table class="data-table resizable-table ui-data-table ui-data-table-quiet ui-mobile-cards" data-table-type="interface-guidance-channels" data-mobile-cards="true">
+              <thead><tr><th>Channel</th><th>Protocol</th><th>State</th></tr></thead>
+              <tbody><tr><td data-label="Channel"><strong>County Dispatch</strong></td><td data-label="Protocol"><span class="ui-pill ui-pill-blue"><span>P25</span></span></td><td data-label="State"><span class="ui-status ui-status-success">Running</span></td></tr><tr><td data-label="Channel"><strong>Fireground 2</strong></td><td data-label="Protocol"><span class="ui-pill ui-pill-neutral"><span>NBFM</span></span></td><td data-label="State"><span class="ui-status ui-status-neutral">Stopped</span></td></tr></tbody>
+            </table></div>
+          </div>
+        </section>
       </section>
 
       <section class="visual-section">
@@ -222,7 +297,7 @@
               <p class="visual-section-copy">Long editors stay inside the viewport while their content scrolls beneath the header.</p>
               <label class="ui-field"><span class="ui-field-label">System</span><input class="ui-input" value="County Public Safety"></label>
               <label class="ui-field"><span class="ui-field-label">Site</span><input class="ui-input" value="Central Simulcast"></label>
-              <label class="ui-field"><span class="ui-field-label">Decoder</span><select class="ui-select"><option>P25 Phase 2</option></select></label>
+              <label class="ui-field"><span class="ui-field-label">Decoder</span><select class="ui-select"><option>P25 Phase 2 TDMA Control Channel (Uncommon)</option></select></label>
               <label class="ui-field"><span class="ui-field-label">Source</span><input class="ui-input" value="Primary tuner"></label>
               <label class="ui-field"><span class="ui-field-label">Notes</span><textarea class="ui-textarea" rows="5">Additional operator notes remain inside the scrollable content region.</textarea></label>
             </div>
@@ -1005,11 +1080,11 @@
     <div class="radioreference-import-workspace data-workspace"><div class="radioreference-browser">
       <div class="radioreference-browse-form ui-surface"><strong class="radioreference-browse-title">Browse area</strong><div class="radioreference-browse-fields"><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Country</span><select class="ui-select"><option>United States</option></select></label><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">State or region</span><select class="ui-select"><option>Ohio</option></select></label><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">County</span><select class="ui-select"><option>Lorain County</option></select></label></div><span class="muted">2 systems and agencies grouped by coverage area.</span></div>
       <div class="radioreference-workbench-grid"><div class="radioreference-directory-results ui-surface"><div class="radioreference-directory-tabs"><div class="ui-segmented"><button class="ui-segmented-option active" type="button">Browse</button><button class="ui-segmented-option" type="button">★ Bookmarks (1)</button></div></div><div class="radioreference-directory-list"><details class="radioreference-directory-branch" open><summary><span class="radioreference-directory-branch-label">Lorain County results</span><span class="ui-pill">2</span></summary><div class="radioreference-directory-branch-content"><div class="radioreference-directory-item is-active"><button class="link-button ui-row-action radioreference-result-open" type="button" aria-pressed="true"><span class="radioreference-row-identity"><strong>County Public Safety</strong><small class="muted">Lorain County</small></span><span class="ui-pill ui-pill-blue">Trunked</span></button><button class="ui-button ui-button-secondary ui-icon-button radioreference-bookmark" type="button" aria-label="Bookmark County Public Safety">☆</button></div><div class="radioreference-directory-item"><button class="link-button ui-row-action radioreference-result-open" type="button"><span class="radioreference-row-identity"><strong>Regional Services</strong><small class="muted">Northeast Ohio</small></span><span class="ui-pill">Conventional</span></button><button class="ui-button ui-button-secondary ui-icon-button radioreference-bookmark" type="button" aria-label="Bookmark Regional Services">☆</button></div></div></details></div></div>
-      <div class="radioreference-import-detail"><section class="radioreference-system-workspace ui-surface"><header class="radioreference-detail-header"><div><span class="muted">Ohio &gt; Lorain County · Trunked system</span><h2>County Public Safety</h2><p class="muted">Project 25</p></div><button class="ui-button ui-button-secondary ui-icon-button radioreference-bookmark" type="button">☆</button></header><div class="radioreference-system-tabs ui-segmented"><button class="ui-segmented-option active" type="button">Sites &amp; Channels</button><button class="ui-segmented-option" type="button">Talkgroups &amp; Aliases</button></div><div class="radioreference-system-body"><div class="radioreference-sites-toolbar ui-catalog-toolbar"><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Search sites &amp; channels</span><input class="ui-input" placeholder="Filter site or channel name"></label><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Sort sites</span><select class="ui-select"><option>Site number</option></select></label><span class="muted">2 of 2 sites</span></div><div class="radioreference-sites-list"><div class="table-wrap ui-table-wrap"><table class="data-table resizable-table ui-data-table ui-data-table-quiet ui-mobile-cards" data-table-type="radioreference-sites" data-mobile-cards="true"><thead><tr><th>Site</th><th>Detected modulation</th><th>Frequencies</th></tr></thead><tbody><tr><td data-label="Site"><span class="radioreference-row-identity"><button class="link-button radioreference-site-import" type="button">County Simulcast</button><small class="muted">Lorain County · Site 1</small></span></td><td data-label="Detected modulation"><span class="ui-pill ui-pill-blue">CQPSK</span></td><td data-label="Frequencies">15 available</td></tr><tr><td data-label="Site"><span class="radioreference-row-identity"><button class="link-button radioreference-site-import" type="button">West Site</button><small class="muted">Lorain County · Site 2</small></span></td><td data-label="Detected modulation"><span class="ui-pill">C4FM</span></td><td data-label="Frequencies">8 available</td></tr></tbody></table></div></div></div></section></div></div>
+      <div class="radioreference-import-detail"><section class="radioreference-system-workspace ui-surface"><header class="radioreference-detail-header"><div><span class="muted">Ohio &gt; Lorain County · Trunked system</span><h2>County Public Safety</h2><p class="muted">Project 25</p></div><button class="ui-button ui-button-secondary ui-icon-button radioreference-bookmark" type="button" aria-label="Bookmark County Public Safety" title="Bookmark County Public Safety">☆</button></header><div class="radioreference-system-tabs ui-segmented"><button class="ui-segmented-option active" type="button">Sites &amp; Channels</button><button class="ui-segmented-option" type="button">Talkgroups &amp; Aliases</button></div><div class="radioreference-system-body"><div class="radioreference-sites-toolbar ui-catalog-toolbar"><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Search sites &amp; channels</span><input class="ui-input" placeholder="Filter site or channel name"></label><label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Sort sites</span><select class="ui-select"><option>Site number</option></select></label><span class="muted">2 of 2 sites</span></div><div class="radioreference-sites-list"><div class="table-wrap ui-table-wrap"><table class="data-table resizable-table ui-data-table ui-data-table-quiet ui-mobile-cards" data-table-type="radioreference-sites" data-mobile-cards="true"><thead><tr><th>Site</th><th>Detected modulation</th><th>Frequencies</th></tr></thead><tbody><tr><td data-label="Site"><span class="radioreference-row-identity"><button class="link-button radioreference-site-import" type="button">County Simulcast</button><small class="muted">Lorain County · Site 1</small></span></td><td data-label="Detected modulation"><span class="ui-pill ui-pill-blue">CQPSK</span></td><td data-label="Frequencies">15 available</td></tr><tr><td data-label="Site"><span class="radioreference-row-identity"><button class="link-button radioreference-site-import" type="button">West Site</button><small class="muted">Lorain County · Site 2</small></span></td><td data-label="Detected modulation"><span class="ui-pill">C4FM</span></td><td data-label="Frequencies">8 available</td></tr></tbody></table></div></div></div></section></div></div>
     </div></div>
   </main>
 
-  <script src="/visual/design-system-gallery.js"></script>
+  <script type="module" src="/visual/design-system-gallery.js"></script>
   <script type="module">import { installIconHints } from '/assets/core/icon-hints.js'; installIconHints();</script>
 </body>
 </html>

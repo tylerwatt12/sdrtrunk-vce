@@ -58,6 +58,36 @@ body {
   grid-column: 1 / -1;
 }
 
+.visual-guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.visual-guidance-grid article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.visual-guidance-grid article > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.visual-guidance-grid article p {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  line-height: 1.45;
+}
+
 .visual-row {
   display: flex;
   align-items: center;
@@ -105,6 +135,38 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+.visual-pattern-label {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.visual-data-panel {
+  margin: 0;
+}
+
+.visual-section-heading {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.visual-section-heading > span {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+.visual-data-toolbar {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.visual-data-toolbar .ui-search {
+  flex: 1 1 280px;
 }
 
 .visual-icon-button svg,
@@ -561,6 +623,7 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
   .visual-grid,
   .visual-form-grid,
   .visual-choice-cards,
+  .visual-guidance-grid,
   .visual-summary-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -576,6 +639,14 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
 
   .visual-row > .ui-button {
     flex: 1 1 auto;
+  }
+
+  .visual-row > .ui-icon-button {
+    flex: 0 0 auto;
+  }
+
+  .visual-data-toolbar {
+    align-items: stretch;
   }
 
   .visual-settings-example {

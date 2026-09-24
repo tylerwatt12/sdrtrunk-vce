@@ -362,6 +362,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     populateAliasSelect(control, family, selectedId);
     return control;
   };
+  const currentAliasListRevision = async () => {
+    const documentValue = await requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false });
+    const revision = Number(documentValue?.revision);
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new Error('The current Alias List revision is unavailable. Reload and try again.');
+    }
+    state.aliasListRevision = revision;
+    return revision;
+  };
   const aliasListField = (label, control, family, helperText) => {
     control.setAttribute('aria-label', label);
     const field = node('div', 'admin-form-field ui-field');
@@ -369,8 +378,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       createInlineAliasListCreator({
         select: control,
         family: normalizedAliasFamily(family),
-        getRevision: () => state.aliasListRevision,
-        triggerLabel: '+ New list',
+        getRevision: currentAliasListRevision,
+        triggerLabel: 'New list',
         submitLabel: 'Create and use',
         helperText,
         onCreated: ({ aliasList, revision }) => {

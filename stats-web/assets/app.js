@@ -14,7 +14,11 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=4';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=15';
+import {
+  createAliasList,
+  createInlineAliasListCreator as buildInlineAliasListCreator
+} from './features/alias-list-create.js?v=1';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=16';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { WebCallPlayer } from './web-call-player.js?v=2';
 
@@ -2241,7 +2245,7 @@ function compareTableValues(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function renderTableRow(data, columns, rowKey, rowClass, onRowClick, rowSelected) {
+function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   const row = node('tr');
   row.tableRowData = data;
   const classes = typeof rowClass === 'function' ? rowClass(data) : rowClass;
@@ -2267,9 +2271,7 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick, rowSelected
   if (typeof onRowClick === 'function') {
     row.dataset.rowInteractive = 'true';
     row.tabIndex = -1;
-    if (typeof rowSelected === 'function') {
-      row.setAttribute('aria-selected', String(Boolean(rowSelected(data))));
-    }
+    row.setAttribute('aria-selected', String(row.classList.contains('selected')));
     const activate = (event) => {
       const body = row.parentElement;
       const key = row.dataset.id;
@@ -2568,8 +2570,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const rows = [...body.children]
       .filter((row) => row.dataset.rowInteractive === 'true' && !row.hidden);
     if (!rows.length) return;
-    if (typeof options.rowSelected === 'function') rows.forEach((row) =>
-      row.setAttribute('aria-selected', String(Boolean(options.rowSelected(row.tableRowData)))));
+    rows.forEach((row) =>
+      row.setAttribute('aria-selected', String(row.classList.contains('selected'))));
     const focused = rows.includes(document.activeElement) ? document.activeElement : null;
     const selected = rows.find((row) => row.getAttribute('aria-selected') === 'true');
     const tabStop = focused || selected || rows.find((row) => row.tabIndex === 0) || rows[0];
@@ -2619,8 +2621,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         }
         activeGroup = group;
       }
-      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick,
-        options.rowSelected);
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
       if (activeGroup) {
         rendered.classList.add('ui-table-row-group-item');
         rendered.dataset.rowGroup = activeGroup.key;
@@ -2651,8 +2652,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const retained = new Set();
     orderedRows.forEach((data, index) => {
       const key = String(incomingKeys[index]);
-      const replacement = renderTableRow(data, columns, options.rowKey, options.rowClass,
-        options.onRowClick, options.rowSelected);
+      const replacement = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
       let current = existing.get(key);
       if (current) {
         retained.add(current);
@@ -2961,8 +2961,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         renderBody();
         return;
       }
-      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick,
-        options.rowSelected);
+      const rendered = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
       if (body.querySelector('.empty')) body.replaceChildren(rendered);
       else if (prepend) body.prepend(rendered);
       else body.append(rendered);
@@ -3883,6 +3882,20 @@ function aliasMutationError(host, error, retry = null) {
   }
 }
 
+function inlineAliasListCreator(options) {
+  if (!aliasAdminAllowed()) return document.createDocumentFragment();
+  return buildInlineAliasListCreator({ node, iconGlyph, uiPill, requestJson }, options);
+}
+
+async function currentAliasListRevision() {
+  const catalog = await requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false });
+  const revision = Number(catalog?.revision);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error('The current Alias List revision is unavailable. Reload and try again.');
+  }
+  return revision;
+}
+
 function aliasConflictSummary(row) {
   const wrapper = node('li', 'alias-conflict-item');
   const id = Number(row?.alias_id);
@@ -4005,10 +4018,8 @@ function openAliasListCreateModal() {
     modal.setBusy(true);
     errorHost.replaceChildren();
     try {
-      const result = await requestJson('/api/v1/admin/alias-lists', {
-        method: 'POST', body: {
-          revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
-        }
+      const result = await createAliasList(requestJson, {
+        revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
       });
       await finishAliasMutation(modal, result, { list: result.alias_list_id, aliasTab: 'configure' });
     } catch (error) {
@@ -14367,8 +14378,9 @@ function liveEventsPanel(onCollapse) {
   let paused = false;
   let eventsActive = true;
   const storedCollapsePreference = savedUiState.details_collapsed;
-  let collapsed = typeof storedCollapsePreference === 'boolean' ? storedCollapsePreference :
-    window.matchMedia('(max-width: 760px)').matches;
+  const collapseMedia = window.matchMedia('(max-width: 760px)');
+  let collapsePreferenceExplicit = typeof storedCollapsePreference === 'boolean';
+  let collapsed = collapsePreferenceExplicit ? storedCollapsePreference : collapseMedia.matches;
   let activePaneId = LIVE_DETAIL_TAB_IDS.has(savedUiState.details_active_tab) ?
     savedUiState.details_active_tab : 'events';
   let stream = null;
@@ -14398,6 +14410,8 @@ function liveEventsPanel(onCollapse) {
   header.append(tabBar, mobileSummary, controls);
 
   const body = node('div', 'live-details-body');
+  body.id = 'live-details-body';
+  collapse.setAttribute('aria-controls', body.id);
   const eventPane = node('div', 'live-details-pane live-events-pane');
   const eventToolbar = node('div', 'live-events-toolbar live-detail-toolbar');
   const selectionLabel = node('strong', 'live-event-selection', 'Select a live row above');
@@ -14635,17 +14649,25 @@ function liveEventsPanel(onCollapse) {
     panes[id].hidden = id !== activePaneId;
   });
 
-  collapse.addEventListener('click', () => {
-    collapsed = !panel.classList.contains('collapsed');
+  const setCollapsed = (next, persist = false) => {
+    collapsed = Boolean(next);
     panel.classList.toggle('collapsed', collapsed);
     collapse.textContent = collapsed ? 'Expand' : 'Collapse';
     collapse.setAttribute('aria-expanded', String(!collapsed));
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
     onCollapse(collapsed);
-    storeLiveUiState({ details_collapsed: collapsed });
+    if (persist) storeLiveUiState({ details_collapsed: collapsed });
     sync();
+  };
+  collapse.addEventListener('click', () => {
+    collapsePreferenceExplicit = true;
+    setCollapsed(!panel.classList.contains('collapsed'), true);
   });
+  const synchronizeResponsiveCollapse = (event) => {
+    if (!collapsePreferenceExplicit) setCollapsed(event.matches);
+  };
+  collapseMedia.addEventListener('change', synchronizeResponsiveCollapse);
   pause.addEventListener('click', () => {
     paused = !paused;
     pause.textContent = paused ? 'Resume' : 'Pause';
@@ -14656,14 +14678,7 @@ function liveEventsPanel(onCollapse) {
     if (!paused) scheduleRender();
   });
   selectPane(activePaneId, false);
-  if (collapsed) {
-    panel.classList.add('collapsed');
-    collapse.textContent = 'Expand';
-    collapse.setAttribute('aria-expanded', 'false');
-    messagesController.setCollapsed(true);
-    channelController.setCollapsed(true);
-    onCollapse(true);
-  }
+  setCollapsed(collapsed);
   renderEvents();
   return {
     element: panel,
@@ -14674,6 +14689,7 @@ function liveEventsPanel(onCollapse) {
       renderTimer = null;
       events.clear();
       order.length = 0;
+      collapseMedia.removeEventListener('change', synchronizeResponsiveCollapse);
       filters.close();
       messagesController.close();
       channelController.close();
@@ -15075,7 +15091,6 @@ function liveChannelsSection(onSelectionChange) {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
     sortable: true,
     rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
-    rowSelected: (row) => selection?.rowKey === row.key,
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
@@ -18305,14 +18320,47 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             presentedControl = unit;
           }
           presentedControl.classList?.add('channel-editor-control');
-          const wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
-            field.type === 'frequency_map' || field.type === 'frequency_list' ?
-            node('div', 'channel-editor-field ui-field channel-wide-field') :
-            formField(field.label, presentedControl, field.help || '');
+          const inlineAliasList = field.path === 'alias_list_id' && control instanceof HTMLSelectElement;
+          let wrapper;
+          if (inlineAliasList) {
+            wrapper = node('div', 'channel-editor-field ui-field');
+            control.id = `channel-alias-list-${profile.id}`;
+            const label = node('label', 'ui-field-label', field.label);
+            label.htmlFor = control.id;
+            wrapper.append(label, presentedControl);
+            if (field.help) wrapper.append(node('small', 'ui-field-detail', field.help));
+          } else {
+            wrapper = field.type === 'boolean' || field.type === 'multi_select' || field.type === 'read_only' ||
+              field.type === 'frequency_map' || field.type === 'frequency_list' ?
+              node('div', 'channel-editor-field ui-field channel-wide-field') :
+              formField(field.label, presentedControl, field.help || '');
+          }
           wrapper.classList.add('channel-editor-field');
           if (!wrapper.contains(control)) {
             wrapper.append(node('span', 'ui-field-label', field.label), presentedControl);
             if (field.help) wrapper.append(node('small', 'ui-field-detail', field.help));
+          }
+          if (inlineAliasList) {
+            wrapper.append(inlineAliasListCreator({
+              select: control,
+              family: profile.alias_family,
+              getRevision: currentAliasListRevision,
+              triggerLabel: 'New list',
+              submitLabel: 'Create and use',
+              helperText: 'The list is created immediately and selected for this channel.',
+              onCreated: ({ aliasList }) => {
+                const next = { id: aliasList.id, name: aliasList.name, family: aliasList.family };
+                options.alias_lists = [...(options.alias_lists || [])
+                  .filter((entry) => Number(entry.id) !== Number(next.id)), next]
+                  .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''),
+                    undefined, { numeric: true, sensitivity: 'base' }));
+                const option = node('option', '', next.name);
+                option.value = String(next.id);
+                control.append(option);
+                control.value = option.value;
+                control.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }));
           }
           if (field.path === 'settings.use_bandplan_override' &&
               capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
@@ -19737,7 +19785,7 @@ async function renderAdminRadioReferenceSettings() {
   const importWorkspace = createRadioReferenceImportWorkspace({
     node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
-    href, anchor, modalFooter: aliasModalFooter,
+    href, anchor, modalFooter: aliasModalFooter, createInlineAliasListCreator: inlineAliasListCreator,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
     mutationTimeoutMs: 65_000
   });

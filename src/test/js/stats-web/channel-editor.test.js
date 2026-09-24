@@ -146,6 +146,12 @@ assert.match(channelModal, /action, configuration_ids: \[configurationId\]/,
   'The editor must start or stop only its own channel');
 assert.match(channelModal, /modal\.isDirty\(\)/,
   'Start and Stop must not discard unsaved channel settings');
+assert.match(channelModal, /inlineAliasListCreator\(\{/,
+  'Channel setup must offer the shared inline Alias List creator');
+assert.match(channelModal, /getRevision: currentAliasListRevision/,
+  'Inline Alias List creation must use the Alias configuration revision');
+assert.match(channelModal, /control\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/,
+  'A newly created Alias List must follow the normal channel-field change path');
 const stickyAssignments = [];
 const stickyHeader = { getBoundingClientRect: () => ({ height: 52.1 }) };
 let observedHeader = null;

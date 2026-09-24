@@ -1094,6 +1094,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
     border-bottom: 0;
   }
 
+  .channels-live-table tbody > tr:not([data-row-interactive]) {
+    grid-template-columns: minmax(0, 1fr);
+    cursor: default;
+  }
+
   .channels-live-table tbody > tr:focus-visible {
     z-index: 1;
     outline: 2px solid var(--focus-ring);
@@ -1129,12 +1134,22 @@ body[data-view="live"] .channel-diagnostic-readouts {
     display: none;
   }
 
+  .channels-live-table tbody td.empty {
+    display: block;
+    grid-column: 1 / -1;
+    padding: var(--space-4);
+    color: var(--muted);
+    text-align: center;
+    text-overflow: initial;
+    white-space: normal;
+  }
+
   .channels-live-table tbody td::before {
     display: none;
   }
 
   .channels-live-table td[data-column="status"] {
-    grid-column: span 4;
+    grid-column: 1 / span 4;
     order: 10;
     justify-self: start;
     padding: var(--space-1) var(--space-2);
@@ -1143,14 +1158,14 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 
   .channels-live-table td[data-column="tags"] {
-    grid-column: span 4;
+    grid-column: 5 / span 4;
     order: 11;
     color: var(--muted);
     font-weight: var(--font-weight-medium);
   }
 
   .channels-live-table td[data-column="decoder"] {
-    grid-column: span 4;
+    grid-column: 9 / span 4;
     order: 12;
     color: var(--muted);
     font-size: var(--font-size-meta);
@@ -1160,18 +1175,32 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
   .channels-live-table td[data-column="source-alias"],
   .channels-live-table td[data-column="target-alias"] {
-    grid-column: span 4;
     order: 20;
     font-size: var(--font-size-body);
     font-weight: var(--font-weight-medium);
   }
 
+  .channels-live-table td[data-column="source-alias"] {
+    grid-column: 1 / span 4;
+  }
+
+  .channels-live-table td[data-column="target-alias"] {
+    grid-column: 7 / span 4;
+  }
+
   .channels-live-table td[data-column="source"],
   .channels-live-table td[data-column="target"] {
-    grid-column: span 2;
     order: 20;
     color: var(--muted);
     font-size: var(--font-size-meta);
+  }
+
+  .channels-live-table td[data-column="source"] {
+    grid-column: 5 / span 2;
+  }
+
+  .channels-live-table td[data-column="target"] {
+    grid-column: 11 / span 2;
   }
 
   .channels-live-table td[data-column="source-alias"]::before,
@@ -1194,13 +1223,17 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
   .channels-live-table td[data-column="channel"],
   .channels-live-table td[data-column="frequency"] {
-    grid-column: span 6;
     order: 30;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
 
+  .channels-live-table td[data-column="channel"] {
+    grid-column: 1 / span 6;
+  }
+
   .channels-live-table td[data-column="frequency"] {
+    grid-column: 7 / span 6;
     text-align: right;
   }
 
@@ -1210,7 +1243,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
 
   .channels-live-table td[data-column="signal"],
   .channels-live-table td[data-column="decode-health"] {
-    grid-column: span 6;
     order: 40;
     color: var(--muted);
     font-size: var(--font-size-meta);
@@ -1218,7 +1250,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 
   .channels-live-table td[data-column="signal"]::before { content: "Signal"; }
+  .channels-live-table td[data-column="signal"] {
+    grid-column: 1 / span 6;
+  }
   .channels-live-table td[data-column="decode-health"] {
+    grid-column: 7 / span 6;
     text-align: right;
   }
   .channels-live-table td[data-column="decode-health"]::before { content: "Quality"; }

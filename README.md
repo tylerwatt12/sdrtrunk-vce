@@ -26,7 +26,7 @@ receiver data before installing or upgrading.
 - **Stable browser activity screen:** Live keeps conventional channels and each active trunked site in stable groups.
   Frequencies stay in place instead of constantly moving around.
 - **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
-  an operator's saved enabled or disabled choice. View Live activity, Radio Systems, Channels, group identities,
+  an operator's saved enabled or disabled choice. View Live activity, the Radio Directory, Channels, group identities,
   radios, history, and statistics from a browser. Subscribe to one or more administrator-defined
   [Scan Lists](docs/browser-listening-and-scan-lists.md); assign normal Aliases or Alias List Defaults to them. Those
   defaults also normally initialize new talkgroup Aliases consistently across the desktop, web, Discover, and
@@ -37,9 +37,9 @@ receiver data before installing or upgrading.
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems, while one
   conventional analog Alias-list family serves both AM and NBFM channels.
-- **Desktop and mobile listening:** The full desktop website and a separate touch-friendly mobile listener use the
-  same bounded completed-call feed and Scan Lists. Queue order, Hold, Skip, Replay Last, Avoid, and Stop remain local
-  to each browser rather than creating a server-side playback session.
+- **Responsive desktop and mobile listening:** One browser interface adapts its navigation, Live activity, scanner,
+  and playback controls for desktop and touch screens. Queue order, Hold, Skip, Replay Last, Avoid, and Stop remain
+  local to each browser rather than creating a server-side playback session.
 
 ## Current Nightly Feature Set
 
@@ -49,7 +49,7 @@ omit these newer features until they are deliberately included in that release l
 - **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, user management, and custom
   certificate import without manually stopping the server.
 - **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
-  talkgroup discovery, and a RadioReference **Import All** action in JavaFX.
+  talkgroup discovery, and RadioReference site, conventional-channel, and bulk talkgroup imports.
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
   FFT and waterfall with zoom, smoothing, persistent country-aware FFT band indicators, optional frequency snapping,
   and channel flags.
@@ -181,7 +181,6 @@ For more detail, see [Portable Startup And Storage](docs/portable-startup-and-st
 
 These older or experimental features are not included:
 
-- Receiver-local speaker playback, output-device selection, and the desktop Hold, Avoid, priority, and backlog controls
 - Receiver-local tuner Spectrum/Waterfall panels and separate spectrum windows; web diagnostics remain supported
 - Local alias actions and the Actions editor
 - LTR Standard, LTR-Net, Passport, and MPT-1327 decoders

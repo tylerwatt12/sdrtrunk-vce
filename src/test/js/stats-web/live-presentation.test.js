@@ -216,14 +216,16 @@ assert.match(channels, /picker\.closest\('\.live-split'\)\?\.classList\.toggle\(
   'Collapsing the picker must release its grid width to the selected channel workspace');
 assert.match(channels, /mobileCards: true/,
   'Live activity must opt into its responsive card presentation');
-assert.match(channels, /rowSelected: \(row\) => selection\?\.rowKey === row\.key/,
-  'Live activity exposes selected-row semantics to the shared table');
+assert.match(channels, /rowClass: \(row\) => selection\?\.rowKey === row\.key \? 'selected' : ''/,
+  'Live activity exposes its selected row through the shared table state');
 
 const renderRow = functionSource('renderTableRow');
 assert.match(renderRow, /cell\.dataset\.column = column\.id/,
   'Table cells expose stable semantic column identifiers for responsive layouts');
 assert.match(renderRow, /row\.setAttribute\('aria-selected'/,
   'Selectable rows expose their selected state');
+assert.match(renderRow, /row\.classList\.contains\('selected'\)/,
+  'Selectable-row semantics follow the shared selected-row class');
 assert.match(renderRow, /event\.key === 'Enter' \|\| event\.key === ' '/,
   'Selectable rows support keyboard activation');
 assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
@@ -236,5 +238,11 @@ assert.match(details, /mobileSummary\.textContent = selection\?\.label/,
   'The collapsed tray summary follows the active Live row');
 assert.match(details, /typeof storedCollapsePreference === 'boolean'/,
   'An explicit details-tray preference must override the responsive default');
-assert.match(details, /matchMedia\('\(max-width: 760px\)'\)\.matches/,
+assert.match(details, /collapseMedia\.matches/,
   'The details tray starts collapsed on a narrow screen when no preference exists');
+assert.match(details, /collapse\.setAttribute\('aria-controls', body\.id\)/,
+  'The details disclosure identifies the controlled tray body');
+assert.match(details, /collapseMedia\.addEventListener\('change', synchronizeResponsiveCollapse\)/,
+  'The unsaved responsive default follows viewport changes');
+assert.match(details, /collapseMedia\.removeEventListener\('change', synchronizeResponsiveCollapse\)/,
+  'The responsive collapse listener is released with the Live page');
