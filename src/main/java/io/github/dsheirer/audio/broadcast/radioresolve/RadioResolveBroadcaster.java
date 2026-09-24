@@ -266,6 +266,12 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     }
 
     @Override
+    public int getAudioQueueSizeSnapshot()
+    {
+        return mSpool.sizeSnapshot();
+    }
+
+    @Override
     public int getAudioQueueSize()
     {
         try

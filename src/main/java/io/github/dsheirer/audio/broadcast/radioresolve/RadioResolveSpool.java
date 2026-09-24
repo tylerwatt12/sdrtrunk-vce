@@ -184,6 +184,7 @@ final class RadioResolveSpool
             forceDirectory();
             entry = new Entry(manifestPath, audio, manifest, Files.size(manifestPath) + Files.size(audio));
             mState.entries.put(envelope.submissionId(), entry);
+            mState.observedSize = mState.entries.size();
             indexEntryLocked(entry);
             mState.sizeBytes += entry.sizeBytes();
         }
@@ -450,6 +451,12 @@ final class RadioResolveSpool
         }
     }
 
+    /** Last published count, without opening storage or waiting for the spool worker. */
+    int sizeSnapshot()
+    {
+        return mState.observedSize;
+    }
+
     int size()
     {
         synchronized(mState)
@@ -671,6 +678,7 @@ final class RadioResolveSpool
 
         String submissionId = submissionId(current);
         mState.entries.remove(submissionId);
+        mState.observedSize = mState.entries.size();
         mState.readySubmissionIds.remove(submissionId);
         mState.heldSubmissionIds.remove(submissionId);
         mState.freshLaneCandidateSubmissionIds.remove(submissionId);
@@ -824,6 +832,7 @@ final class RadioResolveSpool
         }
 
         mState.entries.put(submissionId, entry);
+        mState.observedSize = mState.entries.size();
         indexEntryLocked(entry);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - (existing != null ? existing.sizeBytes() : 0L)) + size;
         return true;
@@ -844,6 +853,7 @@ final class RadioResolveSpool
         long updatedSize = Files.size(current.manifestPath()) + Files.size(current.audioPath());
         Entry replacement = new Entry(current.manifestPath(), current.audioPath(), updated, updatedSize);
         mState.entries.put(submissionId(current), replacement);
+        mState.observedSize = mState.entries.size();
         indexEntryLocked(replacement);
         mState.sizeBytes = Math.max(0L, mState.sizeBytes - current.sizeBytes()) + updatedSize;
         return replacement;
@@ -893,6 +903,7 @@ final class RadioResolveSpool
             if(!Files.isRegularFile(entry.manifestPath()) || !Files.isRegularFile(entry.audioPath()))
             {
                 iterator.remove();
+                mState.observedSize = mState.entries.size();
                 mState.readySubmissionIds.remove(indexed.getKey());
                 mState.heldSubmissionIds.remove(indexed.getKey());
                 mState.freshLaneCandidateSubmissionIds.remove(indexed.getKey());
@@ -1020,6 +1031,7 @@ final class RadioResolveSpool
         private final LinkedHashSet<String> heldSubmissionIds = new LinkedHashSet<>();
         private final LinkedHashSet<String> freshLaneCandidateSubmissionIds = new LinkedHashSet<>();
         private final Set<String> protectedSubmissionIds = new HashSet<>();
+        private volatile int observedSize;
         private long sizeBytes;
         private long lastPruneAtMs;
     }

@@ -25,6 +25,8 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
+import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
+import io.github.dsheirer.web.http.StreamingAdminHttpController;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
@@ -184,6 +186,7 @@ public class StatsWebServerService implements AutoCloseable
     private final ReceiverActivityService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ChannelAdministrationService mChannelAdministrationService;
+    private final StreamingAdministrationService mStreamingAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final RadioReferenceImportService mRadioReferenceImportService;
@@ -271,6 +274,21 @@ public class StatsWebServerService implements AutoCloseable
                                  RadioReferenceDirectoryService radioReferenceDirectoryService,
                                  RadioReferenceImportService radioReferenceImportService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, channelAdministrationService,
+            radioReferenceDirectoryService, radioReferenceImportService, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 ReceiverActivityService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel, ChannelAdministrationService channelAdministrationService,
+                                 RadioReferenceDirectoryService radioReferenceDirectoryService,
+                                 RadioReferenceImportService radioReferenceImportService,
+                                 StreamingAdministrationService streamingAdministrationService)
+    {
+        mStreamingAdministrationService = streamingAdministrationService;
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
@@ -732,6 +750,12 @@ public class StatsWebServerService implements AutoCloseable
             server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, protectedAliases);
         }
 
+        if(mStreamingAdministrationService != null)
+        {
+            StreamingAdminHttpController streamingController = new StreamingAdminHttpController(mStreamingAdministrationService);
+            server.createContext(StreamingAdminHttpController.PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_STREAMING, streamingController::handle));
+        }
         if(mChannelAdministrationService != null)
         {
             ChannelAdminHttpController channelController =
@@ -1083,6 +1107,14 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath(aliasListId, aliasId));
+    }
+
+    public synchronized URI createDesktopAdministratorStreamingHandoffUri()
+    {
+        StatsWebNavigationState navigation = getNavigationState();
+        if(!navigation.running() || mWebAuthenticationService == null ||
+            !mWebAuthenticationService.armDesktopAdministratorHandoff()) return null;
+        return navigation.baseUri().resolve(WebSessionHttpController.desktopStreamingHandoffPath());
     }
 
     /** Arms a one-use local administrator sign-in and opens the web-first Channel manager. */

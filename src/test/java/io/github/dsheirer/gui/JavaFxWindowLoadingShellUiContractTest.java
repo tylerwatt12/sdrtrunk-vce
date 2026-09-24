@@ -20,14 +20,14 @@ class JavaFxWindowLoadingShellUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java");
 
     @Test
-    void playlistAndSettingsRevealAThemeAwareLoadingShellBeforeBuildingTheirEditors() throws Exception
+    void settingsRevealAThemeAwareLoadingShellAndStreamingOpensTheBrowser() throws Exception
     {
         String manager = normalizedSource(WINDOW_MANAGER);
-        String configuration = normalizedSource(CONFIGURATION_EDITOR);
+        assertFalse(Files.exists(CONFIGURATION_EDITOR));
+        assertTrue(manager.contains(".openStreaming(null)"));
         String loading = block(manager, "private static void showLoadingStage(",
             "private static void installLoadedContent(");
 
-        assertTrue(manager.contains("createLoadingShell(\"Playlist\", \"Loading configuration editor…\")"));
         assertTrue(manager.contains("createLoadingShell(\"Settings\", \"Loading user preferences…\")"));
         assertTrue(manager.contains("root.setStyle(\"-fx-background-color: -fx-background;\")"));
         assertFalse(manager.contains("root.setBackground(new Background"));
@@ -40,9 +40,6 @@ class JavaFxWindowLoadingShellUiContractTest
         assertTrue(loading.indexOf("stage.setOpacity(1.0d)") < loading.indexOf("loader.run()"));
         assertTrue(manager.contains("loadingShell.root().setPadding(Insets.EMPTY)"));
         assertTrue(manager.contains("loadingShell.root().getChildren().setAll(content)"));
-        assertTrue(configuration.contains("setTop(getMenuBar());"));
-        assertTrue(configuration.contains("setCenter(getTabPane());"));
-        assertFalse(configuration.contains("Platform.runLater"));
     }
 
     private static String block(String source, String startMarker, String endMarker)

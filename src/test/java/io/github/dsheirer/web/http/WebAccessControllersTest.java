@@ -426,6 +426,12 @@ class WebAccessControllersTest
                     configurationId,
                 p25Handoff.headers().firstValue("Location").orElseThrow());
 
+            assertTrue(authenticationService.armDesktopAdministratorHandoff());
+            HttpResponse<String> streamingHandoff = send(client,
+                request(origin, WebSessionHttpController.desktopStreamingHandoffPath()).header("Cookie", cookie).GET());
+            assertEquals(303, streamingHandoff.statusCode());
+            assertEquals("/?view=streaming", streamingHandoff.headers().firstValue("Location").orElseThrow());
+
             HttpResponse<String> expiredExactHandoff = send(client,
                 request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))
                     .header("Cookie", cookie).GET());

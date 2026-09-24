@@ -25,6 +25,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
+import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -85,6 +86,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
     private final AtomicLong mChannelConfigurationRevision = new AtomicLong();
+    private final AtomicLong mStreamingConfigurationRevision = new AtomicLong();
+    private StreamingAdministrationService mStreamingAdministrationService;
     private final Object mHeadlessWebConfigurationLock = new Object();
     private final Object mRadioReferenceLoginLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
@@ -123,6 +126,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelProcessingManager = new ChannelProcessingManager(eventLogManager, mTunerManager, mAliasModel,
             mUserPreferences);
         mChannelAdministrationService = new ChannelAdministrationService(this);
+        mStreamingAdministrationService = new StreamingAdministrationService(this);
         mRadioReferenceImportService = new RadioReferenceImportService(mRadioReferenceDirectoryService, this);
 
         //Register the channel processing manager to receive global channel stop processing requests so that it can
@@ -582,6 +586,66 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mConfigurationLoading = false;
         }
         mChannelConfigurationRevision.incrementAndGet();
+    }
+
+    public StreamingAdministrationService getStreamingAdministrationService()
+    {
+        return mStreamingAdministrationService;
+    }
+
+    public long getStreamingConfigurationRevision()
+    {
+        return mStreamingConfigurationRevision.get();
+    }
+
+    /** Saves a detached stream candidate before replacing only the affected sender. */
+    public synchronized void commitAndPublishStreamingConfiguration(List<BroadcastConfiguration> proposed, String changedId)
+    {
+        if(mExternalConfigurationOperation)
+            throw new ConfigurationPublicationException("Configuration saves are suspended until SDRTrunk restarts");
+        List<BroadcastConfiguration> committed;
+        try
+        {
+            flushConfiguration();
+            committed = mConfigurationRepository.commitStreamingConfiguration(proposed);
+        }
+        catch(Exception exception)
+        {
+            throw new ConfigurationCommitException("Unable to commit streaming configuration", exception);
+        }
+        try
+        {
+            publishStreamingConfiguration(committed, changedId);
+        }
+        catch(RuntimeException publicationFailure)
+        {
+            try
+            {
+                publishStreamingConfiguration(mConfigurationRepository.load().broadcastConfigurations(), changedId);
+            }
+            catch(Exception recoveryFailure)
+            {
+                mExternalConfigurationOperation = true;
+                throw new ConfigurationPublicationException(
+                    "Streaming configuration saved but could not be applied; restart SDRTrunk", recoveryFailure);
+            }
+        }
+    }
+
+    private void publishStreamingConfiguration(List<BroadcastConfiguration> committed, String changedId)
+    {
+        mConfigurationLoading = true;
+        try
+        {
+            BroadcastConfiguration previous = mBroadcastModel.getBroadcastConfiguration(changedId);
+            if(previous != null) mBroadcastModel.removeBroadcastConfiguration(previous);
+            committed.stream().filter(configuration -> changedId.equals(configuration.getConfigurationId()))
+                .findFirst().ifPresent(mBroadcastModel::addBroadcastConfiguration);
+        }
+        finally { mConfigurationLoading = false; }
+        mStreamingConfigurationRevision.incrementAndGet();
+        // Alias dialogs include the destination catalog; invalidate stale pickers on rename/add/delete.
+        mAliasConfigurationRevision.incrementAndGet();
     }
 
     /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */

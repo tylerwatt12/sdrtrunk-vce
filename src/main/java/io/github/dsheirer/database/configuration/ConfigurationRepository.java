@@ -177,6 +177,21 @@ public final class ConfigurationRepository
         });
     }
 
+    /** Commits only stream rows, validating every alias/default reference in the same transaction. */
+    public synchronized List<BroadcastConfiguration> commitStreamingConfiguration(List<BroadcastConfiguration> proposed)
+        throws IOException, SQLException
+    {
+        return inTransaction(connection ->
+        {
+            List<AliasListDefinition> definitions = mAliasStore.loadAliasListDefinitions(connection);
+            List<Alias> aliases = mAliasStore.loadAliases(connection, definitions);
+            ConfigurationSnapshotValidator.validateChannelAndBroadcastWrite(aliases, definitions,
+                mChannelAndBroadcastStore.loadChannels(connection), proposed);
+            mChannelAndBroadcastStore.replaceBroadcastConfigurations(connection, proposed);
+            return mChannelAndBroadcastStore.load(connection).broadcastConfigurations();
+        });
+    }
+
     /** Replaces delayed desktop channel and stream edits in one transaction. */
     public synchronized void replaceChannelAndBroadcastConfiguration(
         Collection<Channel> channels, Collection<BroadcastConfiguration> broadcastConfigurations)

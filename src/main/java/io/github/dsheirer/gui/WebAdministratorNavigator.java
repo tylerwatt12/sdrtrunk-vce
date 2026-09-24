@@ -69,6 +69,12 @@ public final class WebAdministratorNavigator
                 mStatsWebServerService.createDesktopAdministratorAliasHandoffUri());
     }
 
+    public void openStreaming(Window owner)
+    {
+        open(owner, "Streaming", navigation -> navigation.baseUri().resolve("?view=streaming"),
+            () -> mStatsWebServerService.createDesktopAdministratorStreamingHandoffUri());
+    }
+
     /** Opens the web-first Channel manager after a one-use local administrator handoff. */
     public void openChannels(Window owner)
     {

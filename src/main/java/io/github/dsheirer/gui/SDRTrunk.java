@@ -30,7 +30,6 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputType;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
-import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
 import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -132,7 +131,6 @@ public class SDRTrunk
     private static final Logger mLog = LoggerFactory.getLogger(SDRTrunk.class);
     private Preferences mPreferences;
 
-    private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
     private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
         "sdrtrunk.resource.status.update.icon.migration.1";
@@ -146,7 +144,6 @@ public class SDRTrunk
     private static final long STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS = 2_000L;
     private static final long STATISTICS_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
 
-    private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
     private LogicalCallDiagnosticService mLogicalCallDiagnosticService;
@@ -156,7 +153,6 @@ public class SDRTrunk
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
-    private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
     private IconModel mIconModel;
     private ConfigurationManager mConfigurationManager;
@@ -261,7 +257,8 @@ public class SDRTrunk
             mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
             mConfigurationManager.getScanListModel(), mConfigurationManager.getChannelAdministrationService(),
             mConfigurationManager.getRadioReferenceDirectoryService(),
-            mConfigurationManager.getRadioReferenceImportService());
+            mConfigurationManager.getRadioReferenceImportService(),
+            mConfigurationManager.getStreamingAdministrationService());
 
         if(!GraphicsEnvironment.isHeadless() && !mStatsWebServerService.getRuntimeState().running())
         {
@@ -476,14 +473,6 @@ public class SDRTrunk
         mSplitPane.setDividerSize(5);
         mSplitPane.setResizeWeight(1.0);
         mSplitPane.setTopComponent(mControllerPanel);
-        mBroadcastStatusVisible = mPreferences.getBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, false);
-
-        //Show broadcast status panel when user requests - disabled by default
-        if(mBroadcastStatusVisible)
-        {
-            mSplitPane.setBottomComponent(getBroadcastStatusPanel());
-        }
-
         mMainGui.add(getMainControlPanel(), "cell 0 0,growx");
         mMainGui.add(mSplitPane, "cell 0 1,grow");
 
@@ -527,7 +516,7 @@ public class SDRTrunk
 
         JMenu viewMenu = new JMenu("View");
 
-        JMenuItem viewConfigurationItem = new JMenuItem("Configuration Editor");
+        JMenuItem viewConfigurationItem = new JMenuItem("Streaming (Web)");
         viewConfigurationItem.setIcon(IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 12));
         viewConfigurationItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
         viewMenu.add(viewConfigurationItem);
@@ -604,7 +593,6 @@ public class SDRTrunk
         });
         viewMenu.add(resetColumnWidthsMenuItem);
         viewMenu.add(new JSeparator());
-        viewMenu.add(new BroadcastStatusVisibleMenuItem());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 
         menuBar.add(viewMenu);
@@ -1142,22 +1130,6 @@ public class SDRTrunk
         });
     }
 
-    /**
-     * Lazy constructor for broadcast status panel
-     */
-    private BroadcastStatusPanel getBroadcastStatusPanel()
-    {
-        if(mBroadcastStatusPanel == null)
-        {
-            mBroadcastStatusPanel = new BroadcastStatusPanel(mConfigurationManager.getBroadcastModel(), mUserPreferences,
-                "application.broadcast.status.panel");
-            mBroadcastStatusPanel.setPreferredSize(new Dimension(880, 70));
-            mBroadcastStatusPanel.getTable().setEnabled(false);
-        }
-
-        return mBroadcastStatusPanel;
-    }
-
     private JPanel getMainControlPanel()
     {
         JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][][grow,fill]", "[]"));
@@ -1173,10 +1145,10 @@ public class SDRTrunk
     {
         if(mConfigurationEditorShortcutButton == null)
         {
-            mConfigurationEditorShortcutButton = new JButton("Playlist",
+            mConfigurationEditorShortcutButton = new JButton("Streaming",
                 IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 14));
             mConfigurationEditorShortcutButton.setFocusable(false);
-            mConfigurationEditorShortcutButton.setToolTipText("Configuration Editor");
+            mConfigurationEditorShortcutButton.setToolTipText("Streaming (Web)");
             mConfigurationEditorShortcutButton.addActionListener(e ->
                 MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
         }
@@ -1319,34 +1291,6 @@ public class SDRTrunk
             {
                 processShutdown();
             }
-        }
-    }
-
-    /**
-     * Broadcast status panel visible toggle menu item
-     */
-    public class BroadcastStatusVisibleMenuItem extends JCheckBoxMenuItem
-    {
-        public BroadcastStatusVisibleMenuItem()
-        {
-            super("Show Streaming Status");
-            setSelected(mBroadcastStatusVisible);
-            addActionListener(e -> {
-                mBroadcastStatusVisible = !mBroadcastStatusVisible;
-                EventQueue.invokeLater(() -> {
-                    if(mBroadcastStatusVisible)
-                    {
-                        mSplitPane.setBottomComponent(getBroadcastStatusPanel());
-                    }
-                    else
-                    {
-                        mSplitPane.setBottomComponent(null);
-                    }
-                    mMainGui.revalidate();
-                });
-                mPreferences.putBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, mBroadcastStatusVisible);
-                setSelected(mBroadcastStatusVisible);
-            });
         }
     }
 

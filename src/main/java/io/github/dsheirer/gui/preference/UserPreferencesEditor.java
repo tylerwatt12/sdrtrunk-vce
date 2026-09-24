@@ -270,7 +270,7 @@ public class UserPreferencesEditor extends BorderPane
             mMenuBar.getMenus().add(fileMenu);
 
             Menu viewMenu = new Menu("View");
-            MenuItem configurationEditorItem = new MenuItem("Configuration Editor");
+            MenuItem configurationEditorItem = new MenuItem("Streaming (Web)");
             configurationEditorItem.setOnAction(event -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
             viewMenu.getItems().add(configurationEditorItem);
             mMenuBar.getMenus().add(viewMenu);

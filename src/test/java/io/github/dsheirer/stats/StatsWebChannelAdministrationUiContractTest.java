@@ -19,8 +19,7 @@ class StatsWebChannelAdministrationUiContractTest
     {
         String javascript = Files.readString(Path.of("stats-web/assets/app.js"));
         String stylesheet = StatsWebStylesheetTestSupport.readAll();
-        String configurationEditor = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java"));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java")));
 
         assertTrue(javascript.contains("ADMIN_CHANNELS: 'admin-channels'"));
         assertTrue(javascript.contains("const catalogPath = editable ? '/api/v1/admin/channels' : " +
@@ -56,8 +55,6 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(stylesheet.contains(".editor-workspace"));
         assertTrue(Files.readString(Path.of("src/main/resources/channel-protocols.json"))
             .contains("\"value\":\"CQPSK\",\"label\":\"CQPSK\""));
-        assertFalse(configurationEditor.contains("getChannelsTab()"));
-        assertFalse(configurationEditor.contains("new ChannelEditor("));
     }
 
     @Test
@@ -68,8 +65,7 @@ class StatsWebChannelAdministrationUiContractTest
             Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference");
         String windowManager = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/gui/JavaFxWindowManager.java"));
-        String configurationEditor = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java"));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java")));
 
         if(Files.exists(javaEditors))
         {
@@ -88,7 +84,5 @@ class StatsWebChannelAdministrationUiContractTest
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java")));
         assertFalse(windowManager.contains("ViewChannelRequest"));
         assertTrue(windowManager.contains("process(ViewWebChannelRequest request)"));
-        assertFalse(configurationEditor.contains("RadioReferenceEditor"));
-        assertFalse(configurationEditor.contains("Radio Reference"));
     }
 }

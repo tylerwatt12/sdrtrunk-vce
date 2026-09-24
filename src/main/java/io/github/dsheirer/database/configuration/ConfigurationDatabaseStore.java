@@ -374,7 +374,7 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    private void replaceBroadcastConfigurations(Connection connection, List<BroadcastConfiguration> configurations)
+    public void replaceBroadcastConfigurations(Connection connection, List<BroadcastConfiguration> configurations)
         throws SQLException, IOException
     {
         Set<String> retainedIds = new HashSet<>();
@@ -490,7 +490,8 @@ public class ConfigurationDatabaseStore
 
     private String broadcastPayload(BroadcastConfiguration configuration) throws IOException
     {
-        ObjectNode payload = mObjectMapper.valueToTree(configuration);
+        ObjectNode payload = (ObjectNode)mObjectMapper.readTree(
+            mObjectMapper.writerFor(BroadcastConfiguration.class).writeValueAsBytes(configuration));
         payload.remove("configurationId");
         return mObjectMapper.writeValueAsString(payload);
     }

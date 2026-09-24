@@ -33,8 +33,8 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
     protected ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>(BroadcastState.READY);
     protected ObjectProperty<BroadcastState> mLastBadBroadcastState = new SimpleObjectProperty<>();
     protected volatile int mStreamedAudioCount = 0;
-    protected int mErrorAudioCount = 0;
-    protected int mAgedOffAudioCount = 0;
+    protected volatile int mErrorAudioCount = 0;
+    protected volatile int mAgedOffAudioCount = 0;
 
     /**
      * Constructs an instance
@@ -192,6 +192,12 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
      * Number of audio recordings awaiting streaming or upload
      */
     public abstract int getAudioQueueSize();
+
+    /** Observer read; durable senders override this to avoid storage work or locks. */
+    public int getAudioQueueSizeSnapshot()
+    {
+        return getAudioQueueSize();
+    }
 
     /**
      * Total audio upload/stream error count

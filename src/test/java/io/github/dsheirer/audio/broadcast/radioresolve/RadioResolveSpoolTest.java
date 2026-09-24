@@ -32,6 +32,24 @@ class RadioResolveSpoolTest
     private static final String EVIDENCE_SESSION = "99999999-8888-4777-8666-555555555555";
 
     @Test
+    void statusSnapshotDoesNotOpenStorageOrWaitForItsLock(@TempDir Path directory) throws Exception
+    {
+        Path storage = directory.resolve("unopened");
+        RadioResolveSpool spool = new RadioResolveSpool(storage);
+        var field = RadioResolveSpool.class.getDeclaredField("mState");
+        field.setAccessible(true);
+        Object state = field.get(spool);
+        try(var executor = java.util.concurrent.Executors.newSingleThreadExecutor())
+        {
+            synchronized(state)
+            {
+                assertEquals(0, executor.submit(spool::sizeSnapshot).get(1, TimeUnit.SECONDS));
+            }
+        }
+        assertFalse(Files.exists(storage));
+    }
+
+    @Test
     void productionBoundsAreFixedAtTwentyFourHoursAndTwoGiB()
     {
         assertEquals(TimeUnit.HOURS.toMillis(24), RadioResolveSpool.MAXIMUM_AGE_MILLISECONDS);
@@ -50,6 +68,7 @@ class RadioResolveSpoolTest
         RadioResolveSpool.Entry queued = spool.enqueue(source, build.envelope(), build.holdContext(),
             RadioResolveTestFixtures.END).entry();
 
+        assertEquals(1, spool.sizeSnapshot());
         assertTrue(queued.manifest().envelope().isReady());
         assertEquals(RadioResolveCallEnvelope.HoldContext.EMPTY, queued.manifest().holdContext());
         assertEquals(queued, spool.firstReady());

@@ -296,7 +296,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
     {
         HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .followRedirects(HttpClient.Redirect.NORMAL)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(Duration.ofSeconds(20))
             .build();
 
@@ -307,6 +307,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(configuration.getHost()))
+            .timeout(Duration.ofSeconds(20))
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
             .header(HttpHeaders.USER_AGENT, USER_AGENT_SDRTRUNK)
             .header(HttpHeaders.ACCEPT, "*/*")

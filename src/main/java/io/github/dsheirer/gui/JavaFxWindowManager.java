@@ -27,7 +27,6 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
-import io.github.dsheirer.gui.configuration.ConfigurationEditor;
 import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
@@ -100,7 +99,6 @@ public class JavaFxWindowManager extends Application
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
     private IconManager mIconManager;
     private JmbeEditor mJmbeEditor;
-    private ConfigurationEditor mConfigurationEditor;
     private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
@@ -115,17 +113,13 @@ public class JavaFxWindowManager extends Application
 
     private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
-    private Stage mConfigurationStage;
     private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
     private Stage mLogicalCallMonitorStage;
     private JFXPanel mStatusPanel;
-    private LoadingShell mConfigurationLoadingShell;
     private LoadingShell mUserPreferencesLoadingShell;
-    private boolean mConfigurationEditorLoading;
     private boolean mUserPreferencesEditorLoading;
-    private ConfigurationEditorRequest mPendingConfigurationRequest;
     private ViewUserPreferenceEditorRequest mPendingUserPreferencesRequest;
 
     /**
@@ -413,68 +407,11 @@ public class JavaFxWindowManager extends Application
         return mJmbeEditor;
     }
 
-    /**
-     * Lazy construct and access the configuration editor
-     */
-    public ConfigurationEditor getConfigurationEditor()
-    {
-        if(mConfigurationEditor == null)
-        {
-            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mUserPreferences);
-        }
-
-        return mConfigurationEditor;
-    }
-
-    /**
-     * Access the configuration editor stage.
-     */
-    private Stage getConfigurationStage()
-    {
-        if(mConfigurationStage == null)
-        {
-            mConfigurationLoadingShell = createLoadingShell("Playlist", "Loading configuration editor…");
-            Scene scene = new Scene(mConfigurationLoadingShell.root(), 1000, 750);
-            ThemeManager.getInstance().register(scene);
-            mConfigurationStage = new Stage();
-            mConfigurationStage.setTitle("sdrtrunk-vce - Configuration Editor");
-            mConfigurationStage.setScene(scene);
-            ApplicationIcon.apply(mConfigurationStage);
-            mUserPreferences.getJavaFxPreferences().monitor(mConfigurationStage, STAGE_MONITOR_KEY_CONFIGURATION_EDITOR);
-        }
-
-        return mConfigurationStage;
-    }
-
-    /**
-     * Processes a configuration editor request and brings the configuration editor into focus
-     */
+    /** Retained desktop shortcut now opens Streaming in the authenticated web interface. */
     @Subscribe
     public void process(ConfigurationEditorRequest request)
     {
-        execute(() -> {
-            try
-            {
-                mPendingConfigurationRequest = request;
-                Stage stage = getConfigurationStage();
-
-                if(mConfigurationEditor != null)
-                {
-                    installLoadedContent(mConfigurationLoadingShell, mConfigurationEditor);
-                    restoreStage(stage);
-                    mConfigurationEditor.process(request);
-                }
-                else if(!mConfigurationEditorLoading)
-                {
-                    mConfigurationEditorLoading = true;
-                    showLoadingStage(stage, mConfigurationLoadingShell, () -> loadConfigurationEditor(stage));
-                }
-            }
-            catch(Throwable t)
-            {
-                mLog.error("Error processing show configuration editor request", t);
-            }
-        });
+        execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService).openStreaming(null));
     }
 
     /** Opens the Alias catalog or an exact Alias without constructing the retired Java UI. */
@@ -486,11 +423,11 @@ public class JavaFxWindowManager extends Application
                 new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
             if(request.hasAlias())
             {
-                navigator.openAlias(mConfigurationStage, request.getAliasListId(), request.getAliasId());
+                navigator.openAlias(null, request.getAliasListId(), request.getAliasId());
             }
             else
             {
-                navigator.openAliases(mConfigurationStage);
+                navigator.openAliases(null);
             }
         });
     }
@@ -502,8 +439,8 @@ public class JavaFxWindowManager extends Application
         execute(() -> {
             WebAdministratorNavigator navigator =
                 new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
-            if(request.hasChannel()) navigator.openChannel(mConfigurationStage, request.getConfigurationId());
-            else navigator.openChannels(mConfigurationStage);
+            if(request.hasChannel()) navigator.openChannel(null, request.getConfigurationId());
+            else navigator.openChannels(null);
         });
     }
 
@@ -512,7 +449,7 @@ public class JavaFxWindowManager extends Application
     public void process(ViewWebP25BandplanOverrideRequest request)
     {
         execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService)
-            .openP25BandplanOverride(mConfigurationStage, request.getIdentity(), request.getConfigurationId()));
+            .openP25BandplanOverride(null, request.getIdentity(), request.getConfigurationId()));
     }
 
     /**
@@ -572,41 +509,6 @@ public class JavaFxWindowManager extends Application
         });
     }
 
-    private void loadConfigurationEditor(Stage stage)
-    {
-        ConfigurationEditor editor;
-
-        try
-        {
-            editor = getConfigurationEditor();
-            installLoadedContent(mConfigurationLoadingShell, editor);
-        }
-        catch(Throwable throwable)
-        {
-            mLog.error("Unable to load the configuration editor", throwable);
-            showLoadingFailure(mConfigurationLoadingShell,
-                "Unable to load the configuration editor. Click Playlist to retry.");
-            finishLoading(stage, true);
-            return;
-        }
-
-        try
-        {
-            ConfigurationEditorRequest request = mPendingConfigurationRequest;
-
-            if(request != null)
-            {
-                editor.process(request);
-            }
-        }
-        catch(Throwable throwable)
-        {
-            mLog.error("Unable to process the configuration editor request", throwable);
-        }
-
-        finishLoading(stage, true);
-    }
-
     private void loadUserPreferencesEditor(Stage stage)
     {
         UserPreferencesEditor editor;
@@ -620,7 +522,7 @@ public class JavaFxWindowManager extends Application
         {
             mLog.error("Unable to load the user preferences editor", throwable);
             showLoadingFailure(mUserPreferencesLoadingShell, "Unable to load Settings. Click Settings to retry.");
-            finishLoading(stage, false);
+            finishLoading(stage);
             return;
         }
 
@@ -638,19 +540,12 @@ public class JavaFxWindowManager extends Application
             mLog.error("Unable to process the user preferences editor request", throwable);
         }
 
-        finishLoading(stage, false);
+        finishLoading(stage);
     }
 
-    private void finishLoading(Stage stage, boolean configurationEditor)
+    private void finishLoading(Stage stage)
     {
-        if(configurationEditor)
-        {
-            mConfigurationEditorLoading = false;
-        }
-        else
-        {
-            mUserPreferencesEditorLoading = false;
-        }
+        mUserPreferencesEditorLoading = false;
 
         stage.requestFocus();
         stage.toFront();

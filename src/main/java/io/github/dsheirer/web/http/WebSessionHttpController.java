@@ -309,6 +309,12 @@ public final class WebSessionHttpController
         return DESKTOP_ALIAS_HANDOFF_PATH;
     }
 
+    /** Fixed desktop handoff path for Streaming. */
+    public static String desktopStreamingHandoffPath()
+    {
+        return DESKTOP_HANDOFF_PATH + "/streaming";
+    }
+
     /** Fixed desktop handoff path for the Channel manager. */
     public static String desktopChannelHandoffPath()
     {
@@ -336,6 +342,8 @@ public final class WebSessionHttpController
         {
             return "/";
         }
+
+        if(desktopStreamingHandoffPath().equals(rawPath)) return "/?view=streaming";
 
         if(DESKTOP_ALIAS_HANDOFF_PATH.equals(rawPath))
         {
