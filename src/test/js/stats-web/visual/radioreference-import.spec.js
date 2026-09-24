@@ -464,7 +464,6 @@ test('site sorting and preview use the RadioReference database system ID', async
     .toHaveText(['Protocol', 'System type', 'Voice', 'Frequencies', 'P25 modulation']);
   await expect(importModal.locator('.radioreference-site-facts')).toContainText('Phase II');
   await expect(importModal.locator('.radioreference-site-facts')).toContainText('C4FM');
-  await expect(importModal.getByText('in Channels if needed.', { exact: false })).toBeVisible();
   await expect(importModal).toHaveScreenshot('radioreference-p25-import-light-desktop.png');
   await importModal.getByLabel('Alias List').selectOption('7');
   await importModal.getByRole('button', { name: 'Review Channel' }).click();

@@ -654,9 +654,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       conventionalNetworked(system) ?
         'This conventional networked system has no control channel. All site frequencies are selected by default.' :
       'No primary control frequency is marked for this site. All site frequencies are selected by default.'));
-    if (modulation) detection.append(node('p', 'radioreference-detection-help muted',
-      'Detection uses RadioReference modulation hints and “simul” in the site name or description. Change it later ' +
-      'in Channels if needed.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
     const preview = button('Review Channel', 'ui-button ui-button-primary');
