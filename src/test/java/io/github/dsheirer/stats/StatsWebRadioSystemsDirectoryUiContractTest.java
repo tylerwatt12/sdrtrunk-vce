@@ -46,7 +46,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         String directory = function(app, "async function renderRadioSystems()");
 
         assertTrue(directory.contains("await renderModernChannelCatalog(renderContext, false)"));
-        assertTrue(app.contains("pageHeader(editable ? 'Channel Setup' : 'Radio Directory'"));
+        assertTrue(app.contains("pageHeader(editable ? 'Channels' : 'Radio Directory'"));
         assertTrue(app.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
         assertTrue(app.contains("href('channel', { configuration_id: row.configuration_id })"));
         assertFalse(app.contains("systemApiPath("));

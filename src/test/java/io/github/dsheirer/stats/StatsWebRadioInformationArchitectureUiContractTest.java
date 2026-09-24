@@ -29,7 +29,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(routes.contains("id: 'dashboard', label: 'Main'"));
         assertTrue(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
         assertFalse(routes.contains("id: 'identities', label: 'Identities'"));
-        assertTrue(routes.contains("id: 'channel-setup', label: 'Channel Setup'"));
+        assertTrue(routes.contains("id: 'channel-setup', label: 'Channels'"));
         assertTrue(routes.contains("access: 'admin-channels'"));
         assertTrue(index.contains("data-view=\"dashboard\""));
         assertFalse(index.contains("data-view=\"radio-systems\""));
@@ -43,7 +43,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("route.set('directory_view', 'coverage')"));
         assertTrue(app.contains("route.set('view', 'dashboard')"));
         assertTrue(app.contains("renderNestedRadioDirectory(renderContext, true)"));
-        assertTrue(app.contains("editable ? 'Channel Setup' : 'Radio Directory'"));
+        assertTrue(app.contains("editable ? 'Channels' : 'Radio Directory'"));
         assertTrue(app.contains("if (editable) columns.push"));
     }
 

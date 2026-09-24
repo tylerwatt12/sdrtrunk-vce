@@ -14,13 +14,13 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/tokens.css?v=3") layer(tokens);',
   '@import url("./styles/legacy.css?v=8") layer(legacy);',
   '@import url("./styles/components/controls.css?v=9") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=7") layer(compositions);',
-  '@import url("./styles/compositions/tables.css?v=4") layer(compositions);',
+  '@import url("./styles/compositions/workspaces.css?v=8") layer(compositions);',
+  '@import url("./styles/compositions/tables.css?v=5") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=2") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=2") layer(compositions);',
-  '@import url("./styles/features/channels.css?v=5") layer(features);',
+  '@import url("./styles/features/channels.css?v=6") layer(features);',
   '@import url("./styles/features/entity-details.css?v=8") layer(features);',
   '@import url("./styles/features/live.css?v=4") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=3") layer(features);',
@@ -31,7 +31,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/dashboard.css?v=2") layer(features);',
   '@import url("./styles/features/administration.css?v=2") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=2") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=8") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=9") layer(features);',
   '@import url("./styles/features/streaming.css?v=1") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=2") layer(features);',
@@ -772,7 +772,7 @@ function validateAliasesFeature(stylesheets, entry) {
   assert.ok(channelEditorStart >= 0 && channelEditorEnd > channelEditorStart,
     'Channel editor function must remain discoverable for dependency checks');
   assert.doesNotMatch(appSource.slice(channelEditorStart, channelEditorEnd), /alias-(?:editor|modal)/,
-    'Channel Setup must not borrow Alias Editor presentation classes or helpers');
+    'Channels must not borrow Alias Editor presentation classes or helpers');
 }
 
 function validateLiveFeature(stylesheets, entry) {

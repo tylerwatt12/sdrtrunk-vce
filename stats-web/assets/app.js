@@ -1,8 +1,8 @@
-import * as routeFoundation from './core/routes.js?v=3';
+import * as routeFoundation from './core/routes.js?v=4';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=4';
+import * as tableDefaults from './core/table-defaults.js?v=5';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -14,13 +14,25 @@ import {
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=3';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=11';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=12';
 import { createStreamingWorkspace } from './features/streaming.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
 const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
+
+function installStickyHeaderOffset() {
+  const header = document.querySelector('.app-header');
+  if (!header) return;
+  const update = () => document.documentElement.style.setProperty('--app-header-offset',
+    `${Math.ceil(header.getBoundingClientRect().height)}px`);
+  update();
+  if ('ResizeObserver' in window) new ResizeObserver(update).observe(header);
+  else window.addEventListener('resize', update);
+}
+
+installStickyHeaderOffset();
 const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
   'createAlias', 'createListId', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
 ]);
@@ -2239,6 +2251,18 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
   return row;
 }
 
+function renderTableRowGroup(group, count, columnCount, noun = 'row') {
+  const row = node('tr', 'ui-table-row-group');
+  const heading = node('th');
+  heading.colSpan = columnCount;
+  heading.scope = 'rowgroup';
+  heading.append(node('strong', 'table-row-group-label', group.label),
+    node('span', 'table-row-group-count muted',
+      `${number(count)} ${count === 1 ? noun : `${noun}s`}`));
+  row.append(heading);
+  return row;
+}
+
 function setTableColumnWidths(element, columnElements, widths, fixed = false) {
   const total = widths.reduce((sum, width) => sum + width, 0) || 1;
   widths.forEach((width, index) => {
@@ -2483,14 +2507,34 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       body.append(row);
       return;
     }
-    orderedRows.forEach((data) => body.append(renderTableRow(data, columns, options.rowKey, options.rowClass,
-      options.onRowClick)));
+    const groupCounts = new Map();
+    if (typeof options.rowGroup === 'function') orderedRows.forEach((data) => {
+      const value = options.rowGroup(data);
+      const key = String(value?.key ?? value ?? '');
+      groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
+    });
+    let previousGroup = null;
+    orderedRows.forEach((data) => {
+      if (typeof options.rowGroup === 'function') {
+        const value = options.rowGroup(data);
+        const group = typeof value === 'object' && value !== null ?
+          { key: String(value.key ?? value.label ?? ''), label: String(value.label ?? value.key ?? '') } :
+          { key: String(value ?? ''), label: String(value ?? '') };
+        if (group.key !== previousGroup) {
+          body.append(renderTableRowGroup(group, groupCounts.get(group.key) || 0, columns.length,
+            options.rowGroupNoun));
+          previousGroup = group.key;
+        }
+      }
+      body.append(renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick));
+    });
   };
 
   const reconcileBody = (orderedRows) => {
     //Live rows can receive several quality-only updates per second.  Preserve keyed rows and unchanged cells so
     //links, hover state, and focus do not churn when only a neighboring measurement changes.
-    if (!options.rowKey || !orderedRows.length || body.querySelector('td.empty')) {
+    if (typeof options.rowGroup === 'function' || !options.rowKey || !orderedRows.length ||
+        body.querySelector('td.empty')) {
       replaceBody(orderedRows);
       return;
     }
@@ -2776,6 +2820,9 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const applyWidths = () => applyPreferredTableWidths(element, wrapper, columns, columnElements,
     layout, tableType, options.widthVariant);
   applyWidths();
+  window.requestAnimationFrame(() => {
+    if (wrapper.isConnected) applyWidths();
+  });
   if (tableDefaults.fit(tableType) && typeof ResizeObserver !== 'undefined') {
     tableController.widthObserver = new ResizeObserver(applyWidths);
     tableController.widthObserver.observe(wrapper);
@@ -2794,7 +2841,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       if (limit && dataRows.length > limit) {
         dataRows = prepend ? dataRows.slice(0, limit) : dataRows.slice(-limit);
       }
-      if (clientSort) {
+      if (clientSort || typeof options.rowGroup === 'function') {
         renderBody();
         return;
       }
@@ -16536,8 +16583,6 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', render: (row) =>
       channelAdminFrequencyList(row.frequencies_hz), className: 'channel-frequency-cell',
       sortValue: (row) => Number(row.frequencies_hz?.[0] || 0) },
-    { id: 'protocol', label: 'Protocol', render: (row) => uiPill(row.protocol_label || 'Unknown', 'protocol'),
-      sortValue: (row) => row.protocol_label || '' },
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
@@ -16578,6 +16623,19 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       sortValue: (row) => row.alias_list_name || '' }
   );
   return columns;
+}
+
+function channelProtocolGroup(row) {
+  const label = String(row.protocol_label || protocolFamily(row) || 'Other').trim() || 'Other';
+  return { key: label.toLowerCase(), label };
+}
+
+function channelProtocolOrder(left, right) {
+  const byProtocol = channelProtocolGroup(left).label.localeCompare(
+    channelProtocolGroup(right).label, undefined, { numeric: true, sensitivity: 'base' });
+  if (byProtocol) return byProtocol;
+  return String(left.name || '').localeCompare(String(right.name || ''), undefined,
+    { numeric: true, sensitivity: 'base' });
 }
 
 function radioDirectoryAliasLists(row) {
@@ -16859,12 +16917,13 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
 
 async function renderModernChannelCatalog(renderContext, editable) {
   if (!editable) return renderNestedRadioDirectory(renderContext);
-  const loading = createAsyncSection(editable ? 'Channel Configuration' : 'Receiver Channels', {
+  const loading = createAsyncSection(editable ? 'Channels' : 'Receiver Channels', {
     loadingMessage: editable ? 'Loading channel configuration…' : 'Loading receiver channels…',
     errorMessage: editable ? 'Channel configuration could not be loaded.' :
       'The radio directory could not be loaded.'
   });
-  if (!beginPage(renderContext, pageHeader(editable ? 'Channel Setup' : 'Radio Directory', editable ?
+  loading.element.classList.add('channel-catalog-section');
+  if (!beginPage(renderContext, pageHeader(editable ? 'Channels' : 'Radio Directory', editable ?
     'Create, configure, order, start, and stop receiver channels' :
     'Browse every configured trunked and conventional channel and see what is running'), loading.element)) return;
   await loading.load(async () => {
@@ -16893,19 +16952,20 @@ async function renderModernChannelCatalog(renderContext, editable) {
     search.placeholder = 'Search channels, systems, protocols, frequencies, or alias lists';
     search.setAttribute('aria-label', search.placeholder);
     searchWrap.append(search);
-    let activeView = 'all';
+    let activeStatus = 'all';
     let draw = () => {};
-    const filterEntries = [
-      { value: 'all', label: 'All' },
-      { value: 'trunked', label: 'Trunked' },
-      { value: 'conventional', label: 'Conventional' },
+    const statusFilter = uiSelect([
+      { value: 'all', label: 'All statuses' },
       { value: 'running', label: 'Running' },
-      { value: 'stopped', label: 'Stopped' }
-    ];
-    if (editable) filterEntries.push({ value: 'auto-start', label: 'Auto-start' });
-    const filters = uiSegmentedControl(filterEntries, activeView,
-      (value) => { activeView = value; draw(); });
-    filters.setAttribute('aria-label', 'Filter channels');
+      { value: 'stopped', label: 'Stopped' },
+      { value: 'auto-start', label: 'Auto-start' }
+    ], activeStatus);
+    statusFilter.classList.add('channel-status-filter');
+    statusFilter.setAttribute('aria-label', 'Filter channels by status');
+    statusFilter.addEventListener('change', () => {
+      activeStatus = statusFilter.value;
+      draw();
+    });
     const statusHost = node('div', 'channel-admin-status');
     statusHost.setAttribute('role', 'status');
     statusHost.setAttribute('aria-live', 'polite');
@@ -16916,22 +16976,13 @@ async function renderModernChannelCatalog(renderContext, editable) {
       editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.title = 'Refresh channels';
-    toolbar.append(searchWrap, filters, exportLink, refresh, statusHost);
+    toolbar.append(searchWrap, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
+      exportLink, refresh, statusHost);
 
     const tableHost = node('div', 'channel-catalog-table-host');
     const tableController = {};
     const selectedBar = node('div', 'channel-selection-bar ui-selection-bar');
     selectedBar.hidden = true;
-    const appHeader = document.querySelector('.app-header');
-    if (appHeader && 'ResizeObserver' in window) {
-      const positionSelectionBar = () => {
-        selectedBar.style.top = `${Math.ceil(appHeader.getBoundingClientRect().height) + 8}px`;
-      };
-      const headerObserver = new ResizeObserver(positionSelectionBar);
-      headerObserver.observe(appHeader);
-      renderContext.signal?.addEventListener('abort', () => headerObserver.disconnect(), { once: true });
-      positionSelectionBar();
-    }
     const selectedSummary = node('strong');
     const hiddenSummary = node('span', 'muted');
     let enableAutoStart = null;
@@ -16966,7 +17017,8 @@ async function renderModernChannelCatalog(renderContext, editable) {
         tableHost.querySelectorAll('tbody .ui-selection-check').forEach((rowCheckbox) => {
           rowCheckbox.checked = checkbox.checked;
         });
-        tableHost.querySelectorAll('tbody tr').forEach((row) => row.classList.toggle('selected', checkbox.checked));
+        tableHost.querySelectorAll('tbody tr[data-id]').forEach((row) =>
+          row.classList.toggle('selected', checkbox.checked));
         updateSelection();
       });
       selectAll = checkbox;
@@ -17003,14 +17055,13 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const filteredRows = () => {
       const term = search.value.trim().toLowerCase();
       return (state.catalog.channels || []).filter((row) =>
-        (activeView === 'all' || activeView === 'running' && row.processing_state === 'RUNNING' ||
-          activeView === 'stopped' && row.processing_state !== 'RUNNING' ||
-          activeView === 'trunked' && String(row.channel_kind).toUpperCase() === 'TRUNKED' ||
-          activeView === 'conventional' && String(row.channel_kind).toUpperCase() === 'CONVENTIONAL' ||
-          activeView === 'auto-start' && row.auto_start_order != null) &&
+        (activeStatus === 'all' || activeStatus === 'running' && row.processing_state === 'RUNNING' ||
+          activeStatus === 'stopped' && row.processing_state !== 'RUNNING' ||
+          activeStatus === 'auto-start' && row.auto_start_order != null) &&
         (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
           channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
-            String(value || '').toLowerCase().includes(term))));
+            String(value || '').toLowerCase().includes(term))))
+        .sort(channelProtocolOrder);
     };
     draw = () => {
       state.visibleRows = filteredRows();
@@ -17022,8 +17073,9 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const channelTable = table(state.visibleRows,
       channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader),
       'No channels match this view', {
-        type: editable ? 'channel-catalog-admin-v1' : 'channel-catalog-readonly-v1',
-        clientSort: true, controller: tableController,
+        type: editable ? 'channel-catalog-admin-v2' : 'channel-catalog-readonly-v1',
+        sortable: false, controller: tableController,
+        rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
         rowKey: (row) => row.configuration_id,
         rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
         tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
@@ -19230,7 +19282,7 @@ async function renderAdminRadioReferenceSettings() {
   });
 
   const importWorkspace = createRadioReferenceImportWorkspace({
-    node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
+    node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency: frequency, formatNumber: number,
     href, anchor, modalFooter: aliasModalFooter,
     directoryTimeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS,
@@ -20902,8 +20954,8 @@ function adminProtocolEmptyState(protocolName) {
   const body = node('div', 'settings-empty-state');
   body.append(iconGlyph('icon-conventional'), node('h2', '', `${protocolName} receiver-wide settings`),
     node('p', '', `There are no shared ${protocolName} settings yet. Settings that belong to one channel remain ` +
-      'in Channel Setup.'),
-    anchor('Open Channel Setup', href('channel-setup'), 'ui-button ui-button-secondary'));
+      'in Channels.'),
+    anchor('Open Channels', href('channel-setup'), 'ui-button ui-button-secondary'));
   content.append(body);
 }
 

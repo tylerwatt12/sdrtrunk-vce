@@ -64,15 +64,19 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       return group;
     };
     const table = (values, columns, emptyText, options = {}) => {
+      options.controller?.layoutMenuCleanup?.();
       const wrapper = node('div', `table-wrap ui-table-wrap ${options.wrapperClass || ''}`.trim());
       const element = node('table', 'data-table resizable-table ui-data-table');
       element.dataset.tableType = options.type || 'generic';
       if (options.mobileCards) element.dataset.mobileCards = 'true';
       const head = node('thead');
       const colgroup = node('colgroup');
+      let contentWidth = 0;
       columns.forEach((column) => {
         const col = node('col');
-        col.style.width = `${tableDefaults.width(options.type, column)}px`;
+        const width = tableDefaults.width(options.type, column);
+        contentWidth += width;
+        col.style.width = `${width}px`;
         colgroup.append(col);
       });
       const header = node('tr');
@@ -104,6 +108,19 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         });
       }
       element.append(colgroup, head, tableBody);
+      element.style.width = `${contentWidth}px`;
+      element.style.setProperty('--table-content-min-width', `${contentWidth}px`);
+      if (options.layoutMenuHost) {
+        const layoutMenu = node('div', 'table-layout-menu table-layout-menu-inline');
+        const columnsButton = node('button',
+          'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
+        columnsButton.type = 'button';
+        columnsButton.setAttribute('aria-label', 'Choose table columns');
+        columnsButton.append(iconGlyph('icon-columns'));
+        layoutMenu.append(columnsButton);
+        options.layoutMenuHost.append(layoutMenu);
+        if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();
+      }
       wrapper.append(element);
       return wrapper;
     };
@@ -298,6 +315,31 @@ test('talkgroup selections persist through searches and clear explicitly', async
   await expect(page.getByLabel('Compare with Alias List')).toBeEnabled();
 });
 
+test('talkgroup filters and import tools share one compact command row', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  const commandRow = page.locator('.radioreference-talkgroup-command-row');
+  const filter = commandRow.locator('.radioreference-status-filter');
+  const columns = commandRow.getByRole('button', { name: 'Choose table columns' });
+  const importAll = commandRow.getByRole('button', { name: 'Import all system talkgroups' });
+  await expect(filter).toBeVisible();
+  await expect(columns).toBeVisible();
+  await expect(importAll).toBeVisible();
+  const [commandBox, filterBox, columnsBox, importBox] = await Promise.all([
+    commandRow.boundingBox(), filter.boundingBox(), columns.boundingBox(), importAll.boundingBox()
+  ]);
+  expect(filterBox.width).toBeLessThan(commandBox.width * .7);
+  const columnsCenter = columnsBox.y + (columnsBox.height / 2);
+  const importCenter = importBox.y + (importBox.height / 2);
+  expect(Math.abs(columnsCenter - importCenter)).toBeLessThanOrEqual(2);
+  const [tableBox, tableHostBox] = await Promise.all([
+    page.locator('.radioreference-talkgroup-table table').boundingBox(),
+    page.locator('.radioreference-talkgroup-table').boundingBox()
+  ]);
+  expect(tableBox.width).toBeGreaterThanOrEqual(tableHostBox.width - 1);
+});
+
 test('single changed talkgroup preview shows the RadioReference-owned field changes', async ({ page }) => {
   await installWorkspace(page);
   await openSystem(page);
@@ -332,9 +374,10 @@ test('large talkgroup catalogs filter locally without rendering thousands of row
   await expect(page.getByText('10,000 loaded talkgroups', { exact: false })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(50);
   await page.getByRole('checkbox', { name: 'Select Talkgroup 1', exact: true }).check();
+  await page.evaluate(() => document.documentElement.style.setProperty('--app-header-offset', '64px'));
   await page.evaluate(() => window.scrollTo(0, 900));
   await expect.poll(() => page.locator('.radioreference-talkgroup-actions').evaluate(
-    (element) => Math.round(element.getBoundingClientRect().top))).toBeLessThan(24);
+    (element) => Math.round(element.getBoundingClientRect().top))).toBe(72);
   await page.getByLabel('Filter talkgroup ID, name, or description').fill('Rare Target');
   await expect(page.getByRole('checkbox', { name: 'Select Rare Target' })).toBeVisible();
   await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
@@ -348,6 +391,14 @@ test('large talkgroup catalogs filter locally without rendering thousands of row
 test('sites filter instantly from the loaded catalog', async ({ page }) => {
   await installWorkspace(page);
   await openSystem(page);
+  const [listBox, tableBox, pagerBox] = await Promise.all([
+    page.locator('.radioreference-sites-list').boundingBox(),
+    page.locator('.radioreference-sites-list table').boundingBox(),
+    page.locator('.radioreference-sites-list .radioreference-pager').boundingBox()
+  ]);
+  expect(tableBox.width).toBeGreaterThanOrEqual(listBox.width - 1);
+  expect(pagerBox.x).toBeGreaterThan(listBox.x);
+  expect(pagerBox.x + pagerBox.width).toBeLessThan(listBox.x + listBox.width);
   const search = page.getByLabel('Filter site or channel name');
   await search.fill('missing');
   await expect(page.getByText('No sites match this filter.')).toBeVisible();
@@ -409,14 +460,26 @@ test('site sorting and preview use the RadioReference database system ID', async
   await expect(page.locator('.radioreference-sites-list tbody tr').first()).toContainText('Alpha Site');
   await page.getByRole('button', { name: 'Alpha Site' }).click();
   const importModal = page.getByRole('dialog', { name: /Import Alpha Site/ });
+  await expect(importModal.locator('.radioreference-site-facts dt'))
+    .toHaveText(['Protocol', 'System type', 'Voice', 'Frequencies', 'P25 modulation']);
+  await expect(importModal.locator('.radioreference-site-facts')).toContainText('Phase II');
+  await expect(importModal.locator('.radioreference-site-facts')).toContainText('C4FM');
+  await expect(importModal.getByText('in Channels if needed.', { exact: false })).toBeVisible();
+  await expect(importModal).toHaveScreenshot('radioreference-p25-import-light-desktop.png');
   await importModal.getByLabel('Alias List').selectOption('7');
   await importModal.getByRole('button', { name: 'Review Channel' }).click();
   await expect.poll(async () => page.evaluate(() => window.radioReferenceVisual.calls
     .find(([path]) => path.endsWith('/imports/site/preview'))?.[1]?.body?.system_id)).toBe(2001);
   await page.getByRole('dialog', { name: /Review Central County P25 · Alpha Site/ }).getByRole('button',
     { name: 'Apply Channel' }).click();
-  await expect(page.getByRole('link', { name: 'Open channel' }))
-    .toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');
+  const completed = page.locator('.radioreference-import-complete');
+  await expect(completed.locator('.radioreference-completion-icon')).toBeVisible();
+  await expect(completed).toContainText('The channel is ready in Channels.');
+  const openChannel = completed.getByRole('link', { name: 'Open channel' });
+  await expect(openChannel).toHaveClass(/ui-button-primary/);
+  await expect(openChannel).toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');
+  await expect(page.locator('.radioreference-import-modal-complete'))
+    .toHaveScreenshot('radioreference-import-complete-light-desktop.png');
 });
 
 test('Capacity Plus defaults to all frequencies without P25-only labels', async ({ page }) => {
@@ -426,7 +489,7 @@ test('Capacity Plus defaults to all frequencies without P25-only labels', async 
   await page.getByRole('button', { name: 'Ford Plant Primary' }).click();
   const modal = page.getByRole('dialog', { name: /Import Ford Plant Primary/ });
   await expect(modal.getByText('Motorola Capacity Plus Single Site (TRBO)')).toBeVisible();
-  await expect(modal.getByText('Detected P25 modulation')).toHaveCount(0);
+  await expect(modal.getByText('P25 modulation')).toHaveCount(0);
   await expect(modal.locator('input[value="CONTROL_AND_ALTERNATES"]')).toBeDisabled();
   await expect(modal.locator('input[value="ALL"]')).toBeChecked();
   await modal.getByRole('button', { name: 'Review Channel' }).click();
@@ -442,7 +505,7 @@ test('NXDN sites use marked controls without showing P25 modulation', async ({ p
   await page.getByRole('button', { name: 'Central Simulcast' }).click();
   const modal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
   await expect(modal.getByText('NEXEDGE 9600')).toBeVisible();
-  await expect(modal.getByText('Detected P25 modulation')).toHaveCount(0);
+  await expect(modal.getByText('P25 modulation')).toHaveCount(0);
   await expect(modal.locator('input[value="CONTROL_AND_ALTERNATES"]')).toBeChecked();
 });
 

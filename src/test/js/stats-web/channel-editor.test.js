@@ -65,13 +65,59 @@ const channelColumns = functionSource('function channelAdminColumns(');
 assert.match(channelColumns, /event\.shiftKey/);
 assert.match(channelColumns, /visibleIds\.slice\(Math\.min\(first, last\), Math\.max\(first, last\) \+ 1\)/);
 assert.match(channelColumns, /state\.selectionAnchor = id/);
+assert.doesNotMatch(channelColumns, /id: 'protocol'/,
+  'The Channels table must show protocol as a group heading instead of a repeated column');
+const channelCatalog = functionSource('async function renderModernChannelCatalog(');
+assert.match(channelCatalog, /channel-catalog-admin-v2/);
+assert.match(channelCatalog, /rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'/);
+assert.match(channelCatalog, /label: 'All statuses'/);
+assert.match(channelCatalog, /Filter channels by status/);
+assert.doesNotMatch(channelCatalog, /value: 'trunked'|value: 'conventional'/,
+  'Protocol grouping replaces the mixed topology selector');
+const protocolContext = { protocolFamily: (row) => row.protocol };
+vm.createContext(protocolContext);
+vm.runInContext(`
+  ${functionSource('function channelProtocolGroup(row)')}
+  ${functionSource('function channelProtocolOrder(left, right)')}
+`, protocolContext);
+assert.deepEqual(JSON.parse(vm.runInContext(
+  "JSON.stringify(channelProtocolGroup({ protocol_label: 'P25 Phase 2' }))", protocolContext)),
+{ key: 'p25 phase 2', label: 'P25 Phase 2' });
+assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify([
+  { name: 'Zulu', protocol_label: 'P25 Phase 2' },
+  { name: 'Bravo', protocol_label: 'NBFM' },
+  { name: 'Alpha', protocol_label: 'NBFM' }
+].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Alpha', 'Bravo', 'Zulu']);
 const channelModal = functionSource('async function openChannelEditorModal(');
 assert.match(channelModal, /action, configuration_ids: \[configurationId\]/,
   'The editor must start or stop only its own channel');
 assert.match(channelModal, /modal\.isDirty\(\)/,
   'Start and Stop must not discard unsaved channel settings');
-assert.match(application, /new ResizeObserver\(positionSelectionBar\)/,
-  'The selected-channel bar must follow the changing header height');
+const stickyAssignments = [];
+const stickyHeader = { getBoundingClientRect: () => ({ height: 52.1 }) };
+let observedHeader = null;
+class HeaderResizeObserver {
+  constructor(callback) { this.callback = callback; }
+  observe(value) {
+    observedHeader = value;
+    this.callback();
+  }
+}
+const stickyContext = {
+  document: {
+    querySelector: (selector) => selector === '.app-header' ? stickyHeader : null,
+    documentElement: { style: { setProperty: (name, value) => stickyAssignments.push([name, value]) } }
+  },
+  ResizeObserver: HeaderResizeObserver,
+  window: { ResizeObserver: HeaderResizeObserver, addEventListener: () => assert.fail('Unexpected resize fallback') }
+};
+vm.runInNewContext(`(${functionSource('function installStickyHeaderOffset()')})()`, stickyContext);
+assert.equal(observedHeader, stickyHeader);
+assert.deepEqual(stickyAssignments.at(-1), ['--app-header-offset', '53px']);
+assert.match(application, /\ninstallStickyHeaderOffset\(\);/,
+  'The shared sticky offset must be installed once for every page');
+assert.doesNotMatch(channelCatalog, /positionSelectionBar|new ResizeObserver/,
+  'The Channels page must use the shared header offset instead of owning another observer');
 
 const plan = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'general', label: 'General', fields: [{ path: 'name', required: true }] },
