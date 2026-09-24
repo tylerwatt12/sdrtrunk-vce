@@ -175,7 +175,7 @@ public final class StreamingConfigurationCodec
         fields.add(text("name", "Name", "Name", false));
         fields.add(flag("enabled", "Enable this destination", "isEnabled", "Enabled", false));
         fields.add(text("host", "Server address", "Host", false));
-        fields.add(number("maximum_recording_age", "Maximum queued call age (milliseconds)", "MaximumRecordingAge", 0,
+        if(!(configuration instanceof RadioResolveConfiguration)) fields.add(number("maximum_recording_age", "Maximum queued call age (milliseconds)", "MaximumRecordingAge", 0,
             604800000L, long.class, true));
         if(configuration instanceof IcecastConfiguration || configuration instanceof ShoutcastV1Configuration)
         {

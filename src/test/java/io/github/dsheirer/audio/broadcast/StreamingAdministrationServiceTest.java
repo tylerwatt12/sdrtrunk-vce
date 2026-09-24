@@ -35,11 +35,12 @@ class StreamingAdministrationServiceTest
             changes.put("name","Test " + provider.id());
             String secret=provider.fields().stream().filter(field -> field.type().equals("password")).findFirst().orElseThrow().key();
             changes.put(secret,"test-secret-not-for-browser");
-            changes.put("maximum_recording_age",123456L);
+            boolean configurableAge=provider.fields().stream().anyMatch(field -> field.key().equals("maximum_recording_age"));
+            if(configurableAge) changes.put("maximum_recording_age",123456L);
             var saved=StreamingConfigurationCodec.apply(original,changes);
             var renamed=StreamingConfigurationCodec.apply(saved,Map.of("name","Renamed"));
             assertEquals(original.getConfigurationId(),renamed.getConfigurationId());
-            assertEquals(123456L,renamed.getMaximumRecordingAge());
+            assertEquals(configurableAge ? 123456L : original.getMaximumRecordingAge(),renamed.getMaximumRecordingAge());
             assertEquals(Set.of(secret),StreamingConfigurationCodec.view(renamed).configuredCredentials());
             assertFalse(StreamingConfigurationCodec.view(renamed).settings().containsKey(secret));
             assertFalse(StreamingConfigurationCodec.view(renamed).toString().contains("test-secret-not-for-browser"));
