@@ -53,9 +53,6 @@
 
 .activity-series-button.active {
   opacity: 1;
-  color: var(--primary-control-ink);
-  background: var(--primary-control);
-  border-color: var(--primary-control);
 }
 
 .activity-series-swatch {
@@ -113,7 +110,7 @@
   color: var(--ink);
   background: var(--surface);
   border: 1px solid color-mix(in srgb, var(--line-dark) 28%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   box-shadow: var(--shadow-surface);
   font-size: 11px;
   font-variant-numeric: tabular-nums;

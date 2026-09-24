@@ -20,7 +20,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
 }
 
 a {

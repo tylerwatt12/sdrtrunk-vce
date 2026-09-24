@@ -442,7 +442,7 @@ function createPlanner(loadTunerRows = null) {
         <form class="rfp-form admin-form settings-card-body">
           <div class="rfp-tuner-pool">
             <div class="rfp-tuner-pool-head"><span class="rfp-label">Tuners in this plan</span>
-              <button class="ui-button ui-button-secondary rfp-small rfp-add-tuner" type="button">Add tuner</button></div>
+              <button class="ui-button ui-button-secondary rfp-add-tuner" type="button"><svg aria-hidden="true"><use href="#icon-plus"></use></svg>Add tuner</button></div>
             <p class="rfp-tuner-source" role="status"></p>
             <div class="rfp-tuner-list"></div>
           </div>
@@ -466,10 +466,10 @@ function createPlanner(loadTunerRows = null) {
       </section>
     </div>
     <template class="rfp-tuner-template">
-      <section class="rfp-tuner-card">
+      <section class="rfp-tuner-card ui-inset-surface">
         <div class="rfp-tuner-card-head"><div class="rfp-tuner-card-title"><span class="rfp-tuner-index"></span><span class="rfp-tuner-name"></span></div>
-          <div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary rfp-icon rfp-duplicate-tuner" type="button" title="Duplicate this tuner">Duplicate</button>
-            <button class="ui-button ui-button-danger-quiet rfp-icon rfp-remove-tuner" type="button" title="Remove this tuner">Remove</button></div></div>
+          <div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary ui-icon-button rfp-duplicate-tuner" type="button" aria-label="Duplicate this tuner" title="Duplicate this tuner"><svg aria-hidden="true"><use href="#icon-copy"></use></svg></button>
+            <button class="ui-button ui-button-danger-quiet ui-icon-button rfp-remove-tuner" type="button" aria-label="Remove this tuner" title="Remove this tuner"><svg aria-hidden="true"><use href="#icon-trash"></use></svg></button></div></div>
         <div class="rfp-tuner-fields"><label class="ui-field rfp-field"><span class="ui-field-label">Tuner model</span><select class="ui-select rfp-tuner-profile"></select></label>
           <label class="ui-field rfp-field"><span class="ui-field-label">Sample rate</span><select class="ui-select rfp-tuner-rate"></select></label></div>
         <div class="rfp-tuner-spec"></div>
@@ -621,7 +621,7 @@ function createPlanner(loadTunerRows = null) {
     return `<article class="settings-card rfp-tuner-result"><header class="settings-card-header rfp-result-head">
       <div class="rfp-result-title"><span class="rfp-tuner-number">${String(plan.tunerIndex + 1).padStart(2, '0')}</span>
         <div><h3>Tuner ${plan.tunerIndex + 1}</h3><p>${plan.channels.length} channel${plan.channels.length === 1 ? '' : 's'} · ${escapeHtml(hardware.label)} · ${formatRate(hardware.rate)}</p></div></div>
-      <button class="ui-button ui-button-secondary rfp-small rfp-copy-center" type="button" data-center="${plan.center}">Copy frequency</button></header>
+      <button class="ui-button ui-button-secondary ui-icon-button rfp-copy-center" type="button" data-center="${plan.center}" aria-label="Copy center frequency" title="Copy center frequency"><svg aria-hidden="true"><use href="#icon-copy"></use></svg></button></header>
       <div class="rfp-center-value"><span class="rfp-center-label">Recommended center</span>
         <div class="rfp-center-frequency">${formatMHz(plan.center, 6)} <small>MHz · ${formatInteger(plan.center)} Hz</small></div></div>
       ${renderSpectrum(plan, hardware)}

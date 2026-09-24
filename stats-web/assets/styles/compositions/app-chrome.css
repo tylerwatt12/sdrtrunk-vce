@@ -331,7 +331,7 @@
     linear-gradient(180deg, var(--transport-control) 0%, var(--transport-surface) 52%, var(--transport-surface) 100%);
   border: 1px solid var(--transport-control);
   border-bottom-color: var(--transport-surface);
-  border-radius: 6px;
+  border-radius: var(--radius-card);
   box-shadow: 0 8px 18px color-mix(in srgb, var(--transport-surface) 45%, transparent), inset 0 1px color-mix(in srgb, var(--transport-ink) 5%, transparent);
   z-index: 24;
 }
@@ -352,7 +352,7 @@
   overflow: auto;
   background: color-mix(in srgb, var(--transport-surface) 18%, transparent);
   border: 1px solid var(--transport-control);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
 }
 
 .playback-scan-list-option {
@@ -573,7 +573,7 @@
   padding: 6px;
   background: var(--header);
   border: 1px solid var(--header-line);
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
   box-shadow: var(--shadow-modal);
 }
 
@@ -591,7 +591,7 @@
   padding: 7px 9px;
   color: var(--header-muted);
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 
 .primary-nav .nav-group-links a:hover,
@@ -709,7 +709,7 @@
     width: 100%;
     padding: 8px 10px;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--radius-control);
   }
 
   .nav-group > summary::after {
@@ -781,7 +781,7 @@
       linear-gradient(180deg, var(--transport-control) 0%, var(--transport-surface) 52%, var(--transport-surface) 100%);
     border: 1px solid var(--transport-control);
     border-bottom-color: var(--transport-surface);
-    border-radius: 6px;
+    border-radius: var(--radius-card);
     box-shadow: 0 8px 18px color-mix(in srgb, var(--transport-surface) 45%, transparent), inset 0 1px color-mix(in srgb, var(--transport-ink) 5%, transparent);
   }
 

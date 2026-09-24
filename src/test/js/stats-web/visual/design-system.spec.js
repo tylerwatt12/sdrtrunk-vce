@@ -20,7 +20,10 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
   await page.goto('/design-system.html?theme=light&view=entity-details');
   const tile = page.locator('.visual-entity-details-example .ui-metric').first();
   await expect(tile).toHaveCSS('border-left-width', '1px');
-  await expect(tile).toHaveCSS('border-radius', '8px');
+  const tileRadius = await tile.evaluate((element) => getComputedStyle(element).borderRadius);
+  const controlRadius = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--radius-control').trim());
+  expect(tileRadius).toBe(controlRadius);
   await expect(tile.locator('.ui-metric-icon svg')).toHaveAttribute('aria-hidden', 'true');
   await expect(tile.locator('.ui-metric-label')).toHaveText('Logical Calls');
   await expect(page.locator('.visual-entity-details-example .ui-metric a')).toHaveText('9');
@@ -30,6 +33,42 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
   await expect(signaling.locator('.ui-metric-label')).toHaveText([
     'Continue', 'Active', 'Join', 'Register', 'Emergency', 'Status'
   ]);
+});
+
+test('workspace density changes spacing without changing visual identity', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  const styles = await page.evaluate(() => {
+    const sample = (density) => {
+      const host = document.createElement('div');
+      host.className = density;
+      host.innerHTML = '<button class="ui-button">Action</button><div class="ui-surface">Surface</div>';
+      document.body.append(host);
+      const button = getComputedStyle(host.querySelector('.ui-button'));
+      const surface = getComputedStyle(host.querySelector('.ui-surface'));
+      const result = {
+        buttonHeight: parseFloat(button.height),
+        buttonRadius: button.borderRadius,
+        buttonFontSize: button.fontSize,
+        buttonFontWeight: button.fontWeight,
+        buttonShadow: button.boxShadow,
+        surfaceRadius: surface.borderRadius,
+        surfaceShadow: surface.boxShadow,
+      };
+      host.remove();
+      return result;
+    };
+    return { compact: sample('data-workspace'), comfortable: sample('editor-workspace') };
+  });
+
+  expect(styles.compact.buttonHeight).toBeLessThan(styles.comfortable.buttonHeight);
+  expect(styles.compact.buttonRadius).toBe(styles.comfortable.buttonRadius);
+  expect(styles.compact.buttonFontSize).toBe(styles.comfortable.buttonFontSize);
+  expect(styles.compact.buttonFontWeight).toBe(styles.comfortable.buttonFontWeight);
+  expect(styles.compact.buttonShadow).toBe(styles.comfortable.buttonShadow);
+  expect(styles.compact.surfaceRadius).toBe(styles.comfortable.surfaceRadius);
+  expect(styles.compact.surfaceShadow).not.toBe('none');
+  expect(styles.comfortable.surfaceShadow).not.toBe('none');
 });
 
 test('channel frequencies and band plans share a flush responsive layout', async ({ page }) => {

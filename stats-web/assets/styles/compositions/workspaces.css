@@ -1,17 +1,18 @@
 /*
- * Page-level geometry is explicit. Data workspaces stay compact and flat;
- * editors use larger controls, softer surfaces, and more breathing room.
+ * Density changes spacing and row height, not the product's visual language.
+ * Data workspaces remain compact while sharing the same radii and elevation
+ * as comfortable editor workspaces.
  */
 :where(.data-workspace, [data-ui-density="compact"]) {
   --ui-control-height: var(--control-height-compact);
-  --ui-control-radius: var(--radius-compact);
-  --ui-surface-radius: var(--radius-compact);
+  --ui-control-radius: var(--radius-control);
+  --ui-surface-radius: var(--radius-card);
   --ui-layout-gap: var(--space-2);
   --ui-field-gap: var(--space-2);
-  --ui-row-height: 38px;
+  --ui-row-height: 40px;
   --ui-surface-padding: var(--space-2);
-  --ui-surface-shadow: none;
-  --ui-summary-height: 58px;
+  --ui-surface-shadow: var(--shadow-surface-soft);
+  --ui-summary-height: 64px;
   --ui-summary-number-size: 20px;
 }
 
@@ -39,15 +40,15 @@
 .ui-page-header .page-title {
   margin: 0;
   font-size: clamp(24px, 2.1vw, 30px);
-  font-weight: 750;
+  font-weight: var(--font-weight-heading);
   letter-spacing: 0;
 }
 
 .ui-page-header .page-subtitle {
   margin-top: var(--space-1);
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
 }
 
 .ui-page-nav {
@@ -98,7 +99,8 @@
   padding: var(--space-3) var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  font-weight: 750;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
 }
 
 .ui-section-actions {
@@ -120,13 +122,13 @@
 .identity-summary-primary {
   min-width: 0;
   display: block;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .identity-summary-context {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-meta);
 }
 
 .ui-facts {
@@ -150,7 +152,7 @@
 
 .ui-fact > dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-meta);
   font-weight: 700;
   letter-spacing: .035em;
 }
@@ -159,8 +161,8 @@
   min-width: 0;
   margin: 0;
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
 }
 
@@ -179,7 +181,7 @@
 .ui-fact-list > dd {
   min-width: 0;
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
 }
 
@@ -249,8 +251,8 @@
 
 .ui-metric-label {
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
   line-height: 1.3;
 }
 
@@ -259,7 +261,7 @@
   max-width: 100%;
   color: var(--ink);
   font-size: 24px;
-  font-weight: 750;
+  font-weight: var(--font-weight-heading);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
   overflow-wrap: anywhere;
@@ -282,7 +284,7 @@
   height: 16px;
 }
 
-.ui-metric-compact .ui-metric-label { font-size: 11px; }
+.ui-metric-compact .ui-metric-label { font-size: var(--font-size-meta); }
 .ui-metric-compact .ui-metric-copy > strong { font-size: 16px; }
 
 @media (max-width: 900px) {
@@ -325,6 +327,19 @@
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius, var(--radius-card));
   box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
+}
+
+.ui-inset-surface {
+  min-width: 0;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--ui-control-radius, var(--radius-control));
+}
+
+.ui-surface-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
 }
 
 .ui-icon-tile {
@@ -380,8 +395,8 @@
   grid-column: 2;
   grid-row: 1;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
 }
 
 .ui-summary-success { color: var(--success); }
@@ -401,7 +416,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, none);
+  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
 /* Opt-in selection actions that remain available while a long catalog scrolls. */
@@ -416,7 +431,8 @@
   padding: 5px 8px 5px 11px;
   background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
-  border-radius: var(--ui-surface-radius);
+  border-radius: var(--ui-surface-radius, var(--radius-card));
+  box-shadow: var(--shadow-surface-soft);
 }
 
 .ui-selection-bar[hidden] {
@@ -425,7 +441,7 @@
 
 .ui-selection-bar .muted {
   margin-right: auto;
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 @media (max-width: 640px) {
@@ -465,7 +481,7 @@
 
 .table-layout-panel-header span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
 }
 
 .table-layout-options {
@@ -533,7 +549,7 @@
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: var(--ui-control-radius, var(--radius-control));
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 700;
   text-decoration: none;
 }
@@ -551,7 +567,7 @@
 .ui-section-navigation-link small {
   grid-column: 2;
   margin-top: -5px;
-  font-size: 9px;
+  font-size: var(--font-size-meta);
 }
 
 .ui-section-navigation-link:hover,
@@ -580,7 +596,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--ui-surface-radius, var(--radius-card));
-  box-shadow: var(--ui-surface-shadow, none);
+  box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
 .ui-form-section {
@@ -610,8 +626,8 @@
   gap: var(--space-2);
   padding: 11px var(--space-4);
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 750;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-heading);
   list-style: none;
 }
 
@@ -672,7 +688,7 @@
 
 .number-base-label {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-size-meta);
   font-variant-caps: all-small-caps;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -681,5 +697,5 @@
 
 .number-base-separator {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-size-meta);
 }

@@ -269,13 +269,6 @@
   line-height: 1.3;
 }
 
-.radioreference-directory-item .radioreference-bookmark {
-  min-width: 36px;
-  width: 36px;
-  min-height: 36px;
-  padding: 0;
-}
-
 .radioreference-system-workspace {
   min-width: 0;
   display: flex;
@@ -297,8 +290,6 @@
 .radioreference-detail-header {
   flex: none;
   padding: var(--space-4);
-  background: var(--section-header);
-  border-bottom: 1px solid var(--line);
 }
 
 .radioreference-detail-header > div {

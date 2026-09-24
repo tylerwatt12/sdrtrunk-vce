@@ -132,6 +132,8 @@ export function createStreamingWorkspace(deps) {
     }));
     const cancel = button('Cancel', modal.close);
     const remove = button('Delete destination', () => void removeDestination());
+    remove.classList.remove('ui-button-secondary');
+    remove.classList.add('ui-button-danger');
     const reload = button('Reload current values', () => { if (modal.close()) void openEditor(id, activeTab); });
     reload.hidden = true;
     const footer = modalFooter(test, remove, cancel, save);

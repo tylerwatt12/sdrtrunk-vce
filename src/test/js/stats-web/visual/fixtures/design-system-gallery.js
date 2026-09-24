@@ -11,6 +11,8 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'modal', 'modal-long', 'h
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
+document.querySelectorAll('.radioreference-detail-header').forEach((header) =>
+  header.classList.add('ui-surface-header'));
 if(view === 'radio-directory-panel') {
   const example = document.querySelector('.visual-radio-directory-coverage-example');
   const panel = document.createElement('section');

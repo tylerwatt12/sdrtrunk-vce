@@ -31,40 +31,40 @@ body.modal-open {
 }
 
 .read-only-modal {
-  width: min(1160px, 96vw);
+  width: min(var(--modal-size-wide), 96vw);
   max-height: min(900px, calc(100vh - var(--modal-viewport-inset)));
   max-height: min(900px, calc(100dvh - var(--modal-viewport-inset)));
   display: flex;
   flex-direction: column;
   overflow: hidden;
   color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line-dark);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--radius-modal);
   box-shadow: var(--shadow-modal);
 }
 
 .read-only-modal.admin-modal {
-  width: min(540px, 96vw);
+  width: min(var(--modal-size-small), 96vw);
 }
 
 .read-only-modal.frequency-action-modal {
-  width: min(560px, 96vw);
+  width: min(var(--modal-size-small), 96vw);
 }
 
 .read-only-modal.tuner-frequency-lookup-modal {
-  width: min(900px, 96vw);
+  width: min(var(--modal-size-large), 96vw);
 }
 
 .modal-header {
-  min-height: 52px;
+  min-height: 60px;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 15px;
-  padding: 10px 12px 10px 16px;
-  background: var(--section-header);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
@@ -72,12 +72,14 @@ body.modal-open {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 18px;
+  font-size: var(--font-size-dialog-title);
+  font-weight: var(--font-weight-heading);
+  line-height: 1.25;
 }
 
 .modal-content {
   min-height: 0;
-  padding: 12px;
+  padding: var(--space-4);
   overflow: auto;
   overscroll-behavior: contain;
 }

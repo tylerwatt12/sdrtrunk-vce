@@ -34,4 +34,4 @@ assert.match(css, /\.support-report-form\s*\{[^}]*padding:\s*var\(--space-4\)/);
 assert.match(css, /\.support-report-form\s*\{\s*padding:\s*var\(--space-3\)/);
 assert.match(css, /\.support-report-fields\s*\{[^}]*align-items:\s*start;/);
 assert.doesNotMatch(css, /\.admin-settings-(?:branch|nested)-items\s*\{[^}]*border-left:/);
-assert.doesNotMatch(css, /\.admin-settings-leaf\.active\s*\{[^}]*box-shadow:/);
+assert.match(css, /\.admin-settings-leaf\.active\s*\{[^}]*box-shadow:\s*var\(--shadow-selected\)/);

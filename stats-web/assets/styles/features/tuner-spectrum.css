@@ -160,20 +160,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
 .tuner-spectrum-zoom-actions,
 .tuner-spectrum-playback-actions {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: calc(var(--radius-control) + 2px);
-  box-shadow: var(--shadow-control);
-}
-
-.tuner-spectrum-zoom-actions > button,
-.tuner-spectrum-playback-actions > button {
-  --ui-control-height: 34px;
-  border-color: transparent;
-  box-shadow: none;
+  flex: 0 0 auto;
 }
 
 .tuner-spectrum-zoom-actions > button + button {

@@ -91,15 +91,8 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
 }
 
 .group-identity-activity-chart .activity-series-button {
-  min-height: 34px;
-  padding: 6px 10px;
+  --ui-control-height: var(--control-height-compact);
   opacity: 1;
-}
-
-.group-identity-activity-chart .activity-series-button.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent);
 }
 
 .group-identity-activity-chart .activity-line-chart {

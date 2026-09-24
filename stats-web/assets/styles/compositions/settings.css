@@ -26,19 +26,21 @@
 
 .admin-form {
   display: grid;
-  gap: 13px;
+  gap: var(--space-3);
 }
 
 .admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
 .admin-form select:not(.ui-select),
 .admin-form textarea:not(.ui-textarea) {
-  min-height: 34px;
-  padding: 6px 8px;
+  min-height: var(--ui-control-height, var(--control-height-comfortable));
+  padding: 8px 12px;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: var(--radius-compact);
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--ui-control-radius, var(--radius-control));
   font: inherit;
+  font-size: var(--font-size-control);
+  line-height: var(--line-height-control);
 }
 
 .admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
@@ -50,17 +52,16 @@
 
 .admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]),
 .admin-form select:not(.ui-select) {
-  height: 36px;
-  min-height: 36px;
-  line-height: 1.25;
+  height: var(--ui-control-height, var(--control-height-comfortable));
+  min-height: var(--ui-control-height, var(--control-height-comfortable));
 }
 
 .admin-form input:not(.ui-input):not([type="checkbox"]):not([type="radio"]):focus,
 .admin-form select:not(.ui-select):focus,
 .admin-form textarea:not(.ui-textarea):focus {
   border-color: var(--focus-ring);
-  outline: 2px solid color-mix(in srgb, var(--focus-ring) 24%, transparent);
-  outline-offset: 1px;
+  outline: 0;
+  box-shadow: var(--shadow-focus);
 }
 
 .settings-page-form {
@@ -83,8 +84,8 @@
   overflow: hidden;
   color: var(--ink);
   background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-surface-soft);
 }
 
@@ -95,21 +96,22 @@
 
 .settings-card-header {
   padding: 17px 18px 14px;
-  background: var(--section-header);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
 .settings-card-title,
 .settings-card-form .admin-settings-form-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
   line-height: 1.25;
 }
 
 .settings-card-description {
   margin: 6px 0 0;
   color: var(--muted);
-  line-height: 1.45;
+  line-height: var(--line-height-body);
 }
 
 .settings-card-body {
@@ -162,8 +164,8 @@
 
 .settings-summary dt {
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
 }
 
 .settings-summary dd {
@@ -189,7 +191,7 @@
 .settings-table-layout > summary {
   padding: 10px 12px;
   cursor: pointer;
-  font-weight: 650;
+  font-weight: var(--font-weight-medium);
 }
 
 .settings-table-layout > .settings-summary {
@@ -236,7 +238,8 @@
 
 .admin-settings-form-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
 }
 
 .radioreference-remember {
@@ -319,7 +322,7 @@
 }
 
 .read-only-modal.live-presentation-modal {
-  width: min(680px, 96vw);
+  width: min(var(--modal-size-medium), 96vw);
 }
 
 .live-presentation-form {

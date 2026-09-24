@@ -13,9 +13,9 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import * as rfPlanner from './features/rf-planner.js?v=3';
-import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=12';
-import { createStreamingWorkspace } from './features/streaming.js?v=1';
+import * as rfPlanner from './features/rf-planner.js?v=4';
+import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=13';
+import { createStreamingWorkspace } from './features/streaming.js?v=2';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -1851,9 +1851,8 @@ function openReadOnlyModal(title, body, options = {}) {
   const header = node('header', 'modal-header');
   const heading = node('h2', '', title);
   heading.id = titleId;
-  const close = node('button', 'ui-button ui-button-secondary modal-close', 'Close');
-  close.type = 'button';
-  close.setAttribute('aria-label', `Close ${title}`);
+  const close = iconButton('icon-close', `Close ${title}`,
+    'ui-button ui-button-secondary ui-icon-button modal-close');
   header.append(heading, close);
   const contentNode = node('div', 'modal-content');
   contentNode.append(valueNode(body));
@@ -9600,7 +9599,7 @@ function renderScanner() {
       button.dataset.mode = id;
       modeBar.append(button);
     });
-  const chassis = node('section', 'scanner-workspace');
+  const chassis = node('section', 'scanner-workspace ui-surface');
   const statusBar = node('div', 'scanner-status-bar');
   const playbackStatus = node('strong', 'ui-pill scanner-live-status', 'Ready');
   const age = node('output', 'scanner-relative-age', 'Time unavailable');
@@ -9639,8 +9638,8 @@ function renderScanner() {
   volume.addEventListener('change', () => player.writePreferences());
   utility.append(node('span', '', 'Browser volume'), volume, volumeValue);
 
-  const scanPanel = node('section', 'scanner-scan-lists');
-  const scanHeading = node('div', 'scanner-scan-heading');
+  const scanPanel = node('section', 'scanner-scan-lists ui-surface');
+  const scanHeading = node('div', 'scanner-scan-heading ui-surface-header');
   const scanCopy = node('div');
   scanCopy.append(node('strong', '', 'Scan Lists'), node('span', 'scanner-scan-summary', 'Loading'));
   const coverage = node('button', 'ui-button ui-button-secondary', 'View coverage tree');
@@ -11309,8 +11308,8 @@ function liveChannelPane() {
   toolbar.append(selectionLabel, connection);
 
   const diagnostic = (title, ariaLabel) => {
-    const card = node('section', 'channel-diagnostic-card');
-    const header = node('div', 'channel-diagnostic-header');
+    const card = node('section', 'channel-diagnostic-card ui-surface');
+    const header = node('div', 'channel-diagnostic-header ui-surface-header');
     const plot = node('div', 'channel-diagnostic-plot');
     const canvas = node('canvas', 'channel-diagnostic-canvas');
     canvas.setAttribute('role', 'img');
@@ -12409,11 +12408,11 @@ function tunerSpectrumPanel(snapPresetDocument) {
   const pause = iconButton('icon-pause', 'Pause', 'ui-button ui-button-secondary ui-icon-button');
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
-  const zoomActions = node('div', 'tuner-spectrum-zoom-actions');
+  const zoomActions = node('div', 'tuner-spectrum-zoom-actions ui-control-group');
   zoomActions.setAttribute('role', 'group');
   zoomActions.setAttribute('aria-label', 'Spectrum zoom');
   zoomActions.append(zoomIn, zoomOut, resetZoom);
-  const playbackActions = node('div', 'tuner-spectrum-playback-actions');
+  const playbackActions = node('div', 'tuner-spectrum-playback-actions ui-control-group');
   playbackActions.setAttribute('role', 'group');
   playbackActions.setAttribute('aria-label', 'Spectrum playback');
   playbackActions.append(pause);
@@ -18768,11 +18767,10 @@ function openDeleteUserModal(account, statusHost, returnFocusSelector) {
 function userActions(account, statusHost) {
   if (account.primaryAdmin) return node('span', 'admin-managed-note', 'Managed in JavaFX');
   const actions = node('div', 'admin-row-actions');
-  const reset = node('button', 'ui-button ui-button-secondary', 'Change Password');
-  reset.type = 'button';
+  const reset = iconButton('icon-edit', `Change password for ${account.username}`);
   reset.dataset.username = account.username;
-  const remove = node('button', 'ui-button ui-button-danger', 'Delete');
-  remove.type = 'button';
+  const remove = iconButton('icon-trash', `Delete ${account.username}`,
+    'ui-button ui-button-danger-quiet ui-icon-button');
   remove.dataset.username = account.username;
   reset.addEventListener('click', () => openManagedUserModal(account, statusHost,
     `.admin-row-actions button[data-username="${account.username}"]`));
@@ -19721,8 +19719,8 @@ function p25OverrideBandRow(band = null) {
     type.append(option);
   });
   type.value = band?.type === 'TDMA' ? 'TDMA' : 'FDMA';
-  const remove = node('button', 'ui-button ui-button-danger p25-override-remove', 'Remove band');
-  remove.type = 'button';
+  const remove = iconButton('icon-trash', 'Remove band',
+    'ui-button ui-button-danger-quiet ui-icon-button p25-override-remove');
   remove.addEventListener('click', () => row.remove());
   row.append(
     p25OverrideInput('Band ID', 'identifier', band?.identifier ?? '',
@@ -19748,8 +19746,8 @@ function p25OverrideProfileCard(profile = null) {
   const card = node('details', 'settings-card p25-override-profile');
   const header = node('summary', 'settings-card-header p25-override-profile-header');
   const title = node('h3', 'settings-card-title', 'New P25 override');
-  const remove = node('button', 'ui-button ui-button-danger p25-override-profile-delete', 'Delete profile');
-  remove.type = 'button';
+  const remove = iconButton('icon-trash', 'Delete profile',
+    'ui-button ui-button-danger-quiet ui-icon-button p25-override-profile-delete');
   remove.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -21414,7 +21412,7 @@ function routeViewLabel(view) {
 }
 
 function renderNotFound(view, renderContext = captureRenderContext()) {
-  const panel = node('section', 'access-denied-card');
+  const panel = node('section', 'access-denied-card ui-empty-state');
   panel.append(node('h2', '', 'Page not found'),
     node('p', '', `The page “${String(view || '').slice(0, 80)}” does not exist.`));
   const home = anchor('Open Dashboard', href('dashboard'), 'ui-button ui-button-primary');
@@ -21423,7 +21421,7 @@ function renderNotFound(view, renderContext = captureRenderContext()) {
 }
 
 function renderAccessDenied(view, renderContext = captureRenderContext()) {
-  const panel = node('section', 'access-denied-card');
+  const panel = node('section', 'access-denied-card ui-empty-state');
   const heading = node('h2', '', accessSessionAvailable ? 'Access denied' : 'Access information unavailable');
   const detail = !accessSessionAvailable ?
     'The receiver did not return its access policy. Retry before opening protected pages.' :

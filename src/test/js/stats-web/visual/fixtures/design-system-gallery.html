@@ -22,6 +22,7 @@
       <path d="M12 16V3m0 0L7 8m5-5 5 5M5 13v7h14v-7"></path>
     </symbol>
     <symbol id="visual-icon-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"></path></symbol>
+    <symbol id="visual-icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></symbol>
     <symbol id="visual-icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path></symbol>
     <symbol id="visual-icon-close" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5 5 19"></path></symbol>
     <symbol id="visual-icon-alert" viewBox="0 0 24 24">
@@ -211,7 +212,7 @@
       <section class="read-only-modal" role="dialog" aria-modal="true" aria-labelledby="visual-modal-title">
         <header class="modal-header">
           <h2 id="visual-modal-title">Edit channel</h2>
-          <button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button>
+          <button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
         </header>
         <div class="modal-content">
           <form class="visual-modal-form editor-workspace">
@@ -238,7 +239,7 @@
       <section class="read-only-modal health-alert-settings-modal" role="dialog" aria-modal="true" aria-labelledby="visual-health-alert-modal-title">
         <header class="modal-header">
           <h2 id="visual-health-alert-modal-title">Status icon choices</h2>
-          <button class="ui-button ui-button-secondary modal-close" type="button">Close</button>
+          <button class="ui-button ui-button-secondary ui-icon-button modal-close" type="button" aria-label="Close modal"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
         </header>
         <div class="modal-content">
           <form class="admin-form health-alert-settings-form">
@@ -441,7 +442,7 @@
         <p class="p25-overrides-intro">A matching profile replaces the complete over-the-air band plan only for P25 channels that have the override enabled.</p>
         <div class="p25-override-profile-list">
           <details class="settings-card p25-override-profile" open>
-            <summary class="settings-card-header p25-override-profile-header"><h3 class="settings-card-title">BEE00-49F · 01-01</h3><button class="ui-button ui-button-danger p25-override-profile-delete" type="button">Delete profile</button></summary>
+            <summary class="settings-card-header p25-override-profile-header"><h3 class="settings-card-title">BEE00-49F · 01-01</h3><button class="ui-button ui-button-danger-quiet ui-icon-button p25-override-profile-delete" type="button" aria-label="Delete profile"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></summary>
             <div class="settings-card-body">
               <div class="p25-override-identity">
                 <label class="ui-field"><span class="ui-field-label">WACN (hex)</span><input class="ui-input" value="BEE00"></label>
@@ -458,7 +459,7 @@
                   <label class="ui-field"><span class="ui-field-label">Bandwidth (kHz)</span><input class="ui-input" value="12.5"></label>
                   <label class="ui-field"><span class="ui-field-label">Spacing (kHz)</span><input class="ui-input" value="6.25"></label>
                   <label class="ui-field"><span class="ui-field-label">Offset (MHz)</span><input class="ui-input" value="-45"></label>
-                  <button class="ui-button ui-button-danger p25-override-remove" type="button">Remove band</button>
+                  <button class="ui-button ui-button-danger-quiet ui-icon-button p25-override-remove" type="button" aria-label="Remove band"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button>
                 </div>
               </div>
               <button class="ui-button ui-button-secondary" type="button">Add band</button>
@@ -518,7 +519,7 @@
             <thead><tr><th>Username</th><th>Access tier</th><th>Password changed</th><th>Actions</th></tr></thead>
             <tbody>
               <tr><td><div class="admin-user-identity"><strong>admin</strong><span class="ui-pill ui-pill-success"><span>Primary</span></span></div></td><td><span class="admin-tier-locked">Admin</span></td><td>Today at 8:12 AM</td><td><span class="admin-managed-note">Managed in JavaFX</span></td></tr>
-              <tr><td><div class="admin-user-identity"><strong>dispatcher</strong></div></td><td><select class="ui-select admin-tier-select" aria-label="Access tier for dispatcher"><option>User</option><option>Administrator</option></select></td><td>Yesterday at 4:38 PM</td><td><div class="admin-row-actions"><button class="ui-button ui-button-secondary" type="button">Change Password</button><button class="ui-button ui-button-danger" type="button">Delete</button></div></td></tr>
+              <tr><td><div class="admin-user-identity"><strong>dispatcher</strong></div></td><td><select class="ui-select admin-tier-select" aria-label="Access tier for dispatcher"><option>User</option><option>Administrator</option></select></td><td>Yesterday at 4:38 PM</td><td><div class="admin-row-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Change password for dispatcher"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button" type="button" aria-label="Delete dispatcher"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -657,7 +658,7 @@
   <main class="visual-feature-example visual-scanner-example">
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Listen</p><h1>Scanner</h1><p>Listen to completed calls from this receiver.</p></div><div class="scanner-header-actions"><div class="ui-segmented scanner-view-modes"><button class="ui-segmented-option">Simple</button><button class="ui-segmented-option active">Normal</button><button class="ui-segmented-option">Advanced</button><button class="ui-segmented-option">Engineer</button></div><button class="ui-button ui-button-secondary ui-icon-button" aria-label="Scanner settings">⚙</button></div></header>
     <div class="scanner-page">
-      <section class="scanner-workspace">
+      <section class="scanner-workspace ui-surface">
         <div class="scanner-status-bar"><strong class="ui-pill scanner-live-status active">Listening</strong><output class="scanner-relative-age">Just now</output></div>
         <div class="scanner-display-shell"><div class="scanner-display">
           <div class="scanner-call-intro"><div><span class="scanner-call-kind">P25 Phase 1 · Voice</span><strong class="scanner-call-title">County Fire Dispatch</strong><span class="scanner-call-subtitle">Regional Public Safety · Simulcast</span></div><div class="scanner-call-instruments"><span class="scanner-quality-bars"><i class="active"></i><i class="active"></i><i class="active"></i><i class="active"></i><i></i></span><div class="scanner-audio-wave visual-scanner-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
@@ -667,7 +668,7 @@
         <div class="scanner-controls"><button class="ui-button ui-button-primary scanner-key active">Stop</button><button class="ui-button ui-button-secondary scanner-key">Pause</button><button class="ui-button ui-button-secondary scanner-key">Replay Last Call</button><button class="ui-button ui-button-secondary scanner-key">Skip</button><button class="ui-button ui-button-secondary scanner-key">Hold</button><button class="ui-button ui-button-danger scanner-key">Avoid</button><button class="ui-button ui-button-secondary scanner-key">Avoid List</button><button class="ui-button ui-button-secondary scanner-key">Clear Queue (2)</button></div>
         <div class="scanner-utility-row"><span>Browser volume</span><input class="ui-range" type="range" value="72"><output>72%</output></div>
       </section>
-      <section class="scanner-scan-lists"><div class="scanner-scan-heading"><div><strong>Scan Lists</strong><span>2 of 3 listening</span></div><button class="ui-button ui-button-secondary">View coverage tree</button></div><div class="scanner-scan-buttons"><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">1</span><strong>Fire &amp; EMS</strong><small>Primary dispatch</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">2</span><strong>Law Dispatch</strong><small>County operations</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-number">3</span><strong>Utilities</strong><small>Public works</small></button></div></section>
+      <section class="scanner-scan-lists ui-surface"><div class="scanner-scan-heading ui-surface-header"><div><strong>Scan Lists</strong><span>2 of 3 listening</span></div><button class="ui-button ui-button-secondary">View coverage tree</button></div><div class="scanner-scan-buttons"><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">1</span><strong>Fire &amp; EMS</strong><small>Primary dispatch</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">2</span><strong>Law Dispatch</strong><small>County operations</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-number">3</span><strong>Utilities</strong><small>Public works</small></button></div></section>
     </div>
   </main>
 
@@ -677,7 +678,7 @@
       <div class="tuner-spectrum-toolbar">
         <div class="tuner-spectrum-selection"><label class="tuner-spectrum-target"><span class="ui-select-frame"><select class="ui-select" aria-label="Receiver window"><option>Airspy HF+ · 851.0125 MHz · 768 kHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label><span class="ui-pill ui-pill-success">Live</span></div>
         <div class="tuner-spectrum-toolbar-actions">
-          <div class="tuner-spectrum-zoom-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in">+</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out">−</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom">↺</button></div><div class="tuner-spectrum-playback-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Pause">‖</button></div>
+          <div class="tuner-spectrum-zoom-actions ui-control-group"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in">+</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out">−</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom">↺</button></div><div class="tuner-spectrum-playback-actions ui-control-group"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Pause">‖</button></div>
           <details class="tuner-spectrum-options" open>
             <summary class="ui-button ui-button-secondary tuner-spectrum-options-summary"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg><span>Display options</span></summary>
             <div class="tuner-spectrum-options-panel">
@@ -705,11 +706,11 @@
           <header class="settings-card-header rfp-panel-head"><h2 class="settings-card-title">Build a coverage plan</h2><p class="settings-card-description">Choose the tuners, sample rates, and channels you want to use.</p></header>
           <form class="rfp-form admin-form settings-card-body">
             <div class="rfp-tuner-pool">
-              <div class="rfp-tuner-pool-head"><span class="rfp-label">Tuners in this plan</span><button class="ui-button ui-button-secondary rfp-small" type="button">Add tuner</button></div>
+              <div class="rfp-tuner-pool-head"><span class="rfp-label">Tuners in this plan</span><button class="ui-button ui-button-secondary" type="button"><svg aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add tuner</button></div>
               <p class="rfp-tuner-source">Loaded 1 tuner from this receiver. Recording tuners are not included.</p>
               <div class="rfp-tuner-list">
-                <section class="rfp-tuner-card">
-                  <div class="rfp-tuner-card-head"><div class="rfp-tuner-card-title"><span class="rfp-tuner-index">01</span><span>RTL-SDR 00000001</span></div><div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary rfp-icon" type="button">Duplicate</button><button class="ui-button ui-button-danger-quiet rfp-icon" type="button" disabled>Remove</button></div></div>
+                <section class="rfp-tuner-card ui-inset-surface">
+                  <div class="rfp-tuner-card-head"><div class="rfp-tuner-card-title"><span class="rfp-tuner-index">01</span><span>RTL-SDR 00000001</span></div><div class="rfp-tuner-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Duplicate this tuner"><svg aria-hidden="true"><use href="#visual-icon-copy"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button" type="button" aria-label="Remove this tuner" disabled><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></div>
                   <div class="rfp-tuner-fields"><label class="ui-field rfp-field"><span class="ui-field-label">Tuner model</span><select class="ui-select"><option>RTL-SDR (R8x)</option></select></label><label class="ui-field rfp-field"><span class="ui-field-label">Sample rate</span><select class="ui-select"><option>2.4 MHz</option></select></label></div>
                   <div class="rfp-tuner-spec">2.304 MHz coverage · 25 kHz center exclusion · 24–1766 MHz tuning range</div>
                 </section>
@@ -726,7 +727,7 @@
             <section class="rfp-summary ui-metric-grid"><div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-conventional"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Channels entered</span><strong>3</strong></div></div><div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-channel"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Channels covered</span><strong>3</strong></div></div><div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-radio"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Tuners used</span><strong>1/1</strong></div></div></section>
             <div class="ui-notice ui-notice-warning rfp-notice"><span aria-hidden="true">!</span><div>This plan assumes the listed channels need coverage at the same time.</div></div>
             <article class="settings-card rfp-tuner-result">
-              <header class="settings-card-header rfp-result-head"><div class="rfp-result-title"><span class="rfp-tuner-number">01</span><div><h3>Tuner 1</h3><p>3 channels · RTL-SDR (R8x) · 2.4 MHz</p></div></div><button class="ui-button ui-button-secondary rfp-small" type="button">Copy frequency</button></header>
+              <header class="settings-card-header rfp-result-head"><div class="rfp-result-title"><span class="rfp-tuner-number">01</span><div><h3>Tuner 1</h3><p>3 channels · RTL-SDR (R8x) · 2.4 MHz</p></div></div><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Copy center frequency"><svg aria-hidden="true"><use href="#visual-icon-copy"></use></svg></button></header>
               <div class="rfp-center-value"><span class="rfp-center-label">Recommended center</span><div class="rfp-center-frequency">851.400000 <small>MHz · 851400000 Hz</small></div></div>
               <div class="rfp-spectrum"><div class="rfp-spectrum-track"><span class="rfp-usable-zone" style="left:2%;right:2%"></span><span class="rfp-edge-guard" style="left:0;width:2%"></span><span class="rfp-edge-guard" style="left:98%;right:0"></span><span class="rfp-dc-zone" style="left:49.5%;width:1%"></span><span class="rfp-center-line"></span><span class="rfp-channel-band" style="left:33%;width:1%;top:23px"></span><span class="rfp-channel-band" style="left:43%;width:1%;top:54px"></span><span class="rfp-channel-band" style="left:64%;width:1%;top:85px"></span></div><div class="rfp-band-labels"><span>850.2000 MHz</span><span>▲ 851.400000</span><span>852.6000 MHz</span></div><div class="rfp-spectrum-legend"><span><i class="rfp-legend-swatch channel"></i>Channel width</span><span><i class="rfp-legend-swatch"></i>Coverage range</span><span><i class="rfp-legend-swatch guard"></i>Edge buffer</span><span><i class="rfp-legend-swatch dc"></i>Center exclusion</span></div></div>
               <div class="rfp-detail-grid"><div><span>Coverage range</span><strong>850.24800–852.55200 MHz</strong></div><div><span>Edge buffer</span><strong>48 kHz each side</strong></div><div><span>Center exclusion</span><strong>±25 kHz</strong></div></div>
@@ -777,7 +778,7 @@
   <div class="visual-alias-modal-example">
     <div class="modal-backdrop">
       <section class="read-only-modal alias-editor-modal alias-record-modal" role="dialog" aria-modal="true" aria-labelledby="visual-alias-modal-title">
-        <header class="modal-header"><h2 id="visual-alias-modal-title">Edit Fire Dispatch</h2><button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button></header>
+        <header class="modal-header"><h2 id="visual-alias-modal-title">Edit Fire Dispatch</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
         <div class="modal-content">
           <form class="alias-editor-form editor-workspace">
             <nav class="alias-modal-tabs ui-segmented" role="tablist" aria-label="Alias editor sections"><button class="ui-segmented-option" type="button" aria-selected="false">Basics</button><button class="ui-segmented-option" type="button" aria-selected="false">Identifier</button><button class="ui-segmented-option active" type="button" aria-selected="true">Call Handling</button><button class="ui-segmented-option" type="button" aria-selected="false">Activity</button></nav>
@@ -797,7 +798,7 @@
   <div class="visual-alias-export-example">
     <div class="modal-backdrop">
       <section class="read-only-modal alias-editor-modal alias-transfer-modal" role="dialog" aria-modal="true" aria-labelledby="visual-alias-export-title">
-        <header class="modal-header"><h2 id="visual-alias-export-title">Export aliases from County Public Safety</h2><button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button></header>
+        <header class="modal-header"><h2 id="visual-alias-export-title">Export aliases from County Public Safety</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
         <div class="modal-content">
           <div class="alias-transfer-panel">
             <div class="alias-transfer-export-summary"><h3>Export County Public Safety</h3><p>Download all 1,248 aliases in this list as an importable VCE CSV.</p><p class="muted">The file includes matchers, appearance, recording choices, scan-list memberships, named streaming destinations, and the source Alias List name.</p><p class="muted">Referenced scan lists, streaming destinations, and icons must exist on the receiving installation.</p></div>
@@ -914,7 +915,7 @@
   <div class="visual-live-filter-example">
     <div class="modal-backdrop">
       <section class="read-only-modal live-filter-modal" role="dialog" aria-modal="true" aria-labelledby="visual-live-filter-title">
-        <header class="modal-header"><h2 id="visual-live-filter-title">Event filters</h2><button class="ui-button ui-icon-button" type="button" aria-label="Close">×</button></header>
+        <header class="modal-header"><h2 id="visual-live-filter-title">Event filters</h2><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Close"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button></header>
         <div class="modal-content"><div class="live-filter-editor"><p class="modal-lead">Choose which events to show. Filters only change what you see here.</p><section class="live-filter-section"><h3>Event types</h3><div class="live-filter-type-actions"><button class="ui-button ui-button-secondary" type="button">Show all types</button><button class="ui-button ui-button-secondary" type="button">Hide all types</button></div><div class="live-filter-tree" role="tree"><div class="live-filter-tree-item branch"><div class="live-filter-node-row visual-live-filter-depth-0"><button class="ui-button ui-button-secondary ui-icon-button live-filter-expand" type="button" aria-label="Collapse calls">−</button><label class="live-filter-node-label"><input class="ui-selection-check" type="checkbox" checked><span>Calls</span><span class="live-filter-node-count">3/3</span></label></div><div class="live-filter-tree-children"><div class="live-filter-tree-item leaf"><div class="live-filter-node-row visual-live-filter-depth-1"><span class="live-filter-expand-spacer"></span><label class="live-filter-node-label"><input class="ui-selection-check" type="checkbox" checked><span>Group calls</span></label></div></div><div class="live-filter-tree-item leaf"><div class="live-filter-node-row visual-live-filter-depth-1"><span class="live-filter-expand-spacer"></span><label class="live-filter-node-label"><input class="ui-selection-check" type="checkbox" checked><span>Encrypted calls</span></label></div></div></div></div><div class="live-filter-tree-item branch"><div class="live-filter-node-row visual-live-filter-depth-0"><button class="ui-button ui-button-secondary ui-icon-button live-filter-expand" type="button" aria-label="Expand registration">+</button><label class="live-filter-node-label"><input class="ui-selection-check" type="checkbox" checked><span>Registration</span><span class="live-filter-node-count">4/4</span></label></div></div></div></section><div class="live-filter-settings"><label class="live-filter-search"><span>Search</span><input class="ui-input" type="search" placeholder="Search parties or details"></label></div><div class="live-filter-footer"><button class="ui-button ui-button-secondary" type="button">Reset filters</button><button class="ui-button ui-button-primary" type="button">Done</button></div></div></div>
       </section>
     </div>

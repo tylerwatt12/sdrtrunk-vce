@@ -3,12 +3,14 @@
 .ui-input,
 .ui-textarea {
   min-height: var(--ui-control-height, var(--control-height-comfortable));
-  padding: 8px 11px;
+  padding: 8px 12px;
   color: var(--ink);
   background-color: var(--surface);
   border: 1px solid var(--interactive-border);
   border-radius: var(--ui-control-radius, var(--radius-control));
   font: inherit;
+  font-size: var(--font-size-control);
+  line-height: var(--line-height-control);
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
@@ -65,7 +67,7 @@
 .ui-textarea:focus-visible {
   outline: 0;
   border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 25%, transparent);
+  box-shadow: var(--shadow-focus);
 }
 
 .ui-button {
@@ -74,15 +76,19 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 8px 13px;
+  padding: 8px 14px;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--interactive-border);
   border-radius: var(--ui-control-radius, var(--radius-control));
+  box-shadow: var(--shadow-button);
   font: inherit;
-  font-weight: 650;
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-control);
+  line-height: var(--line-height-control);
   cursor: pointer;
-  transition: transform 100ms ease, border-color 120ms ease, background-color 120ms ease;
+  transition: transform 100ms ease, border-color 120ms ease, background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .ui-button svg,
@@ -103,17 +109,26 @@
 .ui-button:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--accent);
   background: var(--surface-2);
+  box-shadow: var(--shadow-button-hover);
+  transform: translateY(-1px);
 }
 
 .ui-button:active:not(:disabled, [aria-disabled="true"]) {
-  transform: translateY(1px);
+  box-shadow: var(--shadow-button-pressed);
+  transform: translateY(0);
+}
+
+.ui-control-group > .ui-button:hover:not(:disabled, [aria-disabled="true"]),
+.ui-control-group > .ui-button:active:not(:disabled, [aria-disabled="true"]) {
+  transform: none;
 }
 
 .ui-button.active,
 .ui-button[aria-pressed="true"] {
   color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--surface);
   border-color: var(--accent);
+  box-shadow: var(--shadow-selected);
 }
 
 .ui-button-primary.active,
@@ -121,6 +136,7 @@
   color: var(--primary-control-ink);
   background: var(--primary-control-hover);
   border-color: var(--primary-control-hover);
+  box-shadow: var(--shadow-button-pressed);
 }
 
 .ui-button:focus-visible,
@@ -133,6 +149,7 @@
 .ui-button:disabled {
   cursor: not-allowed;
   opacity: .48;
+  box-shadow: none;
 }
 
 .ui-button-header {
@@ -157,6 +174,7 @@
 .ui-button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: .48;
+  box-shadow: none;
 }
 
 .link-button {
@@ -233,6 +251,7 @@
   color: var(--danger);
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
 }
 
 .ui-button-danger:hover:not(:disabled, [aria-disabled="true"]),
@@ -260,6 +279,7 @@
 .ui-icon-button.ui-button-danger-quiet {
   background: var(--surface);
   border-color: var(--interactive-border);
+  box-shadow: var(--shadow-button);
 }
 
 .ui-icon-button:not(.ui-button-primary, .ui-button-header, .ui-button-danger-quiet):hover:not(:disabled, [aria-disabled="true"]) {
@@ -361,7 +381,7 @@
 .ui-toggle-state {
   min-width: 22px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 650;
 }
 
@@ -487,7 +507,7 @@
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -511,23 +531,25 @@
   padding: 3px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-inset-group);
 }
 
 .ui-segmented-option {
-  min-height: 34px;
+  min-height: var(--control-height-compact);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px 14px;
   color: var(--muted);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   font: inherit;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--font-size-control);
+  font-weight: var(--font-weight-control);
+  line-height: var(--line-height-control);
   cursor: pointer;
 }
 
@@ -536,6 +558,26 @@
 .ui-segmented-option[aria-selected="true"] {
   color: var(--ink);
   background: var(--surface);
+  box-shadow: var(--shadow-selected);
+}
+
+.ui-control-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-button);
+}
+
+.ui-control-group > .ui-button {
+  --ui-control-height: var(--control-height-compact);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ui-control-group > .ui-button:hover:not(:disabled, [aria-disabled="true"]) {
   box-shadow: var(--shadow-selected);
 }
 
@@ -643,7 +685,7 @@
 
 .ui-choice-radio:checked {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--shadow-choice);
 }
 
 .ui-choice-radio:checked::before {
@@ -681,7 +723,7 @@
 .ui-choice-card:has(.ui-choice-radio:checked) {
   background: var(--accent-soft);
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: var(--shadow-selection-inset);
 }
 
 .ui-choice-card:focus-visible {
@@ -723,12 +765,12 @@
 
 .ui-toggle-copy strong {
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ui-toggle-copy small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   line-height: 1.4;
 }
 
@@ -769,7 +811,7 @@
 
 .ui-input-unit {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   font-weight: 700;
 }
 
@@ -781,13 +823,13 @@
 }
 
 .ui-field-label {
-  font-size: 12px;
+  font-size: var(--font-size-label);
   font-weight: 750;
 }
 
 .ui-field-detail {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-size-meta);
   line-height: 1.45;
 }
 
@@ -908,7 +950,7 @@
 }
 
 :root[data-theme="dark"] .ui-button:not(.ui-button-primary):not(.ui-button-danger):not(.ui-button-danger-quiet) {
-  color: var(--link);
+  color: var(--ink);
 }
 
 :root[data-theme="dark"] .ui-button-primary {

@@ -10,32 +10,32 @@ const entryStylesheet = path.resolve(process.argv[2]
 
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, legacy, components, compositions, features, utilities;',
-  '@import url("./styles/base.css") layer(reset);',
-  '@import url("./styles/tokens.css?v=3") layer(tokens);',
-  '@import url("./styles/legacy.css?v=8") layer(legacy);',
-  '@import url("./styles/components/controls.css?v=9") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=8") layer(compositions);',
+  '@import url("./styles/base.css?v=1") layer(reset);',
+  '@import url("./styles/tokens.css?v=4") layer(tokens);',
+  '@import url("./styles/legacy.css?v=9") layer(legacy);',
+  '@import url("./styles/components/controls.css?v=10") layer(components);',
+  '@import url("./styles/compositions/workspaces.css?v=9") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=5") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=4") layer(compositions);',
-  '@import url("./styles/compositions/charts.css?v=2") layer(compositions);',
-  '@import url("./styles/compositions/modals.css?v=3") layer(compositions);',
-  '@import url("./styles/compositions/settings.css?v=2") layer(compositions);',
-  '@import url("./styles/features/channels.css?v=6") layer(features);',
-  '@import url("./styles/features/entity-details.css?v=8") layer(features);',
-  '@import url("./styles/features/live.css?v=4") layer(features);',
+  '@import url("./styles/compositions/app-chrome.css?v=5") layer(compositions);',
+  '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
+  '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
+  '@import url("./styles/compositions/settings.css?v=3") layer(compositions);',
+  '@import url("./styles/features/channels.css?v=7") layer(features);',
+  '@import url("./styles/features/entity-details.css?v=9") layer(features);',
+  '@import url("./styles/features/live.css?v=5") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=3") layer(features);',
-  '@import url("./styles/features/tuner-spectrum.css?v=7") layer(features);',
-  '@import url("./styles/features/scanner.css?v=2") layer(features);',
-  '@import url("./styles/features/rf-planner.css?v=2") layer(features);',
-  '@import url("./styles/features/aliases.css?v=5") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css?v=8") layer(features);',
+  '@import url("./styles/features/scanner.css?v=3") layer(features);',
+  '@import url("./styles/features/rf-planner.css?v=3") layer(features);',
+  '@import url("./styles/features/aliases.css?v=6") layer(features);',
   '@import url("./styles/features/dashboard.css?v=2") layer(features);',
-  '@import url("./styles/features/administration.css?v=2") layer(features);',
+  '@import url("./styles/features/administration.css?v=3") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=2") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=9") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=10") layer(features);',
   '@import url("./styles/features/streaming.css?v=1") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
-  '@import url("./styles/features/receiver-health.css?v=2") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css?v=3") layer(utilities);',
+  '@import url("./styles/features/receiver-health.css?v=3") layer(features);',
+  '@import url("./styles/utilities/reduced-motion.css?v=4") layer(utilities);',
 ];
 
 // Existing global element selectors are frozen debt. New controls and tables must be
@@ -44,7 +44,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map();
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 260;
+const LEGACY_LINE_BUDGET = 203;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],
@@ -620,6 +620,39 @@ function validateModernControlStates(stylesheets, entry) {
   );
 }
 
+function validateThemeFoundation(stylesheets, entry) {
+  const tokens = stylesheetModule(stylesheets, entry, 'tokens.css').source;
+  const controls = stylesheetModule(stylesheets, entry, 'components/controls.css').source;
+  const workspaces = stylesheetModule(stylesheets, entry, 'compositions/workspaces.css').source;
+
+  for(const token of ['--radius-control', '--radius-card', '--radius-modal', '--font-size-body',
+    '--font-size-control', '--font-weight-control', '--shadow-button', '--shadow-button-hover',
+    '--shadow-button-pressed', '--shadow-surface', '--shadow-surface-soft']) {
+    assert.match(tokens, new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`),
+      `The unified theme foundation requires ${token}`);
+  }
+
+  const button = ruleBody(controls, '.ui-button');
+  assert.match(button, /border-radius:\s*var\(--ui-control-radius, var\(--radius-control\)\)/,
+    'Shared buttons must use the semantic control radius');
+  assert.match(button, /box-shadow:\s*var\(--shadow-button\)/,
+    'Shared buttons must use the semantic button elevation');
+  assert.match(button, /font-size:\s*var\(--font-size-control\)/,
+    'Shared buttons must use the semantic control type size');
+  assert.match(button, /font-weight:\s*var\(--font-weight-control\)/,
+    'Shared buttons must use the semantic control weight');
+
+  const compact = ruleBody(workspaces, ':where(.data-workspace, [data-ui-density="compact"])');
+  assert.match(compact, /--ui-control-radius:\s*var\(--radius-control\)/,
+    'Compact workspaces must share the standard control shape');
+  assert.match(compact, /--ui-surface-radius:\s*var\(--radius-card\)/,
+    'Compact workspaces must share the standard card shape');
+  assert.match(compact, /--ui-surface-shadow:\s*var\(--shadow-surface-soft\)/,
+    'Compact workspaces must retain the shared surface elevation');
+  assert.doesNotMatch(compact, /--ui-(?:control|surface)-radius:\s*var\(--radius-compact\)/,
+    'Density may change spacing but must not create an older compact visual theme');
+}
+
 function validateModalComposition(stylesheets, entry) {
   const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const modals = stylesheetModule(stylesheets, entry, 'compositions/modals.css').source;
@@ -817,6 +850,9 @@ function validateReducedMotionCoverage(stylesheets, entry) {
 
   assert.deepEqual(missing, [],
     `Modern transitions need ${reducedMotionHeader} overrides in utilities/reduced-motion.css`);
+  const hoveredButton = ruleBody(utilities.source,
+    '.ui-button:hover:not(:disabled, [aria-disabled="true"])');
+  assert.match(hoveredButton, /transform:\s*none/);
   const pressedButton = ruleBody(utilities.source, '.ui-button:active:not(:disabled)');
   assert.match(pressedButton, /transform:\s*none/);
 }
@@ -938,6 +974,7 @@ validateSelectorBudget(stylesheets);
 validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
 validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
+validateThemeFoundation(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);
 validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);

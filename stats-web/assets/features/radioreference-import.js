@@ -530,7 +530,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           onApplied?.(response);
         } catch (error) {
           modal.setBusy(false);
-          const close = button('Close', 'ui-button ui-button-primary');
+          const close = button('Close', 'ui-button ui-button-secondary');
           close.addEventListener('click', modal.close);
           const invalid = node('div', 'radioreference-import-complete');
           invalid.append(uiPill('Preview no longer valid', 'danger'),
@@ -1138,7 +1138,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (sequence !== state.detailSequence) return;
       const details = documentValue?.system || documentValue;
       const panel = node('section', 'radioreference-system-workspace ui-surface');
-      const header = node('header', 'radioreference-detail-header');
+      const header = node('header', 'radioreference-detail-header ui-surface-header');
       const title = node('div');
       title.append(node('span', 'muted', [textValue(system, ['breadcrumb']), 'Trunked system']
         .filter(Boolean).join(' · ')),
@@ -1240,7 +1240,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (sequence !== state.detailSequence) return;
       const categories = rows(categoriesDocument);
       const panel = node('section', 'radioreference-system-workspace ui-surface');
-      const header = node('header', 'radioreference-detail-header');
+      const header = node('header', 'radioreference-detail-header ui-surface-header');
       const title = node('div');
       title.append(node('span', 'muted', [textValue(entry, ['breadcrumb']), 'Conventional agency']
         .filter(Boolean).join(' · ')),

@@ -483,7 +483,7 @@ async function main() {
   assert.match(functionBinding(appSource, 'renderAdminAccess'), /admin-operation-status ui-notice/);
   assert.match(functionBinding(appSource, 'userIdentityCell'), /uiPill\('Primary', 'success'\)/);
   assert.match(functionBinding(appSource, 'userActions'),
-    /ui-button ui-button-secondary[\s\S]+ui-button ui-button-danger/);
+    /iconButton\('icon-edit'[\s\S]+iconButton\('icon-trash'[\s\S]+ui-button ui-button-danger-quiet ui-icon-button/);
   const dashboardCallChart = functionBinding(appSource, 'dashboardCallActivityChart');
   assert.match(dashboardCallChart, /dashboard-control-group ui-segmented/);
   assert.match(dashboardCallChart, /ui-segmented-option dashboard-filter-button/);

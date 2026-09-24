@@ -176,7 +176,7 @@
 
 .channel-editor-modal {
   width: min(1060px, 96vw);
-  border-radius: 14px;
+  border-radius: var(--radius-modal);
   box-shadow: var(--shadow-raised);
 }
 
@@ -216,7 +216,7 @@
   padding: 8px;
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
 }
 
 .channel-restart-notice svg {
@@ -420,7 +420,7 @@
   padding: 7px 9px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
 }
 
 .channel-observed-item span {

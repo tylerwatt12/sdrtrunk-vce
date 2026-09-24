@@ -157,8 +157,8 @@
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: var(--radius-control);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
   text-decoration: none;
 }
 
@@ -171,8 +171,9 @@
 
 .admin-settings-leaf.active {
   color: var(--accent);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-selected);
 }
 
 .settings-scope-badge {

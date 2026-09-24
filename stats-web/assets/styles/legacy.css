@@ -93,28 +93,13 @@
 .access-denied-card {
   max-width: 640px;
   margin: 42px auto;
-  padding: 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  box-shadow: 0 6px 24px rgb(0 0 0 / 9%);
-}
-
-.access-denied-card h2 {
-  margin: 0 0 8px;
-}
-
-.access-denied-card p {
-  margin: 0 0 18px;
-  color: var(--muted);
-  line-height: 1.5;
 }
 
 .alias-color-value {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .alias-color-swatch {
@@ -181,20 +166,12 @@
 }
 
 .yes {
-  color: #087347;
+  color: var(--success);
   font-weight: 600;
 }
 
 .async-section-error .async-section-retry {
   margin-top: 12px;
-}
-
-:root[data-theme="dark"] .encrypted {
-  color: #ff8cba;
-}
-
-:root[data-theme="dark"] .yes {
-  color: #79dca6;
 }
 
 @media (max-width: 560px) {

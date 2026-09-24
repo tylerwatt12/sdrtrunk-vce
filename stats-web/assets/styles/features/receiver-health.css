@@ -125,8 +125,12 @@
   flex-direction: column;
   justify-content: center;
   gap: var(--space-1);
+  margin: 10px;
   padding: var(--space-3) 14px;
-  border-left: 5px solid var(--line-dark);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-surface-soft);
 }
 
 .receiver-health-overview-state span {
@@ -142,25 +146,25 @@
 .receiver-health-overview-state.receiver-health-healthy {
   color: var(--success);
   background: var(--success-soft);
-  border-left-color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 48%, var(--line));
 }
 
 .receiver-health-overview-state.receiver-health-warning {
   color: var(--warning-ink);
   background: var(--warning-soft);
-  border-left-color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--line));
 }
 
 .receiver-health-overview-state.receiver-health-critical {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));
-  border-left-color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--line));
 }
 
 .receiver-health-overview-state.receiver-health-stale {
   color: var(--muted);
   background: var(--surface-2);
-  border-left-color: var(--line-dark);
+  border-color: var(--line-dark);
 }
 
 .receiver-health-timing {
@@ -208,16 +212,16 @@
   padding: var(--space-3);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-left: 5px solid var(--success);
   border-radius: var(--radius-control);
+  box-shadow: var(--shadow-surface-soft);
 }
 
 .receiver-health-resource-bar.receiver-health-warning {
-  border-left-color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 46%, var(--line));
 }
 
 .receiver-health-resource-bar.receiver-health-critical {
-  border-left-color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--line));
 }
 
 .receiver-health-resource-heading {
@@ -325,16 +329,16 @@
   min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-left: 5px solid var(--line-dark);
   border-radius: var(--radius-control);
+  box-shadow: var(--shadow-surface-soft);
 }
 
 .receiver-health-incident.receiver-health-warning {
-  border-left-color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 46%, var(--line));
 }
 
 .receiver-health-incident.receiver-health-critical {
-  border-left-color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--line));
 }
 
 .receiver-health-incident-heading {
@@ -459,10 +463,7 @@ summary.receiver-health-incident-heading:focus-visible {
 }
 
 .receiver-health-resolved-select {
-  height: 30px;
-  min-height: 30px;
-  padding-block: var(--space-1);
-  font: inherit;
+  --ui-control-height: var(--control-height-compact);
 }
 
 .receiver-health-resolved-pager {

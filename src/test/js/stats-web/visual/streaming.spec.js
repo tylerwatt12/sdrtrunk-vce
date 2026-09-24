@@ -26,6 +26,14 @@ async function install(page, theme = 'light', empty = false) {
       icon.innerHTML = '<circle cx="12" cy="12" r="7"></circle>';
       return icon;
     };
+    const iconButton = (_iconId, label, className = 'ui-button ui-button-secondary ui-icon-button') => {
+      const control = node('button', className);
+      control.type = 'button';
+      control.setAttribute('aria-label', label);
+      control.title = label;
+      control.append(iconGlyph());
+      return control;
+    };
     const formField = (labelText, control, detail = '') => {
       const field = node('label', 'admin-form-field ui-field');
       field.append(node('span', 'admin-form-label ui-field-label', labelText), control);
@@ -88,8 +96,9 @@ async function install(page, theme = 'light', empty = false) {
       return wrapper;
     };
 
-    const shared = new Function('node', 'valueNode', `let activeReadOnlyModal = null; ${helpersSource}
-      return { openReadOnlyModal, uiToggleField, uiSegmentedControl };`)(node, value => value instanceof Node ? value : document.createTextNode(String(value)));
+    const shared = new Function('node', 'valueNode', 'iconButton', `let activeReadOnlyModal = null; ${helpersSource}
+      return { openReadOnlyModal, uiToggleField, uiSegmentedControl };`)(node,
+        value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton);
     const fields = [
       {key:'name',label:'Name',type:'text',maximum:255},
       {key:'enabled',label:'Enabled',type:'boolean'},

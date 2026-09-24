@@ -85,9 +85,6 @@
   display: grid;
   gap: var(--space-3);
   padding: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
 }
 
 .rfp-tuner-card-title,
@@ -116,7 +113,7 @@
   background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
   border-radius: var(--radius-compact);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-weight: 750;
 }
 
@@ -154,27 +151,15 @@
 
 .rfp-hint code {
   color: var(--warning-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .rfp-frequencies {
   min-height: 184px;
   resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.55;
-}
-
-.rfp-small {
-  --ui-control-height: 32px;
-  padding: 5px 9px;
-  font-size: 11px;
-}
-
-.rfp-icon {
-  --ui-control-height: 29px;
-  padding: 4px 7px;
-  font-size: 10px;
 }
 
 .rfp-actions {
@@ -487,17 +472,6 @@
   .rfp-tuner-card-head,
   .rfp-result-head {
     align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .rfp-tuner-actions,
-  .rfp-result-head > .rfp-small {
-    width: 100%;
-  }
-
-  .rfp-tuner-actions > *,
-  .rfp-result-head > .rfp-small {
-    flex: 1 1 0;
   }
 
   .rfp-tuner-fields,

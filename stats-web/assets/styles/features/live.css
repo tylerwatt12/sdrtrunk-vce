@@ -351,8 +351,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .live-details-controls,
 .live-events-toolbar,
 .live-messages-toolbar,
-.live-channel-toolbar,
-.live-event-filter {
+.live-channel-toolbar {
   display: flex;
   align-items: center;
 }
@@ -387,21 +386,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.live-event-filter {
-  flex: 0 0 auto;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.live-event-filter select {
-  min-height: 27px;
-  padding: 2px 5px;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
 }
 
 .live-events-scroll {
@@ -553,10 +537,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .channel-diagnostic-card {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-surface-soft);
 }
 
 .channel-diagnostic-header {
@@ -566,8 +546,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   justify-content: space-between;
   gap: 8px;
   padding: 5px var(--space-2) 5px var(--space-3);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
 }
 
 .channel-diagnostic-title {

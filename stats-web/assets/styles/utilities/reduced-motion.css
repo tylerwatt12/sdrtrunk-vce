@@ -52,6 +52,10 @@
     transition: none;
   }
 
+  .ui-button:hover:not(:disabled, [aria-disabled="true"]) {
+    transform: none;
+  }
+
   .ui-button:active:not(:disabled) {
     transform: none;
   }

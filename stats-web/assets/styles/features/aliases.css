@@ -41,11 +41,6 @@
   border-bottom: 1px solid var(--line);
 }
 
-.alias-list-create {
-  min-height: 27px;
-  padding: 3px 8px;
-}
-
 .alias-list-search {
   margin: var(--space-3);
 }
@@ -375,7 +370,7 @@
   padding: 24px;
   text-align: center;
   border: 2px dashed var(--line-dark);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   cursor: pointer;
 }
@@ -435,18 +430,12 @@
   gap: 6px;
 }
 
-.alias-transfer-review-filters button[aria-pressed="true"] {
-  color: var(--primary-control-ink);
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
 .alias-transfer-export-summary {
   display: grid;
   gap: 8px;
   padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--surface-2);
 }
 
@@ -467,7 +456,7 @@
 .alias-transfer-review {
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--surface-2);
 }
 
@@ -537,7 +526,7 @@
   margin-top: 6px;
   padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   overflow-wrap: anywhere;
 }
@@ -747,8 +736,6 @@
 }
 
 .alias-conflict-button {
-  min-height: 28px;
-  padding: 3px 8px;
   white-space: nowrap;
 }
 
@@ -781,7 +768,7 @@
   padding: 8px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
 }
 
 .alias-conflict-item small {
