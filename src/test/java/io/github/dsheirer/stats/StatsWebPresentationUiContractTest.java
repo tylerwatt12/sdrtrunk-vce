@@ -53,8 +53,6 @@ class StatsWebPresentationUiContractTest
             "async function renderTrunkedChannelFrequencies(channel, renderContext)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
         String channels = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
-        String liveMessages = function(source, "function liveMessagesPane()");
-        String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
 
         assertTrue(source.contains("const trigger = iconButton('icon-columns', 'Choose table columns'"));
         assertTrue(source.contains("function setIconButton(button, iconId, label)"));
@@ -78,10 +76,27 @@ class StatsWebPresentationUiContractTest
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channels.contains("tableClass: 'channel-catalog-table'"));
         assertTrue(channels.contains("controller: tableController"));
-        assertTrue(liveMessages.contains("layoutMenuHost: toolbar"));
-        assertTrue(liveEvents.contains("layoutMenuHost: eventToolbar"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
         assertTrue(source.contains("{ ...options, layoutMenuHost: actions }"));
+    }
+
+    @Test
+    void placesCompactLiveTableActionsInOneSharedDetailsHeader() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String liveMessages = function(source, "function liveMessagesPane()");
+        String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
+
+        assertTrue(liveMessages.contains("layoutMenuHost: columnsHost"));
+        assertTrue(liveMessages.contains("actions.append(columnsHost, filters.element)"));
+        assertTrue(liveEvents.contains("layoutMenuHost: eventColumnsHost"));
+        assertTrue(liveEvents.contains("eventActions.append(eventColumnsHost, filters.element)"));
+        assertTrue(liveEvents.contains("iconButton('icon-pause', 'Pause live details'"));
+        assertTrue(liveEvents.contains("ui-icon-button-compact live-details-pause"));
+        assertTrue(liveEvents.contains(
+            "paneActionsHost.append(eventActions, messagesController.actions, channelController.actions)"));
+        assertFalse(liveEvents.contains("live-events-toolbar"));
+        assertFalse(liveEvents.contains("live-event-selection"));
     }
 
     @Test

@@ -50,6 +50,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveDetailSelectionUnchanged')}
   ${functionSource('liveRequestedChannelMatch')}
   ${functionSource('livePickerNavigationIndex')}
+  ${functionSource('liveDetailsPanelPercent')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -58,7 +59,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
-    livePickerNavigationIndex, liveIdentityType, liveIdentityLabel,
+    livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
 
@@ -133,6 +134,16 @@ assert.equal(behavior.livePickerNavigationIndex('End', 0, 3), 2);
 assert.equal(behavior.livePickerNavigationIndex('Enter', 0, 3), null);
 assert.equal(behavior.livePickerNavigationIndex('ArrowDown', 0, 0), null);
 assert.equal(behavior.livePickerNavigationIndex('ArrowDown', 0.5, 3), null);
+
+assert.equal(behavior.liveDetailsPanelPercent(undefined), 25,
+  'The Live details panel must have a stable default share');
+assert.equal(behavior.liveDetailsPanelPercent(Number.NaN), 25);
+assert.equal(behavior.liveDetailsPanelPercent(4), 15,
+  'The resizer must retain a useful minimum for the details panel');
+assert.equal(behavior.liveDetailsPanelPercent(90), 65,
+  'The resizer must retain a useful minimum for the channel panel');
+assert.equal(behavior.liveDetailsPanelPercent(33.6), 34,
+  'Persisted panel shares must remain compact and deterministic');
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);
@@ -214,6 +225,12 @@ assert.match(channels, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \
   'The desktop picker collapse preference must persist across Live visits');
 assert.match(channels, /picker\.closest\('\.live-split'\)\?\.classList\.toggle\('picker-collapsed', pickerCollapsed\)/,
   'Collapsing the picker must release its grid width to the selected channel workspace');
+assert.match(channels, /selectedViewLead\.append\(pickerCollapse, selectedViewCopy\)/,
+  'The picker disclosure must remain reachable in the selected-view heading when its sidebar is hidden');
+assert.match(channels, /pickerCollapse\.setAttribute\('aria-controls', picker\.id\)/,
+  'The picker disclosure must identify the panel that it hides');
+assert.doesNotMatch(channels, /pickerActions\.(?:append|prepend)\(pickerCollapse\)/,
+  'The picker disclosure must not remain inside the sidebar that it hides');
 assert.match(channels, /mobileCards: true/,
   'Live activity must opt into its responsive card presentation');
 assert.match(channels, /rowClass: \(row\) => selection\?\.rowKey === row\.key \? 'selected' : ''/,
@@ -232,10 +249,25 @@ assert.match(renderRow, /'ArrowDown', 'ArrowUp', 'Home', 'End'/,
   'Selectable rows support roving keyboard navigation');
 
 const details = functionSource('liveEventsPanel');
-assert.match(details, /live-details-summary/,
-  'The mobile details tray keeps selected-channel context when collapsed');
-assert.match(details, /mobileSummary\.textContent = selection\?\.label/,
-  'The collapsed tray summary follows the active Live row');
+assert.doesNotMatch(details, /live-details-summary|live-event-selection|live-events-toolbar/,
+  'Selected-channel identity must not be repeated between the Live table and detail tabs');
+assert.match(details, /iconButton\('icon-pause', 'Pause live details',[\s\S]*live-details-pause/,
+  'The shared Live pause action must use the compact icon-button treatment');
+assert.match(details, /iconButton\('icon-arrow-down', 'Collapse live details',[\s\S]*live-details-collapse/,
+  'The Live details disclosure must use the compact icon-button treatment');
+assert.match(details, /setIconButton\(pause, paused \? 'icon-play' : 'icon-pause'/,
+  'The pause button icon and accessible hint must follow its state');
+assert.match(details, /setIconButton\(collapse, collapsed \? 'icon-arrow-up' : 'icon-arrow-down'/,
+  'The details disclosure icon and accessible hint must follow its state');
+assert.match(details, /eventActions\.append\(eventColumnsHost, filters\.element\)/,
+  'Columns and filters must share the active Events header actions');
+assert.match(details, /layoutMenuHost: eventColumnsHost/,
+  'The Events columns control must render directly in the compact details header');
+assert.match(details, /eventPane\.append\(eventGap, eventsTable\)/,
+  'The Events table must start immediately below the shared details header');
+assert.match(details,
+  /paneActionsHost\.append\(eventActions, messagesController\.actions, channelController\.actions\)/,
+  'Each details tab must contribute actions to the one shared header');
 assert.match(details, /typeof storedCollapsePreference === 'boolean'/,
   'An explicit details-tray preference must override the responsive default');
 assert.match(details, /collapseMedia\.matches/,
@@ -246,3 +278,46 @@ assert.match(details, /collapseMedia\.addEventListener\('change', synchronizeRes
   'The unsaved responsive default follows viewport changes');
 assert.match(details, /collapseMedia\.removeEventListener\('change', synchronizeResponsiveCollapse\)/,
   'The responsive collapse listener is released with the Live page');
+
+const filters = functionSource('liveDetailFilterController');
+assert.match(filters, /iconButton\('icon-filter', `Filter \$\{options\.noun\}`/,
+  'Live detail filters must use the shared compact icon action');
+assert.match(filters, /live-detail-filter-state ui-pill ui-pill-compact/,
+  'The active Live event filter must be summarized as a compact pill');
+assert.match(filters, /setIconButton\(trigger, 'icon-filter'/,
+  'The filter hover hint must describe the current filter state');
+
+const workspaceResizer = functionSource('liveWorkspaceResizer');
+assert.match(workspaceResizer, /separator\.setAttribute\('role', 'separator'\)/,
+  'The panel divider must expose separator semantics');
+assert.match(workspaceResizer, /separator\.setAttribute\('aria-orientation', 'horizontal'\)/);
+assert.match(workspaceResizer, /storeLiveUiState\(\{ details_panel_percent: detailsPercent \}\)/,
+  'The chosen Live panel ratio must persist in the existing Live UI state');
+assert.match(workspaceResizer, /\['ArrowUp', 'ArrowDown', 'Home', 'End'\]/,
+  'The panel divider must support keyboard resizing');
+assert.match(workspaceResizer, /separator\.setPointerCapture\(event\.pointerId\)/,
+  'Pointer resizing must retain ownership until completion');
+assert.match(workspaceResizer, /if \(activePointerCleanup \|\| event\.button !== 0/,
+  'A second pointer must not replace an active resize gesture');
+assert.match(workspaceResizer, /moveEvent\.pointerId !== pointerId/,
+  'Only the pointer that started a resize may move the separator');
+assert.match(workspaceResizer, /upEvent\?\.pointerId !== undefined && upEvent\.pointerId !== pointerId/,
+  'Only the pointer that started a resize may finish the gesture');
+for (const eventName of ['pointermove', 'pointerup', 'pointercancel', 'lostpointercapture']) {
+  assert.match(workspaceResizer,
+    new RegExp(`separator\\.removeEventListener\\('${eventName}'`),
+    `The resizer must release its ${eventName} listener`);
+}
+assert.match(workspaceResizer, /window\.removeEventListener\('blur', cancel\)/,
+  'The resizer must release its window lifecycle listener');
+assert.match(workspaceResizer, /activePointerCleanup\?\.\(\)/,
+  'Page cleanup must end an in-progress resize');
+
+const renderLive = functionSource('renderLive');
+assert.match(renderLive, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace\)/,
+  'Live must create one resizer for its right-side workspace');
+assert.match(renderLive, /pageConnections\.add\(workspaceResizer\)/,
+  'The Live resizer must participate in page lifecycle cleanup');
+assert.match(renderLive,
+  /rightWorkspace\.append\(channels\.element, workspaceResizer\.element, eventsPanel\.element\)/,
+  'The separator must render between the channel and details panels');

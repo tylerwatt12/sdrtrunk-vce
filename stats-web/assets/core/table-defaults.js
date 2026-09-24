@@ -194,9 +194,16 @@ function fittedWidths(tableType, columns, widths, savedWidths, availableWidth) {
   if (!profile) return widths;
   const target = Math.min(Math.max(0, availableWidth), profile.maxWidth || Infinity);
   const extra = Math.max(0, target - widths.reduce((sum, value) => sum + value, 0));
-  const grow = columns.map((column, index) => ({ id: column.id, index }))
-    .filter(({ id }) => profile.grow.includes(id) &&
-      (profile.stretchSaved || !Object.hasOwn(savedWidths, id)));
+  const configuredGrow = columns.map((column, index) => ({ id: column.id, index }))
+    .filter(({ id }) => profile.grow.includes(id));
+  const semanticGrow = configuredGrow.filter(({ id }) =>
+    profile.stretchSaved || !Object.hasOwn(savedWidths, id));
+  // Saved widths are preferred baselines, not a reason for a fitted table to leave
+  // unused panel space. Prefer untouched semantic grow columns, then the table's
+  // configured variable-content columns. Only fall back to all visible columns
+  // when every configured grow column is hidden.
+  const grow = semanticGrow.length ? semanticGrow : (configuredGrow.length ? configuredGrow :
+    columns.map((column, index) => ({ id: column.id, index })));
   if (!extra || !grow.length) return widths;
   const growTotal = grow.reduce((sum, { index }) => sum + widths[index], 0);
   let distributed = 0;

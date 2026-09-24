@@ -23,7 +23,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=9") layer(features);',
   '@import url("./styles/features/entity-details.css?v=10") layer(features);',
-  '@import url("./styles/features/live.css?v=9") layer(features);',
+  '@import url("./styles/features/live.css?v=10") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/scanner.css?v=4") layer(features);',
@@ -775,7 +775,8 @@ function validateLiveFeature(stylesheets, entry) {
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
   for(const selector of ['body[data-view="live"]', '.live-right-workspace', '.live-channel-picker',
     '.channels-live-tabs', '.live-selected-view-header', '.live-details-header',
-    '.channel-diagnostic-grid', '.live-filter-editor', '.live-activity-history-notice']) {
+    '.live-workspace-resizer', '.live-workspace-resizer-grip', '.channel-diagnostic-grid',
+    '.live-filter-editor', '.live-activity-history-notice']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
     assert.match(live, baseRule, `Missing Live feature rule ${selector}`);
@@ -789,8 +790,30 @@ function validateLiveFeature(stylesheets, entry) {
     /@media \(max-width: 1120px\)[\s\S]*\.live-picker-toggle\s*\{[\s\S]*display:\s*inline-flex/,
     'The desktop Live picker must collapse to a mobile selector at narrow widths');
   assert.match(live,
-    /\.live-split\.picker-collapsed\s*\{[\s\S]*grid-template-columns:\s*72px minmax\(0, 1fr\)/,
-    'The collapsed desktop Live picker must become a narrow rail');
+    /\.live-split\.picker-collapsed\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'The collapsed desktop Live picker must release its full column');
+  assert.match(live,
+    /\.live-split\.picker-collapsed > \.live-channel-picker\s*\{[\s\S]*display:\s*none/,
+    'The collapsed desktop Live picker must not leave a blank rail');
+  assert.doesNotMatch(live, /grid-template-columns:\s*72px minmax\(0, 1fr\)/,
+    'The removed picker rail must not return');
+  const workspace = ruleBody(live, '.live-right-workspace');
+  assert.match(workspace, /--live-primary-pane-share:\s*75fr/);
+  assert.match(workspace, /--live-details-pane-share:\s*25fr/);
+  assert.match(workspace,
+    /grid-template-rows:[\s\S]*var\(--live-primary-pane-share\)[\s\S]*14px[\s\S]*var\(--live-details-pane-share\)/,
+    'The Live right workspace must reserve a draggable row between its two panels');
+  assert.match(ruleBody(live, '.live-workspace-resizer'), /cursor:\s*row-resize/,
+    'The Live panel separator must advertise vertical resizing');
+  assert.match(live,
+    /\.live-split\.details-collapsed \.live-workspace-resizer\s*\{[\s\S]*display:\s*none/,
+    'Collapsing details must also hide its inactive separator');
+  assert.match(live,
+    /@media \(max-width: 760px\)[\s\S]*\.live-workspace-resizer\s*\{[\s\S]*display:\s*none/,
+    'The stacked mobile Live view must hide the desktop resize handle');
+  assert.doesNotMatch(live,
+    /live-(?:events|messages|channel)-(?:toolbar|selection)|live-details-summary/,
+    'The compact details header must replace legacy duplicate toolbars and headings');
   assert.match(live,
     /@media \(max-width: 1120px\)[\s\S]*\.live-picker-collapse\s*\{[\s\S]*display:\s*none/,
     'The desktop collapse control must not replace the narrow-screen picker');

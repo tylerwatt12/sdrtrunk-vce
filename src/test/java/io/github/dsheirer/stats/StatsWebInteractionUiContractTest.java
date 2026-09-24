@@ -1268,6 +1268,7 @@ class StatsWebInteractionUiContractTest
         String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
+        String resizer = function(source, "function liveWorkspaceResizer(workspace)");
         String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
@@ -1276,10 +1277,29 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("liveChannelsSection((selection) =>"));
         assertTrue(live.contains("historyNotice?.select(selection)"));
         assertTrue(live.contains("node('div', 'live-right-workspace')"));
-        assertTrue(live.contains("rightWorkspace.append(channels.element, eventsPanel.element)"));
+        assertTrue(live.contains(
+            "rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element)"));
+        assertTrue(live.contains("const workspaceResizer = liveWorkspaceResizer(rightWorkspace)"));
+        assertTrue(live.contains("pageConnections.add(workspaceResizer)"));
         assertTrue(live.contains("split.append(channels.picker, rightWorkspace)"));
         assertTrue(live.contains(
             "beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []))"));
+        assertTrue(resizer.contains("liveUiState().details_panel_percent"));
+        assertTrue(resizer.contains("separator.setAttribute('role', 'separator')"));
+        assertTrue(resizer.contains("separator.setAttribute('aria-orientation', 'horizontal')"));
+        assertTrue(resizer.contains("storeLiveUiState({ details_panel_percent: detailsPercent })"));
+        assertTrue(resizer.contains("['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)"));
+        assertTrue(resizer.contains("if (activePointerCleanup || event.button !== 0"));
+        assertTrue(resizer.contains("moveEvent.pointerId !== pointerId"));
+        assertTrue(resizer.contains(
+            "upEvent?.pointerId !== undefined && upEvent.pointerId !== pointerId"));
+        assertTrue(resizer.contains("separator.setPointerCapture(event.pointerId)"));
+        assertTrue(resizer.contains("separator.removeEventListener('pointermove', pointerMove)"));
+        assertTrue(resizer.contains("separator.removeEventListener('pointerup', pointerUp)"));
+        assertTrue(resizer.contains("separator.removeEventListener('pointercancel', cancel)"));
+        assertTrue(resizer.contains("separator.removeEventListener('lostpointercapture', cancel)"));
+        assertTrue(resizer.contains("window.removeEventListener('blur', cancel)"));
+        assertTrue(resizer.contains("activePointerCleanup?.()"));
         assertTrue(systems.contains("node('div', 'section-title-actions ui-section-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
@@ -1293,20 +1313,41 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("select.setAttribute('aria-controls', host.id)"));
         assertTrue(systems.contains("livePickerNavigationIndex(event.key, index, buttons.length)"));
         assertTrue(systems.contains("savedUiState.picker_collapsed === true"));
-        assertTrue(systems.contains("'ui-button ui-button-secondary ui-icon-button live-picker-collapse'"));
+        assertTrue(systems.contains(
+            "'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact live-picker-collapse'"));
+        assertTrue(systems.contains("selectedViewLead.append(pickerCollapse, selectedViewCopy)"));
+        assertTrue(systems.contains("selectedViewHeader?.replaceChildren(selectedViewLead, titleActions)"));
+        assertTrue(systems.contains("pickerCollapse.setAttribute('aria-controls', picker.id)"));
+        assertFalse(systems.contains("pickerActions.prepend(pickerCollapse)"));
         assertTrue(systems.contains("storeLiveUiState({ picker_collapsed: pickerCollapsed })"));
         assertTrue(systems.contains("return { element: block, picker, pickerCollapsed }"));
         assertTrue(live.contains("split.classList.toggle('picker-collapsed', channels.pickerCollapsed)"));
-        assertTrue(events.contains("layoutMenuHost: eventToolbar"));
-        assertTrue(messages.contains("layoutMenuHost: toolbar"));
+        assertTrue(events.contains("layoutMenuHost: eventColumnsHost"));
+        assertTrue(messages.contains("layoutMenuHost: columnsHost"));
         assertTrue(events.contains("'live-details-tabs ui-segmented'"));
         assertTrue(events.contains("'live-details-tab ui-segmented-option'"));
         assertTrue(events.contains("button.setAttribute('role', 'tab')"));
         assertTrue(events.contains("button.setAttribute('aria-controls', `live-details-${id}-panel`)"));
         assertTrue(events.contains("livePickerNavigationIndex(event.key, buttons.indexOf(button), buttons.length)"));
         assertTrue(events.contains("panes[id].setAttribute('role', 'tabpanel')"));
-        assertTrue(events.contains("'ui-button ui-button-secondary live-details-pause'"));
-        assertTrue(filters.contains("'ui-button ui-button-secondary live-detail-filter-trigger'"));
+        assertTrue(events.contains("iconButton('icon-pause', 'Pause live details'"));
+        assertTrue(events.contains("ui-icon-button-compact live-details-pause"));
+        assertTrue(events.contains("iconButton('icon-arrow-down', 'Collapse live details'"));
+        assertTrue(events.contains("ui-icon-button-compact live-details-collapse"));
+        assertTrue(events.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause'"));
+        assertTrue(events.contains(
+            "setIconButton(collapse, collapsed ? 'icon-arrow-up' : 'icon-arrow-down'"));
+        assertTrue(events.contains("eventActions.append(eventColumnsHost, filters.element)"));
+        assertTrue(events.contains(
+            "paneActionsHost.append(eventActions, messagesController.actions, channelController.actions)"));
+        assertTrue(events.contains("eventPane.append(eventGap, eventsTable)"));
+        assertFalse(events.contains("live-details-summary"));
+        assertFalse(events.contains("live-events-toolbar"));
+        assertFalse(events.contains("live-event-selection"));
+        assertTrue(filters.contains("iconButton('icon-filter', `Filter ${options.noun}`"));
+        assertTrue(filters.contains("ui-icon-button-compact live-detail-filter-trigger"));
+        assertTrue(filters.contains("live-detail-filter-state ui-pill ui-pill-compact"));
+        assertTrue(filters.contains("setIconButton(trigger, 'icon-filter'"));
         assertTrue(filters.contains("'ui-button ui-button-primary', 'Done'"));
         assertTrue(html.contains("id=\"icon-columns\""));
         assertTrue(html.contains("id=\"icon-live-presentation\""));
@@ -1350,6 +1391,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("active && !collapsed && !document.hidden && selection?.configurationId"));
         assertTrue(messages.contains("type: 'live-messages'"));
         assertTrue(messages.contains("messagesTable.tableController.replaceRows"));
+        assertTrue(messages.contains("actions.append(columnsHost, filters.element)"));
+        assertTrue(messages.contains("pane.append(gap, messagesTable)"));
+        assertFalse(messages.contains("live-messages-toolbar"));
+        assertFalse(messages.contains("live-message-selection"));
         assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
         assertTrue(channel.contains("expectedSubscriptionId = randomLiveClientId()"));
         assertTrue(channel.contains("parameters.subscription_id = expectedSubscriptionId"));
@@ -1392,6 +1437,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(channel.contains("window.setInterval"));
         assertFalse(channel.contains("window.clearInterval(ageTimer)"));
         assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
+        assertTrue(channel.contains("const actions = node('div', 'live-detail-pane-actions')"));
+        assertFalse(channel.contains("live-channel-toolbar"));
+        assertFalse(channel.contains("live-channel-selection"));
         assertFalse(channel.contains("channel-mode-tabs"));
         assertFalse(channel.contains("view: mode"));
         assertTrue(selection.contains("row?.configuration_id || tableValue?.configuration_id"));
@@ -1420,8 +1468,19 @@ class StatsWebInteractionUiContractTest
         assertTrue(updateVisibleRows.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
         assertTrue(updateVisibleRows.contains("liveDetailSelection(displayed, controlIntent, null)"));
         assertTrue(css.contains("grid-template-columns: minmax(260px, 1fr) minmax(0, 3fr)"));
-        assertTrue(css.contains("grid-template-columns: 72px minmax(0, 1fr)"));
-        assertTrue(css.contains("grid-template-rows: minmax(0, 3fr) minmax(160px, 1fr)"));
+        assertTrue(css.contains("body[data-view=\"live\"] .content > .live-split.picker-collapsed"));
+        assertTrue(css.contains(".live-split.picker-collapsed > .live-channel-picker"));
+        assertFalse(css.contains("grid-template-columns: 72px minmax(0, 1fr)"));
+        assertTrue(css.contains("--live-primary-pane-share: 75fr"));
+        assertTrue(css.contains("--live-details-pane-share: 25fr"));
+        assertTrue(css.contains("minmax(150px, var(--live-primary-pane-share))"));
+        assertTrue(css.contains("minmax(120px, var(--live-details-pane-share))"));
+        assertTrue(css.contains(".live-workspace-resizer"));
+        assertTrue(css.contains("cursor: row-resize"));
+        assertTrue(css.contains(".live-workspace-resizer-grip"));
+        assertTrue(css.contains(".live-split.details-collapsed .live-workspace-resizer"));
+        assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) auto"));
+        assertTrue(css.contains("@media (max-width: 760px)"));
         assertTrue(css.contains("@media (max-width: 1120px)"));
         assertTrue(css.contains(".live-channel-picker.picker-open .live-picker-popover"));
         assertTrue(css.contains(".live-split.details-collapsed"));
@@ -1824,13 +1883,12 @@ class StatsWebInteractionUiContractTest
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
 
-        assertTrue(events.contains("live-details-pause', 'Pause'"));
-        assertTrue(events.contains("'Pause Events, Messages, and Channel'"));
+        assertTrue(events.contains("iconButton('icon-pause', 'Pause live details'"));
         assertFalse(events.contains("const connection = badge('Waiting'"));
         assertTrue(events.contains("eventsActive && !collapsed && selection?.configurationId"));
         assertTrue(events.contains("eventsActive = nextEventsActive"));
         assertFalse(events.contains("document.addEventListener('visibilitychange'"));
-        assertTrue(events.contains("pause.textContent = paused ? 'Resume' : 'Pause'"));
+        assertTrue(events.contains("setIconButton(pause, paused ? 'icon-play' : 'icon-pause'"));
         assertTrue(events.contains("messagesController.setPaused(paused)"));
         assertTrue(events.contains("channelController.setPaused(paused)"));
         assertTrue(events.contains("if (!paused) scheduleRender()"));

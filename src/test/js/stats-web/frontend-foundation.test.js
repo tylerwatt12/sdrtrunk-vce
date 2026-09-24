@@ -300,6 +300,10 @@ async function main() {
   assert.match(liveChannelsSource, /savedUiState\.picker_collapsed === true/);
   assert.match(liveChannelsSource,
     /iconButton\('icon-chevron-down', 'Collapse live view picker',[\s\S]*live-picker-collapse/);
+  assert.match(liveChannelsSource, /selectedViewLead\.append\(pickerCollapse, selectedViewCopy\)/);
+  assert.match(liveChannelsSource, /selectedViewHeader\?\.replaceChildren\(selectedViewLead, titleActions\)/);
+  assert.match(liveChannelsSource, /pickerCollapse\.setAttribute\('aria-controls', picker\.id\)/);
+  assert.doesNotMatch(liveChannelsSource, /pickerActions\.(?:append|prepend)\(pickerCollapse\)/);
   assert.match(liveChannelsSource, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
@@ -607,12 +611,28 @@ async function main() {
   const renderLiveSource = functionBinding(appSource, 'renderLive');
   assert.match(renderLiveSource, /liveUiState\(\)\.historyNoticeDismissed === true \? null/);
   assert.match(renderLiveSource, /node\('div', 'live-right-workspace'\)/);
+  assert.match(renderLiveSource, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace\)/);
+  assert.match(renderLiveSource, /pageConnections\.add\(workspaceResizer\)/);
   assert.match(renderLiveSource,
     /split\.classList\.toggle\('picker-collapsed', channels\.pickerCollapsed\)/);
-  assert.match(renderLiveSource, /rightWorkspace\.append\(channels\.element, eventsPanel\.element\)/);
+  assert.match(renderLiveSource,
+    /rightWorkspace\.append\(channels\.element, workspaceResizer\.element, eventsPanel\.element\)/);
   assert.match(renderLiveSource, /split\.append\(channels\.picker, rightWorkspace\)/);
   assert.match(renderLiveSource,
     /beginPage\(renderContext, split, \.\.\.\(historyNotice \? \[historyNotice\.element\] : \[\]\)\)/);
+  const liveResizerSource = functionBinding(appSource, 'liveWorkspaceResizer');
+  assert.match(liveResizerSource, /role', 'separator'/);
+  assert.match(liveResizerSource, /aria-orientation', 'horizontal'/);
+  assert.match(liveResizerSource, /details_panel_percent: detailsPercent/);
+  assert.match(liveResizerSource, /if \(activePointerCleanup \|\| event\.button !== 0/);
+  assert.match(liveResizerSource, /moveEvent\.pointerId !== pointerId/);
+  assert.match(liveResizerSource,
+    /upEvent\?\.pointerId !== undefined && upEvent\.pointerId !== pointerId/);
+  assert.match(liveResizerSource, /separator\.setPointerCapture\(event\.pointerId\)/);
+  assert.match(liveResizerSource, /separator\.removeEventListener\('pointercancel', cancel\)/);
+  assert.match(liveResizerSource, /separator\.removeEventListener\('lostpointercapture', cancel\)/);
+  assert.match(liveResizerSource, /window\.removeEventListener\('blur', cancel\)/);
+  assert.match(liveResizerSource, /\['ArrowUp', 'ArrowDown', 'Home', 'End'\]/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);
   const decodeReceiverSettings = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'decodeReceiverSettingsEnvelope')})`);
@@ -1147,17 +1167,26 @@ async function main() {
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
     [104, 94, 86], {}, 400), [220, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
-    [130, 94, 86], { descriptor: 130 }, 400), [130, 94, 86]);
+    [130, 94, 86], { descriptor: 130 }, 400), [220, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
     [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 352]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
-    [{ id: 'band' }, { id: 'base' }], [48, 94], { base: 94 }, 400), [48, 94]);
+    [{ id: 'band' }, { id: 'base' }], [48, 94], { base: 94 }, 400), [48, 352]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
     [{ id: 'band' }, { id: 'base' }, { id: 'last-seen' }], [48, 94, 116], { base: 94 }, 400),
     [48, 94, 258]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
     [{ id: 'band' }, { id: 'base' }, { id: 'last-seen' }], [48, 94, 116],
-    { base: 94, 'last-seen': 116 }, 400), [48, 94, 116]);
+    { base: 94, 'last-seen': 116 }, 400), [48, 158, 194]);
+  assert.deepEqual(tableDefaults.fittedWidths('dashboard-call-sources', [
+    { id: 'receiver' }, { id: 'mode' }, { id: 'logical-calls' },
+    { id: 'recorded-logical-calls' }, { id: 'stream-submitted-logical-calls' }
+  ], [900, 80, 85, 70, 90], {
+    receiver: 900, mode: 80, 'logical-calls': 85,
+    'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90
+  }, 1900), [1575, 80, 85, 70, 90]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
+    [{ id: 'band' }, { id: 'state' }], [64, 82], {}, 400), [175, 225]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands-override',
     [{ id: 'band' }, { id: 'base' }, { id: 'offset' }], [48, 94, 92], { offset: 92 }, 400),
     [48, 260, 92]);

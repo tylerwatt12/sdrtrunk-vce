@@ -323,17 +323,101 @@ if(view === 'live-notice') {
     collapse.setAttribute('aria-label', label);
     collapse.title = label;
   });
+  const workspace = split?.querySelector('.live-right-workspace');
+  const resizer = workspace?.querySelector('.live-workspace-resizer');
+  const clampDetailsPercent = (value) => Math.max(15, Math.min(65, Math.round(value)));
+  let detailsPercent = 25;
+  let activeResizeCleanup = null;
+  try {
+    const saved = Number(localStorage.getItem('details_panel_percent'));
+    if(Number.isFinite(saved) && saved > 0) detailsPercent = clampDetailsPercent(saved);
+  } catch(_error) {
+    detailsPercent = 25;
+  }
+  const applyDetailsPercent = () => {
+    workspace?.style.setProperty('--live-primary-pane-share', `${100 - detailsPercent}fr`);
+    workspace?.style.setProperty('--live-details-pane-share', `${detailsPercent}fr`);
+    resizer?.setAttribute('aria-valuenow', String(detailsPercent));
+    resizer?.setAttribute('aria-valuetext', `${detailsPercent}% details panel`);
+  };
+  const storeDetailsPercent = () => {
+    try { localStorage.setItem('details_panel_percent', String(detailsPercent)); } catch(_error) { /* no-op */ }
+  };
+  const updateDetailsPercentFromPointer = (clientY) => {
+    if(!workspace || !resizer) return;
+    const bounds = workspace.getBoundingClientRect();
+    const availableHeight = Math.max(1, bounds.height - resizer.getBoundingClientRect().height);
+    const primaryHeight = Math.max(0, Math.min(availableHeight, clientY - bounds.top));
+    detailsPercent = clampDetailsPercent(100 - primaryHeight / availableHeight * 100);
+    applyDetailsPercent();
+  };
+  resizer?.addEventListener('keydown', (event) => {
+    if(!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if(event.key === 'Home') detailsPercent = 15;
+    else if(event.key === 'End') detailsPercent = 65;
+    else detailsPercent = clampDetailsPercent(detailsPercent + (event.key === 'ArrowUp' ? 2 : -2));
+    applyDetailsPercent();
+    storeDetailsPercent();
+  });
+  resizer?.addEventListener('pointerdown', (event) => {
+    if(activeResizeCleanup || event.button !== 0 || window.matchMedia('(max-width: 760px)').matches) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    updateDetailsPercentFromPointer(event.clientY);
+    const move = (moveEvent) => {
+      if(moveEvent.pointerId !== pointerId) return;
+      updateDetailsPercentFromPointer(moveEvent.clientY);
+    };
+    const finish = (upEvent = null) => {
+      if(upEvent?.pointerId !== undefined && upEvent.pointerId !== pointerId) return;
+      if(Number.isFinite(upEvent?.clientY)) updateDetailsPercentFromPointer(upEvent.clientY);
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', finish);
+      resizer.removeEventListener('pointercancel', finish);
+      resizer.removeEventListener('lostpointercapture', finish);
+      activeResizeCleanup = null;
+      storeDetailsPercent();
+    };
+    activeResizeCleanup = () => finish();
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', finish);
+    resizer.addEventListener('pointercancel', finish);
+    resizer.addEventListener('lostpointercapture', finish);
+    resizer.setPointerCapture(event.pointerId);
+  });
+  resizer?.addEventListener('dblclick', () => {
+    detailsPercent = 25;
+    applyDetailsPercent();
+    storeDetailsPercent();
+  });
+  applyDetailsPercent();
   const details = split?.querySelector('.live-details');
   const detailsCollapse = details?.querySelector('.live-details-collapse');
+  const detailsCollapseIcon = detailsCollapse?.querySelector('use');
   const setDetailsCollapsed = (collapsed) => {
     details?.classList.toggle('collapsed', collapsed);
     split?.classList.toggle('details-collapsed', collapsed);
     if (detailsCollapse) {
-      detailsCollapse.textContent = collapsed ? 'Expand' : 'Collapse';
       detailsCollapse.setAttribute('aria-expanded', String(!collapsed));
+      const label = collapsed ? 'Expand live details' : 'Collapse live details';
+      detailsCollapse.setAttribute('aria-label', label);
+      detailsCollapse.title = label;
+      detailsCollapseIcon?.setAttribute('href', collapsed ? '#visual-icon-arrow-up' :
+        '#visual-icon-arrow-down');
     }
   };
   detailsCollapse?.addEventListener('click', () => setDetailsCollapsed(!details.classList.contains('collapsed')));
+  const detailsPause = details?.querySelector('.live-details-pause');
+  const detailsPauseIcon = detailsPause?.querySelector('use');
+  detailsPause?.addEventListener('click', () => {
+    const paused = detailsPause.getAttribute('aria-pressed') !== 'true';
+    detailsPause.setAttribute('aria-pressed', String(paused));
+    const label = paused ? 'Resume live details' : 'Pause live details';
+    detailsPause.setAttribute('aria-label', label);
+    detailsPause.title = label;
+    detailsPauseIcon?.setAttribute('href', paused ? '#visual-icon-play' : '#visual-icon-pause');
+  });
   if(window.matchMedia('(max-width: 760px)').matches) setDetailsCollapsed(true);
 }
 if(view === 'scanner') document.body.dataset.view = 'scanner';

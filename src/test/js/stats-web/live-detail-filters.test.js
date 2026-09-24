@@ -80,6 +80,17 @@ const context = {
   activeReadOnlyModal: null,
   frequency: (value) => (Number(value) / 1_000_000).toFixed(5),
   node: (tag, className = '', text = '') => new RuntimeNode(tag, className, text),
+  iconButton: (_iconId, label, className = '') => {
+    const button = new RuntimeNode('button', className);
+    button.type = 'button';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    return button;
+  },
+  setIconButton: (button, _iconId, label) => {
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  },
   openReadOnlyModal: (_title, body, options) => {
     lastModalBody = body;
     modalOpenCount += 1;
@@ -220,7 +231,7 @@ const compactSummary = controller.element.children[1];
 assert.equal(trigger.disabled, true);
 assert.equal(controller.setCatalog(catalogV1), 'initial');
 assert.equal(trigger.disabled, false);
-assert.equal(compactSummary.textContent, 'All messages');
+assert.equal(compactSummary.textContent, 'All Messages');
 trigger.dispatch('click');
 assert.equal(modalOpenCount, 1);
 const originalModalBody = lastModalBody;
@@ -250,7 +261,7 @@ assert.strictEqual(lastModalBody, originalModalBody);
 
 assert.equal(controller.setCatalog(catalogV2), 'changed');
 assert.equal(context.activeReadOnlyModal, null);
-assert.equal(compactSummary.textContent, 'All messages');
+assert.equal(compactSummary.textContent, 'All Messages');
 trigger.dispatch('click');
 assert.equal(modalOpenCount, 2);
 assert.equal(findAll(lastModalBody,

@@ -741,9 +741,69 @@ test('live-notice-dark-desktop', async ({ page }) => {
 test('live-picker-collapsed-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/design-system.html?theme=dark&view=live-notice');
-  await page.locator('.live-picker-collapse').click();
+  const split = page.locator('.visual-live-example .live-split');
+  const picker = split.locator('.live-channel-picker');
+  const selectedHeader = split.locator('.live-selected-view-header');
+  const collapse = selectedHeader.locator('.live-picker-collapse');
+  await expect(collapse).toBeVisible();
+  await collapse.click();
+  await expect(split).toHaveClass(/picker-collapsed/);
+  await expect(picker).toBeHidden();
+  const [splitBox, workspaceBox] = await Promise.all([
+    split.boundingBox(), split.locator('.live-right-workspace').boundingBox()
+  ]);
+  expect(Math.abs(workspaceBox.x - splitBox.x)).toBeLessThanOrEqual(1);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.locator('body')).toHaveScreenshot('live-picker-collapsed-dark-desktop.png');
 });
+
+test('Live desktop workspace persists its resizable details ratio and keeps one compact toolbar',
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/design-system.html?theme=light&view=live-notice');
+    const workspace = page.locator('.live-right-workspace');
+    const divider = workspace.getByRole('separator', {
+      name: 'Resize live channels and details panels'
+    });
+    await expect(divider).toBeVisible();
+    await expect(divider.locator('.live-workspace-resizer-grip > span')).toHaveCount(3);
+    await expect(divider).toHaveAttribute('aria-valuenow', '25');
+    const dividerBox = await divider.boundingBox();
+    await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + dividerBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y - 48);
+    await page.mouse.up();
+    const draggedPercent = Number(await divider.getAttribute('aria-valuenow'));
+    expect(draggedPercent).toBeGreaterThan(25);
+    expect(await page.evaluate(() => localStorage.getItem('details_panel_percent')))
+      .toBe(String(draggedPercent));
+    await divider.focus();
+    await divider.press('ArrowUp');
+    const keyboardPercent = Math.min(65, draggedPercent + 2);
+    await expect(divider).toHaveAttribute('aria-valuenow', String(keyboardPercent));
+    expect(await page.evaluate(() => localStorage.getItem('details_panel_percent')))
+      .toBe(String(keyboardPercent));
+    await page.reload();
+    const restoredDivider = page.getByRole('separator', {
+      name: 'Resize live channels and details panels'
+    });
+    await expect(restoredDivider).toHaveAttribute('aria-valuenow', String(keyboardPercent));
+
+    const details = page.locator('.live-details');
+    const controls = details.locator('.live-details-controls');
+    await expect(details.locator('.live-details-summary, .live-event-selection')).toHaveCount(0);
+    await expect(controls.getByRole('button', { name: 'Choose table columns' })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Filter events' })).toBeVisible();
+    await expect(controls.locator('.live-detail-filter-state')).toHaveText('All Events');
+    await expect(controls.getByRole('button', { name: 'Pause live details' })).toBeVisible();
+    const detailsCollapse = controls.getByRole('button', { name: 'Collapse live details' });
+    await detailsCollapse.click();
+    await expect(restoredDivider).toBeHidden();
+    await expect(details.locator('.live-details-body')).toBeHidden();
+    await controls.getByRole('button', { name: 'Expand live details' }).click();
+    await expect(restoredDivider).toBeVisible();
+    await expect(restoredDivider).toHaveAttribute('aria-valuenow', String(keyboardPercent));
+  });
 
 test('live-notice-light-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -764,6 +824,9 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   expect(horizontalOverflow).toBeLessThanOrEqual(1);
 
   const details = page.locator('.live-details');
+  await expect(page.getByRole('separator', {
+    name: 'Resize live channels and details panels'
+  })).toBeHidden();
   await expect(details).toHaveClass(/collapsed/);
   await expect(details.locator('.live-details-body')).toBeHidden();
   await details.locator('.live-details-collapse').click();

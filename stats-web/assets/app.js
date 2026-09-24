@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=4';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=7';
+import * as tableDefaults from './core/table-defaults.js?v=8';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -8850,6 +8850,107 @@ function storeLiveUiState(update) {
   }
 }
 
+function liveDetailsPanelPercent(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 25;
+  return Math.max(15, Math.min(65, Math.round(value)));
+}
+
+function liveWorkspaceResizer(workspace) {
+  let detailsPercent = liveDetailsPanelPercent(liveUiState().details_panel_percent);
+  let activePointerCleanup = null;
+  const separator = node('div', 'live-workspace-resizer');
+  separator.setAttribute('role', 'separator');
+  separator.setAttribute('aria-label', 'Resize live channels and details panels');
+  separator.setAttribute('aria-orientation', 'horizontal');
+  separator.setAttribute('aria-valuemin', '15');
+  separator.setAttribute('aria-valuemax', '65');
+  separator.tabIndex = 0;
+  const grip = node('span', 'live-workspace-resizer-grip');
+  grip.setAttribute('aria-hidden', 'true');
+  grip.append(node('span'), node('span'), node('span'));
+  separator.append(grip);
+
+  const apply = () => {
+    workspace.style.setProperty('--live-primary-pane-share', `${100 - detailsPercent}fr`);
+    workspace.style.setProperty('--live-details-pane-share', `${detailsPercent}fr`);
+    separator.setAttribute('aria-valuenow', String(detailsPercent));
+    separator.setAttribute('aria-valuetext', `${detailsPercent}% details panel`);
+  };
+  const updateFromPointer = (clientY) => {
+    const bounds = workspace.getBoundingClientRect();
+    const separatorHeight = separator.getBoundingClientRect().height;
+    const availableHeight = Math.max(1, bounds.height - separatorHeight);
+    const primaryHeight = Math.max(0, Math.min(availableHeight,
+      Number(clientY) - bounds.top - separatorHeight / 2));
+    detailsPercent = liveDetailsPanelPercent(100 - primaryHeight / availableHeight * 100);
+    apply();
+  };
+  const persist = () => storeLiveUiState({ details_panel_percent: detailsPercent });
+
+  separator.addEventListener('pointerdown', (event) => {
+    if (activePointerCleanup || event.button !== 0 ||
+        window.matchMedia('(max-width: 760px)').matches) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    updateFromPointer(event.clientY);
+    document.documentElement.classList.add('live-workspace-resizing');
+    let finished = false;
+    const pointerMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      updateFromPointer(moveEvent.clientY);
+    };
+    const finish = (upEvent = null) => {
+      if (upEvent?.pointerId !== undefined && upEvent.pointerId !== pointerId) return;
+      if (finished) return;
+      finished = true;
+      if (upEvent && Number.isFinite(upEvent.clientY)) updateFromPointer(upEvent.clientY);
+      separator.removeEventListener('pointermove', pointerMove);
+      separator.removeEventListener('pointerup', pointerUp);
+      separator.removeEventListener('pointercancel', cancel);
+      separator.removeEventListener('lostpointercapture', cancel);
+      window.removeEventListener('blur', cancel);
+      document.documentElement.classList.remove('live-workspace-resizing');
+      activePointerCleanup = null;
+      persist();
+    };
+    const pointerUp = (upEvent) => finish(upEvent);
+    const cancel = (cancelEvent) => finish(cancelEvent);
+    activePointerCleanup = () => finish();
+    separator.addEventListener('pointermove', pointerMove);
+    separator.addEventListener('pointerup', pointerUp);
+    separator.addEventListener('pointercancel', cancel);
+    separator.addEventListener('lostpointercapture', cancel);
+    window.addEventListener('blur', cancel, { once: true });
+    try {
+      separator.setPointerCapture(event.pointerId);
+    } catch (_error) {
+      cancel();
+    }
+  });
+  separator.addEventListener('keydown', (event) => {
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Home') detailsPercent = 15;
+    else if (event.key === 'End') detailsPercent = 65;
+    else detailsPercent = liveDetailsPanelPercent(detailsPercent + (event.key === 'ArrowUp' ? 2 : -2));
+    apply();
+    persist();
+  });
+  separator.addEventListener('dblclick', () => {
+    detailsPercent = 25;
+    apply();
+    persist();
+  });
+  apply();
+  return {
+    element: separator,
+    close() {
+      activePointerCleanup?.();
+      document.documentElement.classList.remove('live-workspace-resizing');
+    }
+  };
+}
+
 function applyLiveChannelActivitySnapshot(snapshot) {
   liveChannelActivityTables.clear();
   (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
@@ -10954,16 +11055,18 @@ function liveDetailFilterModel(options = {}) {
 
 function liveDetailFilterController(options) {
   const model = liveDetailFilterModel(options);
+  const nounLabel = `${options.noun || 'items'}`.replace(/^./, (value) => value.toUpperCase());
   let expandedKeys = new Set();
   let modalApi = null;
   const triggerId = `live-detail-filter-trigger-${++liveDetailFilterSequence}`;
   const container = node('div', 'live-detail-filter-summary');
-  const trigger = node('button', 'ui-button ui-button-secondary live-detail-filter-trigger', 'Filters');
+  const trigger = iconButton('icon-filter', `Filter ${options.noun}`,
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact live-detail-filter-trigger');
   trigger.id = triggerId;
-  trigger.type = 'button';
   trigger.disabled = true;
   trigger.setAttribute('aria-haspopup', 'dialog');
-  const summary = node('span', 'live-detail-filter-state', `Waiting for ${options.noun} types`);
+  const summary = node('span', 'live-detail-filter-state ui-pill ui-pill-compact',
+    `Waiting for ${options.noun} types`);
   summary.setAttribute('aria-live', 'polite');
   container.append(trigger, summary);
 
@@ -10972,7 +11075,7 @@ function liveDetailFilterController(options) {
     trigger.disabled = !catalog;
     if (!catalog) {
       summary.textContent = `Waiting for ${options.noun} types`;
-      trigger.title = summary.textContent;
+      setIconButton(trigger, 'icon-filter', summary.textContent);
       return;
     }
     const active = [];
@@ -10982,8 +11085,9 @@ function liveDetailFilterController(options) {
     }
     if (options.validity && model.enabledValidityCount() !== 2) active.push('validity');
     if (model.query()) active.push('search');
-    summary.textContent = active.length ? active.join(' · ') : `All ${options.noun}`;
-    trigger.title = active.length ? `Active filters: ${active.join(', ')}` : `Showing all ${options.noun}`;
+    summary.textContent = active.length ? active.join(' · ') : `All ${nounLabel}`;
+    setIconButton(trigger, 'icon-filter', active.length ?
+      `Filter ${options.noun}; active filters: ${active.join(', ')}` : `Filter ${options.noun}`);
   };
 
   const notifyChange = () => {
@@ -11222,8 +11326,8 @@ function liveMessagesPane() {
   let scheduleRender = () => {};
 
   const pane = node('div', 'live-details-pane live-messages-pane');
-  const toolbar = node('div', 'live-messages-toolbar live-detail-toolbar');
-  const selectionLabel = node('strong', 'live-message-selection', 'Select a live row above');
+  const actions = node('div', 'live-detail-pane-actions');
+  const columnsHost = node('div', 'live-detail-columns');
   const filters = liveDetailFilterController({
     noun: 'messages',
     title: 'Message filters',
@@ -11235,7 +11339,7 @@ function liveMessagesPane() {
     onChange: () => scheduleRender(),
     onStateChange: (state) => storeLiveUiState({ message_filters: state })
   });
-  toolbar.append(selectionLabel, filters.element);
+  actions.append(columnsHost, filters.element);
   const gap = node('div', 'live-detail-gap');
   gap.hidden = true;
   gap.setAttribute('role', 'status');
@@ -11262,9 +11366,9 @@ function liveMessagesPane() {
     type: 'live-messages', sortable: false, rowKey: (message) => message.message_id,
     rowClass: (message) => message.valid ? '' : 'message-invalid',
     wrapperClass: 'live-messages-scroll', tableClass: 'live-messages-table',
-    layoutMenuHost: toolbar
+    layoutMenuHost: columnsHost
   });
-  pane.append(toolbar, gap, messagesTable);
+  pane.append(gap, messagesTable);
 
   const matches = (message) => {
     if (!filters.matchesLeaf(message.filter_key)) return false;
@@ -11366,7 +11470,6 @@ function liveMessagesPane() {
     const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
     const transportChanged = liveMessageTransportChanged(selection, nextSelection);
     selection = nextSelection;
-    selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
     if (logicalChanged) {
       closeStream();
       clearSession();
@@ -11387,6 +11490,7 @@ function liveMessagesPane() {
   render();
   return {
     element: pane,
+    actions,
     select,
     setActive(value) {
       const next = value === true;
@@ -11444,10 +11548,9 @@ function liveChannelPane() {
   let drawPending = false;
 
   const pane = node('div', 'live-details-pane live-channel-pane');
-  const toolbar = node('div', 'live-channel-toolbar');
-  const selectionLabel = node('strong', 'live-channel-selection', 'Select a live row above');
+  const actions = node('div', 'live-detail-pane-actions');
   const connection = badge('Waiting', 'state-stale');
-  toolbar.append(selectionLabel, connection);
+  actions.append(connection);
 
   const diagnostic = (title, ariaLabel) => {
     const card = node('section', 'channel-diagnostic-card ui-surface');
@@ -11480,7 +11583,7 @@ function liveChannelPane() {
   signalDiagnostic.header.append(signalViewToggle);
   const diagnosticGrid = node('div', 'channel-diagnostic-grid');
   diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card);
-  pane.append(toolbar, diagnosticGrid);
+  pane.append(diagnosticGrid);
 
   const setStatus = (text, className = 'state-stale') => {
     connection.textContent = text;
@@ -11804,7 +11907,6 @@ function liveChannelPane() {
   const select = (nextSelection) => {
     const { logicalChanged, transportChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
-    selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
     if (logicalChanged) {
       closeStream();
       clearPlots(selection ? 'Waiting for channel data…' : 'Select a live row above');
@@ -11825,17 +11927,21 @@ function liveChannelPane() {
 
   const onVisibilityChange = () => sync();
   const onResize = () => scheduleDraw();
+  const sizeObserver = 'ResizeObserver' in window ? new ResizeObserver(onResize) : null;
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
+  sizeObserver?.observe(pane);
   clearPlots('Select a live row above');
   return {
     element: pane,
+    actions,
     select,
     setActive(value) { active = value; sync(); scheduleDraw(); },
     setCollapsed(value) { collapsed = value; sync(); },
     setPaused(value) { paused = value; sync(); },
     close() {
       closeStream();
+      sizeObserver?.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResize);
     }
@@ -14398,23 +14504,22 @@ function liveEventsPanel(onCollapse) {
   tabBar.setAttribute('role', 'tablist');
   tabBar.setAttribute('aria-label', 'Live details');
   const controls = node('div', 'live-details-controls');
-  const mobileSummary = node('strong', 'live-details-summary', 'Select a live row');
-  const pause = node('button', 'ui-button ui-button-secondary live-details-pause', 'Pause');
-  pause.type = 'button';
-  pause.setAttribute('aria-label', 'Pause Events, Messages, and Channel');
+  const paneActionsHost = node('div', 'live-detail-active-actions');
+  const pause = iconButton('icon-pause', 'Pause live details',
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact live-details-pause');
   pause.setAttribute('aria-pressed', 'false');
-  const collapse = node('button', 'ui-button ui-button-secondary live-details-collapse', 'Collapse');
-  collapse.type = 'button';
+  const collapse = iconButton('icon-arrow-down', 'Collapse live details',
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact live-details-collapse');
   collapse.setAttribute('aria-expanded', 'true');
-  controls.append(pause, collapse);
-  header.append(tabBar, mobileSummary, controls);
+  controls.append(paneActionsHost, pause, collapse);
+  header.append(tabBar, controls);
 
   const body = node('div', 'live-details-body');
   body.id = 'live-details-body';
   collapse.setAttribute('aria-controls', body.id);
   const eventPane = node('div', 'live-details-pane live-events-pane');
-  const eventToolbar = node('div', 'live-events-toolbar live-detail-toolbar');
-  const selectionLabel = node('strong', 'live-event-selection', 'Select a live row above');
+  const eventActions = node('div', 'live-detail-pane-actions');
+  const eventColumnsHost = node('div', 'live-detail-columns');
   const filters = liveDetailFilterController({
     noun: 'events',
     title: 'Event filters',
@@ -14424,7 +14529,7 @@ function liveEventsPanel(onCollapse) {
     onChange: () => scheduleRender(),
     onStateChange: (state) => storeLiveUiState({ event_filters: state })
   });
-  eventToolbar.append(selectionLabel, filters.element);
+  eventActions.append(eventColumnsHost, filters.element);
   const eventGap = node('div', 'live-detail-gap');
   eventGap.hidden = true;
   eventGap.setAttribute('role', 'status');
@@ -14470,14 +14575,20 @@ function liveEventsPanel(onCollapse) {
     type: 'live-events', sortable: false, rowKey: (event) => event.event_id,
     rowClass: (event) => liveEventCategoryClass(event.category),
     wrapperClass: 'live-events-scroll', tableClass: 'live-events-table',
-    layoutMenuHost: eventToolbar
+    layoutMenuHost: eventColumnsHost
   });
-  eventPane.append(eventToolbar, eventGap, eventsTable);
+  eventPane.append(eventGap, eventsTable);
 
   const messagesController = liveMessagesPane();
   const channelController = liveChannelPane();
   const messagesPane = messagesController.element;
   const channelPane = channelController.element;
+  const paneActions = {
+    events: eventActions,
+    messages: messagesController.actions,
+    channel: channelController.actions
+  };
+  paneActionsHost.append(eventActions, messagesController.actions, channelController.actions);
   body.append(eventPane, messagesPane, channelPane);
   panel.append(header, body);
 
@@ -14593,8 +14704,6 @@ function liveEventsPanel(onCollapse) {
     channelController.select(nextSelection);
     const { logicalChanged } = liveDetailSelectionDelta(selection, nextSelection);
     selection = nextSelection;
-    selectionLabel.textContent = selection?.label || 'Select a live row above';
-    mobileSummary.textContent = selection?.label || 'Select a live row';
     if (logicalChanged) {
       closeStream();
       clearSession();
@@ -14613,6 +14722,13 @@ function liveEventsPanel(onCollapse) {
       tab?.classList.toggle('active', active);
       tab?.setAttribute('aria-selected', String(active));
       if (tab) tab.tabIndex = active ? 0 : -1;
+      const actions = paneActions[paneId];
+      if (actions) {
+        actions.hidden = !active;
+        if (!active) actions.querySelectorAll('[popover]').forEach((popover) => {
+          if (popover.matches(':popover-open')) popover.hidePopover();
+        });
+      }
     });
     messagesController.setActive(id === 'messages');
     channelController.setActive(id === 'channel');
@@ -14652,7 +14768,8 @@ function liveEventsPanel(onCollapse) {
   const setCollapsed = (next, persist = false) => {
     collapsed = Boolean(next);
     panel.classList.toggle('collapsed', collapsed);
-    collapse.textContent = collapsed ? 'Expand' : 'Collapse';
+    setIconButton(collapse, collapsed ? 'icon-arrow-up' : 'icon-arrow-down',
+      `${collapsed ? 'Expand' : 'Collapse'} live details`);
     collapse.setAttribute('aria-expanded', String(!collapsed));
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
@@ -14670,8 +14787,8 @@ function liveEventsPanel(onCollapse) {
   collapseMedia.addEventListener('change', synchronizeResponsiveCollapse);
   pause.addEventListener('click', () => {
     paused = !paused;
-    pause.textContent = paused ? 'Resume' : 'Pause';
-    pause.setAttribute('aria-label', `${paused ? 'Resume' : 'Pause'} Events, Messages, and Channel`);
+    setIconButton(pause, paused ? 'icon-play' : 'icon-pause',
+      `${paused ? 'Resume' : 'Pause'} live details`);
     pause.setAttribute('aria-pressed', String(paused));
     messagesController.setPaused(paused);
     channelController.setPaused(paused);
@@ -15069,9 +15186,8 @@ function liveChannelsSection(onSelectionChange) {
   const connection = badge('Connecting', 'state-stale');
   const titleActions = node('div', 'section-title-actions ui-section-actions live-channels-title-actions');
   const selectedViewActions = node('div', 'live-selected-view-actions');
-  titleActions.append(selectedViewActions);
+  titleActions.append(connection, selectedViewActions);
   const pickerActions = node('div', 'section-title-actions ui-section-actions live-picker-actions');
-  pickerActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
     const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
       'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
@@ -15105,12 +15221,16 @@ function liveChannelsSection(onSelectionChange) {
   const selectedViewTitle = node('h2', 'live-selected-view-title', 'Live Channels');
   const selectedViewMeta = node('span', 'live-selected-view-meta', 'Waiting for channel activity…');
   selectedViewCopy.append(selectedViewTitle, selectedViewMeta);
+  const pickerCollapse = iconButton('icon-chevron-down', 'Collapse live view picker',
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact live-picker-collapse');
+  const selectedViewLead = node('div', 'live-selected-view-lead');
+  selectedViewLead.append(pickerCollapse, selectedViewCopy);
   host.append(liveTable);
   const block = section('Live Channels', host, titleActions);
   block.classList.add('live-channels-section');
   const selectedViewHeader = block.querySelector(':scope > .section-title');
   selectedViewHeader?.classList.add('live-selected-view-header');
-  selectedViewHeader?.replaceChildren(selectedViewCopy, titleActions);
+  selectedViewHeader?.replaceChildren(selectedViewLead, titleActions);
 
   const pickerSearch = node('input', 'ui-input live-picker-search-input');
   pickerSearch.type = 'search';
@@ -15125,6 +15245,7 @@ function liveChannelsSection(onSelectionChange) {
   pickerPopover.append(pickerSearchField, tabBar, pickerEmpty, pickerSummary);
   const picker = section('Live views', pickerPopover, pickerActions);
   picker.classList.add('live-channel-picker');
+  picker.id = 'live-channel-picker';
   const pickerHeading = node('span', 'live-picker-heading', 'Live views');
   const pickerToggle = node('button', 'ui-button ui-button-secondary live-picker-toggle');
   const pickerToggleLabel = node('span', 'live-picker-toggle-label', 'Choose a live view');
@@ -15136,10 +15257,7 @@ function liveChannelsSection(onSelectionChange) {
   const pickerHeader = picker.querySelector(':scope > .section-title');
   pickerHeader?.classList.add('live-picker-header');
   pickerHeader?.replaceChildren(pickerHeading, pickerToggle, pickerActions);
-  const pickerCollapse = iconButton('icon-chevron-down', 'Collapse live view picker',
-    'ui-button ui-button-secondary ui-icon-button live-picker-collapse');
-  pickerCollapse.setAttribute('aria-controls', pickerPopover.id);
-  pickerActions.prepend(pickerCollapse);
+  pickerCollapse.setAttribute('aria-controls', picker.id);
 
   const setPickerCollapsed = (collapsed, persist = true) => {
     pickerCollapsed = collapsed === true;
@@ -15470,16 +15588,21 @@ function liveChannelsSection(onSelectionChange) {
 async function renderLive() {
   const renderContext = captureRenderContext();
   const split = node('div', 'live-split');
+  const rightWorkspace = node('div', 'live-right-workspace');
+  const workspaceResizer = liveWorkspaceResizer(rightWorkspace);
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
+  pageConnections.add(workspaceResizer);
   const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice();
   const channels = liveChannelsSection((selection) => {
     eventsPanel.select(selection);
     historyNotice?.select(selection);
   });
   split.classList.toggle('picker-collapsed', channels.pickerCollapsed);
-  const rightWorkspace = node('div', 'live-right-workspace');
-  rightWorkspace.append(channels.element, eventsPanel.element);
+  channels.element.id = 'live-primary-panel';
+  eventsPanel.element.id = 'live-details-panel';
+  workspaceResizer.element.setAttribute('aria-controls', 'live-primary-panel live-details-panel');
+  rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element);
   split.append(channels.picker, rightWorkspace);
   beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []));
 }
