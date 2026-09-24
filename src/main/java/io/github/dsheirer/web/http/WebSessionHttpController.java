@@ -39,7 +39,6 @@ public final class WebSessionHttpController
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
     public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
     private static final String DESKTOP_ALIAS_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/aliases";
-    private static final String DESKTOP_CHANNEL_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/channels";
     private static final String DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH =
         DESKTOP_HANDOFF_PATH + "/p25-bandplan-overrides";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
@@ -315,18 +314,6 @@ public final class WebSessionHttpController
         return DESKTOP_HANDOFF_PATH + "/streaming";
     }
 
-    /** Fixed desktop handoff path for the Channel manager. */
-    public static String desktopChannelHandoffPath()
-    {
-        return DESKTOP_CHANNEL_HANDOFF_PATH;
-    }
-
-    /** Fixed desktop handoff path for one configured Channel. */
-    public static String desktopChannelHandoffPath(String configurationId)
-    {
-        return DESKTOP_CHANNEL_HANDOFF_PATH + "/" + requireCanonicalConfigurationId(configurationId);
-    }
-
     /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
     public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String configurationId)
     {
@@ -348,26 +335,6 @@ public final class WebSessionHttpController
         if(DESKTOP_ALIAS_HANDOFF_PATH.equals(rawPath))
         {
             return "/?view=aliases";
-        }
-
-
-        if(DESKTOP_CHANNEL_HANDOFF_PATH.equals(rawPath))
-        {
-            return "/?view=channel-setup";
-        }
-
-        String channelPrefix = DESKTOP_CHANNEL_HANDOFF_PATH + "/";
-        if(rawPath != null && rawPath.startsWith(channelPrefix))
-        {
-            try
-            {
-                return "/?view=channel-setup&channel=" +
-                    requireCanonicalConfigurationId(rawPath.substring(channelPrefix.length()));
-            }
-            catch(IllegalArgumentException exception)
-            {
-                return null;
-            }
         }
 
         String p25Prefix = DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + "/";

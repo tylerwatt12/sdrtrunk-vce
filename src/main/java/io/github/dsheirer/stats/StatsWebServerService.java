@@ -1117,26 +1117,6 @@ public class StatsWebServerService implements AutoCloseable
         return navigation.baseUri().resolve(WebSessionHttpController.desktopStreamingHandoffPath());
     }
 
-    /** Arms a one-use local administrator sign-in and opens the web-first Channel manager. */
-    public synchronized URI createDesktopAdministratorChannelHandoffUri()
-    {
-        return createDesktopAdministratorChannelHandoffUri(null);
-    }
-
-    /** Arms a one-use local administrator sign-in and opens one configured Channel. */
-    public synchronized URI createDesktopAdministratorChannelHandoffUri(String configurationId)
-    {
-        String handoffPath = configurationId == null ? WebSessionHttpController.desktopChannelHandoffPath() :
-            WebSessionHttpController.desktopChannelHandoffPath(configurationId);
-        StatsWebNavigationState navigation = getNavigationState();
-        if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff())
-        {
-            return null;
-        }
-        return navigation.baseUri().resolve(handoffPath);
-    }
-
     /**
      * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
      */

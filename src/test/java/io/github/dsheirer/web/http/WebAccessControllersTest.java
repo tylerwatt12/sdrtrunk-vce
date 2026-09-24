@@ -351,10 +351,6 @@ class WebAccessControllersTest
                 () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
             P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
             String configurationId = "abcdefab-cdef-abcd-efab-cdefabcdefab";
-            assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/channels/" + configurationId,
-                WebSessionHttpController.desktopChannelHandoffPath(configurationId));
-            assertThrows(IllegalArgumentException.class,
-                () -> WebSessionHttpController.desktopChannelHandoffPath(configurationId.toUpperCase()));
             assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId,
                 WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, configurationId));
@@ -365,6 +361,14 @@ class WebAccessControllersTest
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "?target=https%3A%2F%2Fattacker.example").GET());
             assertEquals(400, arbitraryRedirect.statusCode());
+            for(String retiredPath : new String[]{"/channels", "/channels/" + configurationId})
+            {
+                HttpResponse<String> retiredChannelHandoff = send(client,
+                    request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + retiredPath).GET());
+                assertEquals(404, retiredChannelHandoff.statusCode());
+                assertTrue(retiredChannelHandoff.headers().firstValue("Location").isEmpty());
+                assertTrue(retiredChannelHandoff.headers().firstValue("Set-Cookie").isEmpty());
+            }
             HttpResponse<String> malformedAliasTarget = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/aliases/12/41/extra").GET());
             assertEquals(404, malformedAliasTarget.statusCode());
@@ -407,14 +411,6 @@ class WebAccessControllersTest
             assertEquals(303, exactHandoff.statusCode());
             assertEquals("/?view=aliases&list=12&alias=41",
                 exactHandoff.headers().firstValue("Location").orElseThrow());
-
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            HttpResponse<String> channelHandoff = send(client,
-                request(origin, WebSessionHttpController.desktopChannelHandoffPath(configurationId))
-                    .header("Cookie", cookie).GET());
-            assertEquals(303, channelHandoff.statusCode());
-            assertEquals("/?view=channel-setup&channel=" + configurationId,
-                channelHandoff.headers().firstValue("Location").orElseThrow());
 
             assertTrue(authenticationService.armDesktopAdministratorHandoff());
             HttpResponse<String> p25Handoff = send(client,

@@ -83,6 +83,7 @@ class StatsWebChannelAdministrationUiContractTest
         }
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java")));
         assertFalse(windowManager.contains("ViewChannelRequest"));
-        assertTrue(windowManager.contains("process(ViewWebChannelRequest request)"));
+        assertFalse(windowManager.contains("ViewWebChannelRequest"));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/ViewWebChannelRequest.java")));
     }
 }

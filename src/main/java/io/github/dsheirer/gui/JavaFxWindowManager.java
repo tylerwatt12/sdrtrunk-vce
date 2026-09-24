@@ -432,18 +432,6 @@ public class JavaFxWindowManager extends Application
         });
     }
 
-    /** Opens the web-first Channel manager without constructing the retired Java editor. */
-    @Subscribe
-    public void process(ViewWebChannelRequest request)
-    {
-        execute(() -> {
-            WebAdministratorNavigator navigator =
-                new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
-            if(request.hasChannel()) navigator.openChannel(null, request.getConfigurationId());
-            else navigator.openChannels(null);
-        });
-    }
-
     /** Opens one site-scoped P25 bandplan override draft in the authenticated web editor. */
     @Subscribe
     public void process(ViewWebP25BandplanOverrideRequest request)
