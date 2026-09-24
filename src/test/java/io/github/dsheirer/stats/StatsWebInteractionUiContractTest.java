@@ -1131,7 +1131,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(filters.contains("className: 'live-filter-modal'"));
         assertTrue(filters.contains("returnFocusSelector:"));
         assertTrue(filters.contains("trigger.setAttribute('aria-haspopup', 'dialog')"));
-        assertTrue(filters.contains("tree.setAttribute('role', 'tree')"));
+        assertTrue(filters.contains("node('ul', 'live-filter-tree')"));
+        assertTrue(filters.contains("node('li', `live-filter-tree-item"));
+        assertFalse(filters.contains("tree.setAttribute('role', 'tree')"));
+        assertTrue(filters.contains("iconButton('icon-chevron-down'"));
+        assertTrue(filters.contains("ui-disclosure-button live-filter-expand"));
+        assertTrue(filters.contains("setIconButton(expand, 'icon-chevron-down'"));
         assertTrue(filters.contains("input.indeterminate"));
         assertTrue(filters.contains("`${selected}/${leafKeys.length}`"));
         assertTrue(model.contains("catalog?.signature === next.signature"));
@@ -1207,6 +1212,8 @@ class StatsWebInteractionUiContractTest
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
         String conventional = function(source, "function liveConventionalChannelValue(row)");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
+        String selectedViewAction = function(source, "function liveSelectedViewAction(target, label, iconId)");
+        String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
         String upsert = function(systems, "const upsertTable = (value) =>");
         String selectedView = function(systems, "const updateSelectedView = (value) =>");
         String rowRenderer = function(source,
@@ -1245,6 +1252,14 @@ class StatsWebInteractionUiContractTest
         assertFalse(selectedView.contains("{ site: 'quality' }"));
         assertTrue(selectedView.contains("liveSelectedViewAction(channelTarget, 'Channel details', 'icon-channel')"));
         assertTrue(selectedView.contains("liveSelectedViewAction(qualityTarget, 'Signal quality', 'icon-health')"));
+        assertTrue(selectedViewAction.contains("ui-icon-button section-title-icon live-selected-view-action"));
+        assertTrue(selectedViewAction.contains("return setIconButton(action, iconId, label)"));
+        assertFalse(selectedViewAction.contains("node('span'"));
+        assertTrue(systems.contains("titleActions.append(presentationSettings)"));
+        assertFalse(systems.contains("if (userPreferenceController.snapshot().loaded)"));
+        assertTrue(settingsActivation.contains("showLoginModal(returnFocusSelector)"));
+        assertTrue(settingsActivation.contains("snapshot = await synchronizeUserPreferences()"));
+        assertTrue(settingsActivation.contains("openLivePresentationSettings(returnFocusSelector)"));
         assertFalse(upsert.contains("quality.classList.toggle('quality-link'"));
         assertFalse(upsert.contains("select.classList.toggle('quality-link'"));
         assertFalse(css.contains(".channels-tab-close"));
@@ -1265,6 +1280,7 @@ class StatsWebInteractionUiContractTest
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
+        String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
         String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
@@ -1272,18 +1288,16 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
-        assertTrue(live.contains(
-            "const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice()"));
         assertTrue(live.contains("liveChannelsSection((selection) =>"));
-        assertTrue(live.contains("historyNotice?.select(selection)"));
+        assertFalse(source.contains("function liveActivityHistoryNotice()"));
+        assertFalse(live.contains("historyNotice"));
         assertTrue(live.contains("node('div', 'live-right-workspace')"));
         assertTrue(live.contains(
             "rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element)"));
         assertTrue(live.contains("const workspaceResizer = liveWorkspaceResizer(rightWorkspace)"));
         assertTrue(live.contains("pageConnections.add(workspaceResizer)"));
         assertTrue(live.contains("split.append(channels.picker, rightWorkspace)"));
-        assertTrue(live.contains(
-            "beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []))"));
+        assertTrue(live.contains("beginPage(renderContext, split)"));
         assertTrue(resizer.contains("liveUiState().details_panel_percent"));
         assertTrue(resizer.contains("separator.setAttribute('role', 'separator')"));
         assertTrue(resizer.contains("separator.setAttribute('aria-orientation', 'horizontal')"));
@@ -1303,7 +1317,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("node('div', 'section-title-actions ui-section-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
-        assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));
+        assertTrue(systems.contains("activateLivePresentationSettings(presentationSettings)"));
+        assertTrue(settingsActivation.contains("openLivePresentationSettings(returnFocusSelector)"));
         assertTrue(systems.contains("section('Live Channels', host, titleActions)"));
         assertTrue(systems.contains("section('Live views', pickerPopover, pickerActions)"));
         assertTrue(systems.contains("'ui-input live-picker-search-input'"));
@@ -1341,6 +1356,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains(
             "paneActionsHost.append(eventActions, messagesController.actions, channelController.actions)"));
         assertTrue(events.contains("eventPane.append(eventGap, eventsTable)"));
+        assertTrue(events.contains("if (persist && collapsed)"));
+        assertTrue(events.contains("setCollapsed(false, collapsePreferenceExplicit)"));
         assertFalse(events.contains("live-details-summary"));
         assertFalse(events.contains("live-events-toolbar"));
         assertFalse(events.contains("live-event-selection"));

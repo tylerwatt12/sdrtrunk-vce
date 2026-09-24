@@ -296,6 +296,18 @@ document.querySelectorAll('.ui-table-row-group > th').forEach((heading, index) =
     items.forEach((row) => { row.hidden = expanded; });
   });
 });
+document.querySelectorAll('.live-filter-expand').forEach((button) => {
+  button.addEventListener('click', () => {
+    const opening = button.getAttribute('aria-expanded') !== 'true';
+    const noun = String(button.getAttribute('aria-label') || '').replace(/^(?:Expand|Collapse)\s+/, '');
+    const label = `${opening ? 'Collapse' : 'Expand'} ${noun}`;
+    button.setAttribute('aria-expanded', String(opening));
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    const children = document.getElementById(button.getAttribute('aria-controls'));
+    if (children) children.hidden = !opening;
+  });
+});
 if(view === 'radio-directory-panel') {
   const example = document.querySelector('.visual-radio-directory-coverage-example');
   const panel = document.createElement('section');
@@ -408,6 +420,17 @@ if(view === 'live-notice') {
     }
   };
   detailsCollapse?.addEventListener('click', () => setDetailsCollapsed(!details.classList.contains('collapsed')));
+  details?.querySelectorAll('.live-details-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      details.querySelectorAll('.live-details-tab').forEach((candidate) => {
+        const active = candidate === tab;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-selected', String(active));
+        candidate.tabIndex = active ? 0 : -1;
+      });
+      setDetailsCollapsed(false);
+    });
+  });
   const detailsPause = details?.querySelector('.live-details-pause');
   const detailsPauseIcon = detailsPause?.querySelector('use');
   detailsPause?.addEventListener('click', () => {

@@ -3,10 +3,10 @@ import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
 import * as tableDefaults from './core/table-defaults.js?v=8';
-import { Controller as PageTitleController } from './core/page-title.js';
+import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints } from './core/icon-hints.js?v=2';
+import { installIconHints } from './core/icon-hints.js?v=3';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -2050,38 +2050,6 @@ function detailedHistoryNotice() {
   }
   return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
     'No saved activity is available because Store Detailed Event History is turned off. Enable it in Stats & Web > Stats Server. Activity begins saving from that point forward; earlier activity cannot be recovered.');
-}
-
-function liveActivityHistoryNotice() {
-  const message = node('span', '', 'Live shows data received after this page was opened. For earlier activity, ');
-  const link = anchor('browse saved activity', href('dashboard', { tab: 'health' }));
-  const detail = node('span', '', '. Saved activity is available when Store Detailed Event History is enabled in ' +
-    'Stats & Web > Stats Server.');
-  const copy = node('span', 'live-activity-history-notice-copy');
-  copy.append(message, link, detail);
-  const notice = node('div', 'live-activity-history-notice ui-notice ui-notice-warning');
-  notice.setAttribute('role', 'status');
-  const dismiss = uiActionButton('Dismiss', null, () => {
-    storeLiveUiState({ historyNoticeDismissed: true });
-    notice.remove();
-  });
-  dismiss.classList.add('live-activity-history-dismiss');
-  notice.append(copy, dismiss);
-  return {
-    element: notice,
-    select(selection) {
-      if (!selection?.configurationId) {
-        link.textContent = 'browse saved activity';
-        link.href = href('dashboard', { tab: 'health' });
-        link.removeAttribute('title');
-        return;
-      }
-      link.textContent = 'view saved activity for this channel';
-      link.href = href('channel', { configuration_id: selection.configurationId, tab: 'activity' });
-      link.title = selection.label ? `Open saved activity for ${selection.label}` :
-        'Open saved activity for this channel';
-    }
-  };
 }
 
 function databaseLoggingNotice(view) {
@@ -11121,8 +11089,7 @@ function liveDetailFilterController(options) {
     hideAll.type = 'button';
     typeActions.append(showAll, hideAll);
     typeSection.append(typeActions);
-    const tree = node('div', 'live-filter-tree');
-    tree.setAttribute('role', 'tree');
+    const tree = node('ul', 'live-filter-tree');
     tree.setAttribute('aria-label', options.typeHeading || `${options.noun} types`);
     typeSection.append(tree);
     modalBody.append(typeSection);
@@ -11140,38 +11107,29 @@ function liveDetailFilterController(options) {
     const appendFilterNode = (filterNode, parent, depth) => {
       const branch = filterNode.children.length > 0;
       const { leafKeys } = model.leafSelection(filterNode);
-      const item = node('div', `live-filter-tree-item${branch ? ' branch' : ' leaf'}`);
-      item.setAttribute('role', 'treeitem');
-      item.setAttribute('aria-level', String(depth + 1));
+      const item = node('li', `live-filter-tree-item${branch ? ' branch' : ' leaf'}`);
       const row = node('div', 'live-filter-node-row');
       row.style.setProperty('--filter-indent', `${6 + depth * 18}px`);
       let children = null;
+      let expand = null;
       if (branch) {
-        const expand = node('button',
-          'ui-button ui-button-secondary ui-icon-button live-filter-expand',
-          expandedKeys.has(filterNode.key) ? '−' : '+');
-        expand.type = 'button';
-        expand.setAttribute('aria-label', `${expandedKeys.has(filterNode.key) ? 'Collapse' : 'Expand'} ${filterNode.label}`);
-        expand.setAttribute('aria-expanded', String(expandedKeys.has(filterNode.key)));
-        row.append(expand);
-        children = node('div', 'live-filter-tree-children');
+        const expanded = expandedKeys.has(filterNode.key);
+        expand = iconButton('icon-chevron-down', `${expanded ? 'Collapse' : 'Expand'} ${filterNode.label}`,
+          'ui-icon-button ui-disclosure-button live-filter-expand');
+        expand.setAttribute('aria-expanded', String(expanded));
+        children = node('ul', 'live-filter-tree-children');
         children.id = `${triggerId}-tree-${++treeNodeSequence}`;
-        children.setAttribute('role', 'group');
-        children.hidden = !expandedKeys.has(filterNode.key);
+        children.hidden = !expanded;
         expand.setAttribute('aria-controls', children.id);
         expand.addEventListener('click', () => {
           const opening = children.hidden;
           children.hidden = !opening;
-          expand.textContent = opening ? '−' : '+';
           expand.setAttribute('aria-expanded', String(opening));
-          expand.setAttribute('aria-label', `${opening ? 'Collapse' : 'Expand'} ${filterNode.label}`);
+          setIconButton(expand, 'icon-chevron-down',
+            `${opening ? 'Collapse' : 'Expand'} ${filterNode.label}`);
           if (opening) expandedKeys.add(filterNode.key);
           else expandedKeys.delete(filterNode.key);
         });
-      } else {
-        const spacer = node('span', 'live-filter-expand-spacer');
-        spacer.setAttribute('aria-hidden', 'true');
-        row.append(spacer);
       }
       const label = node('label', 'live-filter-node-label');
       const input = node('input');
@@ -11182,6 +11140,7 @@ function liveDetailFilterController(options) {
       label.append(input, text);
       if (count) label.append(count);
       row.append(label);
+      if (expand) row.append(expand);
       item.append(row);
       selectionInputs.push({ input, count, leafKeys });
       input.addEventListener('change', () => {
@@ -14736,7 +14695,11 @@ function liveEventsPanel(onCollapse) {
     if (eventsActive && !nextEventsActive) closeStream();
     eventsActive = nextEventsActive;
     if (persist) storeLiveUiState({ details_active_tab: id });
-    sync();
+    if (persist && collapsed) {
+      setCollapsed(false, collapsePreferenceExplicit);
+    } else {
+      sync();
+    }
   };
   ['events', 'messages', 'channel'].forEach((id) => {
     const button = node('button', 'live-details-tab ui-segmented-option', id[0].toUpperCase() + id.slice(1));
@@ -14953,6 +14916,11 @@ function liveAliasValue(row, kind) {
   return result;
 }
 
+function liveIdentityHasDisplayLabel(row, kind) {
+  const fields = kind === 'source' ? [row?.source_alias, row?.talker_alias] : [row?.target_alias];
+  return fields.some((value) => String(value || '').trim());
+}
+
 function liveConventionalChannelValue(row) {
   const label = String(row?.channel_name || '');
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
@@ -14996,10 +14964,31 @@ function livePickerNavigationIndex(key, index, count) {
 }
 
 function liveSelectedViewAction(target, label, iconId) {
-  const action = anchor('', target, 'ui-button ui-button-secondary live-selected-view-action');
-  action.setAttribute('aria-label', label);
-  action.append(iconGlyph(iconId), node('span', '', label));
-  return action;
+  const action = anchor('', target,
+    'ui-button ui-button-secondary ui-icon-button section-title-icon live-selected-view-action');
+  return setIconButton(action, iconId, label);
+}
+
+async function activateLivePresentationSettings(button) {
+  const returnFocusSelector = `#${button.id}`;
+  let snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded && !accessSession.authenticated) {
+    showLoginModal(returnFocusSelector);
+    return;
+  }
+  if (!snapshot.loaded) {
+    button.disabled = true;
+    button.classList.add('is-loading');
+    button.replaceChildren();
+    button.setAttribute('aria-label', 'Loading Live presentation settings');
+    button.removeAttribute('title');
+    snapshot = await synchronizeUserPreferences();
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    setIconButton(button, 'icon-live-presentation', snapshot.loaded ?
+      'Live presentation settings' : 'Retry Live presentation settings');
+  }
+  if (snapshot.loaded) openLivePresentationSettings(returnFocusSelector);
 }
 
 const LIVE_IDLE_CALL_FIELDS = [
@@ -15111,6 +15100,25 @@ function liveChannelsSection(onSelectionChange) {
     }
     return values.join(' · ');
   };
+  const decodeQualityIndicator = (row) => {
+    const text = decodeQualityText(row);
+    if (!text) return '';
+    const values = decodeQualityValues(row);
+    const percent = values.length ? Math.max(0, Math.min(100, Math.min(...values))) : null;
+    const level = percent == null ? 0 : Math.max(1, Math.min(4, Math.ceil(percent / 25)));
+    const state = percent == null ? 'unavailable' :
+      (percent >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
+        (percent >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
+    const value = node('span', 'live-decode-quality');
+    value.setAttribute('role', 'img');
+    value.setAttribute('aria-label', `Decode quality ${text}`);
+    const bars = node('span',
+      `live-decode-quality-bars ui-quality-bars ui-quality-${state} ui-quality-level-${level}`);
+    bars.setAttribute('aria-hidden', 'true');
+    for (let index = 0; index < 4; index += 1) bars.append(node('span'));
+    value.append(node('span', 'live-decode-quality-text', text), bars);
+    return value;
+  };
   const decodeQualityTitle = (row) => {
     const values = [];
     if (decodeDisplay.show_control && row.decode_health_pct != null) {
@@ -15128,6 +15136,12 @@ function liveChannelsSection(onSelectionChange) {
     return tags.has('CURRENT_CONTROL') ? 'control-current' :
       (tags.has('ALTERNATE_CONTROL') ? 'control-alternate' : '');
   };
+  const activityRowClass = (row) => [
+    selection?.rowKey === row.key ? 'selected' : '',
+    channelTagSet(row.tags).has('CONVENTIONAL') ? '' : 'live-row-trunked',
+    liveIdentityHasDisplayLabel(row, 'source') ? 'live-row-has-source-label' : '',
+    liveIdentityHasDisplayLabel(row, 'target') ? 'live-row-has-target-label' : ''
+  ].filter(Boolean).join(' ');
   const decodeQualityClass = (row) => {
     const values = decodeQualityValues(row);
     const percent = values.length ? Math.min(...values) : null;
@@ -15155,7 +15169,7 @@ function liveChannelsSection(onSelectionChange) {
       render: (row) => row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`,
       className: channelStateClass, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
     { id: 'decode-health', label: 'Decode %',
-      render: decodeQualityText, title: decodeQualityTitle, className: decodeQualityClass,
+      render: decodeQualityIndicator, title: decodeQualityTitle, className: decodeQualityClass,
       sortValue: (row) => {
         const values = decodeQualityValues(row);
         return values.length ? Math.min(...values) : -1;
@@ -15188,14 +15202,11 @@ function liveChannelsSection(onSelectionChange) {
   const selectedViewActions = node('div', 'live-selected-view-actions');
   titleActions.append(connection, selectedViewActions);
   const pickerActions = node('div', 'section-title-actions ui-section-actions live-picker-actions');
-  if (userPreferenceController.snapshot().loaded) {
-    const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
-      'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
-    presentationSettings.id = 'live-presentation-settings';
-    presentationSettings.addEventListener('click', () =>
-      openLivePresentationSettings('#live-presentation-settings'));
-    titleActions.append(presentationSettings);
-  }
+  const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
+    'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
+  presentationSettings.id = 'live-presentation-settings';
+  presentationSettings.addEventListener('click', () => void activateLivePresentationSettings(presentationSettings));
+  titleActions.append(presentationSettings);
   let activeTableId = null;
   let applyingSnapshot = false;
   let selection = null;
@@ -15206,7 +15217,7 @@ function liveChannelsSection(onSelectionChange) {
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
     sortable: true,
-    rowClass: (row) => selection?.rowKey === row.key ? 'selected' : '',
+    rowClass: activityRowClass,
     onRowClick: (row) => {
       const value = tables.get(activeTableId);
       if (value) selectRow(value, row);
@@ -15441,7 +15452,7 @@ function liveChannelsSection(onSelectionChange) {
       const copy = node('span', 'channels-tab-copy');
       copy.append(node('strong', 'channels-tab-title'), node('span', 'channels-tab-meta'));
       const state = node('span', 'channels-tab-state');
-      const quality = node('span', 'channels-tab-quality');
+      const quality = node('span', 'channels-tab-quality ui-quality-bars');
       for (let index = 0; index < 4; index += 1) quality.append(node('span'));
       state.append(quality, node('span', 'channels-tab-state-label'));
       select.append(copy, state);
@@ -15482,12 +15493,12 @@ function liveChannelsSection(onSelectionChange) {
     const decodeQuality = qualityFresh && Number.isFinite(decodeValue) ?
       Math.max(0, Math.min(100, decodeValue)) : null;
     if (value.table_id === 'conventional') {
-      quality.className = 'channels-tab-quality quality-neutral';
+      quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
       tab.title = label;
       select.setAttribute('aria-label', `Show live channels for ${label}`);
       stateLabel.textContent = 'Live';
     } else if (signalStrength === null && decodeQuality === null) {
-      quality.className = 'channels-tab-quality quality-unavailable';
+      quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
       tab.title = `${label} · Signal strength and decode quality unavailable`;
       select.setAttribute('aria-label', `Show live channels for ${label}; signal strength and decode quality unavailable`);
       stateLabel.textContent = value.channel_running === false ? 'Stopped' : 'Running';
@@ -15496,7 +15507,7 @@ function liveChannelsSection(onSelectionChange) {
       const state = decodeQuality === null ? 'unavailable' :
         (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
           (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
-      quality.className = `channels-tab-quality quality-${state} quality-level-${level}`;
+      quality.className = `channels-tab-quality ui-quality-bars ui-quality-${state} ui-quality-level-${level}`;
       const signalLabel = signalStrength === null ? 'Signal strength unavailable' :
         `${signalStrength.toFixed(1)} dBFS signal strength`;
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
@@ -15593,10 +15604,8 @@ async function renderLive() {
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
   pageConnections.add(workspaceResizer);
-  const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice();
   const channels = liveChannelsSection((selection) => {
     eventsPanel.select(selection);
-    historyNotice?.select(selection);
   });
   split.classList.toggle('picker-collapsed', channels.pickerCollapsed);
   channels.element.id = 'live-primary-panel';
@@ -15604,7 +15613,7 @@ async function renderLive() {
   workspaceResizer.element.setAttribute('aria-controls', 'live-primary-panel live-details-panel');
   rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element);
   split.append(channels.picker, rightWorkspace);
-  beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []));
+  beginPage(renderContext, split);
 }
 
 async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',

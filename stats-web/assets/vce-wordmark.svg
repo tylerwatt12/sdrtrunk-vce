@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 124 44" focusable="false">
+  <defs>
+    <mask id="vce-brush-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="124" height="44">
+      <rect width="124" height="44" fill="white"/>
+      <g fill="black">
+        <path d="m10 9 8-1 1 3-8 1z"/>
+        <path d="m16 20 8-2 2 3-8 2z"/>
+        <path d="m24 32 9-2-1 3-7 2z"/>
+        <path d="m36 9 8-2-2 4-8 1z"/>
+        <path d="m49 12 10-2-2 3-8 2z"/>
+        <path d="m47 28 10-1 2 3-11 1z"/>
+        <path d="m62 5 11 1-1 3-10-1z"/>
+        <path d="m60 35 12-2 2 3-13 2z"/>
+        <path d="m79 9 8-1-2 3-7 1z"/>
+        <path d="m94 8 13-2 1 3-13 2z"/>
+        <path d="m96 20 15-2 1 3-16 2z"/>
+        <path d="m96 34 17-2 1 3-18 2z"/>
+      </g>
+    </mask>
+  </defs>
+  <g fill="#e7eff3" mask="url(#vce-brush-mask)">
+    <path d="M2 3 14 5l10 27 3 1L40 2l12 2-18 37-16-1z"/>
+    <path d="m88 8-8 8c-4-4-8-6-14-6-7 0-11 5-11 12 0 8 5 12 12 12 6 0 11-3 14-7l8 7c-5 6-12 9-23 8-16-1-23-8-23-20C43 9 52 1 66 1c10 0 17 2 22 7z"/>
+    <path d="m92 3 30-1-1 9h-17l-1 6 15-1 1 9h-17v8l21-2-2 10-31-1z"/>
+  </g>
+</svg>

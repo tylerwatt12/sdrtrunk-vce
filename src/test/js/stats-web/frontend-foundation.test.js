@@ -10,6 +10,7 @@ const core = path.resolve(process.argv[2] || path.resolve(__dirname, '../../../.
 const appSource = fs.readFileSync(path.resolve(core, '../app.js'), 'utf8');
 const appCssSource = readStylesheetSource(path.resolve(core, '../app.css'));
 const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf8');
+const wordmarkSource = fs.readFileSync(path.resolve(core, '../vce-wordmark.svg'), 'utf8');
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
 const radioReferenceImportSource = fs.readFileSync(
   path.resolve(core, '../features/radioreference-import.js'), 'utf8');
@@ -231,6 +232,14 @@ async function main() {
   assert.match(indexSource,
     /id="preference-status" class="preference-status ui-notice" role="status" aria-live="polite" hidden/);
   assert.match(indexSource, /id="global-status" class="visually-hidden"/);
+  assert.match(indexSource, /<title>VCE<\/title>/);
+  assert.match(indexSource,
+    /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=1" alt=""><\/a>/);
+  assert.match(wordmarkSource, /viewBox="0 0 124 44"/);
+  assert.match(wordmarkSource, /mask id="vce-brush-mask"/);
+  assert.match(appCssSource, /\.brand-logo \{[^}]*width: 100%;[^}]*display: block;/s);
+  assert.match(appCssSource,
+    /@media \(max-width: 560px\)[\s\S]*?\.topbar \{[^}]*grid-template-columns: var\(--icon-action-size\)[^}]*gap: 10px;[^}]*padding: 5px 8px;/);
   assert.match(appCssSource, /\.preference-status \{/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'),
     /preference-status ui-notice ui-notice-danger/);
@@ -282,9 +291,21 @@ async function main() {
   assert.match(appSource, /id = 'scanner-settings'/);
   assert.match(appSource, /openScannerSettings\('#scanner-settings'\)/);
   const liveChannelsSource = functionBinding(appSource, 'liveChannelsSection');
+  const selectedViewActionSource = functionBinding(appSource, 'liveSelectedViewAction');
+  const liveSettingsActivationSource = functionBinding(appSource, 'activateLivePresentationSettings');
   assert.match(liveChannelsSource, /layoutMenuHost: titleActions/);
   assert.match(liveChannelsSource,
     /iconButton\('icon-live-presentation', 'Live presentation settings'/);
+  assert.match(liveChannelsSource, /titleActions\.append\(presentationSettings\)/);
+  assert.doesNotMatch(liveChannelsSource,
+    /if \(userPreferenceController\.snapshot\(\)\.loaded\) \{[\s\S]*presentationSettings/);
+  assert.match(selectedViewActionSource, /ui-icon-button section-title-icon live-selected-view-action/);
+  assert.match(selectedViewActionSource, /return setIconButton\(action, iconId, label\)/);
+  assert.doesNotMatch(selectedViewActionSource, /node\('span'/);
+  assert.match(liveSettingsActivationSource, /!snapshot\.loaded && !accessSession\.authenticated/);
+  assert.match(liveSettingsActivationSource, /showLoginModal\(returnFocusSelector\)/);
+  assert.match(liveSettingsActivationSource, /snapshot = await synchronizeUserPreferences\(\)/);
+  assert.match(liveSettingsActivationSource, /openLivePresentationSettings\(returnFocusSelector\)/);
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
   assert.match(liveChannelsSource, /let requestedChannel = route\.get\('channel'\)/);
   assert.match(liveChannelsSource, /liveRequestedChannelMatch\(value, requestedChannel\)/);
@@ -604,12 +625,9 @@ async function main() {
   assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
   assert.match(appCssSource,
     /\.radio-directory-system-grid \{[\s\S]+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
-  const liveHistoryNotice = functionBinding(appSource, 'liveActivityHistoryNotice');
-  assert.match(liveHistoryNotice, /live-activity-history-notice ui-notice ui-notice-warning/);
-  assert.match(liveHistoryNotice, /storeLiveUiState\(\{ historyNoticeDismissed: true \}\)/);
-  assert.match(liveHistoryNotice, /notice\.remove\(\)/);
   const renderLiveSource = functionBinding(appSource, 'renderLive');
-  assert.match(renderLiveSource, /liveUiState\(\)\.historyNoticeDismissed === true \? null/);
+  assert.doesNotMatch(appSource, /function liveActivityHistoryNotice\(/);
+  assert.doesNotMatch(renderLiveSource, /historyNotice/);
   assert.match(renderLiveSource, /node\('div', 'live-right-workspace'\)/);
   assert.match(renderLiveSource, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace\)/);
   assert.match(renderLiveSource, /pageConnections\.add\(workspaceResizer\)/);
@@ -618,8 +636,7 @@ async function main() {
   assert.match(renderLiveSource,
     /rightWorkspace\.append\(channels\.element, workspaceResizer\.element, eventsPanel\.element\)/);
   assert.match(renderLiveSource, /split\.append\(channels\.picker, rightWorkspace\)/);
-  assert.match(renderLiveSource,
-    /beginPage\(renderContext, split, \.\.\.\(historyNotice \? \[historyNotice\.element\] : \[\]\)\)/);
+  assert.match(renderLiveSource, /beginPage\(renderContext, split\)/);
   const liveResizerSource = functionBinding(appSource, 'liveWorkspaceResizer');
   assert.match(liveResizerSource, /role', 'separator'/);
   assert.match(liveResizerSource, /aria-orientation', 'horizontal'/);
@@ -1274,9 +1291,10 @@ async function main() {
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 0 } }), 'WEST');
   assert.equal(pageTitles.derive({ routeId: 'channel', pageTitle: 'Channel BEE00:941 01-01 (Control)',
     prependPlaying: true, playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }),
-  'WEST (2) - sdrtrunk-vce - Channel BEE00:941 01-01 (Control)');
+  'WEST (2) - VCE - Channel BEE00:941 01-01 (Control)');
   assert.equal(pageTitles.derive({ routeId: 'channel', pageTitle: 'Channel', prependPlaying: false,
-    playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'sdrtrunk-vce - Channel');
+    playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'VCE - Channel');
+  assert.equal(pageTitles.PRODUCT, 'VCE');
   assert.equal(pageTitles.safeText('A\u202e\n B'), 'A B');
 
   assert.equal(entityRefs.href({ kind: 'radio_system', key: 'p25:bee00:941' }),

@@ -36,13 +36,21 @@
 }
 
 .brand {
+  width: 74px;
+  min-width: 74px;
+  display: inline-flex;
+  align-items: center;
   color: var(--header-ink);
-  font-size: 17px;
-  font-weight: 700;
 }
 
 .brand:hover {
   text-decoration: none;
+}
+
+.brand-logo {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .primary-nav {
@@ -826,17 +834,14 @@
 
 @media (max-width: 560px) {
   .topbar {
-    grid-template-columns: 34px minmax(72px, 1fr) max-content;
-    gap: 5px;
-    padding: 5px 6px;
+    grid-template-columns: var(--icon-action-size) minmax(66px, 1fr) max-content;
+    gap: 10px;
+    padding: 5px 8px;
   }
 
   .brand {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 15px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    width: 66px;
+    min-width: 66px;
   }
 
   .header-controls {

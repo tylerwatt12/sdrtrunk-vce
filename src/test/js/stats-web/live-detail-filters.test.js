@@ -245,6 +245,20 @@ firstLeafInput.dispatch('change');
 assert.equal(controller.matchesLeaf('message/root/a'), false);
 const rootBranch = findAll(originalModalBody,
   (candidate) => candidate.className.split(/\s+/).includes('branch'))[0];
+const rootDisclosure = findAll(rootBranch,
+  (candidate) => candidate.className.split(/\s+/).includes('live-filter-expand'))[0];
+const rootChildren = findAll(rootBranch,
+  (candidate) => candidate.className.split(/\s+/).includes('live-filter-tree-children'))[0];
+assert.equal(rootDisclosure.attributes.get('aria-expanded'), 'true');
+assert.equal(rootDisclosure.attributes.get('aria-controls'), rootChildren.id);
+assert.equal(rootDisclosure.attributes.get('aria-label'), 'Collapse P25 Phase 1 Messages');
+assert.equal(rootDisclosure.title, 'Collapse P25 Phase 1 Messages');
+assert.equal(rootChildren.hidden, false);
+rootDisclosure.dispatch('click');
+assert.equal(rootDisclosure.attributes.get('aria-expanded'), 'false');
+assert.equal(rootDisclosure.attributes.get('aria-label'), 'Expand P25 Phase 1 Messages');
+assert.equal(rootDisclosure.title, 'Expand P25 Phase 1 Messages');
+assert.equal(rootChildren.hidden, true);
 const rootInput = findAll(rootBranch, (candidate) => candidate.tag === 'input')[0];
 const rootCount = findAll(rootBranch,
   (candidate) => candidate.className.split(/\s+/).includes('live-filter-node-count'))[0];

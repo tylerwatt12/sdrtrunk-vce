@@ -13,17 +13,17 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=1") layer(reset);',
   '@import url("./styles/tokens.css?v=5") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=1") layer(components);',
-  '@import url("./styles/components/controls.css?v=14") layer(components);',
+  '@import url("./styles/components/controls.css?v=16") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=11") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=8") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=7") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=8") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=4") layer(compositions);',
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=9") layer(features);',
   '@import url("./styles/features/entity-details.css?v=10") layer(features);',
-  '@import url("./styles/features/live.css?v=10") layer(features);',
+  '@import url("./styles/features/live.css?v=12") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/scanner.css?v=4") layer(features);',
@@ -37,7 +37,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/streaming.css?v=4") layer(features);',
   '@import url("./styles/features/p25-settings.css?v=1") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=4") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css?v=5") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=7") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
@@ -776,7 +776,7 @@ function validateLiveFeature(stylesheets, entry) {
   for(const selector of ['body[data-view="live"]', '.live-right-workspace', '.live-channel-picker',
     '.channels-live-tabs', '.live-selected-view-header', '.live-details-header',
     '.live-workspace-resizer', '.live-workspace-resizer-grip', '.channel-diagnostic-grid',
-    '.live-filter-editor', '.live-activity-history-notice']) {
+    '.live-filter-editor']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
     assert.match(live, baseRule, `Missing Live feature rule ${selector}`);

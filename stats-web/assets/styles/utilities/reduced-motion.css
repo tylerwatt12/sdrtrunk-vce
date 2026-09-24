@@ -1,5 +1,8 @@
 /* Final-layer accessibility overrides for the opt-in design system. */
 @media (prefers-reduced-motion: reduce) {
+  .ui-disclosure-button > svg {
+    transition: none;
+  }
   .ui-data-table .activity-row-new > td {
     background: var(--accent-soft);
     animation: none;

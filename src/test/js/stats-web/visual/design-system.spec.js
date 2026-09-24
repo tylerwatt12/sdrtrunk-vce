@@ -19,6 +19,13 @@ test('interface guidance demonstrates the current composition rules', async ({ p
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');
   await expect(page.locator('.visual-guidance-grid article')).toHaveCount(4);
+  const actionsGuidance = page.locator('.visual-section').filter({
+    has: page.locator('h2:text-is("Actions")')
+  });
+  await expect(actionsGuidance.locator('.visual-section-copy')).toContainText(
+    'Prefer compact icon-only actions when the symbol is familiar and space matters');
+  await expect(actionsGuidance.locator('.visual-section-copy')).toContainText(
+    'Keep visible text for ambiguous, primary, or high-consequence actions');
   const dataWorkspace = page.locator('.visual-section').filter({
     has: page.locator('h2:text-is("Data workspace")')
   });
@@ -56,7 +63,8 @@ test('interface guidance demonstrates the current composition rules', async ({ p
     '.ui-icon-button', '.icon-button', '.ui-header-indicator', '.playback-command',
     '.playback-control-menu > summary', '.channels-tab-close'
   ].join(', ')).evaluateAll((controls) => controls.filter((control) =>
-    !control.getAttribute('aria-label') && !control.getAttribute('title')).map((control) => control.outerHTML));
+    !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby'))
+    .map((control) => control.outerHTML));
   expect(unlabeledIconControls).toEqual([]);
 });
 
@@ -345,6 +353,8 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await expect(navigation).toBeHidden();
   await expect(playbackMenu).toHaveAttribute('open', '');
   const header = page.locator('.visual-app-chrome-example .app-header');
+  const brand = header.getByRole('link', { name: 'VCE home' });
+  await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=1');
   await expect(header.getByText('RadioReference', { exact: true })).toBeAttached();
   await expect(header.getByText('Streaming', { exact: true })).toBeAttached();
   await expect(header.getByText('Hardware', { exact: true })).toBeAttached();
@@ -356,6 +366,8 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(navigation).toBeVisible();
+  const [navigationBox, brandBox] = await Promise.all([navigation.boundingBox(), brand.boundingBox()]);
+  expect(brandBox.x - (navigationBox.x + navigationBox.width)).toBeGreaterThanOrEqual(9);
   await expect(playbackMenu).not.toHaveAttribute('open', '');
   await expect(page.locator('.visual-app-chrome-example .playback-control-menu > summary')).toBeVisible();
 });
@@ -738,6 +750,46 @@ test('live-notice-dark-desktop', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('live-notice-dark-desktop.png');
 });
 
+test('Live selected-view actions use compact icons with shared hints', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/design-system.html?theme=light&view=live-notice');
+  const header = page.locator('.visual-live-example .live-selected-view-header');
+  for (const label of ['Channel details', 'Signal quality']) {
+    const action = header.getByRole('link', { name: label });
+    await expect(action).toBeVisible();
+    await expect(action).toHaveClass(/ui-icon-button/);
+    await expect(action).toHaveAttribute('title', label);
+    await expect(action.locator('svg')).toHaveCount(1);
+    await expect(action.locator('span')).toHaveCount(0);
+    const box = await action.boundingBox();
+    expect(Math.round(box.width)).toBe(40);
+    expect(Math.round(box.height)).toBe(40);
+  }
+  const channelDetails = header.getByRole('link', { name: 'Channel details' });
+  await channelDetails.hover();
+  await expect(page.locator('.ui-icon-hint')).toHaveText('Channel details');
+  await expect(page.locator('.ui-icon-hint')).toBeVisible();
+  await expect(header.getByRole('button', { name: 'Live presentation settings' })).toBeVisible();
+
+  const rows = page.locator('.channels-live-table tbody > tr');
+  const control = rows.nth(0);
+  const labeled = rows.nth(1);
+  const fallback = rows.nth(3);
+  await expect(rows).toHaveCount(5);
+  await expect(control.locator('[data-column="channel"]')).toHaveText('LCN 1-1772');
+  await expect(control.locator('[data-column="channel"]')).toBeVisible();
+  await expect(labeled.locator('[data-column="source"]')).toBeVisible();
+  await expect(labeled.locator('[data-column="target"]')).toBeVisible();
+  await expect(fallback).toBeVisible();
+  const desktopQuality = labeled.locator('.live-decode-quality');
+  await expect(desktopQuality).toHaveAccessibleName('Decode quality VC 92.4%');
+  await expect(desktopQuality.locator('.live-decode-quality-text')).toBeVisible();
+  await expect(desktopQuality.locator('.live-decode-quality-bars')).toBeHidden();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(header.getByRole('button', { name: 'Live presentation settings' })).toBeVisible();
+});
+
 test('live-picker-collapsed-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/design-system.html?theme=dark&view=live-notice');
@@ -800,6 +852,11 @@ test('Live desktop workspace persists its resizable details ratio and keeps one 
     await detailsCollapse.click();
     await expect(restoredDivider).toBeHidden();
     await expect(details.locator('.live-details-body')).toBeHidden();
+    await details.getByRole('tab', { name: 'Messages' }).click();
+    await expect(details).not.toHaveClass(/collapsed/);
+    await expect(details.locator('.live-details-body')).toBeVisible();
+    await expect(restoredDivider).toBeVisible();
+    await controls.getByRole('button', { name: 'Collapse live details' }).click();
     await controls.getByRole('button', { name: 'Expand live details' }).click();
     await expect(restoredDivider).toBeVisible();
     await expect(restoredDivider).toHaveAttribute('aria-valuenow', String(keyboardPercent));
@@ -816,12 +873,47 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   await page.goto('/design-system.html?theme=light&view=live-notice');
   const table = page.locator('.channels-live-table');
   const rows = table.locator('tbody > tr');
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(5);
+  await expect(rows.filter({ visible: true })).toHaveCount(4);
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true');
   await expect(rows.first().locator('[data-column="source-alias"]')).toHaveCount(1);
+
+  const control = rows.nth(0);
+  const labeled = rows.nth(1);
+  const otaLabeled = rows.nth(2);
+  const fallback = rows.nth(3);
+  await expect(control.locator('[data-column="channel"]')).toHaveText('LCN 1-1772');
+  await expect(control.locator('[data-column="channel"]')).toBeHidden();
+  await expect(labeled.locator('[data-column="source-alias"]')).toHaveText('Engine 4');
+  await expect(labeled.locator('[data-column="target-alias"]')).toHaveText('Fire Dispatch');
+  await expect(labeled.locator('[data-column="source"]')).toBeHidden();
+  await expect(labeled.locator('[data-column="target"]')).toBeHidden();
+  await expect(otaLabeled.locator('[data-column="source-alias"]')).toHaveText('TA: Unit 312');
+  await expect(otaLabeled.locator('[data-column="source"]')).toBeHidden();
+  await expect(otaLabeled.locator('[data-column="target"]')).toBeVisible();
+  await expect(fallback.locator('[data-column="source"]')).toHaveText('318');
+  await expect(fallback.locator('[data-column="target"]')).toHaveText('12044');
+  await expect(fallback.locator('[data-column="source"]')).toBeVisible();
+  await expect(fallback.locator('[data-column="target"]')).toBeVisible();
+  expect(await fallback.locator('[data-column="source"]').evaluate((cell) =>
+    getComputedStyle(cell).gridColumnStart)).toBe('1');
+  expect(await fallback.locator('[data-column="target"]').evaluate((cell) =>
+    getComputedStyle(cell).gridColumnStart)).toBe('7');
+
+  for (const quality of await table.locator('tbody > tr:not([hidden]) .live-decode-quality').all()) {
+    await expect(quality).toHaveAccessibleName(/Decode quality (?:CC|VC) \d+\.\d%/);
+    await expect(quality.locator('.live-decode-quality-text')).toBeHidden();
+    await expect(quality.locator('.live-decode-quality-bars')).toBeVisible();
+  }
+
   const horizontalOverflow = await table.locator('xpath=..').evaluate((element) =>
     element.scrollWidth - element.clientWidth);
   expect(horizontalOverflow).toBeLessThanOrEqual(1);
+
+  const conventional = table.locator('tbody > tr.visual-live-conventional-probe');
+  await conventional.evaluate((row) => row.removeAttribute('hidden'));
+  await expect(conventional.locator('[data-column="channel"]')).toBeVisible();
+  await expect(conventional.locator('[data-column="channel"]')).toHaveText('County Fire Dispatch');
 
   const details = page.locator('.live-details');
   await expect(page.getByRole('separator', {
@@ -829,17 +921,9 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
   })).toBeHidden();
   await expect(details).toHaveClass(/collapsed/);
   await expect(details.locator('.live-details-body')).toBeHidden();
-  await details.locator('.live-details-collapse').click();
+  await details.getByRole('tab', { name: 'Messages' }).click();
   await expect(details).not.toHaveClass(/collapsed/);
   await expect(details.locator('.live-details-body')).toBeVisible();
-
-  const sparse = rows.nth(1);
-  await sparse.locator('[data-column="source-alias"], [data-column="target-alias"]')
-    .evaluateAll((cells) => cells.forEach((cell) => { cell.textContent = ''; }));
-  expect(await sparse.locator('[data-column="source"]').evaluate((cell) =>
-    getComputedStyle(cell).gridColumnStart)).toBe('5');
-  expect(await sparse.locator('[data-column="target"]').evaluate((cell) =>
-    getComputedStyle(cell).gridColumnStart)).toBe('11');
 
   await table.locator('tbody').evaluate((body) => {
     const row = document.createElement('tr');
@@ -859,7 +943,36 @@ test('mobile Live activity uses compact cards and a collapsible details tray', a
 test('live-filter-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 980, height: 760 });
   await page.goto('/design-system.html?theme=dark&view=live-filter');
+  const tree = page.locator('.live-filter-tree');
+  await expect(tree).toHaveAttribute('aria-label', 'Event types');
+  await expect(tree).not.toHaveAttribute('role', 'tree');
+  const disclosure = tree.locator('.live-filter-expand').first();
+  await expect(disclosure).toHaveAccessibleName('Collapse Calls');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await expect(disclosure.locator('svg')).toHaveCount(1);
+  expect((await disclosure.textContent()).trim()).toBe('');
+  const checkbox = tree.locator('.live-filter-node-label input').first();
+  const [disclosureBox, checkboxBox] = await Promise.all([
+    disclosure.boundingBox(), checkbox.boundingBox()
+  ]);
+  expect(disclosureBox.x).toBeGreaterThan(checkboxBox.x + checkboxBox.width);
+  await disclosure.hover();
+  await expect(page.locator('.ui-icon-hint')).toHaveText('Collapse Calls');
+  await disclosure.press('Enter');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.ui-icon-hint')).toHaveText('Expand Calls');
+  await disclosure.press('Enter');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.ui-icon-hint')).toHaveText('Collapse Calls');
+  await page.mouse.move(1, 1);
+  await expect(page.locator('.ui-icon-hint')).toBeHidden();
   await expect(page.locator('body')).toHaveScreenshot('live-filter-dark-desktop.png');
+});
+
+test('live-filter-light-mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=live-filter');
+  await expect(page.locator('body')).toHaveScreenshot('live-filter-light-mobile.png');
 });
 
 test('dashboard-health-light-desktop', async ({ page }) => {

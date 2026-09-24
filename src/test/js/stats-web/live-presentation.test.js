@@ -51,6 +51,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveRequestedChannelMatch')}
   ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveDetailsPanelPercent')}
+  ${functionSource('liveIdentityHasDisplayLabel')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -59,7 +60,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
-    livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityType, liveIdentityLabel,
+    livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
+    liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
 
@@ -145,6 +147,18 @@ assert.equal(behavior.liveDetailsPanelPercent(90), 65,
 assert.equal(behavior.liveDetailsPanelPercent(33.6), 34,
   'Persisted panel shares must remain compact and deterministic');
 
+assert.equal(behavior.liveIdentityHasDisplayLabel({ source_alias: 'Engine 4' }, 'source'), true,
+  'A configured source alias must replace its numeric ID on compact Live rows');
+assert.equal(behavior.liveIdentityHasDisplayLabel({ talker_alias: 'OTA Unit 312' }, 'source'), true,
+  'An over-the-air source alias must replace its numeric ID on compact Live rows');
+assert.equal(behavior.liveIdentityHasDisplayLabel({ source_alias_display: 'Composite label' }, 'source'), false,
+  'Composite navigation metadata must not suppress the source ID');
+assert.equal(behavior.liveIdentityHasDisplayLabel({ target_alias: 'Fire Dispatch' }, 'target'), true,
+  'A configured target alias must replace its talkgroup ID on compact Live rows');
+assert.equal(behavior.liveIdentityHasDisplayLabel({ talker_alias: 'Source only' }, 'target'), false,
+  'Source-only OTA aliases must not suppress the target ID');
+assert.equal(behavior.liveIdentityHasDisplayLabel({}, 'source'), false);
+
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);
 }
@@ -204,6 +218,23 @@ const untouched = behavior.livePresentedRow(idle, {
 assert.equal(untouched, idle, 'Rows that need no presentation change should not be copied');
 
 const channels = functionSource('liveChannelsSection');
+const selectedViewAction = functionSource('liveSelectedViewAction');
+const settingsActivation = functionSource('activateLivePresentationSettings');
+assert.match(selectedViewAction, /ui-icon-button section-title-icon live-selected-view-action/,
+  'Selected-view navigation must use the shared icon-button geometry');
+assert.match(selectedViewAction, /return setIconButton\(action, iconId, label\)/,
+  'Selected-view navigation must expose the shared accessible hover and focus hint');
+assert.doesNotMatch(selectedViewAction, /node\('span'/,
+  'Selected-view icon actions must not repeat long visible labels');
+assert.match(channels, /titleActions\.append\(presentationSettings\)/,
+  'Live presentation settings must remain visible regardless of preference-load state');
+assert.doesNotMatch(channels,
+  /if \(userPreferenceController\.snapshot\(\)\.loaded\) \{[\s\S]*presentationSettings/,
+  'Preference loading must not remove the Live settings affordance');
+assert.match(settingsActivation, /showLoginModal\(returnFocusSelector\)/,
+  'Anonymous users must be offered sign-in when opening Live presentation settings');
+assert.match(settingsActivation, /snapshot = await synchronizeUserPreferences\(\)/,
+  'Signed-in users can retry a failed preference load from the Live settings action');
 assert.doesNotMatch(channels, /activeRowOrders|activeOrders/,
   'Frontend ordering must come from the authoritative snapshot without duplicate state');
 assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
@@ -233,8 +264,25 @@ assert.doesNotMatch(channels, /pickerActions\.(?:append|prepend)\(pickerCollapse
   'The picker disclosure must not remain inside the sidebar that it hides');
 assert.match(channels, /mobileCards: true/,
   'Live activity must opt into its responsive card presentation');
-assert.match(channels, /rowClass: \(row\) => selection\?\.rowKey === row\.key \? 'selected' : ''/,
-  'Live activity exposes its selected row through the shared table state');
+assert.match(channels, /rowClass: activityRowClass/,
+  'Live activity must expose semantic row state to its responsive presentation');
+assert.match(channels,
+  /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? '' : 'live-row-trunked'/,
+  'Only trunked rows may hide their LCN in the compact mobile presentation');
+assert.match(channels,
+  /liveIdentityHasDisplayLabel\(row, 'source'\) \? 'live-row-has-source-label' : ''/,
+  'Source-label availability must be reflected on each responsive row');
+assert.match(channels,
+  /liveIdentityHasDisplayLabel\(row, 'target'\) \? 'live-row-has-target-label' : ''/,
+  'Target-label availability must be reflected on each responsive row');
+assert.match(channels,
+  /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? liveConventionalChannelValue\(row\) :[\s\S]*`LCN \$\{row\.lcn\}`/,
+  'Conventional channel names must remain distinct from trunked LCN values');
+assert.match(channels, /class="live-decode-quality-text"|node\('span', 'live-decode-quality-text', text\)/,
+  'Decode quality retains an exact text value for desktop and accessibility');
+assert.match(channels,
+  /live-decode-quality-bars ui-quality-bars ui-quality-\$\{state\} ui-quality-level-\$\{level\}/,
+  'Compact Live rows must represent decode quality with the shared signal-bar primitive');
 
 const renderRow = functionSource('renderTableRow');
 assert.match(renderRow, /cell\.dataset\.column = column\.id/,
@@ -278,6 +326,9 @@ assert.match(details, /collapseMedia\.addEventListener\('change', synchronizeRes
   'The unsaved responsive default follows viewport changes');
 assert.match(details, /collapseMedia\.removeEventListener\('change', synchronizeResponsiveCollapse\)/,
   'The responsive collapse listener is released with the Live page');
+assert.match(details,
+  /if \(persist && collapsed\) \{\s*setCollapsed\(false, collapsePreferenceExplicit\)/,
+  'Selecting any details tab must expand a collapsed tray without replacing the responsive default');
 
 const filters = functionSource('liveDetailFilterController');
 assert.match(filters, /iconButton\('icon-filter', `Filter \$\{options\.noun\}`/,

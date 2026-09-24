@@ -73,6 +73,13 @@ export function installIconHints(root = document) {
   root.addEventListener('focusout', (event) => {
     if (active && active.contains(event.target) && !active.contains(event.relatedTarget)) hide();
   });
+  root.addEventListener('click', (event) => {
+    const control = controlFor(event.target);
+    if (control !== active || !hint.matches(':popover-open')) return;
+    window.queueMicrotask(() => {
+      if (active === control && hint.matches(':popover-open')) show(control);
+    });
+  });
   root.addEventListener('pointerdown', hide);
   root.addEventListener('scroll', () => {
     if (active === root.activeElement && hint.matches(':popover-open')) position(active);
