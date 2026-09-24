@@ -12,7 +12,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, legacy, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=1") layer(reset);',
   '@import url("./styles/tokens.css?v=4") layer(tokens);',
-  '@import url("./styles/legacy.css?v=9") layer(legacy);',
+  '@import url("./styles/legacy.css?v=10") layer(legacy);',
   '@import url("./styles/components/controls.css?v=11") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=9") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=5") layer(compositions);',
@@ -31,8 +31,8 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/dashboard.css?v=2") layer(features);',
   '@import url("./styles/features/administration.css?v=3") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=2") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=10") layer(features);',
-  '@import url("./styles/features/streaming.css?v=2") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=11") layer(features);',
+  '@import url("./styles/features/streaming.css?v=3") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=3") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=4") layer(utilities);',
@@ -44,7 +44,7 @@ const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map();
 
 // These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
 // reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 203;
+const LEGACY_LINE_BUDGET = 188;
 const FEATURE_SHARED_SELECTOR_BUDGET = 20;
 const MODERN_IMPORTANT_BUDGET = new Map([
   ['features/channels.css', 2],

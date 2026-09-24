@@ -88,6 +88,74 @@
 .streaming-empty {
   grid-column: 1 / -1;
 }
+.streaming-feed-browser,
+.streaming-feed-error {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+.streaming-feed-introduction {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.streaming-feed-introduction h3,
+.streaming-feed-introduction p,
+.streaming-feed-name {
+  margin: 0;
+}
+.streaming-feed-introduction p {
+  margin-top: var(--space-1);
+}
+.streaming-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.streaming-feed-card {
+  min-width: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  align-content: start;
+}
+.streaming-feed-card-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) 0;
+}
+.streaming-feed-identity,
+.streaming-feed-name {
+  min-width: 0;
+}
+.streaming-feed-identity {
+  display: grid;
+  gap: var(--space-1);
+}
+.streaming-feed-name {
+  overflow-wrap: anywhere;
+}
+.streaming-feed-facts {
+  grid-template-columns: minmax(0, 1fr);
+}
+.streaming-feed-card > [role="status"] {
+  padding-inline: var(--space-4);
+}
+.streaming-feed-card > [role="status"]:empty {
+  display: none;
+}
+.streaming-feed-card-actions {
+  align-self: end;
+  justify-content: flex-end;
+  padding: 0 var(--space-4) var(--space-4);
+}
 .streaming-page-meta {
   display: flex;
   align-items: baseline;
@@ -128,6 +196,9 @@
 .read-only-modal.streaming-editor-modal {
   width: min(820px, 96vw);
 }
+.read-only-modal.streaming-feeds-modal {
+  width: min(var(--modal-size-large), 96vw);
+}
 .streaming-panel[hidden],
 .streaming-advanced[hidden] {
   display: none;
@@ -149,6 +220,17 @@
   .streaming-page-meta {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .streaming-feed-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .streaming-feed-introduction,
+  .streaming-feed-card-header {
+    flex-direction: column;
+  }
+  .streaming-feed-card-actions,
+  .streaming-feed-add {
+    width: 100%;
   }
 }
 @media (max-width: 480px) {

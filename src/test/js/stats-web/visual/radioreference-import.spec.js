@@ -174,6 +174,12 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       }
       if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio', abbreviation: 'OH' }] };
       if (path.includes('/counties?')) return { items: [{ id: 49, name: 'Franklin County' }] };
+      if (path.includes('/browse/catalog?') && scenario === 'directory-loading') {
+        await new Promise((resolve) => { window.radioReferenceVisual.finishDirectoryLoad = resolve; });
+      }
+      if (path.includes('/browse/catalog?') && scenario === 'directory-error') {
+        throw new Error('RadioReference directory is temporarily unavailable.');
+      }
       if (path.includes('/browse/catalog?')) return [
         { type: 'TRUNKED_SYSTEM', scope: 'COUNTY',
           name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
@@ -435,6 +441,40 @@ test('directory sorts supported systems and filters types without another API re
   const calls = await page.evaluate(() => window.radioReferenceVisual.calls
     .filter(([path]) => path.includes('/browse/catalog?')).length);
   expect(calls).toBe(1);
+});
+
+for (const [name, theme, viewport] of [
+  ['radioreference-directory-loading-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['radioreference-directory-loading-dark-mobile', 'dark', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installWorkspace(page, theme, false, false, 'directory-loading');
+    const results = page.locator('.radioreference-directory-results');
+    const stateHost = results.locator('.radioreference-directory-state');
+    await expect(stateHost.locator('.ui-feedback-loading')).toContainText('Loading directory results');
+    await expect(stateHost).toHaveCSS('padding', '12px');
+    await expect(results).toHaveScreenshot(`${name}.png`);
+
+    await page.evaluate(() => window.radioReferenceVisual.finishDirectoryLoad());
+    const list = results.locator('.radioreference-directory-list');
+    const tree = list.locator(':scope > .radioreference-directory-tree');
+    await expect(tree).toBeVisible();
+    await expect(list.locator(':scope > .radioreference-directory-state')).toHaveCount(0);
+    const [listBox, treeBox] = await Promise.all([list.boundingBox(), tree.boundingBox()]);
+    expect(Math.abs(listBox.x - treeBox.x)).toBeLessThanOrEqual(1);
+
+    await page.getByLabel('Filter system type').selectOption('DMR');
+    await expect(list.locator(':scope > .radioreference-directory-state .ui-empty-state')).toBeVisible();
+    await expect(list.locator(':scope > .radioreference-directory-state')).toHaveCSS('padding', '12px');
+  });
+}
+
+test('directory errors use the same inset feedback state', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'directory-error');
+  const stateHost = page.locator('.radioreference-directory-list > .radioreference-directory-state');
+  await expect(stateHost.locator('.ui-feedback-error')).toContainText('temporarily unavailable');
+  await expect(stateHost).toHaveCSS('padding', '12px');
 });
 
 test('bookmarks keep breadcrumb and name readable on a narrow screen', async ({ page }) => {

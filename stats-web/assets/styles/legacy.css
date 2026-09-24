@@ -109,12 +109,6 @@
   border-radius: 3px;
 }
 
-.alias-destination-list {
-  margin: 0;
-  padding: 10px 12px 10px 30px;
-}
-
-
 .metric-guide {
   margin: 0;
   border-top: 1px solid var(--line);
@@ -165,11 +159,6 @@
   font-weight: 650;
 }
 
-.yes {
-  color: var(--success);
-  font-weight: 600;
-}
-
 .async-section-error .async-section-retry {
   margin-top: 12px;
 }
@@ -191,10 +180,6 @@
 
   .metric-guide-list dd {
     margin-bottom: 5px;
-  }
-
-  .action-legend {
-    grid-template-columns: 1fr;
   }
 
   .credits-list {

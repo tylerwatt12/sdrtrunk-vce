@@ -420,35 +420,92 @@ export function createStreamingWorkspace(deps) {
   }
 
   async function findFeeds() {
-    const body = node('div', 'streaming-panel editor-workspace');
-    body.append(feedback('Loading available Broadcastify feeds…', 'loading'));
+    const body = node('div', 'streaming-feed-browser editor-workspace');
     let alive = true;
     const abort = new AbortController();
     const modal = openReadOnlyModal('Available Broadcastify feeds', body, {
-      id: 'streaming-feeds', cleanup: () => { alive = false; abort.abort(); modalActive = false; void refresh(); }
+      id: 'streaming-feeds', className: 'streaming-feeds-modal',
+      cleanup: () => { alive = false; abort.abort(); modalActive = false; void refresh(); }
     });
     if (!modal) return;
     modalActive = true;
-    try {
-      const result = await write('/feeds/refresh', 'POST', {}, { signal: abort.signal, page: false });
-      const options = await read('/options', { signal: abort.signal, page: false });
-      if (!alive) return;
-      body.replaceChildren(table(result.items, [
-        { id: 'name', label: 'Feed', render: row => row.name },
-        { id: 'action', label: '', render: row => {
-          const add = button(row.configured ? 'Already configured' : 'Add feed', () => {
-            modal.setBusy(true); body.querySelectorAll('button').forEach(control => { control.dataset.wasDisabled = String(control.disabled); control.disabled = true; });
-            void write('/feeds', 'POST', { feed_id: row.id, revision: options.revision }, { signal: abort.signal, page: false })
-              .then(saved => { if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); } })
-              .catch(error => { if (alive) { body.append(feedback(error.message, 'error')); modal.setBusy(false); body.querySelectorAll('button').forEach(control => { control.disabled = control.dataset.wasDisabled === 'true'; }); } });
-          }); add.disabled = row.configured; return add;
-        } }
-      ], 'No feeds are assigned to the saved RadioReference account.', { type: 'streaming-feeds', sortable: false }));
-    } catch (error) {
-      if (alive && error.name !== 'AbortError') {
-        showError(body, error); const link = node('a', '', 'Open RadioReference account settings'); link.href = href('radioreference'); body.append(link);
+    async function loadFeeds() {
+      body.replaceChildren(feedback('Loading available Broadcastify feeds…', 'loading'));
+      try {
+        const result = await write('/feeds/refresh', 'POST', {}, { signal: abort.signal, page: false });
+        const options = await read('/options', { signal: abort.signal, page: false });
+        if (!alive) return;
+        const rows = result.items || [];
+        const introduction = node('div', 'streaming-feed-introduction');
+        const introductionText = node('div');
+        introductionText.append(node('h3', '', 'Feeds assigned to this account'),
+          node('p', 'muted', 'Add a feed as a disabled destination, then review its settings before connecting.'));
+        introduction.append(introductionText, uiStatus(`${rows.length} feed${rows.length === 1 ? '' : 's'}`, 'neutral'));
+        if (!rows.length) {
+          const empty = node('div', 'streaming-feed-empty ui-empty-state');
+          empty.append(node('h3', '', 'No assigned feeds'),
+            node('p', '', 'No Broadcastify feeds are assigned to the saved RadioReference account.'));
+          body.replaceChildren(introduction, empty);
+          return;
+        }
+        const grid = node('div', 'streaming-feed-grid');
+        rows.forEach(row => {
+          const card = node('article', 'streaming-feed-card ui-surface');
+          const header = node('header', 'streaming-feed-card-header');
+          const identity = node('div', 'streaming-feed-identity');
+          identity.append(node('h3', 'streaming-feed-name', row.name || 'Unnamed Broadcastify feed'),
+            node('span', 'muted', 'Broadcastify feed'));
+          header.append(identity, uiStatus(row.configured ? 'Configured' : 'Available', row.configured ? 'success' : 'neutral'));
+          const facts = node('dl', 'ui-facts streaming-feed-facts');
+          const feedId = node('div', 'ui-fact');
+          feedId.append(node('dt', '', 'Feed ID'), node('dd', '', formatNumber(row.id)));
+          facts.append(feedId);
+          const cardMessage = node('div');
+          cardMessage.setAttribute('role', 'status');
+          const cardActions = node('footer', 'streaming-feed-card-actions ui-action-row');
+          const add = button(row.configured ? 'Already added' : 'Add feed', async () => {
+            modal.setBusy(true);
+            body.querySelectorAll('button').forEach(control => {
+              control.dataset.wasDisabled = String(control.disabled);
+              control.disabled = true;
+            });
+            cardMessage.replaceChildren();
+            try {
+              const saved = await write('/feeds', 'POST', { feed_id: row.id, revision: options.revision },
+                { signal: abort.signal, page: false });
+              if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); }
+            } catch (error) {
+              if (alive && error.name !== 'AbortError') {
+                cardMessage.replaceChildren(feedback(error.message || 'The feed could not be added', 'error'));
+                modal.setBusy(false);
+                body.querySelectorAll('button').forEach(control => {
+                  control.disabled = control.dataset.wasDisabled === 'true';
+                  delete control.dataset.wasDisabled;
+                });
+              }
+            }
+          }, !row.configured);
+          add.classList.add('streaming-feed-add');
+          add.disabled = row.configured;
+          cardActions.append(add);
+          card.append(header, facts, cardMessage, cardActions);
+          grid.append(card);
+        });
+        body.replaceChildren(introduction, grid);
+      } catch (error) {
+        if (alive && error.name !== 'AbortError') {
+          const errorState = node('div', 'streaming-feed-error');
+          errorState.append(feedback(error.message || 'Available feeds could not be loaded', 'error'));
+          const recovery = node('div', 'ui-action-row');
+          const settings = node('a', 'ui-button ui-button-secondary', 'Open RadioReference settings');
+          settings.href = href('radioreference');
+          recovery.append(button('Try again', () => void loadFeeds()), settings);
+          errorState.append(recovery);
+          body.replaceChildren(errorState);
+        }
       }
     }
+    void loadFeeds();
   }
 
   actions.append(button('Find Broadcastify feeds', () => void findFeeds()), button('Add destination', () => void openEditor(), true));

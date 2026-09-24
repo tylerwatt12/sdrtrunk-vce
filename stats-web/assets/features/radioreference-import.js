@@ -276,6 +276,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     value.append(node('h3', '', title), node('p', '', message));
     return value;
   };
+  const directoryState = (value) => {
+    const stateHost = node('div', 'radioreference-directory-state');
+    stateHost.append(value);
+    return stateHost;
+  };
   const button = (label, className = 'ui-button ui-button-secondary') => {
     const control = node('button', className, label);
     control.type = 'button';
@@ -1341,8 +1346,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const filtered = supported.filter((entry) => state.directoryType === 'ALL' ||
       directoryFamily(entry) === state.directoryType);
     if (!filtered.length) {
-      listHost.replaceChildren(empty('No systems or agencies here',
-        'Try another system type or choose a broader browse area.'));
+      listHost.replaceChildren(directoryState(empty('No systems or agencies here',
+        'Try another system type or choose a broader browse area.')));
       return;
     }
     const compareNames = (left, right) => textValue(left, ['name']).localeCompare(textValue(right, ['name']),
@@ -1442,8 +1447,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
 
     const showBookmarks = () => {
       if (!state.bookmarks.length) {
-        listHost.replaceChildren(empty('No bookmarks yet',
-          'Use a star beside a system, agency, or category to save it here.'));
+        listHost.replaceChildren(directoryState(empty('No bookmarks yet',
+          'Use a star beside a system, agency, or category to save it here.')));
         return;
       }
       const fragmentValue = document.createDocumentFragment();
@@ -1596,7 +1601,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (!country.value) return;
       const sequence = ++state.browseSequence;
       message.textContent = 'Loading systems and agencies…';
-      if (state.browseTab === 'browse') listHost.replaceChildren(feedback('Loading directory results…', 'loading'));
+      if (state.browseTab === 'browse') {
+        listHost.replaceChildren(directoryState(feedback('Loading directory results…', 'loading')));
+      }
       try {
         const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.browseCatalog, {
           country_id: country.value, state_id: region.value || null, county_id: county.value || null
@@ -1626,7 +1633,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           ' systems and agencies grouped by coverage area.';
       } catch (error) {
         if (sequence !== state.browseSequence) return;
-        if (state.browseTab === 'browse') listHost.replaceChildren(feedback(error.message, 'error'));
+        if (state.browseTab === 'browse') {
+          listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
+        }
         message.textContent = 'RadioReference directory could not be loaded.';
       }
     };
@@ -1635,7 +1644,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       await loadStates(state.configuration?.state_id, state.configuration?.county_id);
       await browse();
     } catch (error) {
-      listHost.replaceChildren(feedback(error.message, 'error'));
+      listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
     }
     country.addEventListener('change', async () => {
       const sequence = ++locationSequence;
@@ -1644,7 +1653,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         await loadStates(null, null, sequence);
         if (sequence === locationSequence) await browse();
       } catch (error) {
-        if (sequence === locationSequence) listHost.replaceChildren(feedback(error.message, 'error'));
+        if (sequence === locationSequence) {
+          listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
+        }
       }
     });
     region.addEventListener('change', async () => {
@@ -1654,7 +1665,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         await loadCounties(null, sequence);
         if (sequence === locationSequence) await browse();
       } catch (error) {
-        if (sequence === locationSequence) listHost.replaceChildren(feedback(error.message, 'error'));
+        if (sequence === locationSequence) {
+          listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
+        }
       }
     });
     county.addEventListener('change', () => void browse());

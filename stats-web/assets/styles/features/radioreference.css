@@ -176,6 +176,10 @@
   min-height: 0;
 }
 
+.radioreference-directory-state {
+  padding: var(--space-3);
+}
+
 .radioreference-directory-group {
   padding: var(--space-2) var(--space-3);
   color: var(--muted);

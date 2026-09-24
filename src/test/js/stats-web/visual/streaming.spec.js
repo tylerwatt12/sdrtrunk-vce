@@ -124,12 +124,22 @@ async function install(page, theme = 'light', empty = false) {
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
-    window.streamingTest={calls,fail:false,stale:false};
+    window.streamingTest={calls,fail:false,stale:false,feedMode:'ready',feedDelay:0,feeds:[
+      {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
+      {id:2087,name:'County Fire and EMS',configured:true},
+      {id:3194,name:'Citywide Events',configured:false}
+    ]};
     const requestJson=async (path, options={}) => {
       calls.push([path, options]);
       const url=new URL(path,location.href); const suffix=url.pathname.replace('/api/v1/admin/streaming','');
       if(window.streamingTest.fail) throw new Error('Connection unavailable');
       if(options.method && window.streamingTest.stale) throw Object.assign(new Error('Configuration changed. Reload this editor before saving'),{code:'stale_revision'});
+      if(suffix==='/feeds/refresh'&&options.method==='POST') {
+        if(window.streamingTest.feedDelay) await new Promise(resolve=>setTimeout(resolve,window.streamingTest.feedDelay));
+        if(window.streamingTest.feedMode==='error') throw new Error('Available feeds could not be loaded');
+        return {items:window.streamingTest.feedMode==='empty'?[]:structuredClone(window.streamingTest.feeds)};
+      }
+      if(suffix==='/feeds'&&options.method==='POST') return {revision:'2:1:1',configuration_id:'destination'};
       if(suffix==='/options') return {revision,providers:[{id:'BROADCASTIFY_CALL',label:'Broadcastify Calls',connection_test:true,fields}],sites:[]};
       if(suffix.startsWith('/templates/')) return {...structuredClone(definition),settings:{...definition.settings,name:'',enabled:false},configured_credentials:[]};
       if(suffix==='/test') return {success:true,message:'Connection accepted'};
@@ -239,6 +249,50 @@ test('new destinations enable assignment tabs only after saving',async({page})=>
   await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
   await expect(modal.getByRole('button',{name:'Aliases',exact:true})).toBeEnabled();
   await expect(modal.getByLabel('Provider',{exact:true})).toBeDisabled();
+});
+
+for(const scenario of [
+  {theme:'light',mobile:false,snapshot:'streaming-feeds-light-desktop.png'},
+  {theme:'dark',mobile:true,snapshot:'streaming-feeds-dark-mobile.png'}
+]) test(`Broadcastify feed cards stay usable in ${scenario.theme} ${scenario.mobile?'mobile':'desktop'} layout`,async({page})=>{
+  await page.setViewportSize(scenario.mobile?{width:390,height:844}:{width:1440,height:1000});
+  await install(page,scenario.theme);
+  await page.evaluate(()=>{window.streamingTest.feedDelay=120;});
+  await page.getByRole('button',{name:'Find Broadcastify feeds',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await expect(modal.getByText('Loading available Broadcastify feeds…',{exact:true})).toBeVisible();
+  await expect(modal.locator('.streaming-feed-card')).toHaveCount(3);
+  await expect(modal.locator('table[data-table-type="streaming-feeds"]')).toHaveCount(0);
+  await expect(modal.getByRole('heading',{name:'Metro Public Safety Dispatch and Regional Interoperability Network',exact:true})).toBeVisible();
+  await expect(modal.getByRole('button',{name:'Already added',exact:true})).toBeDisabled();
+  expect(await modal.evaluate(element=>element.scrollWidth)).toBeLessThanOrEqual(scenario.mobile?390:900);
+  await expect(modal).toHaveScreenshot(scenario.snapshot);
+});
+
+test('Broadcastify feed picker presents recoverable error and empty states',async({page})=>{
+  await install(page);
+  await page.evaluate(()=>{window.streamingTest.feedMode='error';});
+  await page.getByRole('button',{name:'Find Broadcastify feeds',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await expect(modal.getByText('Available feeds could not be loaded',{exact:true})).toBeVisible();
+  await expect(modal.getByRole('link',{name:'Open RadioReference settings',exact:true})).toHaveAttribute('href','/?view=radioreference');
+  await page.evaluate(()=>{window.streamingTest.feedMode='empty';});
+  await modal.getByRole('button',{name:'Try again',exact:true}).click();
+  await expect(modal.getByRole('heading',{name:'No assigned feeds',exact:true})).toBeVisible();
+  await expect(modal.getByText('No Broadcastify feeds are assigned to the saved RadioReference account.',{exact:true})).toBeVisible();
+});
+
+test('available Broadcastify feed opens its destination editor',async({page})=>{
+  await install(page);
+  await page.getByRole('button',{name:'Find Broadcastify feeds',exact:true}).click();
+  let modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Add feed',exact:true}).first().click();
+  modal=page.getByRole('dialog');
+  await expect(modal.getByRole('heading',{name:'Streaming destination',exact:true})).toBeVisible();
+  await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('County Calls');
+  const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/feeds')&&options.method==='POST'));
+  expect(writes).toHaveLength(1);
+  expect(writes[0][1].body).toEqual({feed_id:1042,revision:'1:1:1'});
 });
 
 for(const theme of ['light','dark']) test(`shared labeled mobile table ${theme}`,async({page})=>{

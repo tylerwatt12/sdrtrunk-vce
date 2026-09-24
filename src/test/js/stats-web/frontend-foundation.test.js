@@ -472,6 +472,9 @@ async function main() {
   assert.match(radioReferenceImportSource, /preferredAliasListId/);
   assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
   assert.match(radioReferenceImportSource, /browseCatalog/);
+  assert.match(radioReferenceImportSource,
+    /listHost\.replaceChildren\(directoryState\(feedback\('Loading directory results…', 'loading'\)\)\)/,
+    'RadioReference directory feedback should be inset without changing populated result geometry');
   assert.match(radioReferenceImportSource, /RadioReference fields changing/);
   assert.match(radioReferenceImportSource, /mobileCards: true/);
   assert.match(radioReferenceImportSource, /imports\/site\/preview/);
