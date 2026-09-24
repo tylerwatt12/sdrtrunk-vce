@@ -17,7 +17,7 @@
 .streaming-toolbar {
   justify-content: space-between;
 }
-.streaming-toolbar > .ui-field {
+.streaming-toolbar > .streaming-query-field {
   flex: 1 1 220px;
 }
 .streaming-fields {

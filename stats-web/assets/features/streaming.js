@@ -152,7 +152,9 @@ export function createStreamingWorkspace(deps) {
     const next = button('Next', () => { aliasOffset += 50; void loadAliases(); });
     const aliasQuery = node('form', 'streaming-toolbar');
     const searchButton = button('Search'); searchButton.type = 'submit';
-    aliasQuery.append(formField('Search aliases', aliasSearch), formField('Show', uiSelectFrame(assignedOnly)), searchButton);
+    const queryFields = [formField('Search aliases', aliasSearch), formField('Show', uiSelectFrame(assignedOnly))];
+    queryFields.forEach(field => field.classList.add('streaming-query-field'));
+    aliasQuery.append(...queryFields, searchButton);
     aliasQuery.addEventListener('submit', event => { event.preventDefault(); aliasOffset = 0; void loadAliases(); });
     assignedOnly.addEventListener('change', () => { aliasOffset = 0; void loadAliases(); });
     const bulk = node('div', 'ui-action-row');
@@ -162,7 +164,7 @@ export function createStreamingWorkspace(deps) {
     bulk.append(button('Select visible', () => selectVisible(true)), button('Clear visible', () => selectVisible(false)));
     aliasPager.append(aliasCount, previous, next);
     aliasesPanel.append(aliasQuery, bulk, aliasRows, aliasPager,
-      node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved.'));
+      node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved, up to 500 per save.'));
 
     function setBusy(value) {
       busy = value; modal.setBusy(value);
@@ -250,6 +252,8 @@ export function createStreamingWorkspace(deps) {
       const provider = options.providers.find(item => item.id === definition.provider);
       if (!provider) throw new Error('This provider cannot be edited.');
       provider.fields.forEach(field => bindField(field, field.advanced ? advancedFields : fields));
+      if (definition.provider === 'RADIORESOLVE') fields.append(node('p', 'muted',
+        'Delivery uses a durable queue: calls are kept for up to 24 hours, within a 2 GiB storage limit.'));
       advanced.hidden = !advancedFields.childElementCount;
       warning.hidden = !id;
       settingsDirty = false; dirty(); syncButtons();
@@ -386,7 +390,8 @@ export function createStreamingWorkspace(deps) {
       renderFields();
       if (existing) drawStatus(existing.status);
       switchTab(initialTab);
-    } catch (error) { if (alive && error.name !== 'AbortError') content.replaceChildren(feedback(error.message, 'error')); }
+    } catch (error) { if (alive && error.name !== 'AbortError') content.replaceChildren(feedback(error.message, 'error'),
+      button('Retry', () => { if (modal.close()) void openEditor(id, initialTab); })); }
   }
 
   async function findFeeds() {
