@@ -228,3 +228,45 @@
   min-width: 0;
   max-width: none;
 }
+
+/* Opt-in labeled cards preserve table content on narrow screens. */
+@media (max-width: 760px) {
+  .ui-data-table.ui-mobile-cards {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+    background: transparent;
+  }
+  .ui-mobile-cards :where(colgroup, thead) { display: none; }
+  .ui-mobile-cards tbody { display: grid; gap: var(--space-3); }
+  .ui-mobile-cards tbody > tr {
+    display: grid;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+  .ui-data-table.ui-mobile-cards tbody td {
+    display: grid;
+    grid-template-columns: minmax(0, 35%) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    width: auto;
+    min-width: 0;
+    padding: var(--space-3);
+    border-right: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .ui-mobile-cards tbody td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-weight: 650;
+  }
+  .ui-mobile-cards tbody td:last-child { border-bottom: 0; }
+  .ui-data-table.ui-mobile-cards td.empty { display: block; }
+  .ui-mobile-cards td.empty::before { display: none; }
+}

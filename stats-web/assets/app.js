@@ -1,8 +1,8 @@
-import * as routeFoundation from './core/routes.js?v=2';
+import * as routeFoundation from './core/routes.js?v=3';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=3';
+import * as tableDefaults from './core/table-defaults.js?v=4';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -15,6 +15,7 @@ import {
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=3';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=11';
+import { createStreamingWorkspace } from './features/streaming.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=1';
 
 let route = new URLSearchParams(window.location.search);
@@ -74,6 +75,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
   ADMIN_CHANNELS: 'admin-channels',
+  ADMIN_STREAMING: 'admin-streaming',
   ADMIN_SETTINGS: 'admin-settings',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
@@ -633,6 +635,9 @@ function routeDefinitionAllowed(definition) {
   }
   if (definition.access === 'admin-aliases') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
+  }
+  if (definition.access === 'admin-streaming') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_STREAMING);
   }
   if (definition.access === 'admin-channels') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
@@ -20833,8 +20838,12 @@ async function renderSettings() {
 
 function renderStreaming() {
   const renderContext = captureRenderContext();
-  beginPage(renderContext, pageHeader('Streaming',
-    'Connect and manage streaming services'), comingSoonPanel('Streaming'));
+  const workspace = createStreamingWorkspace({
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
+    openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
+    signal: renderContext.signal
+  });
+  beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'), workspace.element);
 }
 
 function renderTuners() {

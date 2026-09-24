@@ -17,6 +17,14 @@ const COLUMN_WIDTHS = Object.freeze({
 });
 
 const TABLE_DEFAULTS = Object.freeze({
+  'streaming-destinations': {
+    widths: { name: 260, status: 180, queued: 80, sent: 132, aged_off: 85, errors: 75, 'last-error': 220 },
+    grow: ['name', 'last-error']
+  },
+  'streaming-aliases': {
+    widths: { selected: 88, name: 220, identifier: 145, list: 230 },
+    grow: ['name', 'list']
+  },
   'channel-frequencies-p25': {
     widths: { descriptor: 104, callsign: 110, tags: 130, downlink: 94, uplink: 94,
       tdma: 60, slots: 56, state: 86, 'voice-observations': 80,

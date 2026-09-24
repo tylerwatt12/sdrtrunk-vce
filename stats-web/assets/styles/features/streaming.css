@@ -1,0 +1,62 @@
+/* Shared modern primitives own all appearance. Streaming owns only its page/editor geometry. */
+.streaming-page,
+.streaming-panel,
+.streaming-editor,
+.streaming-attention {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+.streaming-toolbar,
+.streaming-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.streaming-toolbar {
+  justify-content: space-between;
+}
+.streaming-toolbar > .ui-field {
+  flex: 1 1 220px;
+}
+.streaming-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  min-width: 0;
+}
+.streaming-fields > * {
+  min-width: 0;
+}
+.streaming-identity {
+  display: grid;
+  gap: var(--space-1);
+}
+.streaming-attention > * {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+}
+.streaming-advanced > .streaming-fields {
+  margin-top: var(--space-4);
+}
+.read-only-modal.streaming-editor-modal {
+  width: min(820px, 96vw);
+}
+.streaming-panel[hidden],
+.streaming-advanced[hidden] {
+  display: none;
+}
+@media (max-width: 680px) {
+  .streaming-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.streaming-page > *,
+.streaming-panel > * {
+  min-width: 0;
+}

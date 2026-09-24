@@ -510,6 +510,7 @@ body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-exam
     repeating-linear-gradient(180deg, #07111d 0 5px, #0b2430 6px, #123846 8px, #07111d 11px);
 }
 
+body:not([data-gallery-view="mobile-table"]) .visual-mobile-table-example,
 body:not([data-gallery-view="app-chrome"]) .visual-app-chrome-example,
 body:not([data-gallery-view="gallery"]) .design-system-gallery,
 body:not([data-gallery-view="modal"]):not([data-gallery-view="modal-long"]) .visual-modal-example,
