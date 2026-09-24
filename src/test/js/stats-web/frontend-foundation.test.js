@@ -285,9 +285,20 @@ async function main() {
     /iconButton\('icon-live-presentation', 'Live presentation settings'/);
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
   assert.match(liveChannelsSource, /let requestedChannel = route\.get\('channel'\)/);
+  assert.match(liveChannelsSource, /liveRequestedChannelMatch\(value, requestedChannel\)/);
+  assert.match(liveChannelsSource, /if \(requestedMatch\.row\) \{[\s\S]*selectRow\(displayed, requestedRow\)/,
+    'A conventional Live channel deep link must select the matching row');
   assert.match(liveChannelsSource,
-    /if \(activeTableId !== value\.table_id\) showTable\(value\.table_id\);\s+requestedChannel = null;\s+route\.delete\('channel'\);\s+window\.history\.replaceState/,
-    'A Live channel deep link must be consumed after its initial table selection');
+    /requestedChannel = null;\s+route\.delete\('channel'\);\s+window\.history\.replaceState/,
+    'A Live channel deep link must be consumed after its initial selection');
+  assert.match(liveChannelsSource, /tabBar\.setAttribute\('role', 'tablist'\)/);
+  assert.match(liveChannelsSource, /tabBar\.setAttribute\('aria-orientation', 'vertical'\)/);
+  assert.match(liveChannelsSource, /select\.setAttribute\('role', 'tab'\)/);
+  assert.match(liveChannelsSource, /livePickerNavigationIndex\(event\.key, index, buttons\.length\)/);
+  assert.match(liveChannelsSource, /savedUiState\.picker_collapsed === true/);
+  assert.match(liveChannelsSource,
+    /iconButton\('icon-chevron-down', 'Collapse live view picker',[\s\S]*live-picker-collapse/);
+  assert.match(liveChannelsSource, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
   assert.match(appSource, /layoutMenuOpen: reopenLayoutMenu/);
@@ -567,6 +578,11 @@ async function main() {
   assert.match(liveHistoryNotice, /notice\.remove\(\)/);
   const renderLiveSource = functionBinding(appSource, 'renderLive');
   assert.match(renderLiveSource, /liveUiState\(\)\.historyNoticeDismissed === true \? null/);
+  assert.match(renderLiveSource, /node\('div', 'live-right-workspace'\)/);
+  assert.match(renderLiveSource,
+    /split\.classList\.toggle\('picker-collapsed', channels\.pickerCollapsed\)/);
+  assert.match(renderLiveSource, /rightWorkspace\.append\(channels\.element, eventsPanel\.element\)/);
+  assert.match(renderLiveSource, /split\.append\(channels\.picker, rightWorkspace\)/);
   assert.match(renderLiveSource,
     /beginPage\(renderContext, split, \.\.\.\(historyNotice \? \[historyNotice\.element\] : \[\]\)\)/);
   assert.doesNotMatch(appSource, /row\.id \?\? row\.scan_list_id|row\.scan_list_id \?\? row\.id/);

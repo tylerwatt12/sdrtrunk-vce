@@ -454,7 +454,8 @@ body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-exam
 
 .visual-live-example {
   width: min(1180px, calc(100% - 32px));
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   margin: 0 auto;
@@ -462,7 +463,8 @@ body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-exam
   box-sizing: border-box;
 }
 
-.visual-live-example .live-split > .section {
+.visual-live-example .live-channel-picker,
+.visual-live-example .live-right-workspace > .section {
   min-height: 0;
   margin: 0;
   overflow: hidden;

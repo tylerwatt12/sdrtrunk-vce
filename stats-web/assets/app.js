@@ -14545,6 +14545,7 @@ function liveEventsPanel(onCollapse) {
       const tab = tabBar.querySelector(`[data-tab="${paneId}"]`);
       tab?.classList.toggle('active', active);
       tab?.setAttribute('aria-selected', String(active));
+      if (tab) tab.tabIndex = active ? 0 : -1;
     });
     messagesController.setActive(id === 'messages');
     channelController.setActive(id === 'channel');
@@ -14557,12 +14558,27 @@ function liveEventsPanel(onCollapse) {
   ['events', 'messages', 'channel'].forEach((id) => {
     const button = node('button', 'live-details-tab ui-segmented-option', id[0].toUpperCase() + id.slice(1));
     button.type = 'button';
+    button.id = `live-details-${id}-tab`;
     button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', `live-details-${id}-panel`);
     button.addEventListener('click', () => selectPane(id));
+    button.addEventListener('keydown', (event) => {
+      const buttons = [...tabBar.querySelectorAll('.live-details-tab')];
+      const nextIndex = livePickerNavigationIndex(event.key, buttons.indexOf(button), buttons.length);
+      if (nextIndex === null) return;
+      event.preventDefault();
+      const next = buttons[nextIndex];
+      next.focus();
+      selectPane(next.dataset.tab);
+    });
     button.dataset.tab = id;
     button.classList.toggle('active', id === activePaneId);
     button.setAttribute('aria-selected', String(id === activePaneId));
+    button.tabIndex = id === activePaneId ? 0 : -1;
     tabBar.append(button);
+    panes[id].id = `live-details-${id}-panel`;
+    panes[id].setAttribute('role', 'tabpanel');
+    panes[id].setAttribute('aria-labelledby', button.id);
     panes[id].hidden = id !== activePaneId;
   });
 
@@ -14757,31 +14773,47 @@ function liveConventionalChannelValue(row) {
   return label && target ? anchor(label, target, 'live-channel-link') : label;
 }
 
-function liveChannelTabTitle(value, label, channelTarget, selectTable) {
-  const title = String(label || '');
-  const channelName = String(value?.channel_name || '').trim();
-  const parenthetical = channelName ? `(${channelName})` : '';
-  const parentheticalAt = parenthetical && title.endsWith(parenthetical) ?
-    title.length - parenthetical.length : -1;
-  const siteName = String(value?.site_name || '').trim();
-  const linkText = parentheticalAt >= 0 ? parenthetical : siteName;
-  const linkAt = parentheticalAt >= 0 ? parentheticalAt :
-    (siteName && title.includes(siteName) ? title.indexOf(siteName) : -1);
-  const selectable = (text) => {
-    if (!text) return null;
-    const button = node('button', 'channels-tab-title-button', text);
-    button.type = 'button';
-    button.addEventListener('click', selectTable);
-    return button;
-  };
-  if (linkAt < 0 || !channelTarget) return selectable(title);
-  const site = anchor(linkText, channelTarget, 'channels-tab-label');
-  site.setAttribute('aria-label', `Open ${siteName || channelName} site details`);
-  return fragment(selectable(title.slice(0, linkAt)), site, selectable(title.slice(linkAt + linkText.length)));
+function liveChannelViewMeta(value, label = '') {
+  if (value?.table_id === 'conventional') {
+    const count = Number(value?.rows_total ?? value?.rows?.length ?? 0);
+    return `${number(count)} channel${count === 1 ? '' : 's'}`;
+  }
+  const normalizedLabel = String(label || '').trim().toLowerCase();
+  const values = [value?.system_name, value?.site_name, value?.channel_name,
+    value?.rows?.find((row) => row?.protocol)?.protocol]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item, index, items) => items.findIndex((candidate) =>
+      candidate.toLowerCase() === item.toLowerCase()) === index)
+    .filter((item) => item.toLowerCase() !== normalizedLabel);
+  return values.slice(0, 2).join(' · ') || 'Trunked channel';
 }
 
-function openLocalHref(target) {
-  navigateTo(target);
+function liveRequestedChannelMatch(tableValue, configurationId) {
+  const requested = String(configurationId || '').trim();
+  if (!requested || !tableValue) return null;
+  if (String(tableValue.configuration_id || '').trim() === requested) {
+    return { tableId: tableValue.table_id, row: null };
+  }
+  const row = (Array.isArray(tableValue.rows) ? tableValue.rows : [])
+    .find((candidate) => String(candidate?.configuration_id || '').trim() === requested);
+  return row ? { tableId: tableValue.table_id, row } : null;
+}
+
+function livePickerNavigationIndex(key, index, count) {
+  if (!Number.isInteger(index) || count < 1) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown' || key === 'ArrowRight') return (index + 1) % count;
+  if (key === 'ArrowUp' || key === 'ArrowLeft') return (index - 1 + count) % count;
+  return null;
+}
+
+function liveSelectedViewAction(target, label, iconId) {
+  const action = anchor('', target, 'ui-button ui-button-secondary live-selected-view-action');
+  action.setAttribute('aria-label', label);
+  action.append(iconGlyph(iconId), node('span', '', label));
+  return action;
 }
 
 const LIVE_IDLE_CALL_FIELDS = [
@@ -14834,7 +14866,9 @@ function livePresentedTableRows(tableValue, presentation) {
 }
 
 function liveChannelsSection(onSelectionChange) {
-  liveChannelActivityActiveTableId = String(liveUiState().active_channel_table_id || '').trim() || null;
+  const savedUiState = liveUiState();
+  liveChannelActivityActiveTableId = String(savedUiState.active_channel_table_id || '').trim() || null;
+  let pickerCollapsed = savedUiState.picker_collapsed === true;
   const tables = new Map();
   const tabNodes = new Map();
   const dismissedStoppedTables = new Set();
@@ -14960,9 +14994,15 @@ function liveChannelsSection(onSelectionChange) {
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
   ];
   const tabBar = node('div', 'channels-live-tabs');
+  tabBar.setAttribute('role', 'tablist');
+  tabBar.setAttribute('aria-label', 'Live views');
+  tabBar.setAttribute('aria-orientation', 'vertical');
   const connection = badge('Connecting', 'state-stale');
   const titleActions = node('div', 'section-title-actions ui-section-actions live-channels-title-actions');
-  titleActions.append(connection);
+  const selectedViewActions = node('div', 'live-selected-view-actions');
+  titleActions.append(selectedViewActions);
+  const pickerActions = node('div', 'section-title-actions ui-section-actions live-picker-actions');
+  pickerActions.append(connection);
   if (userPreferenceController.snapshot().loaded) {
     const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
       'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
@@ -14975,6 +15015,8 @@ function liveChannelsSection(onSelectionChange) {
   let applyingSnapshot = false;
   let selection = null;
   let selectRow = () => {};
+  let pickerTabSequence = 0;
+  let selectedViewSignature = '';
   const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
@@ -14987,8 +15029,139 @@ function liveChannelsSection(onSelectionChange) {
     wrapperClass: 'table-scroll', tableClass: 'channels-live-table', layoutMenuHost: titleActions
   });
   const host = node('div', 'channels-live');
-  host.append(tabBar, liveTable);
+  host.id = 'live-channel-table-panel';
+  host.setAttribute('role', 'tabpanel');
+  const selectedViewCopy = node('div', 'live-selected-view-copy');
+  const selectedViewTitle = node('h2', 'live-selected-view-title', 'Live Channels');
+  const selectedViewMeta = node('span', 'live-selected-view-meta', 'Waiting for channel activity…');
+  selectedViewCopy.append(selectedViewTitle, selectedViewMeta);
+  host.append(liveTable);
   const block = section('Live Channels', host, titleActions);
+  block.classList.add('live-channels-section');
+  const selectedViewHeader = block.querySelector(':scope > .section-title');
+  selectedViewHeader?.classList.add('live-selected-view-header');
+  selectedViewHeader?.replaceChildren(selectedViewCopy, titleActions);
+
+  const pickerSearch = node('input', 'ui-input live-picker-search-input');
+  pickerSearch.type = 'search';
+  pickerSearch.placeholder = 'Search live views';
+  pickerSearch.setAttribute('aria-label', 'Search live views');
+  const pickerSearchField = node('label', 'live-picker-search');
+  pickerSearchField.append(node('span', 'visually-hidden', 'Search live views'), pickerSearch);
+  const pickerEmpty = node('div', 'empty live-picker-empty', 'No live views match this search.');
+  pickerEmpty.hidden = true;
+  const pickerSummary = node('div', 'live-picker-summary', 'Waiting for live views…');
+  const pickerPopover = node('div', 'live-picker-popover');
+  pickerPopover.append(pickerSearchField, tabBar, pickerEmpty, pickerSummary);
+  const picker = section('Live views', pickerPopover, pickerActions);
+  picker.classList.add('live-channel-picker');
+  const pickerHeading = node('span', 'live-picker-heading', 'Live views');
+  const pickerToggle = node('button', 'ui-button ui-button-secondary live-picker-toggle');
+  const pickerToggleLabel = node('span', 'live-picker-toggle-label', 'Choose a live view');
+  pickerToggle.type = 'button';
+  pickerToggle.setAttribute('aria-expanded', 'false');
+  pickerToggle.setAttribute('aria-controls', 'live-picker-popover');
+  pickerToggle.append(pickerToggleLabel, iconGlyph('icon-chevron-down'));
+  pickerPopover.id = 'live-picker-popover';
+  const pickerHeader = picker.querySelector(':scope > .section-title');
+  pickerHeader?.classList.add('live-picker-header');
+  pickerHeader?.replaceChildren(pickerHeading, pickerToggle, pickerActions);
+  const pickerCollapse = iconButton('icon-chevron-down', 'Collapse live view picker',
+    'ui-button ui-button-secondary ui-icon-button live-picker-collapse');
+  pickerCollapse.setAttribute('aria-controls', pickerPopover.id);
+  pickerActions.prepend(pickerCollapse);
+
+  const setPickerCollapsed = (collapsed, persist = true) => {
+    pickerCollapsed = collapsed === true;
+    picker.classList.toggle('is-collapsed', pickerCollapsed);
+    picker.closest('.live-split')?.classList.toggle('picker-collapsed', pickerCollapsed);
+    const label = pickerCollapsed ? 'Expand live view picker' : 'Collapse live view picker';
+    pickerCollapse.setAttribute('aria-expanded', String(!pickerCollapsed));
+    pickerCollapse.setAttribute('aria-label', label);
+    pickerCollapse.title = label;
+    if (persist) storeLiveUiState({ picker_collapsed: pickerCollapsed });
+  };
+  pickerCollapse.addEventListener('click', () => setPickerCollapsed(!pickerCollapsed));
+  setPickerCollapsed(pickerCollapsed, false);
+
+  const closePicker = (restoreFocus = false) => {
+    picker.classList.remove('picker-open');
+    pickerToggle.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && pickerToggle.offsetParent !== null) pickerToggle.focus();
+  };
+  const updatePickerResults = () => {
+    const query = pickerSearch.value.trim().toLowerCase();
+    const visibleTabs = [];
+    tabNodes.forEach((tab) => {
+      const matches = !query || String(tab.dataset.search || '').includes(query);
+      tab.hidden = !matches;
+      if (matches) visibleTabs.push(tab);
+    });
+    const focusTab = visibleTabs.find((tab) => tab.classList.contains('active')) || visibleTabs[0];
+    tabNodes.forEach((tab) => {
+      const button = tab.querySelector('.channels-tab-select');
+      if (button) button.tabIndex = tab === focusTab ? 0 : -1;
+    });
+    pickerEmpty.hidden = visibleTabs.length > 0;
+  };
+  const updatePickerSummary = () => {
+    const running = [...tables.values()].filter((value) => value.channel_running !== false).length;
+    pickerSummary.textContent = `${number(tables.size)} view${tables.size === 1 ? '' : 's'} · ` +
+      `${number(running)} running`;
+    updatePickerResults();
+  };
+  const updateSelectedView = (value) => {
+    const label = value?.title || value?.channel_name || value?.table_id || 'Live Channels';
+    const meta = value ? liveChannelViewMeta(value, label) : 'Waiting for channel activity…';
+    const signature = JSON.stringify([value?.table_id || '', label, meta,
+      value?.channel_running, value?.entity_ref || null, capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]);
+    if (signature === selectedViewSignature) return;
+    selectedViewSignature = signature;
+    selectedViewTitle.textContent = label;
+    selectedViewMeta.textContent = meta;
+    pickerToggleLabel.textContent = label;
+    selectedViewActions.replaceChildren();
+    if (value?.table_id !== 'conventional' && capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
+      const channelTarget = entityTarget(value?.entity_ref);
+      const qualityTarget = entityTarget(value?.entity_ref, { channel: 'quality' });
+      if (channelTarget) selectedViewActions.append(
+        liveSelectedViewAction(channelTarget, 'Channel details', 'icon-channel'));
+      if (qualityTarget) selectedViewActions.append(
+        liveSelectedViewAction(qualityTarget, 'Signal quality', 'icon-health'));
+    }
+    if (value?.table_id !== 'conventional' && value?.channel_running === false) {
+      const dismiss = iconButton('icon-close', `Close stopped channel ${label}`,
+        'ui-button ui-button-danger-quiet ui-icon-button live-selected-view-dismiss');
+      dismiss.addEventListener('click', () => {
+        dismissedStoppedTables.add(value.table_id);
+        removeTable(value.table_id);
+        window.requestAnimationFrame(() => {
+          if (pickerToggle.offsetParent !== null) pickerToggle.focus();
+          else tabNodes.get(activeTableId)?.querySelector('.channels-tab-select')?.focus();
+        });
+      });
+      selectedViewActions.append(dismiss);
+    }
+  };
+  pickerToggle.addEventListener('click', () => {
+    const open = !picker.classList.contains('picker-open');
+    picker.classList.toggle('picker-open', open);
+    pickerToggle.setAttribute('aria-expanded', String(open));
+    if (open) window.requestAnimationFrame(() => pickerSearch.focus());
+  });
+  pickerSearch.addEventListener('input', updatePickerResults);
+  pickerSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown') return;
+    const first = [...tabBar.querySelectorAll('.channels-live-tab:not([hidden]) .channels-tab-select')][0];
+    if (!first) return;
+    event.preventDefault();
+    first.focus();
+  });
+  picker.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !picker.classList.contains('picker-open')) return;
+    event.preventDefault();
+    closePicker(true);
+  });
 
   const clearSelection = () => {
     if (!selection) return;
@@ -15006,7 +15179,7 @@ function liveChannelsSection(onSelectionChange) {
     onSelectionChange(selection);
   };
 
-  const showTable = (tableId) => {
+  const showTable = (tableId, closeMobilePicker = false) => {
     const value = tables.get(tableId);
     if (!value) return;
     clearSelection();
@@ -15019,7 +15192,16 @@ function liveChannelsSection(onSelectionChange) {
     liveTable.tableController.replaceRows(displayed.rows);
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
     if (currentControl) selectRow(displayed, currentControl);
-    tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
+    tabNodes.forEach((tab, id) => {
+      const active = id === activeTableId;
+      tab.classList.toggle('active', active);
+      const button = tab.querySelector('.channels-tab-select');
+      button?.setAttribute('aria-selected', String(active));
+      if (button) button.tabIndex = active ? 0 : -1;
+      if (active && button) host.setAttribute('aria-labelledby', button.id);
+    });
+    updateSelectedView(value);
+    if (closeMobilePicker) closePicker(true);
   };
   let requestedChannel = route.get('channel');
 
@@ -15047,6 +15229,7 @@ function liveChannelsSection(onSelectionChange) {
       else clearSelection();
     }
     liveTable.tableController.reconcileRows(displayed.rows);
+    updateSelectedView(value);
   };
 
   const upsertTable = (value) => {
@@ -15059,30 +15242,35 @@ function liveChannelsSection(onSelectionChange) {
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
       tab = node('div', 'channels-live-tab');
+      tab.setAttribute('role', 'none');
       const select = node('button', 'channels-tab-select');
       select.type = 'button';
+      select.id = `live-picker-tab-${++pickerTabSequence}`;
+      select.setAttribute('role', 'tab');
+      select.setAttribute('aria-selected', 'false');
+      select.setAttribute('aria-controls', host.id);
+      select.tabIndex = -1;
+      const copy = node('span', 'channels-tab-copy');
+      copy.append(node('strong', 'channels-tab-title'), node('span', 'channels-tab-meta'));
+      const state = node('span', 'channels-tab-state');
       const quality = node('span', 'channels-tab-quality');
       for (let index = 0; index < 4; index += 1) quality.append(node('span'));
-      select.append(quality);
-      select.addEventListener('click', () => {
-        const current = tables.get(value.table_id);
-        const qualityTarget = current?.table_id !== 'conventional' &&
-          capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityTarget(current?.entity_ref, { channel: 'quality' }) : '';
-        if (qualityTarget) openLocalHref(qualityTarget);
-        else showTable(value.table_id);
+      state.append(quality, node('span', 'channels-tab-state-label'));
+      select.append(copy, state);
+      select.addEventListener('click', () => showTable(value.table_id, true));
+      select.addEventListener('keydown', (event) => {
+        const buttons = [...tabBar.querySelectorAll('.channels-tab-select')]
+          .filter((button) => !button.closest('.channels-live-tab')?.hidden);
+        const index = buttons.indexOf(select);
+        const nextIndex = livePickerNavigationIndex(event.key, index, buttons.length);
+        if (nextIndex === null) return;
+        event.preventDefault();
+        const next = buttons[nextIndex];
+        next.focus();
+        showTable(next.closest('.channels-live-tab')?.dataset.tableId);
       });
-      const title = node('span', 'channels-tab-title');
-      const close = iconButton('icon-close', 'Close stopped channel',
-        'ui-button ui-button-danger-quiet ui-icon-button channels-tab-close');
-      close.hidden = true;
-      close.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const current = tables.get(value.table_id);
-        if (!current || current.channel_running !== false) return;
-        dismissedStoppedTables.add(value.table_id);
-        removeTable(value.table_id);
-      });
-      tab.append(select, title, close);
+      tab.dataset.tableId = value.table_id;
+      tab.append(select);
       tabNodes.set(value.table_id, tab);
       if(value.table_id === 'conventional') tabBar.prepend(tab);
       else tabBar.append(tab);
@@ -15090,16 +15278,12 @@ function liveChannelsSection(onSelectionChange) {
     const label = value.title || value.channel_name || value.table_id;
     const select = tab.querySelector('.channels-tab-select');
     const title = tab.querySelector('.channels-tab-title');
-    const titleSignature = `${label}|${JSON.stringify(value.entity_ref || null)}|${value.table_id}`;
-    if (title.dataset.liveValue !== titleSignature) {
-      title.dataset.liveValue = titleSignature;
-      const channelTarget = value.table_id !== 'conventional' &&
-        capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityTarget(value.entity_ref) : '';
-      title.replaceChildren(liveChannelTabTitle(value, label, channelTarget, () => showTable(value.table_id)));
-    }
+    const meta = liveChannelViewMeta(value, label);
+    title.textContent = label;
+    tab.querySelector('.channels-tab-meta').textContent = meta;
+    tab.dataset.search = `${label} ${meta}`.toLowerCase();
     const quality = tab.querySelector('.channels-tab-quality');
-    const qualityLinksToChannel = value.table_id !== 'conventional' &&
-      capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && Boolean(entityTarget(value.entity_ref, { channel: 'quality' }));
+    const stateLabel = tab.querySelector('.channels-tab-state-label');
     const currentControl = liveCurrentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
@@ -15113,10 +15297,12 @@ function liveChannelsSection(onSelectionChange) {
       quality.className = 'channels-tab-quality quality-neutral';
       tab.title = label;
       select.setAttribute('aria-label', `Show live channels for ${label}`);
+      stateLabel.textContent = 'Live';
     } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'channels-tab-quality quality-unavailable';
       tab.title = `${label} · Signal strength and decode quality unavailable`;
-      select.setAttribute('aria-label', `Open ${label} channel quality; signal strength and decode quality unavailable`);
+      select.setAttribute('aria-label', `Show live channels for ${label}; signal strength and decode quality unavailable`);
+      stateLabel.textContent = value.channel_running === false ? 'Stopped' : 'Running';
     } else {
       const level = signalBarLevel(signalStrength);
       const state = decodeQuality === null ? 'unavailable' :
@@ -15128,18 +15314,26 @@ function liveChannelsSection(onSelectionChange) {
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
         `${decodeQuality.toFixed(1)}% decode quality`;
       tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
-      select.setAttribute('aria-label', `Open ${label} channel quality, ${signalLabel}, ${qualityLabel}`);
+      select.setAttribute('aria-label', `Show live channels for ${label}, ${signalLabel}, ${qualityLabel}`);
+      stateLabel.textContent = decodeQuality === null ? 'Running' : `Running · ${Math.round(decodeQuality)}%`;
     }
-    quality.classList.toggle('quality-link', Boolean(qualityLinksToChannel));
-    select.classList.toggle('quality-link', Boolean(qualityLinksToChannel));
     const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     tab.classList.toggle('stopped', stopped);
-    const close = tab.querySelector('.channels-tab-close');
-    close.hidden = !stopped;
-    close.title = stopped ? `Close stopped channel ${label}` : '';
-    close.setAttribute('aria-label', `Close stopped channel ${label}`);
-    if (requestedChannel && value.configuration_id === requestedChannel) {
+    if (stopped) stateLabel.textContent = 'Stopped';
+    updatePickerSummary();
+    const requestedMatch = liveRequestedChannelMatch(value, requestedChannel);
+    if (requestedMatch) {
       if (activeTableId !== value.table_id) showTable(value.table_id);
+      if (requestedMatch.row) {
+        const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
+        const requestedRow = displayed.rows.find((row) => row.key === requestedMatch.row.key);
+        if (requestedRow) {
+          selectRow(displayed, requestedRow);
+          window.requestAnimationFrame(() => liveTable
+            .querySelector(`tbody tr[data-id="${CSS.escape(String(requestedRow.key))}"]`)
+            ?.scrollIntoView({ block: 'nearest' }));
+        }
+      }
       requestedChannel = null;
       route.delete('channel');
       window.history.replaceState({}, '', currentHref());
@@ -15152,7 +15346,7 @@ function liveChannelsSection(onSelectionChange) {
 
   const showFallbackTable = () => {
     if (activeTableId) return;
-    const preferred = liveChannelActivityActiveTableId;
+    const preferred = requestedChannel ? null : liveChannelActivityActiveTableId;
     const fallback = tables.has(preferred) ? preferred :
       (tables.has('conventional') ? 'conventional' : tables.keys().next().value);
     if (fallback) showTable(fallback);
@@ -15162,12 +15356,16 @@ function liveChannelsSection(onSelectionChange) {
     tables.delete(tableId);
     tabNodes.get(tableId)?.remove();
     tabNodes.delete(tableId);
+    updatePickerSummary();
     if (activeTableId === tableId) {
       clearSelection();
       activeTableId = null;
       const next = tables.has('conventional') ? 'conventional' : tables.keys().next().value;
       if (next) showTable(next);
-      else liveTable.tableController.replaceRows([]);
+      else {
+        liveTable.tableController.replaceRows([]);
+        updateSelectedView(null);
+      }
     }
   };
 
@@ -15196,7 +15394,7 @@ function liveChannelsSection(onSelectionChange) {
       connection.className = 'badge ui-pill state-stale';
     }
   });
-  return block;
+  return { element: block, picker, pickerCollapsed };
 }
 
 async function renderLive() {
@@ -15209,7 +15407,10 @@ async function renderLive() {
     eventsPanel.select(selection);
     historyNotice?.select(selection);
   });
-  split.append(channels, eventsPanel.element);
+  split.classList.toggle('picker-collapsed', channels.pickerCollapsed);
+  const rightWorkspace = node('div', 'live-right-workspace');
+  rightWorkspace.append(channels.element, eventsPanel.element);
+  split.append(channels.picker, rightWorkspace);
   beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []));
 }
 

@@ -19,7 +19,7 @@
 @import url("./styles/features/about.css?v=1") layer(features);
 @import url("./styles/features/channels.css?v=9") layer(features);
 @import url("./styles/features/entity-details.css?v=10") layer(features);
-@import url("./styles/features/live.css?v=7") layer(features);
+@import url("./styles/features/live.css?v=8") layer(features);
 @import url("./styles/features/radio-directory.css?v=4") layer(features);
 @import url("./styles/features/tuner-spectrum.css?v=10") layer(features);
 @import url("./styles/features/scanner.css?v=4") layer(features);
@@ -32,4 +32,4 @@
 @import url("./styles/features/streaming.css?v=4") layer(features);
 @import url("./styles/features/p25-settings.css?v=1") layer(features);
 @import url("./styles/features/receiver-health.css?v=4") layer(features);
-@import url("./styles/utilities/reduced-motion.css?v=4") layer(utilities);
+@import url("./styles/utilities/reduced-motion.css?v=5") layer(utilities);

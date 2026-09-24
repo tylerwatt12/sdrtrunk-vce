@@ -48,6 +48,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePresentedTableRows')}
   ${functionSource('liveIdentityRenderKey')}
   ${functionSource('liveDetailSelectionUnchanged')}
+  ${functionSource('liveRequestedChannelMatch')}
+  ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -55,7 +57,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('groupIdentityLabel')}
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
-    liveIdentityRenderKey, liveDetailSelectionUnchanged, liveIdentityType, liveIdentityLabel,
+    liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
+    livePickerNavigationIndex, liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
 
@@ -103,6 +106,33 @@ const selected = { kind: 'CONTROL', role: 'CURRENT_CONTROL', logicalKey: 'CONTRO
 assert.equal(behavior.liveDetailSelectionUnchanged(selected, { ...selected }), true);
 assert.equal(behavior.liveDetailSelectionUnchanged(selected,
   { ...selected, transportKey: 'channel:852012500:', bindingFrequencyHz: 852012500 }), false);
+
+assert.deepEqual(JSON.parse(JSON.stringify(behavior.liveRequestedChannelMatch({
+  table_id: 'site-32', configuration_id: 'trunked-channel', rows: []
+}, 'trunked-channel'))), { tableId: 'site-32', row: null },
+  'A trunked Live deep link must match the table configuration');
+const conventionalRow = { key: 'conventional-154.430', configuration_id: 'conventional-channel' };
+assert.deepEqual(JSON.parse(JSON.stringify(behavior.liveRequestedChannelMatch({
+  table_id: 'conventional', configuration_id: '', rows: [
+    conventionalRow, { key: 'conventional-155.250', configuration_id: 'other-channel' }
+  ]
+}, ' conventional-channel '))), { tableId: 'conventional', row: conventionalRow },
+  'A conventional Live deep link must match its row-level configuration');
+assert.equal(behavior.liveRequestedChannelMatch({
+  table_id: 'conventional', rows: [conventionalRow]
+}, 'missing-channel'), null);
+assert.equal(behavior.liveRequestedChannelMatch(null, 'conventional-channel'), null);
+assert.equal(behavior.liveRequestedChannelMatch({ table_id: 'conventional' }, ''), null);
+
+assert.equal(behavior.livePickerNavigationIndex('ArrowDown', 2, 3), 0);
+assert.equal(behavior.livePickerNavigationIndex('ArrowRight', 0, 3), 1);
+assert.equal(behavior.livePickerNavigationIndex('ArrowUp', 0, 3), 2);
+assert.equal(behavior.livePickerNavigationIndex('ArrowLeft', 2, 3), 1);
+assert.equal(behavior.livePickerNavigationIndex('Home', 2, 3), 0);
+assert.equal(behavior.livePickerNavigationIndex('End', 0, 3), 2);
+assert.equal(behavior.livePickerNavigationIndex('Enter', 0, 3), null);
+assert.equal(behavior.livePickerNavigationIndex('ArrowDown', 0, 0), null);
+assert.equal(behavior.livePickerNavigationIndex('ArrowDown', 0.5, 3), null);
 
 for (const status of ['CONTROL', 'ACTIVE', 'CALL', 'DATA', 'ENCRYPTED']) {
   assert.equal(behavior.liveRowIsActive(row(status, status, { activation_order: 1 })), true);
@@ -174,3 +204,13 @@ assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.ro
 assert.match(channels, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
 assert.match(channels, /if \(activeFilter && selection && !incoming\.has\(selection\.rowKey\)\) clearSelection\(\)/);
+assert.match(channels, /const requestedMatch = liveRequestedChannelMatch\(value, requestedChannel\)/,
+  'Live deep links must resolve both table-level and row-level channel configurations');
+assert.match(channels, /selectRow\(displayed, requestedRow\)/,
+  'A conventional deep link must select the corresponding row');
+assert.match(channels, /livePickerNavigationIndex\(event\.key, index, buttons\.length\)/,
+  'The Live view picker must provide predictable keyboard navigation');
+assert.match(channels, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/,
+  'The desktop picker collapse preference must persist across Live visits');
+assert.match(channels, /picker\.closest\('\.live-split'\)\?\.classList\.toggle\('picker-collapsed', pickerCollapsed\)/,
+  'Collapsing the picker must release its grid width to the selected channel workspace');

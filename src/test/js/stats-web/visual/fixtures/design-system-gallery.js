@@ -58,7 +58,21 @@ if(view === 'radio-directory-panel') {
   panel.append(title, body);
   example.replaceChildren(panel);
 }
-if(view === 'live-notice') document.body.dataset.view = 'live';
+if(view === 'live-notice') {
+  document.body.dataset.view = 'live';
+  const split = document.querySelector('.visual-live-example .live-split');
+  const picker = split?.querySelector('.live-channel-picker');
+  const collapse = split?.querySelector('.live-picker-collapse');
+  collapse?.addEventListener('click', () => {
+    const collapsed = !split.classList.contains('picker-collapsed');
+    split.classList.toggle('picker-collapsed', collapsed);
+    picker?.classList.toggle('is-collapsed', collapsed);
+    collapse.setAttribute('aria-expanded', String(!collapsed));
+    const label = collapsed ? 'Expand live view picker' : 'Collapse live view picker';
+    collapse.setAttribute('aria-label', label);
+    collapse.title = label;
+  });
+}
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
 if(view === 'app-chrome' && window.matchMedia('(max-width: 1180px)').matches) {

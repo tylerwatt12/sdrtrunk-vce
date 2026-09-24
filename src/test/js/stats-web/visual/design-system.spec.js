@@ -645,9 +645,18 @@ test('live-notice-dark-desktop', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('live-notice-dark-desktop.png');
 });
 
+test('live-picker-collapsed-dark-desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/design-system.html?theme=dark&view=live-notice');
+  await page.locator('.live-picker-collapse').click();
+  await expect(page.locator('body')).toHaveScreenshot('live-picker-collapsed-dark-desktop.png');
+});
+
 test('live-notice-light-mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/design-system.html?theme=light&view=live-notice');
+  await page.locator('.live-picker-collapse').click();
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('body')).toHaveScreenshot('live-notice-light-mobile.png');
 });
 

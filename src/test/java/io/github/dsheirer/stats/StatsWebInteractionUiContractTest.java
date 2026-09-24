@@ -1164,6 +1164,7 @@ class StatsWebInteractionUiContractTest
         String conventional = function(source, "function liveConventionalChannelValue(row)");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
         String upsert = function(systems, "const upsertTable = (value) =>");
+        String selectedView = function(systems, "const updateSelectedView = (value) =>");
         String rowRenderer = function(source,
             "function renderTableRow(data, columns, rowKey, rowClass, onRowClick)");
 
@@ -1186,21 +1187,26 @@ class StatsWebInteractionUiContractTest
         assertTrue(routedPrefill.contains("selectedList.new_alias_behavior"));
         assertTrue(conventional.contains("entityRefHref(row?.entity_ref)"));
         assertFalse(conventional.contains("context_key"));
-        assertTrue(upsert.contains("entityTarget(value.entity_ref)"));
-        assertTrue(upsert.contains("entityTarget(value.entity_ref, { channel: 'quality' })"));
-        assertFalse(upsert.contains("{ site: 'quality' }"));
+        assertFalse(upsert.contains("entityTarget(value.entity_ref)"));
         assertTrue(upsert.contains("dismissedStoppedTables.has(value.table_id)"));
         assertTrue(upsert.contains("value.channel_running !== true"));
-        assertTrue(upsert.contains("current.channel_running !== false"));
+        assertTrue(selectedView.contains("value?.channel_running === false"));
+        assertTrue(selectedView.contains("dismissedStoppedTables.add(value.table_id)"));
         assertTrue(systems.contains("type: 'live-channels'"));
         assertTrue(systems.contains("onRowClick: (row) =>"));
         assertTrue(rowRenderer.contains("event.target.closest('a, button, input, select, textarea, label')"));
-        assertTrue(upsert.contains("quality.classList.toggle('quality-link'"));
-        assertTrue(upsert.contains("select.classList.toggle('quality-link'"));
-        assertTrue(css.contains(".channels-tab-close"));
+        assertTrue(selectedView.contains("selectedViewActions.replaceChildren()"));
+        assertTrue(selectedView.contains("entityTarget(value?.entity_ref)"));
+        assertTrue(selectedView.contains("entityTarget(value?.entity_ref, { channel: 'quality' })"));
+        assertFalse(selectedView.contains("{ site: 'quality' }"));
+        assertTrue(selectedView.contains("liveSelectedViewAction(channelTarget, 'Channel details', 'icon-channel')"));
+        assertTrue(selectedView.contains("liveSelectedViewAction(qualityTarget, 'Signal quality', 'icon-health')"));
+        assertFalse(upsert.contains("quality.classList.toggle('quality-link'"));
+        assertFalse(upsert.contains("select.classList.toggle('quality-link'"));
+        assertFalse(css.contains(".channels-tab-close"));
         assertTrue(css.contains(".channels-live-tab.stopped .channels-tab-quality"));
-        assertTrue(css.contains(".channels-tab-select:hover .channels-tab-quality.quality-link span"));
-        assertTrue(css.contains(".channels-tab-select.quality-link:hover"));
+        assertTrue(css.contains(".live-selected-view-actions"));
+        assertFalse(css.contains(".channels-tab-select.quality-link:hover"));
     }
 
     @Test
@@ -1215,7 +1221,7 @@ class StatsWebInteractionUiContractTest
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
-        String showTable = function(systems, "const showTable = (tableId) =>");
+        String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
         String html = readText(INDEX_HTML);
@@ -1225,6 +1231,9 @@ class StatsWebInteractionUiContractTest
             "const historyNotice = liveUiState().historyNoticeDismissed === true ? null : liveActivityHistoryNotice()"));
         assertTrue(live.contains("liveChannelsSection((selection) =>"));
         assertTrue(live.contains("historyNotice?.select(selection)"));
+        assertTrue(live.contains("node('div', 'live-right-workspace')"));
+        assertTrue(live.contains("rightWorkspace.append(channels.element, eventsPanel.element)"));
+        assertTrue(live.contains("split.append(channels.picker, rightWorkspace)"));
         assertTrue(live.contains(
             "beginPage(renderContext, split, ...(historyNotice ? [historyNotice.element] : []))"));
         assertTrue(systems.contains("node('div', 'section-title-actions ui-section-actions live-channels-title-actions')"));
@@ -1232,10 +1241,26 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
         assertTrue(systems.contains("openLivePresentationSettings('#live-presentation-settings')"));
         assertTrue(systems.contains("section('Live Channels', host, titleActions)"));
+        assertTrue(systems.contains("section('Live views', pickerPopover, pickerActions)"));
+        assertTrue(systems.contains("'ui-input live-picker-search-input'"));
+        assertTrue(systems.contains("tabBar.setAttribute('role', 'tablist')"));
+        assertTrue(systems.contains("tabBar.setAttribute('aria-orientation', 'vertical')"));
+        assertTrue(systems.contains("select.setAttribute('role', 'tab')"));
+        assertTrue(systems.contains("select.setAttribute('aria-controls', host.id)"));
+        assertTrue(systems.contains("livePickerNavigationIndex(event.key, index, buttons.length)"));
+        assertTrue(systems.contains("savedUiState.picker_collapsed === true"));
+        assertTrue(systems.contains("'ui-button ui-button-secondary ui-icon-button live-picker-collapse'"));
+        assertTrue(systems.contains("storeLiveUiState({ picker_collapsed: pickerCollapsed })"));
+        assertTrue(systems.contains("return { element: block, picker, pickerCollapsed }"));
+        assertTrue(live.contains("split.classList.toggle('picker-collapsed', channels.pickerCollapsed)"));
         assertTrue(events.contains("layoutMenuHost: eventToolbar"));
         assertTrue(messages.contains("layoutMenuHost: toolbar"));
         assertTrue(events.contains("'live-details-tabs ui-segmented'"));
         assertTrue(events.contains("'live-details-tab ui-segmented-option'"));
+        assertTrue(events.contains("button.setAttribute('role', 'tab')"));
+        assertTrue(events.contains("button.setAttribute('aria-controls', `live-details-${id}-panel`)"));
+        assertTrue(events.contains("livePickerNavigationIndex(event.key, buttons.indexOf(button), buttons.length)"));
+        assertTrue(events.contains("panes[id].setAttribute('role', 'tabpanel')"));
         assertTrue(events.contains("'ui-button ui-button-secondary live-details-pause'"));
         assertTrue(filters.contains("'ui-button ui-button-secondary live-detail-filter-trigger'"));
         assertTrue(filters.contains("'ui-button ui-button-primary', 'Done'"));
@@ -1350,7 +1375,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(updateVisibleRows.contains("liveCurrentControlRow(displayed)"));
         assertTrue(updateVisibleRows.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
         assertTrue(updateVisibleRows.contains("liveDetailSelection(displayed, controlIntent, null)"));
-        assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)"));
+        assertTrue(css.contains("grid-template-columns: minmax(260px, 1fr) minmax(0, 3fr)"));
+        assertTrue(css.contains("grid-template-columns: 72px minmax(0, 1fr)"));
+        assertTrue(css.contains("grid-template-rows: minmax(0, 3fr) minmax(160px, 1fr)"));
+        assertTrue(css.contains("@media (max-width: 1120px)"));
+        assertTrue(css.contains(".live-channel-picker.picker-open .live-picker-popover"));
         assertTrue(css.contains(".live-split.details-collapsed"));
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));
         assertTrue(css.contains(".live-events-table tbody tr:hover"));

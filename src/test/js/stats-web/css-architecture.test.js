@@ -23,7 +23,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=9") layer(features);',
   '@import url("./styles/features/entity-details.css?v=10") layer(features);',
-  '@import url("./styles/features/live.css?v=7") layer(features);',
+  '@import url("./styles/features/live.css?v=8") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/scanner.css?v=4") layer(features);',
@@ -36,7 +36,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/streaming.css?v=4") layer(features);',
   '@import url("./styles/features/p25-settings.css?v=1") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=4") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css?v=4") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=5") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
@@ -747,7 +747,8 @@ function validateAliasesFeature(stylesheets, entry) {
 
 function validateLiveFeature(stylesheets, entry) {
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
-  for(const selector of ['body[data-view="live"]', '.channels-live-tabs', '.live-details-header',
+  for(const selector of ['body[data-view="live"]', '.live-right-workspace', '.live-channel-picker',
+    '.channels-live-tabs', '.live-selected-view-header', '.live-details-header',
     '.channel-diagnostic-grid', '.live-filter-editor', '.live-activity-history-notice']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
@@ -758,6 +759,18 @@ function validateLiveFeature(stylesheets, entry) {
   assert.match(live,
     /@media \(max-width: 680px\)[\s\S]*\.live-details-header\s*\{[\s\S]*flex-wrap:\s*wrap/,
     'Live detail controls must wrap cleanly on small screens');
+  assert.match(live,
+    /@media \(max-width: 1120px\)[\s\S]*\.live-picker-toggle\s*\{[\s\S]*display:\s*inline-flex/,
+    'The desktop Live picker must collapse to a mobile selector at narrow widths');
+  assert.match(live,
+    /\.live-split\.picker-collapsed\s*\{[\s\S]*grid-template-columns:\s*72px minmax\(0, 1fr\)/,
+    'The collapsed desktop Live picker must become a narrow rail');
+  assert.match(live,
+    /@media \(max-width: 1120px\)[\s\S]*\.live-picker-collapse\s*\{[\s\S]*display:\s*none/,
+    'The desktop collapse control must not replace the narrow-screen picker');
+  assert.match(live,
+    /@media \(max-width: 1120px\)[\s\S]*\.live-split\.picker-collapsed\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'A saved collapsed state must return to the single-column picker on narrow screens');
 }
 
 function validateReducedMotionCoverage(stylesheets, entry) {
