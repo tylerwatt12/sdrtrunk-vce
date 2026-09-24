@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=4';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=6';
+import * as tableDefaults from './core/table-defaults.js?v=7';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -19560,19 +19560,12 @@ function openDeleteScanListAdminModal(scanList, revision) {
   remove.focus();
 }
 
-function adminScanListIdentity(scanList) {
-  const wrapper = node('div', 'admin-capability-identity');
-  wrapper.append(node('strong', '', scanList.name));
-  if (scanList.default === true) wrapper.append(badge('Default', 'state-current'));
-  if (scanList.published === false) wrapper.append(badge('Not published', 'state-stale'));
-  return wrapper;
-}
-
 function adminScanListActions(scanList, revision) {
-  const actions = node('div', 'admin-row-actions');
+  const actions = node('div', 'admin-row-actions scan-list-card-actions');
   const members = anchor('Manage Members', href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
   }), 'ui-button ui-button-secondary admin-scan-list-members');
+  members.prepend(iconGlyph('icon-identities'));
   const edit = iconButton('icon-edit', `Edit ${scanList.name} details`,
     'ui-button ui-button-secondary ui-icon-button admin-scan-list-edit');
   edit.dataset.scanListId = String(scanList.id);
@@ -19593,9 +19586,13 @@ function adminScanListActions(scanList, revision) {
 }
 
 function adminScanListMemberCount(scanList) {
-  return anchor(number(scanList.alias_count || 0), href('aliases', {
+  const count = Number(scanList.alias_count || 0);
+  const link = anchor(number(count), href('aliases', {
     scanListId: scanList.id, aliasTab: 'configure'
   }), 'admin-scan-list-member-count');
+  link.setAttribute('aria-label',
+    `Manage ${number(count)} assigned alias${count === 1 ? '' : 'es'} for ${scanList.name}`);
+  return link;
 }
 
 function adminScanListUnmatchedAliasLists(scanList) {
@@ -19612,40 +19609,177 @@ function adminScanListUnmatchedAliasLists(scanList) {
   return links.childElementCount ? links : node('span', 'muted', 'None');
 }
 
+function adminScanListSummaryCards(scanLists) {
+  const rows = Array.isArray(scanLists) ? scanLists : [];
+  const assignedAliases = rows.reduce((total, row) => total + Number(row.alias_count || 0), 0);
+  const defaultRoutes = rows.reduce((total, row) => total + Number(row.unmatched_alias_list_count || 0), 0);
+  const summary = node('section', 'scan-list-overview ui-metric-grid');
+  summary.setAttribute('aria-label', 'Scan List summary');
+  [
+    ['Scan lists', rows.length, 'icon-scan-lists', 'blue'],
+    ['Alias assignments', assignedAliases, 'icon-identities', 'success'],
+    ['Alias List default routes', defaultRoutes, 'icon-trunked', 'neutral']
+  ].forEach(([label, value, icon, tone]) => {
+    const card = node('div', `ui-summary-card ui-summary-${tone}`);
+    card.append(iconGlyph(icon), node('strong', '', number(value)), node('span', '', label));
+    summary.append(card);
+  });
+  return summary;
+}
+
+function adminScanListCard(scanList, revision) {
+  const name = String(scanList?.name || 'Unnamed Scan List');
+  const titleId = `admin-scan-list-title-${String(scanList?.id ?? 'unknown')
+    .replace(/[^a-z0-9_-]/gi, '-')}`;
+  const card = node('article', 'admin-scan-list-card scan-list-card ui-surface');
+  card.dataset.scanListId = String(scanList?.id ?? '');
+  card.setAttribute('aria-labelledby', titleId);
+
+  const header = node('header', 'scan-list-card-header');
+  const title = node('div', 'scan-list-card-title');
+  const statuses = [
+    scanList.default === true ? badge('Default', 'state-current') : null,
+    scanList.published === false ? badge('Hidden from listeners', 'state-stale') :
+      badge('Available to listeners')
+  ];
+  const heading = node('h2', '', name);
+  heading.id = titleId;
+  title.append(heading, badgeGroup(statuses));
+  header.append(uiIconTile('icon-scan-lists'), title);
+
+  const description = node('p', 'scan-list-card-description muted',
+    String(scanList.description || '').trim() || 'No description added');
+  const facts = node('dl', 'scan-list-card-facts ui-facts');
+  const assigned = node('div', 'scan-list-card-fact ui-fact');
+  const assignedValue = node('dd');
+  assignedValue.append(adminScanListMemberCount(scanList));
+  assigned.append(node('dt', '', 'Assigned aliases'), assignedValue);
+  const defaults = node('div', 'scan-list-card-fact ui-fact');
+  defaults.append(node('dt', '', 'Alias List defaults'),
+    node('dd', '', number(scanList.unmatched_alias_list_count || 0)));
+  facts.append(assigned, defaults);
+
+  const routes = node('div', 'scan-list-card-routes');
+  routes.append(node('p', 'muted', 'Routes unmatched calls here'),
+    adminScanListUnmatchedAliasLists(scanList));
+  card.append(header, description, facts, routes, adminScanListActions(scanList, revision));
+  return card;
+}
+
 async function renderAdminScanLists() {
   const renderContext = captureRenderContext();
-  if (!beginPage(renderContext, pageHeader('Scan Lists',
-    'Choose which calls listeners can hear together'))) return;
   const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
+  if (!renderIsCurrent(renderContext)) return;
   const revision = Number(response?.revision ?? 0);
   const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
-  const create = node('button', 'ui-button ui-button-primary', 'Create Scan List');
-  create.type = 'button';
+  const heading = pageHeader('Scan Lists', 'Choose which calls listeners can hear together');
+  heading.classList.add('scan-list-page-header');
+  const create = uiActionButton('Create scan list', 'icon-plus', () =>
+    openScanListAdminModal(null, revision), 'ui-button ui-button-primary');
   create.id = 'admin-create-scan-list';
-  create.addEventListener('click', () => openScanListAdminModal(null, revision));
-  const actions = node('div', 'section-title-actions ui-section-actions');
-  actions.append(anchor('Assign Individual Aliases', href('aliases', { aliasTab: 'configure' }),
-    'ui-button ui-button-secondary'), create);
-  const body = node('div', 'admin-section-body');
-  body.append(node('p', 'admin-section-intro',
+  const assign = anchor('Assign aliases', href('aliases', { aliasTab: 'configure' }),
+    'ui-button ui-button-secondary');
+  assign.prepend(iconGlyph('icon-identities'));
+  const actions = node('div', 'scan-list-heading-actions ui-section-actions');
+  actions.append(assign, create);
+  heading.append(actions);
+  if (!beginPage(renderContext, heading)) return;
+
+  const workspace = node('div', 'scan-list-page editor-workspace');
+  workspace.append(node('p', 'scan-list-intro ui-notice',
     'A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls ' +
     'listeners hear. To include calls that do not match an alias, open that Alias List and choose this Scan List ' +
-    'under Call Handling Defaults.'),
-    table(scanLists, [
-      { id: 'scan-list', label: 'Scan list', render: adminScanListIdentity,
-        sortValue: (row) => Number(row.sort_order || 0) },
-      { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
-      { id: 'aliases', label: 'Assigned aliases', className: 'numeric',
-        render: adminScanListMemberCount, sortValue: (row) => Number(row.alias_count || 0) },
-      { id: 'unmatched-alias-lists', label: 'Unmatched calls from',
-        render: adminScanListUnmatchedAliasLists,
-        sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
-      { id: 'actions', label: 'Actions', sortable: false,
-        render: (row) => adminScanListActions(row, revision) }
-    ], 'No scan lists are configured', {
-      type: 'admin-scan-lists', sortable: false, layoutMenuHost: actions
-    }));
-  content.append(section('Listener Scan Lists', body, actions));
+    'under Call Handling Defaults.'), adminScanListSummaryCards(scanLists));
+
+  const catalog = node('section', 'scan-list-catalog ui-catalog');
+  catalog.setAttribute('aria-label', 'Listener Scan Lists');
+  const grid = node('div', 'scan-list-card-grid');
+  if (!scanLists.length) {
+    const empty = node('div', 'scan-list-card-empty ui-empty-state');
+    empty.append(node('h2', '', 'No scan lists are configured'),
+      node('p', '', 'Create a scan list to group the calls that listeners can hear together.'));
+    grid.append(empty);
+    catalog.append(grid);
+    workspace.append(catalog);
+    content.append(workspace);
+    return;
+  }
+
+  const entries = scanLists.map((scanList) => ({
+    scanList,
+    card: adminScanListCard(scanList, revision)
+  }));
+  grid.append(...entries.map((entry) => entry.card));
+  const noMatches = node('div', 'admin-scan-list-filter-empty scan-list-card-empty ui-empty-state');
+  noMatches.hidden = true;
+  noMatches.append(node('h2', '', 'No scan lists match'),
+    node('p', '', 'Try another search or choose a different availability filter.'));
+  grid.append(noMatches);
+
+  const searchControl = node('label', 'scan-list-search-control ui-field');
+  searchControl.append(node('span', 'ui-field-label', 'Search scan lists'));
+  const searchFrame = node('span', 'ui-search');
+  searchFrame.append(iconGlyph('icon-search'));
+  const search = node('input', 'ui-input');
+  search.id = 'admin-scan-list-search';
+  search.type = 'search';
+  search.autocomplete = 'off';
+  search.placeholder = 'Search name, description, or Alias List';
+  searchFrame.append(search);
+  searchControl.append(searchFrame);
+
+  let activeFilter = 'all';
+  let applyFilters = () => {};
+  const filter = uiSegmentedControl([
+    { value: 'all', label: 'All' },
+    { value: 'available', label: 'Available' },
+    { value: 'hidden', label: 'Hidden' }
+  ], activeFilter, (value) => {
+    activeFilter = value;
+    applyFilters();
+  });
+  filter.classList.add('scan-list-filter');
+  filter.setAttribute('aria-label', 'Show scan lists');
+  filter.querySelectorAll('.ui-segmented-option').forEach((button) => {
+    button.classList.add('admin-scan-list-filter');
+    button.dataset.filter = button.dataset.value;
+  });
+  const filterControl = node('div', 'scan-list-filter-control ui-field');
+  filterControl.append(node('span', 'ui-field-label', 'Show'), filter);
+  const toolbar = node('div', 'scan-list-catalog-toolbar ui-catalog-toolbar');
+  toolbar.append(searchControl, filterControl);
+
+  const count = node('span', 'admin-scan-list-count');
+  count.setAttribute('aria-live', 'polite');
+  const meta = node('div', 'scan-list-catalog-meta muted');
+  meta.append(count);
+
+  applyFilters = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    entries.forEach(({ scanList, card }) => {
+      const aliasLists = Array.isArray(scanList.unmatched_alias_lists) ? scanList.unmatched_alias_lists : [];
+      const searchable = [scanList.name, scanList.description,
+        ...aliasLists.flatMap((aliasList) => [aliasList.name, aliasList.family])]
+        .filter(Boolean).join(' ').toLocaleLowerCase();
+      const published = scanList.published !== false;
+      const matchesText = !query || searchable.includes(query);
+      const matchesState = activeFilter === 'all' ||
+        (activeFilter === 'available' ? published : !published);
+      card.hidden = !(matchesText && matchesState);
+      if (!card.hidden) visible += 1;
+    });
+    const total = entries.length;
+    count.textContent = visible === total ?
+      `${number(total)} scan list${total === 1 ? '' : 's'}` :
+      `${number(visible)} of ${number(total)} scan lists`;
+    noMatches.hidden = visible > 0;
+  };
+  search.addEventListener('input', applyFilters);
+  applyFilters();
+  catalog.append(toolbar, meta, grid);
+  workspace.append(catalog);
+  content.append(workspace);
 }
 
 function radioReferenceAccountMessage(account) {

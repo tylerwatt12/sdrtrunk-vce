@@ -250,17 +250,63 @@ test('disabled icon hint stays visible outside a table', async ({ page }) => {
   await expect(hint).toBeVisible();
 });
 
-test('table columns action is compact and stays in the owning title bar', async ({ page }) => {
+test('scan list catalog uses semantic cards with useful search and availability filters', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=admin-scan-lists');
-  const titleBar = page.locator('.visual-admin-scan-lists-example .ui-section-title');
-  const menu = titleBar.locator('.table-layout-menu');
-  const trigger = menu.getByRole('button', { name: 'Choose table columns' });
-  await expect(trigger).toHaveCSS('width', '36px');
-  await expect(trigger).toHaveCSS('height', '36px');
-  await expect(menu).toHaveCSS('margin-top', '0px');
-  await expect(menu).toHaveCSS('padding-top', '0px');
+  const catalog = page.locator('.visual-admin-scan-lists-example .scan-list-catalog');
+  const cards = catalog.locator('article.admin-scan-list-card');
+  await expect(catalog.locator('table')).toHaveCount(0);
+  await expect(catalog.getByRole('button', { name: 'Choose table columns' })).toHaveCount(0);
+  await expect(cards).toHaveCount(3);
+  await expect(cards.locator('h2')).toHaveText(['County Public Safety', 'City Services', 'Training']);
+  await expect(cards.first().getByRole('link', {
+    name: 'Manage 124 assigned aliases for County Public Safety'
+  })).toHaveText('124');
+  expect(await cards.evaluateAll((elements) => elements.every((element) => {
+    const labelledBy = element.getAttribute('aria-labelledby');
+    return element.tagName === 'ARTICLE' && labelledBy && element.querySelector(`#${labelledBy}`);
+  }))).toBe(true);
+  await expect(catalog.getByText('Default', { exact: true })).toHaveCount(1);
+  await expect(catalog.getByText('Available to listeners', { exact: true })).toHaveCount(2);
+  await expect(catalog.getByText('Hidden from listeners', { exact: true })).toHaveCount(1);
+  await expect(page.locator('.scan-list-overview .ui-summary-card > span')).toHaveText([
+    'Scan lists', 'Alias assignments', 'Alias List default routes'
+  ]);
 
+  const search = catalog.getByLabel('Search scan lists');
+  await search.fill('roads');
+  await expect(catalog.locator('article.admin-scan-list-card:visible')).toHaveCount(1);
+  await expect(catalog.locator('article.admin-scan-list-card:visible h2')).toHaveText('City Services');
+  await expect(catalog.locator('.admin-scan-list-count')).toHaveText('1 of 3 scan lists');
+
+  await search.fill('');
+  await catalog.getByRole('button', { name: 'Hidden', exact: true }).click();
+  await expect(catalog.getByRole('button', { name: 'Hidden', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(catalog.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(catalog.locator('article.admin-scan-list-card:visible h2')).toHaveText('Training');
+  await search.fill('county');
+  await expect(catalog.locator('.admin-scan-list-filter-empty')).toBeVisible();
+  await expect(catalog.locator('.admin-scan-list-count')).toHaveText('0 of 3 scan lists');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  const mobileCatalog = page.locator('.visual-admin-scan-lists-example .scan-list-catalog');
+  const mobileCards = mobileCatalog.locator('.admin-scan-list-card');
+  const [firstCard, secondCard] = await Promise.all([
+    mobileCards.nth(0).boundingBox(), mobileCards.nth(1).boundingBox()
+  ]);
+  expect(secondCard.y).toBeGreaterThan(firstCard.y + firstCard.height);
+  const firstActions = mobileCards.first().locator('.scan-list-card-actions');
+  const [manage, edit] = await Promise.all([
+    firstActions.getByRole('link', { name: 'Manage Members' }).boundingBox(),
+    firstActions.getByRole('button', { name: 'Edit County Public Safety details' }).boundingBox()
+  ]);
+  expect(edit.y).toBeGreaterThan(manage.y);
+  expect(await page.locator('body').evaluate((body) => body.scrollWidth <= body.clientWidth)).toBe(true);
+});
+
+test('table columns action is compact and stays in the owning title bar', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=radio-directory-coverage');
   const coverage = page.locator('.visual-radio-directory-coverage-example .alias-coverage-table-section');
   await expect(coverage.locator('.alias-coverage-table-header .table-layout-trigger')).toHaveCount(1);
@@ -371,12 +417,6 @@ test('admin-scan-lists-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=admin-scan-lists');
   await expect(page.locator('body')).toHaveScreenshot('admin-scan-lists-dark-mobile.png', { fullPage: true });
-});
-
-test('admin-scan-lists-columns-dark-mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/design-system.html?theme=dark&view=admin-scan-lists-columns');
-  await expect(page.locator('body')).toHaveScreenshot('admin-scan-lists-columns-dark-mobile.png', { fullPage: true });
 });
 
 test('older administration toggles keep shared switch behavior', async ({ page }) => {

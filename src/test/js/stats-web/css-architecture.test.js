@@ -29,6 +29,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/scanner.css?v=4") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=3") layer(features);',
   '@import url("./styles/features/aliases.css?v=8") layer(features);',
+  '@import url("./styles/features/scan-lists.css?v=1") layer(features);',
   '@import url("./styles/features/dashboard.css?v=3") layer(features);',
   '@import url("./styles/features/administration.css?v=3") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=3") layer(features);',
@@ -745,6 +746,31 @@ function validateAliasesFeature(stylesheets, entry) {
     'Channels must not borrow Alias Editor presentation classes or helpers');
 }
 
+function validateScanListsFeature(stylesheets, entry) {
+  const scanLists = stylesheetModule(stylesheets, entry, 'features/scan-lists.css').source;
+  for(const selector of ['.scan-list-catalog', '.scan-list-catalog-toolbar',
+    '.scan-list-card-grid', '.scan-list-card', '.scan-list-card-actions']) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(scanLists, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
+      `Missing Scan Lists rule ${selector}`);
+  }
+  assert.match(scanLists,
+    /@media \(max-width: 1180px\)[\s\S]*\.scan-list-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/,
+    'Scan List cards must reduce to two columns before space becomes cramped');
+  assert.match(scanLists,
+    /@media \(max-width: 720px\)[\s\S]*\.scan-list-card-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Scan List cards must become one column on small screens');
+  assert.match(scanLists,
+    /@media \(max-width: 480px\)[\s\S]*\.scan-list-card-actions\s*\{[\s\S]*flex-wrap:\s*wrap/,
+    'Scan List card actions must wrap on phone-sized screens');
+  assert.doesNotMatch(scanLists, /:root\[data-theme="dark"\]/,
+    'Scan Lists presentation must adapt through semantic tokens instead of feature theme overrides');
+  assert.doesNotMatch(scanLists, /#[0-9a-f]{3,8}\b|\brgba?\(/i,
+    'Scan Lists presentation must use semantic color tokens');
+  assert.doesNotMatch(scanLists, /!important/,
+    'Scan Lists presentation must not add important declarations');
+}
+
 function validateLiveFeature(stylesheets, entry) {
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
   for(const selector of ['body[data-view="live"]', '.live-right-workspace', '.live-channel-picker',
@@ -930,6 +956,7 @@ validateTunerSpectrumFeature(stylesheets, entryStylesheet);
 validateScannerFeature(stylesheets, entryStylesheet);
 validateRfPlannerFeature(stylesheets, entryStylesheet);
 validateAliasesFeature(stylesheets, entryStylesheet);
+validateScanListsFeature(stylesheets, entryStylesheet);
 validateLiveFeature(stylesheets, entryStylesheet);
 validateReducedMotionCoverage(stylesheets, entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);

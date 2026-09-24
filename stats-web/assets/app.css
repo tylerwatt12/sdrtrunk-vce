@@ -25,6 +25,7 @@
 @import url("./styles/features/scanner.css?v=4") layer(features);
 @import url("./styles/features/rf-planner.css?v=3") layer(features);
 @import url("./styles/features/aliases.css?v=8") layer(features);
+@import url("./styles/features/scan-lists.css?v=1") layer(features);
 @import url("./styles/features/dashboard.css?v=3") layer(features);
 @import url("./styles/features/administration.css?v=3") layer(features);
 @import url("./styles/features/signal-quality.css?v=3") layer(features);

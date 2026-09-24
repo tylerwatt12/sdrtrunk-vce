@@ -663,8 +663,31 @@ async function main() {
       { revision: 5, settings: currentReceiverSettings });
     return true;
   });
+  const scanListRenderer = functionBinding(appSource, 'renderAdminScanLists');
+  const scanListCard = functionBinding(appSource, 'adminScanListCard');
+  const scanListActions = functionBinding(appSource, 'adminScanListActions');
+  assert.doesNotMatch(scanListRenderer, /\btable\s*\(/,
+    'Scan Lists must remain a card catalog instead of returning to a generic data table');
+  assert.doesNotMatch(scanListRenderer, /layoutMenuHost|admin-scan-lists/,
+    'Scan List cards must not expose table column customization');
+  assert.match(scanListRenderer, /admin-scan-list-search/);
+  assert.match(scanListRenderer, /admin-scan-list-filter/);
+  assert.match(scanListRenderer, /search\.addEventListener\('input', applyFilters\)/);
+  assert.match(scanListRenderer, /activeFilter === 'available'/);
+  assert.match(scanListRenderer, /admin-scan-list-count/);
+  assert.match(scanListRenderer, /admin-scan-list-filter-empty scan-list-card-empty ui-empty-state/);
+  assert.match(scanListCard,
+    /node\('article', 'admin-scan-list-card scan-list-card ui-surface'\)/);
+  assert.match(scanListCard, /card\.setAttribute\('aria-labelledby', titleId\)/);
+  assert.match(scanListCard, /node\('h2', '', name\)/);
+  assert.match(scanListCard, /badge\('Hidden from listeners', 'state-stale'\)/);
+  assert.match(scanListCard, /badge\('Available to listeners'\)/);
+  assert.match(scanListCard, /'Routes unmatched calls here'/);
+  assert.match(scanListActions, /anchor\('Manage Members'/);
+  assert.match(appSource,
+    /`Manage \$\{number\(count\)\} assigned alias\$\{count === 1 \? '' : 'es'\} for \$\{scanList\.name\}`/);
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 17, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 16, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');

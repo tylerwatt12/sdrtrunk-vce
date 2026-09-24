@@ -900,6 +900,37 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void rendersScanListsAsSearchableResponsiveCards() throws Exception
+    {
+        String source = source();
+        String renderer = function(source, "async function renderAdminScanLists()");
+        String card = function(source, "function adminScanListCard(scanList, revision)");
+        String actions = function(source, "function adminScanListActions(scanList, revision)");
+
+        assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
+        assertTrue(renderer.contains("heading.classList.add('scan-list-page-header')"));
+        assertTrue(renderer.contains("admin-scan-list-search"));
+        assertTrue(renderer.contains("admin-scan-list-filter"));
+        assertTrue(renderer.contains("admin-scan-list-count"));
+        assertTrue(renderer.contains("admin-scan-list-filter-empty"));
+        assertTrue(renderer.contains("search.addEventListener('input', applyFilters)"));
+        assertTrue(renderer.contains("activeFilter === 'available'"));
+        assertFalse(renderer.contains("table("));
+        assertFalse(renderer.contains("layoutMenuHost"));
+
+        assertTrue(card.contains("node('article', 'admin-scan-list-card scan-list-card ui-surface')"));
+        assertTrue(card.contains("card.setAttribute('aria-labelledby', titleId)"));
+        assertTrue(card.contains("node('h2', '', name)"));
+        assertTrue(card.contains("'Hidden from listeners'"));
+        assertTrue(card.contains("'Available to listeners'"));
+        assertTrue(card.contains("'Routes unmatched calls here'"));
+        assertTrue(card.contains("adminScanListUnmatchedAliasLists"));
+        assertTrue(actions.contains("anchor('Manage Members'"));
+        assertTrue(source.contains(
+            "`Manage ${number(count)} assigned alias${count === 1 ? '' : 'es'} for ${scanList.name}`"));
+    }
+
+    @Test
     void providesOneResponsiveScannerShellWithoutAdministratorAudioControls() throws Exception
     {
         String html = readText(INDEX_HTML);
@@ -1019,17 +1050,30 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("data-view=\"scan-lists\" href=\"/?view=scan-lists\""));
         assertTrue(source.contains("'scan-lists': renderAdminScanLists"));
         assertTrue(source.contains("return renderAdminScanLists()"));
-        assertTrue(scanLists.contains("beginPage(renderContext, pageHeader('Scan Lists'"));
+        assertTrue(scanLists.contains("const heading = pageHeader('Scan Lists'"));
+        assertTrue(scanLists.contains("heading.classList.add('scan-list-page-header')"));
         assertTrue(source.contains("function renderStreaming()"));
         assertTrue(source.contains("function renderTuners()"));
         assertTrue(source.contains("function renderRfPlanner()"));
         assertFalse(source.contains("href('configuration', { tab: 'scan-lists' })"));
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));
-        assertTrue(scanLists.contains("unmatched_alias_list_count"));
-        assertTrue(scanLists.contains("adminScanListUnmatchedAliasLists"));
-        assertTrue(scanLists.contains("'Unmatched calls from'"));
         assertTrue(scanLists.contains("Call Handling Defaults"));
+        assertFalse(scanLists.contains("table("));
+        assertFalse(scanLists.contains("layoutMenuHost"));
+        assertTrue(scanLists.contains("admin-scan-list-search"));
+        assertTrue(scanLists.contains("admin-scan-list-filter"));
+        assertTrue(scanLists.contains("admin-scan-list-count"));
+        assertTrue(scanLists.contains("admin-scan-list-filter-empty"));
+        String scanListCard = function(source, "function adminScanListCard(scanList, revision)");
+        assertTrue(scanListCard.contains("node('article', 'admin-scan-list-card scan-list-card ui-surface')"));
+        assertTrue(scanListCard.contains("card.setAttribute('aria-labelledby', titleId)"));
+        assertTrue(scanListCard.contains("node('h2', '', name)"));
+        assertTrue(scanListCard.contains("unmatched_alias_list_count"));
+        assertTrue(scanListCard.contains("adminScanListUnmatchedAliasLists"));
+        assertTrue(scanListCard.contains("'Routes unmatched calls here'"));
+        assertTrue(scanListCard.contains("'Hidden from listeners'"));
+        assertTrue(scanListCard.contains("'Available to listeners'"));
         String unmatchedAliasLists = function(source, "function adminScanListUnmatchedAliasLists(scanList)");
         assertTrue(unmatchedAliasLists.contains("scanList?.unmatched_alias_lists"));
         assertTrue(unmatchedAliasLists.contains("list: id, aliasTab: 'configure'"));

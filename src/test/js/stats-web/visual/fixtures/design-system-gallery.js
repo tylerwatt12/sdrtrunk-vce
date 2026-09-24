@@ -217,18 +217,51 @@ function initializeGuidanceTable() {
   render();
 }
 
+function initializeScanListCatalog() {
+  const catalog = document.querySelector('.visual-admin-scan-lists-example .scan-list-catalog');
+  const search = catalog?.querySelector('#admin-scan-list-search');
+  const filters = [...(catalog?.querySelectorAll('.admin-scan-list-filter') || [])];
+  const cards = [...(catalog?.querySelectorAll('.admin-scan-list-card') || [])];
+  const count = catalog?.querySelector('.admin-scan-list-count');
+  const empty = catalog?.querySelector('.admin-scan-list-filter-empty');
+  if(!search || !filters.length || !cards.length || !count || !empty) return;
+  let activeFilter = 'all';
+  const draw = () => {
+    const term = search.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    cards.forEach((card) => {
+      const stateMatches = activeFilter === 'all' || card.dataset.state === activeFilter;
+      const searchMatches = !term || (card.dataset.search || '').toLocaleLowerCase().includes(term);
+      card.hidden = !(stateMatches && searchMatches);
+      if(!card.hidden) visible += 1;
+    });
+    count.textContent = visible === cards.length ?
+      `${cards.length} scan lists` : `${visible} of ${cards.length} scan lists`;
+    empty.hidden = visible !== 0;
+  };
+  search.addEventListener('input', draw);
+  filters.forEach((filter) => filter.addEventListener('click', () => {
+    activeFilter = filter.dataset.filter || 'all';
+    filters.forEach((candidate) => candidate.setAttribute('aria-pressed',
+      String(candidate === filter)));
+    draw();
+  }));
+  draw();
+}
+
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
 const view = ['mobile-table', 'gallery', 'app-chrome', 'modal', 'modal-long', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
-  'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists', 'admin-scan-lists-columns',
+  'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
   'scanner', 'tuner-spectrum', 'rf-planner', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-popover'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
 if(view === 'gallery') initializeGuidanceTable();
+if(view === 'admin-scan-lists') initializeScanListCatalog();
 document.querySelectorAll('.radioreference-detail-header').forEach((header) =>
   header.classList.add('ui-surface-header'));
 document.querySelectorAll('.ui-table-row-group > th').forEach((heading, index) => {

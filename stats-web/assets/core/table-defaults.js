@@ -136,9 +136,6 @@ const TABLE_DEFAULTS = Object.freeze({
   'admin-access': { widths: {
     capability: 310, 'required-tier': 170, 'default-tier': 120, 'policy-status': 130
   } },
-  'admin-scan-lists': { widths: {
-    'scan-list': 240, aliases: 130, 'unmatched-alias-lists': 260, actions: 360
-  } },
   'radioreference-sites': {
     widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site'], stretchSaved: true
   },

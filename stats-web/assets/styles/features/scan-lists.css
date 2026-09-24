@@ -1,0 +1,221 @@
+/* Scan Lists owns catalog and card geometry; shared primitives own appearance. */
+.scan-list-page,
+.scan-list-catalog,
+.scan-list-catalog > *,
+.scan-list-card,
+.scan-list-card > * {
+  min-width: 0;
+}
+
+.scan-list-page,
+.scan-list-catalog {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.scan-list-intro {
+  margin: 0;
+}
+
+.scan-list-overview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0;
+}
+
+.scan-list-catalog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: end;
+}
+
+.scan-list-search-control,
+.scan-list-filter-control {
+  min-width: 0;
+}
+
+.scan-list-filter-control {
+  justify-self: end;
+}
+
+.scan-list-filter {
+  max-width: 100%;
+}
+
+.scan-list-catalog-meta {
+  min-height: var(--control-height-compact);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-inline: var(--space-1);
+}
+
+.scan-list-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.scan-list-card-empty {
+  grid-column: 1 / -1;
+}
+
+.scan-list-card {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  align-content: start;
+  overflow: hidden;
+}
+
+.scan-list-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) 0;
+}
+
+.scan-list-card-title {
+  min-width: 0;
+  display: grid;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+}
+
+.scan-list-card-title > :where(h2, h3, strong) {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
+  line-height: var(--line-height-control);
+  overflow-wrap: anywhere;
+}
+
+.scan-list-card-description {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) 0;
+  overflow-wrap: anywhere;
+}
+
+.scan-list-card-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.scan-list-card-fact {
+  align-content: start;
+}
+
+.scan-list-card-routes {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.scan-list-card-routes > :where(p, span) {
+  margin: 0;
+}
+
+.scan-list-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.scan-list-card-actions .admin-scan-list-members {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 1180px) {
+  .scan-list-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .scan-list-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scan-list-heading-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scan-list-heading-actions > * {
+    width: 100%;
+  }
+
+  .scan-list-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scan-list-overview > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .scan-list-catalog-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scan-list-filter-control,
+  .scan-list-filter {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .scan-list-filter > * {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .scan-list-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .scan-list-catalog-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scan-list-card-header {
+    padding: var(--space-3) var(--space-3) 0;
+  }
+
+  .scan-list-card-description {
+    padding: var(--space-3) var(--space-3) 0;
+  }
+
+  .scan-list-card-facts {
+    padding: var(--space-3) var(--space-3) 0;
+  }
+
+  .scan-list-card-routes {
+    padding: var(--space-3);
+  }
+
+  .scan-list-card-actions {
+    flex-wrap: wrap;
+    padding: var(--space-3);
+  }
+
+  .scan-list-card-actions .admin-scan-list-members {
+    width: 100%;
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 340px) {
+  .scan-list-heading-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

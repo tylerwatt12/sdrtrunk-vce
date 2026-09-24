@@ -319,7 +319,7 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   margin-bottom: var(--space-1);
 }
 
-.visual-feature-header > div {
+.visual-feature-header > div:not(:where(.ui-section-actions)) {
   display: grid;
   gap: var(--space-1);
 }
@@ -350,30 +350,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
 
 .visual-admin-access-example table {
   min-width: 760px;
-}
-
-.visual-admin-scan-lists-example table {
-  min-width: 760px;
-}
-
-body[data-gallery-view="admin-scan-lists"] .visual-admin-scan-lists-example .visual-table-layout-panel {
-  display: none;
-}
-
-body[data-gallery-view="admin-scan-lists-columns"] .visual-admin-scan-lists-example {
-  min-height: 560px;
-}
-
-.visual-admin-scan-lists-example .visual-table-layout-panel {
-  top: 190px;
-  right: max(12px, calc((100vw - 1180px) / 2));
-}
-
-@media (max-width: 560px) {
-  .visual-admin-scan-lists-example .visual-table-layout-panel {
-    top: 215px;
-    right: 10px;
-  }
 }
 
 .visual-dashboard-example table {
@@ -588,7 +564,7 @@ body:not([data-gallery-view="settings"]) .visual-settings-example,
 body:not([data-gallery-view="health"]) .visual-health-example,
 body:not([data-gallery-view="p25"]) .visual-p25-example,
 body:not([data-gallery-view="admin-access"]) .visual-admin-access-example,
-body:not([data-gallery-view="admin-scan-lists"]):not([data-gallery-view="admin-scan-lists-columns"]) .visual-admin-scan-lists-example,
+body:not([data-gallery-view="admin-scan-lists"]) .visual-admin-scan-lists-example,
 body:not([data-gallery-view="admin-receiver"]) .visual-admin-receiver-example,
 body:not([data-gallery-view="admin-support"]) .visual-admin-support-example,
 body:not([data-gallery-view="dashboard-health"]) .visual-dashboard-health-example,
