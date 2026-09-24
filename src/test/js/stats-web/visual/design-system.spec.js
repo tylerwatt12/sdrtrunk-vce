@@ -340,6 +340,22 @@ test('channels-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('channels-light-mobile.png', { fullPage: true });
 });
 
+test('selected channel actions remain below the app header while scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/design-system.html?theme=light&view=channels');
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--app-header-offset', '64px');
+    const workspace = document.querySelector('.visual-channels-example');
+    workspace.classList.add('ui-section', 'channel-catalog-section');
+    const spacer = document.createElement('div');
+    spacer.style.height = '1200px';
+    workspace.querySelector('.channel-admin-catalog').append(spacer);
+  });
+  await page.evaluate(() => window.scrollTo(0, 600));
+  await expect.poll(() => page.locator('.channel-selection-bar').evaluate(
+    (element) => Math.round(element.getBoundingClientRect().top))).toBe(72);
+});
+
 test('radio-directory-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=light&view=radio-directory');

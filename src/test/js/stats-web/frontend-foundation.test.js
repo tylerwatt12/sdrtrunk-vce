@@ -1028,6 +1028,9 @@ async function main() {
   assert.deepEqual(tableDefaults.fittedWidths('radioreference-sites', [
     { id: 'site' }, { id: 'system' }, { id: 'frequencies' }
   ], [340, 200, 150], {}, 1700), [1350, 200, 150]);
+  assert.deepEqual(tableDefaults.fittedWidths('radioreference-sites', [
+    { id: 'site' }, { id: 'system' }, { id: 'frequencies' }
+  ], [420, 200, 150], { site: 420 }, 1700), [1350, 200, 150]);
   assert.equal(tableDefaults.width('example', { id: 'calls' }), 66);
   const compactColumns = [{ id: 'descriptor' }, { id: 'downlink' }, { id: 'state' }];
   assert.deepEqual(tableDefaults.layout('channel-frequencies-p25', [

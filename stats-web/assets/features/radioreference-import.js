@@ -228,7 +228,7 @@ function resultCount(value, key) {
 
 export function createRadioReferenceImportWorkspace(dependencies) {
   const {
-    node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
+    node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency, formatNumber, href, anchor,
     modalFooter, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
@@ -472,11 +472,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const configurationId = textValue(response, ['configuration_id', 'configurationId'],
       textValue(response?.channel, ['configuration_id', 'configurationId']));
     if (configurationId) actions.append(anchor('Open channel', href('channel-setup', { channel: configurationId }),
-      'ui-button ui-button-secondary'));
+      'ui-button ui-button-primary'));
     const listId = integerValue(response, ['alias_list_id', 'aliasListId']) || Number(aliasListIdValue);
     if (kind === 'talkgroups' && Number.isSafeInteger(listId) && listId > 0) {
       actions.append(anchor('Open Alias List', href('aliases', { list: listId, aliasTab: 'configure' }),
-        'ui-button ui-button-secondary'));
+        'ui-button ui-button-primary'));
     }
     return actions;
   };
@@ -517,11 +517,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const count = directValue !== null && directValue !== undefined && Number.isFinite(directCount) &&
             directCount >= 0 ? directCount : changedCount;
           const completed = node('div', 'radioreference-import-complete');
-          completed.append(uiPill('Import complete', 'success'),
+          const completedIcon = node('span', 'ui-icon-tile radioreference-completion-icon');
+          completedIcon.append(iconGlyph(kind === 'talkgroups' ? 'icon-aliases' : 'icon-channel'));
+          completed.append(completedIcon,
             node('h3', '', kind === 'talkgroups' ? 'Talkgroups imported' : 'Channel saved'),
             node('p', 'muted', kind === 'talkgroups' ?
               `${formatNumber(Number.isFinite(count) ? count : 0)} talkgroup change${count === 1 ? '' : 's'} applied.` :
-              'The channel is ready in Channel Setup.'), completionLink(response, kind, aliasListIdValue));
+              'The channel is ready in Channels.'), completionLink(response, kind, aliasListIdValue));
           modal.dialog.classList.add('radioreference-import-modal-complete');
           modal.dialog.querySelector('.modal-header h2').textContent = 'Import complete';
           modal.content.replaceChildren(completed);
@@ -628,24 +630,33 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       frequencyPanel.hidden = !modeInputs.get('SELECTED').checked;
     });
     const detection = node('div', 'radioreference-detection');
+    const detectionFacts = node('dl', 'ui-facts radioreference-site-facts');
     const flavor = textValue(system, ['flavor']);
     const voice = textValue(system, ['voice']);
-    detection.append(node('span', 'muted', 'System'), uiPill(systemTypeLabel(system) || family || 'Trunked',
-      'protocol'));
-    if (flavor) detection.append(node('span', '', flavor));
-    if (voice && voice.toLowerCase() !== (systemTypeLabel(system) || '').toLowerCase())
-      detection.append(node('span', 'muted', `Voice: ${voice}`));
-    detection.append(node('span', 'muted', `${uniqueChannels.length} frequencies`));
-    if (!hasControl) detection.append(node('small', 'muted', capacityPlus(system) ?
+    const appendFact = (label, value, className = '') => {
+      const fact = node('div', `ui-fact${className ? ` ${className}` : ''}`);
+      const description = node('dd');
+      description.append(value);
+      fact.append(node('dt', '', label), description);
+      detectionFacts.append(fact);
+    };
+    const protocol = systemTypeLabel(system) || family || 'Trunked';
+    appendFact('Protocol', uiPill(protocol, 'protocol'));
+    appendFact('System type', flavor || protocol);
+    if (voice && voice.toLowerCase() !== protocol.toLowerCase())
+      appendFact('Voice', voice, 'radioreference-site-fact-wide');
+    appendFact('Frequencies', `${uniqueChannels.length} available`);
+    if (modulation) appendFact('P25 modulation', uiPill(modulation,
+      modulation.toUpperCase().includes('CQPSK') || modulation.toUpperCase().includes('LSM') ? 'blue' : 'neutral'));
+    detection.append(detectionFacts);
+    if (!hasControl) detection.append(node('p', 'radioreference-detection-help muted', capacityPlus(system) ?
       'Capacity Plus uses a moving rest channel. All site frequencies are selected by default.' :
       conventionalNetworked(system) ?
         'This conventional networked system has no control channel. All site frequencies are selected by default.' :
       'No primary control frequency is marked for this site. All site frequencies are selected by default.'));
-    if (modulation) detection.append(node('span', 'muted', 'Detected P25 modulation'), uiPill(modulation,
-      modulation.toUpperCase().includes('CQPSK') || modulation.toUpperCase().includes('LSM') ? 'blue' : 'neutral'),
-      node('small', 'muted',
+    if (modulation) detection.append(node('p', 'radioreference-detection-help muted',
       'Detection uses RadioReference modulation hints and “simul” in the site name or description. Change it later ' +
-      'in Channel Setup if needed.'));
+      'in Channels if needed.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
     const preview = button('Review Channel', 'ui-button ui-button-primary');
@@ -851,10 +862,17 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
     filter.classList.add('radioreference-status-filter');
     filter.setAttribute('aria-label', 'Filter by import status');
+    const statusFilter = node('div', 'radioreference-talkgroup-status-control');
+    statusFilter.append(node('span', 'ui-field-label', 'Import status'), filter);
+    const tableTools = node('div', 'radioreference-talkgroup-table-tools');
+    const commandTools = node('div', 'radioreference-talkgroup-command-tools');
+    commandTools.append(tableTools, importAll);
+    const commandRow = node('div', 'radioreference-talkgroup-command-row');
+    commandRow.append(statusFilter, commandTools);
     const actions = node('div', 'radioreference-talkgroup-actions ui-selection-bar');
     actions.append(selectionBadge, clear, importSelected);
     toolbar.append(formField('Compare with Alias List', selectFrame(aliasList)), categoryField,
-      formField('Search talkgroups', searchFrame), filter, importAll);
+      formField('Search talkgroups', searchFrame), commandRow);
     target.replaceChildren(toolbar, actions, status, tableHost);
 
     const selected = state.selectedTalkgroups;
@@ -957,7 +975,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         } }
       ], 'No talkgroups match these filters.',
       { type: 'radioreference-talkgroups', sortable: false, mobileCards: true,
-        controller: tableController, layoutMenuHost: toolbar });
+        controller: tableController, layoutMenuHost: tableTools });
       grid.querySelector('table')?.classList.add('ui-data-table-quiet');
       tableHost.replaceChildren(grid, internalPager({
         offset, limit: TALKGROUP_LIMIT, visible: values.length, total: filtered.length,

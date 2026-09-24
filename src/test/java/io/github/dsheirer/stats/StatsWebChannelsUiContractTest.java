@@ -43,14 +43,15 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("channelSummaryCards(catalog, editable)"));
         assertTrue(catalog.contains("tableController.reconcileRows"));
         assertTrue(catalog.contains("layoutMenuHost: toolbar"));
-        assertTrue(catalog.contains("editable ? 'channel-catalog-admin-v1' : " +
+        assertTrue(catalog.contains("editable ? 'channel-catalog-admin-v2' : " +
             "'channel-catalog-readonly-v1'"));
         assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
         assertTrue(columns.contains("if (editable) columns.push"));
-        assertTrue(columns.contains("label: 'Startup order'"));
+        assertTrue(columns.contains("fullLabel: 'Startup order'"));
         assertTrue(columns.contains("row.alias_list_name"));
         assertTrue(columns.contains("row.editable !== false"));
         assertTrue(columns.contains("channelInlineNavigation(row"));
+        assertFalse(columns.contains("id: 'protocol'"));
         assertFalse(columns.contains("id: 'live'"));
         assertFalse(columns.contains("id: 'channel'"));
         assertTrue(columns.contains("id: 'select'"));
@@ -64,6 +65,52 @@ class StatsWebChannelsUiContractTest
         assertFalse(catalog.contains("querySelector('thead th')"));
         assertFalse(source.contains("/api/v1/conventional-channels"));
         assertFalse(source.contains("/api/v1/conventional-contexts"));
+    }
+
+    @Test
+    void groupsChannelsByProtocolWithoutTheOldTopologySelector() throws Exception
+    {
+        String source = source();
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        String protocolGroup = function(source, "function channelProtocolGroup(row)");
+        String protocolOrder = function(source, "function channelProtocolOrder(left, right)");
+        String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
+        String groupRow = function(source, "function renderTableRowGroup(group, count, columnCount, noun = 'row')");
+
+        assertTrue(catalog.contains("pageHeader(editable ? 'Channels' : 'Radio Directory'"));
+        assertTrue(catalog.contains("label: 'All statuses'"));
+        assertTrue(catalog.contains("statusFilter.setAttribute('aria-label', 'Filter channels by status')"));
+        assertTrue(catalog.contains("rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'"));
+        assertTrue(catalog.contains(".sort(channelProtocolOrder)"));
+        assertFalse(catalog.contains("value: 'trunked'"));
+        assertFalse(catalog.contains("value: 'conventional'"));
+        assertFalse(catalog.contains("uiSegmentedControl(filterEntries"));
+        assertTrue(protocolGroup.contains("row.protocol_label"));
+        assertTrue(protocolGroup.contains("label.toLowerCase()"));
+        assertTrue(protocolOrder.contains("channelProtocolGroup(left).label.localeCompare"));
+        assertTrue(table.contains("typeof options.rowGroup === 'function'"));
+        assertTrue(table.contains("renderTableRowGroup(group"));
+        assertTrue(groupRow.contains("heading.scope = 'rowgroup'"));
+        assertTrue(groupRow.contains("count === 1 ? noun : `${noun}s`"));
+    }
+
+    @Test
+    void usesTheSharedHeaderOffsetForStickyChannelActions() throws Exception
+    {
+        String source = source();
+        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        String stickyOffset = function(source, "function installStickyHeaderOffset()");
+        String css = StatsWebStylesheetTestSupport.readAll();
+
+        assertTrue(stickyOffset.contains("document.querySelector('.app-header')"));
+        assertTrue(stickyOffset.contains("document.documentElement.style.setProperty('--app-header-offset'"));
+        assertTrue(stickyOffset.contains("new ResizeObserver(update).observe(header)"));
+        assertTrue(stickyOffset.contains("window.addEventListener('resize', update)"));
+        assertTrue(catalog.contains("loading.element.classList.add('channel-catalog-section')"));
+        assertFalse(catalog.contains("positionSelectionBar"));
+        assertTrue(css.contains(".ui-selection-bar {\n  position: sticky;\n" +
+            "  top: calc(var(--app-header-offset, 0px) + var(--space-2));"));
+        assertTrue(css.contains(".channel-catalog-section.ui-section {\n  overflow: clip;"));
     }
 
     @Test
@@ -117,7 +164,6 @@ class StatsWebChannelsUiContractTest
         assertFalse(css.contains("max-height: min(70dvh, 720px);"));
         assertTrue(css.contains("@media (max-width: 720px)"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-admin-catalog .link-button"));
-        assertTrue(css.contains(":not(.ui-button):not(.ui-segmented-option)"));
     }
 
     @Test

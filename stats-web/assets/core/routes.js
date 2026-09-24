@@ -10,7 +10,7 @@
     { id: 'group-identity', label: 'Group Identity Details', title: 'Group Identity Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },
     { id: 'radio', label: 'Radio Details', title: 'Radio Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },
     { id: 'channels', label: 'Radio Directory', title: 'Radio Directory', parent: 'dashboard', capability: 'radio', databaseNotice: false },
-    { id: 'channel-setup', label: 'Channel Setup', title: 'Channel Setup', parent: 'channel-setup', access: 'admin-channels', databaseNotice: false },
+    { id: 'channel-setup', label: 'Channels', title: 'Channels', parent: 'channel-setup', access: 'admin-channels', databaseNotice: false },
     { id: 'channel', label: 'Channel Details', title: 'Channel Details', parent: 'dashboard', capability: 'radio', databaseNotice: true },
     { id: 'aliases', label: 'Aliases', title: 'Aliases', parent: 'aliases', access: 'admin-aliases', databaseNotice: true },
     { id: 'scan-lists', label: 'Scan Lists', title: 'Scan Lists', parent: 'scan-lists', access: 'admin-configuration', databaseNotice: false },

@@ -39,6 +39,11 @@ const TABLE_DEFAULTS = Object.freeze({
       status: 112, 'auto-start': 144, 'alias-list': 190 },
     grow: ['name', 'frequency', 'alias-list']
   },
+  'channel-catalog-admin-v2': {
+    widths: { select: 48, name: 320, frequency: 280,
+      status: 112, 'auto-start': 144, 'alias-list': 210 },
+    grow: ['name', 'frequency', 'alias-list']
+  },
   'channel-catalog-readonly-v1': {
     widths: { name: 300, frequency: 260, protocol: 160, status: 112, 'alias-list': 190 },
     grow: ['name', 'frequency', 'alias-list']
@@ -127,15 +132,15 @@ const TABLE_DEFAULTS = Object.freeze({
     'scan-list': 240, aliases: 130, 'unmatched-alias-lists': 260, actions: 360
   } },
   'radioreference-sites': {
-    widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site']
+    widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site'], stretchSaved: true
   },
   'radioreference-talkgroups': { widths: {
     selected: 54, talkgroup: 90, 'alpha-tag': 190, description: 260,
     category: 180, status: 150
-  }, grow: ['alpha-tag', 'description', 'category'] },
+  }, grow: ['alpha-tag', 'description', 'category'], stretchSaved: true },
   'radioreference-conventional': { widths: {
     frequency: 125, 'alpha-tag': 220, description: 260, mode: 120
-  }, grow: ['alpha-tag', 'description'] }
+  }, grow: ['alpha-tag', 'description'], stretchSaved: true }
 });
 
 function defaultsFor(tableType) {
@@ -173,7 +178,8 @@ function fit(tableType) {
   const defaults = defaultsFor(tableType);
   return Array.isArray(defaults.grow) ? {
     grow: defaults.grow,
-    maxWidth: defaults.maxWidth || null
+    maxWidth: defaults.maxWidth || null,
+    stretchSaved: defaults.stretchSaved === true
   } : null;
 }
 
@@ -183,7 +189,8 @@ function fittedWidths(tableType, columns, widths, savedWidths, availableWidth) {
   const target = Math.min(Math.max(0, availableWidth), profile.maxWidth || Infinity);
   const extra = Math.max(0, target - widths.reduce((sum, value) => sum + value, 0));
   const grow = columns.map((column, index) => ({ id: column.id, index }))
-    .filter(({ id }) => profile.grow.includes(id) && !Object.hasOwn(savedWidths, id));
+    .filter(({ id }) => profile.grow.includes(id) &&
+      (profile.stretchSaved || !Object.hasOwn(savedWidths, id)));
   if (!extra || !grow.length) return widths;
   const growTotal = grow.reduce((sum, { index }) => sum + widths[index], 0);
   let distributed = 0;

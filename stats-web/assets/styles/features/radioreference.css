@@ -283,8 +283,7 @@
 }
 
 .radioreference-detail-header,
-.radioreference-talkgroup-actions,
-.radioreference-detection {
+.radioreference-talkgroup-actions {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -371,6 +370,7 @@
 
 .radioreference-sites-list,
 .radioreference-talkgroup-table {
+  width: 100%;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -389,6 +389,8 @@
 .radioreference-sites-list > .table-wrap,
 .radioreference-talkgroup-table > .table-wrap,
 .radioreference-system-body > .table-wrap {
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
   flex: 1 1 auto;
   overflow-x: auto;
@@ -396,11 +398,17 @@
 }
 
 .data-table[data-table-type^="radioreference-"][data-mobile-cards="true"] {
-  min-width: var(--table-content-min-width);
+  min-width: max(100%, var(--table-content-min-width));
 }
 
 .radioreference-pager {
   flex: none;
+}
+
+.radioreference-sites-list > .radioreference-pager,
+.radioreference-talkgroup-table > .radioreference-pager,
+.radioreference-system-body > .radioreference-pager {
+  margin: var(--space-3) var(--space-4) var(--space-4);
 }
 
 .radioreference-row-identity {
@@ -428,13 +436,42 @@
   gap: var(--space-2);
 }
 
-.radioreference-import-all {
-  grid-column: 1 / -1;
-  justify-self: end;
-}
-
 .radioreference-talkgroup-toolbar > .admin-form-field:nth-child(3) {
   align-self: end;
+}
+
+.radioreference-talkgroup-command-row {
+  min-width: 0;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.radioreference-talkgroup-status-control {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+
+.radioreference-status-filter {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.radioreference-talkgroup-command-tools,
+.radioreference-talkgroup-table-tools {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.radioreference-talkgroup-command-tools {
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .radioreference-system-body > .admin-form-message {
@@ -456,7 +493,6 @@
   flex: none;
 }
 
-.radioreference-status-filter,
 .radioreference-talkgroup-actions {
   grid-column: 1 / -1;
 }
@@ -547,15 +583,22 @@
 }
 
 .radioreference-detection {
-  flex-wrap: wrap;
-  padding: 11px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
 }
 
-.radioreference-detection small {
-  width: 100%;
+.radioreference-site-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
+}
+
+.radioreference-site-fact-wide {
+  grid-column: span 2;
+}
+
+.radioreference-detection-help {
+  margin: 0;
   line-height: 1.4;
 }
 
@@ -633,14 +676,30 @@
 }
 
 .radioreference-import-complete {
+  display: grid;
+  align-content: center;
   justify-items: center;
-  padding: var(--space-4);
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
   text-align: center;
 }
 
 .radioreference-import-complete :where(h3, p) {
   max-width: 540px;
   margin: 0;
+}
+
+.radioreference-completion-icon {
+  width: 52px;
+  height: 52px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  border-radius: 50%;
+}
+
+.radioreference-completion-icon > svg {
+  width: 24px;
+  height: 24px;
 }
 
 .radioreference-completion-actions {
@@ -680,6 +739,10 @@
 
   .radioreference-talkgroup-search {
     grid-column: 1 / -1;
+  }
+
+  .radioreference-site-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -745,8 +808,22 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .radioreference-import-all {
-    justify-self: stretch;
+  .radioreference-talkgroup-command-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .radioreference-talkgroup-status-control {
+    width: 100%;
+  }
+
+  .radioreference-talkgroup-command-tools {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .radioreference-talkgroup-command-tools .radioreference-import-all {
+    flex: 1 1 auto;
   }
 
   .radioreference-selection-badge {
@@ -774,6 +851,14 @@
 
   .radioreference-preview-facts {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .radioreference-site-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .radioreference-site-fact-wide {
+    grid-column: auto;
   }
 
   .radioreference-preview-facts dt {
