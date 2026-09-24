@@ -18,15 +18,15 @@ const COLUMN_WIDTHS = Object.freeze({
 
 const TABLE_DEFAULTS = Object.freeze({
   'channel-frequencies-p25': {
-    widths: { descriptor: 104, callsign: 110, tags: 78, downlink: 94, uplink: 94,
+    widths: { descriptor: 104, callsign: 110, tags: 130, downlink: 94, uplink: 94,
       tdma: 60, slots: 56, state: 86, 'voice-observations': 80,
-      'data-observations': 70, 'last-seen': 166 },
+      'data-observations': 70, 'last-seen': 116 },
     hidden: ['callsign', 'tdma', 'data-observations'],
     grow: ['descriptor', 'callsign', 'tags']
   },
   'channel-frequency-bands': {
     widths: { band: 64, base: 94, spacing: 68, bandwidth: 68, offset: 92,
-      tdma: 60, slots: 56, state: 82, observations: 76, 'last-seen': 166 },
+      tdma: 60, slots: 56, state: 82, observations: 76, 'last-seen': 116 },
     hidden: ['tdma'], grow: []
   },
   'channel-frequency-bands-override': {
@@ -127,7 +127,7 @@ const TABLE_DEFAULTS = Object.freeze({
     'scan-list': 240, aliases: 130, 'unmatched-alias-lists': 260, actions: 360
   } },
   'radioreference-sites': {
-    widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site'], maxWidth: 1050
+    widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site']
   },
   'radioreference-talkgroups': { widths: {
     selected: 54, talkgroup: 90, 'alpha-tag': 190, description: 260,

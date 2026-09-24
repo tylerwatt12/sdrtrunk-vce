@@ -53,6 +53,32 @@
   border-right: 0;
 }
 
+.ui-data-table.ui-data-table-calm th,
+.ui-data-table.ui-data-table-calm td {
+  border-right: 0;
+}
+
+.ui-data-table.ui-data-table-calm td {
+  vertical-align: middle;
+}
+
+.ui-muted-state {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ui-time-stacked {
+  display: inline-grid;
+  gap: 2px;
+  line-height: 1.15;
+}
+
+.ui-time-stacked > span:last-child {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* A calmer catalog treatment where vertical gridlines do not aid scanning. */
 .ui-data-table.ui-data-table-quiet th,
 .ui-data-table.ui-data-table-quiet td {
@@ -153,7 +179,6 @@
 }
 
 .ui-data-table.resizable-table.table-layout-busy .column-resizer {
-  pointer-events: none;
   opacity: .45;
 }
 

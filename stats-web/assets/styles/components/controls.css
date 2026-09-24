@@ -380,6 +380,11 @@
   white-space: nowrap;
 }
 
+.ui-pill-compact {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
 .ui-pill-success {
   color: var(--success);
   background: var(--success-soft);
@@ -411,6 +416,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
+}
+
+.ui-badge-group-compact {
+  gap: 3px;
 }
 
 .ui-pill:is(.state-current, .role-voice) {

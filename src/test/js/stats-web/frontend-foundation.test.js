@@ -299,6 +299,61 @@ async function main() {
   assert.match(resizerSource, /event\.key === 'Enter'/);
   assert.match(resizerSource, /measureTableColumnContentWidth\(element, header, index\)/);
   assert.match(resizerSource, /resizedWidths\[index\] === startingWidths\[index\]/);
+  assert.match(resizerSource, /addEventListener\('lostpointercapture', cancel\)/);
+  assert.match(resizerSource, /window\.addEventListener\('blur', cancel/);
+  assert.match(resizerSource, /finally \{\s+endLayoutMutation\(\)/);
+  class ResizeTarget {
+    constructor() { this.listeners = new Map(); }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type).add(listener);
+    }
+    removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
+    emit(type, properties = {}) {
+      for (const listener of [...(this.listeners.get(type) || [])]) listener(properties);
+    }
+    setAttribute() {}
+    setPointerCapture() {}
+  }
+  const resizeHeader = new ResizeTarget();
+  resizeHeader.getBoundingClientRect = () => ({ width: 100 });
+  resizeHeader.append = (handle) => { resizeHeader.handle = handle; };
+  const resizeWindow = new ResizeTarget();
+  let resizePending = false;
+  let resizeLayout = { column_widths: {} };
+  let restoredWidths = 0;
+  const savedWidths = [];
+  const resizerFunctionSource = appSource.slice(appSource.indexOf('function addColumnResizers('),
+    appSource.indexOf('function cleanupTableLayoutMenu(')).trim();
+  const addResizers = vm.runInNewContext(`(${resizerFunctionSource})`, {
+    node: () => new ResizeTarget(), window: resizeWindow,
+    TABLE_WIDTH_MINIMUM: 48, TABLE_WIDTH_MAXIMUM: 1200,
+    tableColumnKey: (column) => column.id,
+    tableLayouts: { resize: (layout, key, width) =>
+      ({ ...layout, column_widths: { ...layout.column_widths, [key]: width } }) },
+    tableDefaults: { fit: () => false }, setTableColumnWidths: () => {},
+    saveTableLayoutPreference: async (_type, layout) => {
+      savedWidths.push(layout.column_widths.action);
+      return true;
+    }
+  });
+  addResizers({}, [{ id: 'action', label: 'Action' }], [], [resizeHeader], 'actions',
+    () => resizeLayout, (layout) => { resizeLayout = layout; },
+    () => { if (resizePending) return false; resizePending = true; return true; },
+    () => { resizePending = false; }, () => {}, () => { restoredWidths += 1; });
+  const dragStart = { button: 0, clientX: 100, pointerId: 1,
+    preventDefault() {}, stopPropagation() {} };
+  resizeHeader.handle.emit('pointerdown', dragStart);
+  resizeHeader.handle.emit('pointermove', { clientX: 130 });
+  resizeHeader.handle.emit('lostpointercapture');
+  assert.equal(resizePending, false, 'lost capture must release the layout lock');
+  assert.equal(restoredWidths, 1, 'lost capture must restore the saved widths');
+  resizeHeader.handle.emit('pointerdown', dragStart);
+  resizeHeader.handle.emit('pointermove', { clientX: 140 });
+  resizeHeader.handle.emit('pointerup', { clientX: 140 });
+  await new Promise(setImmediate);
+  assert.equal(resizePending, false, 'the next drag must finish normally');
+  assert.deepEqual(savedWidths, [140]);
   const autofitSource = functionBinding(appSource, 'measureTableColumnContentWidth');
   assert.match(autofitSource, /\.\.\.element\.tBodies/);
   assert.match(autofitSource, /!cell\.classList\.contains\('empty'\)/);
@@ -534,7 +589,7 @@ async function main() {
     return true;
   });
   const tableCalls = functionCalls(appSource, 'table');
-  assert.equal(tableCalls.length, 18, 'Every application table call must be audited');
+  assert.equal(tableCalls.length, 17, 'Every application table call must be audited');
   assert.match(appSource,
     /else if \(!options\.serverSort && options\.sortable !== false\)/,
     'Server-paged tables must not offer current-page-only sorting for derived columns');
@@ -828,7 +883,10 @@ async function main() {
     { id: 'radio' }, { id: 'talker-alias' }, { id: 'affiliation' }, { id: 'confirmed-channel' }
   ]), 'radios.talker-alias-affiliation-channel');
   assert.match(appSource, /radioTableType\('group-identity-radios', columns\)/);
-  assert.match(appSource, /type: 'system-action-observations'/);
+  assert.match(appSource, /signalingMetrics\(signalingActionRows\(response\.action_counts\)/);
+  assert.match(functionBinding(appSource, 'signalingMetrics'), /values\.filter\(\(\[, count\]\) => Number\(count\) > 0\)/);
+  assert.equal(tableDefaults.width('channel-frequencies-p25', { id: 'tags' }), 130);
+  assert.equal(tableDefaults.width('channel-frequency-bands', { id: 'last-seen' }), 116);
 
   const player = Object.create(playerModule.WebCallPlayer.prototype);
   player.arrivalSequence = 0;
@@ -967,6 +1025,9 @@ async function main() {
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 105);
   assert.equal(tableDefaults.width('radioreference-sites', { id: 'site' }), 340);
+  assert.deepEqual(tableDefaults.fittedWidths('radioreference-sites', [
+    { id: 'site' }, { id: 'system' }, { id: 'frequencies' }
+  ], [340, 200, 150], {}, 1700), [1350, 200, 150]);
   assert.equal(tableDefaults.width('example', { id: 'calls' }), 66);
   const compactColumns = [{ id: 'descriptor' }, { id: 'downlink' }, { id: 'state' }];
   assert.deepEqual(tableDefaults.layout('channel-frequencies-p25', [

@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=2';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=2';
+import * as tableDefaults from './core/table-defaults.js?v=3';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -1073,6 +1073,15 @@ function dateTime(value) {
   return time;
 }
 
+function stackedDateTime(value) {
+  const time = dateTime(value);
+  if (!time) return '';
+  const [date, clock] = time.textContent.split(' ');
+  time.classList.add('ui-time-stacked');
+  time.replaceChildren(node('span', '', date), node('span', '', clock));
+  return time;
+}
+
 function yesNo(value) {
   return Number(value) ? 'Yes' : '';
 }
@@ -1410,6 +1419,15 @@ function stateBadge(value) {
   return badge(state ? state[0] + state.slice(1).toLowerCase() : '', `state-${state.toLowerCase()}`);
 }
 
+function compactStateBadge(value) {
+  if (String(value || '').toUpperCase() === 'HISTORICAL') {
+    return node('span', 'ui-muted-state', 'Historical');
+  }
+  const element = stateBadge(value);
+  element.classList.add('ui-pill-compact');
+  return element;
+}
+
 function neighborStatus(value) {
   const status = String(value || '').toUpperCase();
   const labels = [];
@@ -1731,7 +1749,11 @@ function channelTags(row) {
   if (observed.has('DATA')) tags.push(channelTagBadge('DATA'));
   if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) tags.push(channelTagBadge('DATA_ANNOUNCED'));
   if (observed.has('CWID') || current.has('CWID')) tags.push(channelTagBadge('CWID'));
-  return tags.length ? badgeGroup(tags) : badge('Unknown', 'state-historical');
+  if (!tags.length) return badge('Unknown', 'state-historical ui-pill-compact');
+  const group = badgeGroup(tags);
+  group.classList.add('ui-badge-group-compact');
+  tags.forEach((tag) => tag.classList.add('ui-pill-compact'));
+  return group;
 }
 
 function visibleLiveChannelTags(row) {
@@ -2277,11 +2299,17 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
     currentLayout, setCurrentLayout, beginLayoutMutation, endLayoutMutation, onSaveFailure,
     applyWidths) {
   const saveWidth = async (index, width) => {
-    const nextLayout = tableLayouts.resize(currentLayout(), tableColumnKey(columns[index], index),
-      Math.round(width));
-    setCurrentLayout(nextLayout);
-    const saved = await saveTableLayoutPreference(tableType, nextLayout);
-    endLayoutMutation();
+    let saved = false;
+    try {
+      const nextLayout = tableLayouts.resize(currentLayout(), tableColumnKey(columns[index], index),
+        Math.round(width));
+      setCurrentLayout(nextLayout);
+      saved = await saveTableLayoutPreference(tableType, nextLayout);
+    } catch (_error) {
+      saved = false;
+    } finally {
+      endLayoutMutation();
+    }
     if (!saved) onSaveFailure?.();
     else applyWidths?.();
   };
@@ -2345,21 +2373,39 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
         handle.setAttribute('aria-valuenow', String(Math.round(resizedWidths[index])));
       };
       const pointerMove = (moveEvent) => updateWidth(moveEvent.clientX);
-      const pointerUp = (upEvent) => {
-        if (Number.isFinite(upEvent.clientX)) updateWidth(upEvent.clientX);
+      let finished = false;
+      const finish = (upEvent = null) => {
+        if (finished) return;
+        finished = true;
+        if (upEvent && Number.isFinite(upEvent.clientX)) updateWidth(upEvent.clientX);
         handle.removeEventListener('pointermove', pointerMove);
         handle.removeEventListener('pointerup', pointerUp);
-        handle.removeEventListener('pointercancel', pointerUp);
+        handle.removeEventListener('pointercancel', cancel);
+        handle.removeEventListener('lostpointercapture', cancel);
+        window.removeEventListener('blur', cancel);
+        if (!upEvent) {
+          applyWidths?.();
+          endLayoutMutation();
+          return;
+        }
         if (resizedWidths[index] === startingWidths[index]) {
           endLayoutMutation();
           return;
         }
         void saveWidth(index, resizedWidths[index]);
       };
-      handle.setPointerCapture(event.pointerId);
+      const pointerUp = (upEvent) => finish(upEvent);
+      const cancel = () => finish();
       handle.addEventListener('pointermove', pointerMove);
       handle.addEventListener('pointerup', pointerUp);
-      handle.addEventListener('pointercancel', pointerUp);
+      handle.addEventListener('pointercancel', cancel);
+      handle.addEventListener('lostpointercapture', cancel);
+      window.addEventListener('blur', cancel, { once: true });
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch (_error) {
+        cancel();
+      }
     });
     header.append(handle);
   });
@@ -2836,6 +2882,9 @@ const METRIC_ICONS = {
   Relationships: 'icon-trunked',
   'Join Relationships': 'icon-trunked', Total: 'icon-live', Grants: 'icon-play',
   Join: 'icon-plus', Emergency: 'icon-warning', Register: 'icon-plus',
+  Continue: 'icon-skip', Active: 'icon-play', Acknowledge: 'icon-health',
+  Check: 'icon-search', 'Check Ack': 'icon-health', GPS: 'icon-tuner',
+  Page: 'icon-scan-lists', Patch: 'icon-trunked', Status: 'icon-dashboard',
   Logout: 'icon-stop', Denial: 'icon-warning', Data: 'icon-dashboard',
   'Healthy channels': 'icon-health', 'Degraded channels': 'icon-warning',
   'Offline channels': 'icon-stop', 'Current issues': 'icon-health',
@@ -6475,12 +6524,21 @@ function signalingCounts(row) {
     .sort((left, right) => right[1] - left[1]);
 }
 
+function signalingMetrics(values) {
+  const observed = values.filter(([, count]) => Number(count) > 0)
+    .sort((left, right) => Number(right[1]) - Number(left[1]));
+  if (!observed.length) return node('div', 'empty', 'No signaling observations recorded');
+  const summary = metrics(observed, true);
+  summary.querySelectorAll('.ui-metric').forEach((metric) => metric.classList.add('ui-metric-compact'));
+  return summary;
+}
+
 function signalingActionRows(rows) {
-  return (rows || []).filter((row) => {
+  return (rows || []).map((row) => {
     const field = `${String(row.action || '').trim().toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')}_observation_count`;
-    return SIGNALING_COUNT_LABELS.has(field);
-  });
+    return { ...row, label: SIGNALING_COUNT_LABELS.get(field) };
+  }).filter((row) => row.label);
 }
 
 function groupIdentitySignaling(row) {
@@ -7510,7 +7568,6 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
-  const tableController = {};
   const rangeControl = rangeControls(ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
     await load(buttons, true);
@@ -7518,15 +7575,8 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
   const historySection = section('Activity History', historyHost, sectionActionHost(rangeControl.controls));
   historySection.classList.add('group-identity-history-section');
   const chartSection = section('Call Activity', chartHost);
-  const signalingActions = sectionActionHost();
-  const signalingSection = section('Retained Signaling Totals', signalingHost, signalingActions);
+  const signalingSection = section('Retained Signaling Totals', signalingHost);
   panels.append(historySection, chartSection, signalingSection);
-
-  const signalingColumns = [
-    { id: 'action', label: 'Action', key: 'action' },
-    { id: 'count', label: 'Count', render: (row) => number(row.count),
-      className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-  ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
     if (loading && !interactive) return;
@@ -7545,11 +7595,8 @@ async function groupIdentityActivityHistorySection(scopeParameters) {
       historyHost.replaceChildren(groupIdentityHistoryTotals(response.totals));
       chartHost.replaceChildren(groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
         'Group calls and call outcomes by time'));
-      signalingHost.replaceChildren(table(
-        signalingCounts(response.totals || {}).map(([action, count]) => ({ action, count })),
-        signalingColumns, 'No signaling observations recorded', {
-          type: 'action-counts', controller: tableController, layoutMenuHost: signalingActions
-        }), activityMetricGuide(true));
+      signalingHost.replaceChildren(signalingMetrics(signalingCounts(response.totals || {})),
+        activityMetricGuide(true));
     } catch (error) {
       if (pageOwned) rethrowPageHandlingError(error);
       if (sequence === loadingSequence) {
@@ -15214,13 +15261,10 @@ async function renderRadioSystem() {
       ['Assignment', radioSystemAssignmentLabel(system)],
       ['Alias Lists', radioSystemAliasLists(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
-    ])), tableSection('Retained Signaling Observations',
-      signalingActionRows(response.action_counts), [
-      { id: 'action', label: 'Action', key: 'action' },
-      { id: 'observations', label: 'Observations',
-        render: (row) => number(row.observation_count), className: 'numeric',
-        sortValue: (row) => Number(row.observation_count || 0) }
-    ], 'No signaling observations recorded', { type: 'system-action-observations' }, activityMetricGuide()));
+    ])), section('Retained Signaling Observations', fragment(
+      signalingMetrics(signalingActionRows(response.action_counts)
+        .map((row) => [row.label, Number(row.observation_count || 0)])),
+      activityMetricGuide())));
     infoColumn.append(...blocks);
 
     const channelsPage = await apiPage(radioSystemApiPath(radioSystem.radio_system_key, 'channels'), pageParameters());
@@ -15408,11 +15452,8 @@ async function renderRadio() {
       ['Talker Alias Observed', dateTime(radio.last_talker_alias_seen_ms)],
       ['First Observed', dateTime(radio.first_seen_ms)],
       ['Last Observed', dateTime(radio.last_seen_ms)]
-    ])), tableSection('Collected Signaling Observations',
-      signalingCounts(radio).map(([action, count]) => ({ action, count })), [
-      { id: 'action', label: 'Action', key: 'action' },
-      { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No signaling observations recorded', { type: 'action-counts' }, activityMetricGuide()));
+    ])), section('Collected Signaling Observations', fragment(
+      signalingMetrics(signalingCounts(radio)), activityMetricGuide())));
     infoColumn.append(...blocks);
     content.append(infoColumn);
   }
@@ -15547,14 +15588,14 @@ function p25ChannelFrequencyColumns() {
     { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma),
       sortValue: (row) => Boolean(row.tdma) },
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
-    { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
+    { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state),
       sortValue: (row) => row.state || '' },
     { id: 'voice-observations', label: 'Voice', fullLabel: 'Voice Grant Observations', key: 'voice_grant_observations',
       className: 'numeric' },
     { id: 'data-observations', label: 'Data', fullLabel: 'Data Grant Observations', key: 'data_grant_observations',
       className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
-      render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
 }
 
@@ -15572,10 +15613,10 @@ function trunkedChannelFrequencyColumns() {
       render: (row) => frequency(row.frequency_hz), className: 'numeric' },
     { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
       render: (row) => frequency(row.uplink_hz), className: 'numeric' },
-    { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
+    { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state) },
     { id: 'snapshots', label: 'Snapshots', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
-      render: (row) => dateTime(row.last_seen_ms) }
+      render: (row) => stackedDateTime(row.last_seen_ms) }
   ];
 }
 
@@ -15597,7 +15638,7 @@ async function renderTrunkedChannelFrequencies(channel, renderContext, host) {
         p25 ? 'channel-frequencies-p25' : 'channel-frequencies-trunked', {
           itemLabel: 'Frequencies', emptyText: 'No frequencies recorded',
           tableOptions: {
-            sortable: false, serverSort: false,
+            sortable: false, serverSort: false, tableClass: 'ui-data-table-calm',
             layoutMenuHost: directory.titleActions, controller: directory.tableController
           }
         })),
@@ -15756,15 +15797,15 @@ function renderTrunkedChannelBandPlans(channel, data) {
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' }
   ];
   if (!overrideActive) homeBandColumns.push(
-    { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+    { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state), sortValue: (row) => row.state || '' },
     { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   );
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
     overrideActive ? 'state-current' : '');
   return fragment(tableSection('Home System Band Plan', data.home_bands || [], homeBandColumns,
     'No home-system band plan recorded', { type: overrideActive ? 'channel-frequency-bands-override' :
-      'channel-frequency-bands' }, null, bandSource),
+      'channel-frequency-bands', tableClass: 'ui-data-table-calm' }, null, bandSource),
   data.foreign_bands?.length ? tableSection('ISSI Advertised Band Plans', data.foreign_bands, [
     { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
     { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
@@ -15776,10 +15817,11 @@ function renderTrunkedChannelBandPlans(channel, data) {
     { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
     { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
-    { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+    { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state), sortValue: (row) => row.state || '' },
     { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands' }) :
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands',
+    tableClass: 'ui-data-table-calm' }) :
     section('ISSI Advertised Band Plans',
       node('p', 'muted channel-frequency-note', 'No ISSI-advertised band plans recorded')));
 }

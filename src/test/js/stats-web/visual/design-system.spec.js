@@ -24,6 +24,12 @@ test('stat counters share a rounded tile with a decorative landmark icon', async
   await expect(tile.locator('.ui-metric-icon svg')).toHaveAttribute('aria-hidden', 'true');
   await expect(tile.locator('.ui-metric-label')).toHaveText('Logical Calls');
   await expect(page.locator('.visual-entity-details-example .ui-metric a')).toHaveText('9');
+  const signaling = page.locator('.visual-entity-details-example .ui-section')
+    .filter({ has: page.locator('.ui-section-title:text-is("Retained Signaling Totals")') });
+  await expect(signaling.locator('.ui-metric-compact')).toHaveCount(6);
+  await expect(signaling.locator('.ui-metric-label')).toHaveText([
+    'Continue', 'Active', 'Join', 'Register', 'Emergency', 'Status'
+  ]);
 });
 
 test('channel frequencies and band plans share a flush responsive layout', async ({ page }) => {
@@ -32,14 +38,16 @@ test('channel frequencies and band plans share a flush responsive layout', async
   await page.evaluate(() => {
     document.body.dataset.view = 'channel';
     document.body.innerHTML = `<main class="content"><div class="channel-frequency-layout two-columns">
-      <div class="channel-frequency-column"><section class="section ui-section"><div class="section-title ui-section-title">Frequencies</div><div class="async-section-content ui-table-content"><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table"><thead><tr><th>Channel</th><th>Down MHz</th></tr></thead><tbody><tr><td>01-01</td><td>851.0125</td></tr></tbody></table></div></div></section></div>
-      <div class="channel-band-plan-column"><div class="async-section-content"><section class="section ui-section"><div class="section-title ui-section-title">Home System Band Plan</div><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table"><thead><tr><th>Band</th><th>Base</th></tr></thead><tbody><tr><td>0</td><td>851.00625</td></tr></tbody></table></div></section></div></div>
+      <div class="channel-frequency-column"><section class="section ui-section"><div class="section-title ui-section-title">Frequencies</div><div class="async-section-content ui-table-content"><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table ui-data-table-calm"><thead><tr><th>Channel</th><th>Down MHz</th><th>Seen</th></tr></thead><tbody><tr><td>01-01</td><td>851.0125</td><td><time class="ui-time-stacked" datetime="2026-09-23T20:09:05"><span>2026-09-23</span><span>20:09:05</span></time></td></tr></tbody></table></div></div></section></div>
+      <div class="channel-band-plan-column"><div class="async-section-content"><section class="section ui-section"><div class="section-title ui-section-title">Home System Band Plan</div><div class="table-wrap ui-table-wrap"><table class="data-table ui-data-table ui-data-table-calm"><thead><tr><th>Band</th><th>Base</th></tr></thead><tbody><tr><td>0</td><td>851.00625</td></tr></tbody></table></div></section></div></div>
     </div></main>`;
   });
   const layout = page.locator('.channel-frequency-layout');
   const frequency = page.locator('.channel-frequency-column');
   const bandPlan = page.locator('.channel-band-plan-column');
   await expect(page.locator('.channel-frequency-column .async-section-content')).toHaveCSS('padding', '0px');
+  await expect(page.locator('.channel-frequency-column th').first()).toHaveCSS('border-right-width', '0px');
+  await expect(page.locator('.ui-time-stacked')).toHaveCSS('display', 'inline-grid');
   expect((await frequency.boundingBox()).y).toBe((await bandPlan.boundingBox()).y);
   expect((await layout.boundingBox()).width).toBeGreaterThan((await frequency.boundingBox()).width * 1.9);
   await page.setViewportSize({ width: 390, height: 844 });
