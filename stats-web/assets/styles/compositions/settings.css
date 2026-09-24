@@ -222,12 +222,6 @@
   padding: 18px;
 }
 
-.admin-settings-form-stack {
-  width: 100%;
-  max-width: none;
-  padding: 18px;
-}
-
 .admin-settings-form-title,
 .settings-card-form .settings-card-description,
 .admin-settings-form .admin-form-message,
@@ -340,8 +334,7 @@
     justify-content: flex-start;
   }
 
-  .settings-page-form,
-  .admin-settings-form-stack {
+  .settings-page-form {
     padding: var(--space-3);
   }
 

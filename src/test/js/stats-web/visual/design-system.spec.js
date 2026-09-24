@@ -123,6 +123,37 @@ test('async tables meet section edges while non-table content keeps padding', as
   await expect(sections.first()).toHaveScreenshot('async-table-flush-light-desktop.png');
 });
 
+test('column auto-fit measures intrinsic table content off screen', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/design-system.html?theme=light&view=gallery');
+  const measurement = await page.evaluate(() => {
+    const table = document.createElement('table');
+    table.className = 'ui-data-table resizable-table table-column-autofit-measurement';
+    table.innerHTML = '<tbody><tr><th><span class="table-column-label">Auto fit</span></th></tr>'
+      + '<tr><td>Compact value</td></tr></tbody>';
+    document.body.append(table);
+    const tableStyle = getComputedStyle(table);
+    const cellStyle = getComputedStyle(table.querySelector('td'));
+    const labelStyle = getComputedStyle(table.querySelector('.table-column-label'));
+    const result = {
+      width: table.getBoundingClientRect().width,
+      position: tableStyle.position,
+      tableLayout: tableStyle.tableLayout,
+      visibility: tableStyle.visibility,
+      whiteSpace: cellStyle.whiteSpace,
+      labelOverflow: labelStyle.overflow,
+    };
+    table.remove();
+    return result;
+  });
+  expect(measurement.width).toBeGreaterThan(48);
+  expect(measurement.width).toBeLessThan(300);
+  expect(measurement).toMatchObject({
+    position: 'fixed', tableLayout: 'auto', visibility: 'hidden',
+    whiteSpace: 'nowrap', labelOverflow: 'visible'
+  });
+});
+
 test('icon actions share a size and show one hint on hover and focus', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=gallery');

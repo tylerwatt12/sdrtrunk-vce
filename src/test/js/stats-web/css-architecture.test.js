@@ -9,46 +9,39 @@ const entryStylesheet = path.resolve(process.argv[2]
   || path.resolve(__dirname, '../../../../stats-web/assets/app.css'));
 
 const EXPECTED_ENTRY_MANIFEST = [
-  '@layer reset, tokens, legacy, components, compositions, features, utilities;',
+  '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=1") layer(reset);',
-  '@import url("./styles/tokens.css?v=4") layer(tokens);',
-  '@import url("./styles/legacy.css?v=10") layer(legacy);',
-  '@import url("./styles/components/controls.css?v=11") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=9") layer(compositions);',
-  '@import url("./styles/compositions/tables.css?v=5") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=6") layer(compositions);',
+  '@import url("./styles/tokens.css?v=5") layer(tokens);',
+  '@import url("./styles/components/semantic-text.css?v=1") layer(components);',
+  '@import url("./styles/components/controls.css?v=12") layer(components);',
+  '@import url("./styles/compositions/workspaces.css?v=10") layer(compositions);',
+  '@import url("./styles/compositions/tables.css?v=6") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=7") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
-  '@import url("./styles/compositions/settings.css?v=3") layer(compositions);',
-  '@import url("./styles/features/channels.css?v=7") layer(features);',
-  '@import url("./styles/features/entity-details.css?v=9") layer(features);',
-  '@import url("./styles/features/live.css?v=5") layer(features);',
+  '@import url("./styles/compositions/settings.css?v=4") layer(compositions);',
+  '@import url("./styles/features/about.css?v=1") layer(features);',
+  '@import url("./styles/features/channels.css?v=9") layer(features);',
+  '@import url("./styles/features/entity-details.css?v=10") layer(features);',
+  '@import url("./styles/features/live.css?v=7") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=3") layer(features);',
-  '@import url("./styles/features/tuner-spectrum.css?v=9") layer(features);',
+  '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/scanner.css?v=4") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=3") layer(features);',
-  '@import url("./styles/features/aliases.css?v=6") layer(features);',
-  '@import url("./styles/features/dashboard.css?v=2") layer(features);',
+  '@import url("./styles/features/aliases.css?v=8") layer(features);',
+  '@import url("./styles/features/dashboard.css?v=3") layer(features);',
   '@import url("./styles/features/administration.css?v=3") layer(features);',
-  '@import url("./styles/features/signal-quality.css?v=2") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=11") layer(features);',
-  '@import url("./styles/features/streaming.css?v=3") layer(features);',
-  '@import url("./styles/features/p25-settings.css") layer(features);',
-  '@import url("./styles/features/receiver-health.css?v=3") layer(features);',
+  '@import url("./styles/features/signal-quality.css?v=3") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=12") layer(features);',
+  '@import url("./styles/features/streaming.css?v=4") layer(features);',
+  '@import url("./styles/features/p25-settings.css?v=1") layer(features);',
+  '@import url("./styles/features/receiver-health.css?v=4") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=4") layer(utilities);',
 ];
 
-// Existing global element selectors are frozen debt. New controls and tables must be
-// scoped beneath a page, component, or explicit density/composition boundary.
-const LEGACY_UNSCOPED_SELECTOR_BUDGET = new Map();
-
-// These are frozen migration budgets, not targets. New work must use tokens and shared components; migrations may
-// reduce the budgets without requiring an all-at-once legacy rewrite.
-const LEGACY_LINE_BUDGET = 188;
-const FEATURE_SHARED_SELECTOR_BUDGET = 20;
-const MODERN_IMPORTANT_BUDGET = new Map([
-  ['features/channels.css', 2],
-]);
+// Feature styles may shape shared primitives only where page-specific composition requires it.
+// This is a shrinking migration budget, not permission for new shared-component overrides.
+const FEATURE_SHARED_SELECTOR_BUDGET = 18;
 
 function locator(source) {
   const lineStarts = [0];
@@ -423,36 +416,14 @@ function unscopedSelectorOccurrences(stylesheets) {
   return occurrences;
 }
 
-function validateSelectorBudget(stylesheets, budget = LEGACY_UNSCOPED_SELECTOR_BUDGET) {
+function validateSelectorBoundaries(stylesheets) {
   const occurrences = unscopedSelectorOccurrences(stylesheets);
   const violations = [];
   for (const [selector, locations] of occurrences) {
-    const allowance = budget.get(selector) || 0;
-    const legacyLocations = locations.filter((location) =>
-      path.basename(location.file) === 'legacy.css' &&
-      path.basename(path.dirname(location.file)) === 'styles');
-    const moduleLocations = locations.filter((location) => !legacyLocations.includes(location));
-    for (const location of moduleLocations) {
-      violations.push(
-        `${location.file}:${location.line}:${location.column}: unscoped selector \`${selector}\` `
-        + 'is permitted only in assets/styles/legacy.css',
-      );
-    }
-    for (const location of legacyLocations.slice(allowance)) {
+    for (const location of locations) {
       violations.push(
         `${location.file}:${location.line}:${location.column}: unscoped selector \`${selector}\` `
         + 'must be scoped beneath a page, component, or density/composition boundary',
-      );
-    }
-  }
-  for(const [selector, allowance] of budget) {
-    const actual = (occurrences.get(selector) || []).filter((location) =>
-      path.basename(location.file) === 'legacy.css'
-      && path.basename(path.dirname(location.file)) === 'styles').length;
-    if(actual !== allowance) {
-      violations.push(
-        `assets/styles/legacy.css: expected exactly ${allowance} occurrence(s) of legacy selector `
-        + `\`${selector}\`, found ${actual}`,
       );
     }
   }
@@ -503,18 +474,21 @@ function validateModernDesignSystemBoundaries(stylesheets, entry) {
   let featureSharedSelectors = 0;
   for(const stylesheet of stylesheets) {
     const relative = relativeStyleName(stylesheet, entry);
-    if(relative === 'legacy.css' || relative === 'tokens.css' || relative.startsWith('..')) continue;
+    if(relative === 'tokens.css' || relative.startsWith('..')) continue;
 
     const rawColors = stylesheet.source.match(/#[0-9a-f]{3,8}\b|rgba?\s*\(/gi) || [];
     if(rawColors.length) {
       violations.push(`${relative}: ${rawColors.length} raw color value(s); add a semantic token in tokens.css`);
     }
 
+    if(/:root\[data-theme=["']dark["']\]/.test(stylesheet.source)) {
+      violations.push(`${relative}: dark-theme overrides belong in tokens.css`);
+    }
+
     if(/^(?:components|compositions|features|utilities)\//.test(relative)) {
       const importantCount = (stylesheet.source.match(/!important\b/gi) || []).length;
-      const allowance = MODERN_IMPORTANT_BUDGET.get(relative) || 0;
-      if(importantCount > allowance) {
-        violations.push(`${relative}: !important budget is ${allowance}, found ${importantCount}`);
+      if(importantCount > 0) {
+        violations.push(`${relative}: !important is not allowed, found ${importantCount}`);
       }
     }
 
@@ -544,12 +518,7 @@ function validateModernDesignSystemBoundaries(stylesheets, entry) {
   }
 }
 
-function validateLegacyAndInlineStyleRatchets(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
-  const legacyLines = (legacy.match(/\n/g) || []).length;
-  assert.ok(legacyLines <= LEGACY_LINE_BUDGET,
-    `legacy.css may shrink but not grow: budget ${LEGACY_LINE_BUDGET}, found ${legacyLines}`);
-
+function validateInlineStyleRatchets(entry) {
   const assets = path.dirname(path.resolve(entry));
   const indexSource = fs.readFileSync(path.resolve(assets, '../index.html'), 'utf8');
   const appSource = fs.readFileSync(path.resolve(assets, 'app.js'), 'utf8');
@@ -559,9 +528,9 @@ function validateLegacyAndInlineStyleRatchets(stylesheets, entry) {
   assert.doesNotMatch(appSource, inlineStylePattern,
     'JavaScript must not inject arbitrary style strings; use classes, tokens, or bounded geometry properties');
   assert.match(appSource, /element\.classList\.add\('ui-feedback', `ui-feedback-\$\{state\}`\)/,
-    'Legacy feedback constructors must be adapted to shared feedback primitives');
+    'Feedback constructors must adapt to shared feedback primitives');
   assert.match(appSource, /element\.classList\.contains\('admin-form-actions'\).*'ui-action-row'/,
-    'Legacy administration action rows must receive the shared action-row primitive');
+    'Administration action rows must receive the shared action-row primitive');
   assert.match(appSource, /control\.classList\.add\('ui-input'\)/,
     'Administration fields must receive shared input primitives through formField');
 }
@@ -588,7 +557,7 @@ function ruleBody(source, header) {
 function validateModernControlStates(stylesheets, entry) {
   const controls = stylesheetModule(stylesheets, entry, 'components/controls.css').source;
   assert.match(controls, /(?:^|\n)\.link-button\s*\{\s*min-height:\s*0;/,
-    'Link-style buttons must not inherit the legacy button minimum height');
+    'Link-style buttons must not inherit the shared button minimum height');
   const dangerHoverHeader = '.ui-button-danger:hover:not(:disabled, [aria-disabled="true"]),\n'
     + '.ui-button-danger-quiet:hover:not(:disabled, [aria-disabled="true"])';
   const dangerHover = ruleBody(controls, dangerHoverHeader);
@@ -599,25 +568,12 @@ function validateModernControlStates(stylesheets, entry) {
   assert.match(dangerHover, /background:[^;]*var\(--danger\)/);
   assert.match(dangerHover, /border-color:[^;]*var\(--danger\)/);
 
-  const darkNeutral = ':root[data-theme="dark"] '
-    + '.ui-button:not(.ui-button-primary):not(.ui-button-danger):not(.ui-button-danger-quiet)';
-  ruleBody(controls, darkNeutral);
-  const darkDanger = ruleBody(controls,
-    ':root[data-theme="dark"] .ui-button-danger,\n'
-    + ':root[data-theme="dark"] .ui-button-danger-quiet');
-  assert.match(darkDanger, /color:\s*var\(--danger\)/);
-
-  const darkPrimaryHeader = ':root[data-theme="dark"] .ui-button-primary';
-  const darkPrimaryHoverHeader = `${darkPrimaryHeader}:hover:not(:disabled)`;
-  const darkPrimary = ruleBody(controls, darkPrimaryHeader);
-  const darkPrimaryHover = ruleBody(controls, darkPrimaryHoverHeader);
-  assert.ok(controls.indexOf(darkPrimaryHoverHeader) > controls.indexOf(darkPrimaryHeader),
-    'The dark primary hover rule must follow the dark primary base rule');
-  assert.notEqual(
-    darkPrimaryHover.match(/background:\s*([^;]+)/)?.[1],
-    darkPrimary.match(/background:\s*([^;]+)/)?.[1],
-    'Dark primary hover must visibly change its background',
-  );
+  assert.match(controls,
+    /(?:^|\n)\.ui-button-primary\s*\{[^}]*background:\s*var\(--primary-control\)/,
+    'Primary buttons must use the theme token');
+  assert.match(controls,
+    /(?:^|\n)\.ui-button-primary:hover:not\(:disabled, \[aria-disabled="true"\]\)\s*\{[^}]*background:\s*var\(--primary-control-hover\)/,
+    'Primary button hover must use the theme hover token');
 }
 
 function validateThemeFoundation(stylesheets, entry) {
@@ -654,13 +610,11 @@ function validateThemeFoundation(stylesheets, entry) {
 }
 
 function validateModalComposition(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const modals = stylesheetModule(stylesheets, entry, 'compositions/modals.css').source;
   for(const selector of ['body.modal-open', '.modal-backdrop', '.read-only-modal', '.modal-header',
     '.modal-header h2', '.modal-content']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
-    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the shared modal composition`);
     assert.match(modals, baseRule, `Missing shared modal foundation rule ${selector}`);
   }
   assert.match(modals, /@media \(max-width: 560px\)[\s\S]*\.read-only-modal\s*\{[\s\S]*height:\s*100dvh/,
@@ -670,14 +624,12 @@ function validateModalComposition(stylesheets, entry) {
 }
 
 function validateSettingsComposition(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const settings = stylesheetModule(stylesheets, entry, 'compositions/settings.css').source;
   for(const selector of ['.admin-form', '.settings-page-form', '.settings-card-grid', '.settings-card',
     '.settings-card-header', '.settings-card-body', '.settings-form-footer', '.settings-summary',
     '.admin-settings-form', '.admin-toggle-control', '.admin-form-message']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
-    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the shared settings composition`);
     assert.match(settings, baseRule, `Missing shared settings foundation rule ${selector}`);
   }
   assert.match(settings,
@@ -689,7 +641,6 @@ function validateSettingsComposition(stylesheets, entry) {
 }
 
 function validateSettingsFeatures(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const p25 = stylesheetModule(stylesheets, entry, 'features/p25-settings.css').source;
   const health = stylesheetModule(stylesheets, entry, 'features/receiver-health.css').source;
   const chrome = stylesheetModule(stylesheets, entry, 'compositions/app-chrome.css').source;
@@ -706,7 +657,6 @@ function validateSettingsFeatures(stylesheets, entry) {
   ]) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
-    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the ${label} feature stylesheet`);
     assert.match(stylesheet, baseRule, `Missing ${label} rule ${selector}`);
   }
   assert.doesNotMatch(health, /:root\[data-theme="dark"\]/,
@@ -720,10 +670,7 @@ function validateSettingsFeatures(stylesheets, entry) {
 }
 
 function validateTunerSpectrumFeature(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const spectrum = stylesheetModule(stylesheets, entry, 'features/tuner-spectrum.css').source;
-  assert.doesNotMatch(legacy, /tuner-spectrum/,
-    'Tuner Spectrum presentation belongs in its feature stylesheet');
   for(const selector of ['.tuner-spectrum-layout', '.tuner-spectrum-toolbar',
     '.tuner-spectrum-options-panel', '.tuner-spectrum-card', '.tuner-spectrum-plot']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -738,10 +685,7 @@ function validateTunerSpectrumFeature(stylesheets, entry) {
 }
 
 function validateScannerFeature(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const scanner = stylesheetModule(stylesheets, entry, 'features/scanner.css').source;
-  assert.doesNotMatch(legacy, /scanner-/,
-    'Scanner presentation belongs in its feature stylesheet');
   for(const selector of ['.scanner-page', '.scanner-workspace', '.scanner-display',
     '.scanner-controls', '.scanner-scan-lists']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -760,10 +704,7 @@ function validateScannerFeature(stylesheets, entry) {
 }
 
 function validateRfPlannerFeature(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const planner = stylesheetModule(stylesheets, entry, 'features/rf-planner.css').source;
-  assert.doesNotMatch(legacy, /(?:rf-planner|rfp-)/,
-    'RF Planner presentation belongs in its feature stylesheet');
   for(const selector of ['.rf-planner', '.rfp-layout', '.rfp-tuner-card',
     '.rfp-summary', '.rfp-spectrum-track']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -778,11 +719,7 @@ function validateRfPlannerFeature(stylesheets, entry) {
 }
 
 function validateAliasesFeature(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const aliases = stylesheetModule(stylesheets, entry, 'features/aliases.css').source;
-  const aliasSelectors = /(?:alias-editor-|alias-list-|alias-transfer-|alias-modal-|alias-membership-|alias-tone-|observed-group-identity|scan-list-member)/;
-  assert.doesNotMatch(legacy, aliasSelectors,
-    'Alias management presentation belongs in its feature stylesheet');
   for(const selector of ['.alias-editor-workspace', '.alias-list-rail', '.alias-list-summary',
     '.alias-editor-filter-toolbar', '.scan-list-members-workspace']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -809,13 +746,11 @@ function validateAliasesFeature(stylesheets, entry) {
 }
 
 function validateLiveFeature(stylesheets, entry) {
-  const legacy = stylesheetModule(stylesheets, entry, 'legacy.css').source;
   const live = stylesheetModule(stylesheets, entry, 'features/live.css').source;
   for(const selector of ['body[data-view="live"]', '.channels-live-tabs', '.live-details-header',
     '.channel-diagnostic-grid', '.live-filter-editor', '.live-activity-history-notice']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const baseRule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{`);
-    assert.doesNotMatch(legacy, baseRule, `${selector} belongs in the Live feature stylesheet`);
     assert.match(live, baseRule, `Missing Live feature rule ${selector}`);
   }
   assert.doesNotMatch(live, /:root\[data-theme="dark"\]/,
@@ -881,7 +816,7 @@ function runFocusedContractTests() {
     'selector-fixture.css',
   );
   const fixtureStylesheet = [{
-    file: path.join('styles', 'legacy.css'),
+    file: path.join('styles', 'components', 'controls.css'),
     source: '',
     ...selectorFixture,
   }];
@@ -902,20 +837,20 @@ function runFocusedContractTests() {
     ['body button', ':where(button)', ':is(select)', 'html table'],
   );
   assert.throws(
-    () => validateSelectorBudget(bypassFixture, new Map()),
-    /permitted only in assets\/styles\/legacy\.css/,
+    () => validateSelectorBoundaries(bypassFixture),
+    /must be scoped beneath a page, component, or density\/composition boundary/,
   );
   assert.throws(
-    () => validateSelectorBudget(fixtureStylesheet, new Map([['button.primary', 1]])),
-    /unscoped selector `td\.numeric`/,
+    () => validateSelectorBoundaries(fixtureStylesheet),
+    /unscoped selector `button\.primary`/,
   );
   assert.throws(
-    () => validateSelectorBudget([{
+    () => validateSelectorBoundaries([{
       file: path.join('styles', 'components', 'controls.css'),
       source: '',
       ...parseStylesheet('select { color: red; }', 'controls.css'),
-    }], new Map([['select', 1]])),
-    /permitted only in assets\/styles\/legacy\.css/,
+    }]),
+    /unscoped selector `select`.*must be scoped/,
   );
 
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stats-web-css-contract-'));
@@ -931,11 +866,11 @@ function runFocusedContractTests() {
       fixtureGraph.map((item) => path.basename(item.file)),
       ['nested.css', 'base.css', 'app.css'],
     );
-    validateSelectorBudget(fixtureGraph, new Map());
+    validateSelectorBoundaries(fixtureGraph);
 
     fs.writeFileSync(path.join(styles, 'nested.css'), 'select.compact { width: 100%; }\n');
     assert.throws(
-      () => validateSelectorBudget(readStylesheetGraph(path.join(assets, 'app.css')), new Map()),
+      () => validateSelectorBoundaries(readStylesheetGraph(path.join(assets, 'app.css'))),
       /unscoped selector `select\.compact`/,
     );
     fs.writeFileSync(path.join(styles, 'nested.css'), '.field { width: 100%; }}\n');
@@ -970,9 +905,9 @@ runFocusedContractTests();
 validateEntryManifest(entryStylesheet);
 const stylesheets = readStylesheetGraph(entryStylesheet);
 validateModuleReachability(stylesheets, entryStylesheet);
-validateSelectorBudget(stylesheets);
+validateSelectorBoundaries(stylesheets);
 validateModernDesignSystemBoundaries(stylesheets, entryStylesheet);
-validateLegacyAndInlineStyleRatchets(stylesheets, entryStylesheet);
+validateInlineStyleRatchets(entryStylesheet);
 validateModernControlStates(stylesheets, entryStylesheet);
 validateThemeFoundation(stylesheets, entryStylesheet);
 validateModalComposition(stylesheets, entryStylesheet);

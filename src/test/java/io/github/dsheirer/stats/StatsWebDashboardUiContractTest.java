@@ -287,7 +287,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-activity-donut"));
         assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));
         assertTrue(css.contains(".dashboard-activity-radio-status"));
-        assertTrue(css.contains(".dashboard-activity-radio-result > .metric-meaning-note"));
+        assertTrue(css.contains(".dashboard-activity-radio-result > .ui-section-note"));
         assertTrue(css.contains("--chart-grant: #2d6f9f"));
         assertTrue(css.contains("--chart-grant: #78b7e5"));
         assertFalse(css.contains(".dashboard-activity-breakdown-toolbar"));

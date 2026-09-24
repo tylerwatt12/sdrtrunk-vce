@@ -16,12 +16,7 @@
   border-color: color-mix(in srgb, var(--danger) 58%, var(--header-line));
 }
 
-.receiver-health-indicator.receiver-health-neutral {
-  color: var(--header-muted);
-  background: color-mix(in srgb, var(--header) 82%, var(--surface));
-  border-color: var(--header-line);
-}
-
+.receiver-health-indicator.receiver-health-neutral,
 .receiver-health-indicator.receiver-health-stale,
 .receiver-health-indicator.receiver-health-loading {
   color: var(--header-muted);

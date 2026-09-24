@@ -237,8 +237,7 @@
   text-align: center;
 }
 
-.signal-disabled,
-.signal-health-error {
+.signal-disabled {
   grid-column: 1 / -1;
 }
 

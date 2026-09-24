@@ -262,8 +262,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   line-height: 1.45;
 }
 
-.tuner-spectrum-options-kicker,
-.tuner-spectrum-card-kicker {
+.tuner-spectrum-options-kicker {
   color: var(--accent);
   font-size: 10px;
   font-weight: 800;
@@ -495,14 +494,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-target > span,
 .tuner-spectrum-target select {
   width: min(620px, 100%);
-}
-
-.tuner-spectrum-field-label {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .06em;
-  text-transform: uppercase;
 }
 
 .tuner-spectrum-card {

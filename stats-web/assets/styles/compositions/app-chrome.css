@@ -3,6 +3,19 @@
   min-height: 100vh;
 }
 
+.content {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 14px;
+}
+
+@media (max-width: 560px) {
+  .content {
+    padding: var(--space-2);
+  }
+}
+
 .app-header {
   position: sticky;
   top: 0;

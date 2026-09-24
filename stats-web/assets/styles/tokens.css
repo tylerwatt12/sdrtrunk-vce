@@ -141,6 +141,7 @@
   --line-height-control: 1.2;
   --modal-size-small: 540px;
   --modal-size-medium: 680px;
+  --modal-size-editor: 820px;
   --modal-size-large: 900px;
   --modal-size-wide: 1160px;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

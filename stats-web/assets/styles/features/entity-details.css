@@ -46,6 +46,22 @@ body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="ra
   margin-bottom: 0;
 }
 
+.activity-refresh-controls {
+  font-weight: 400;
+}
+
+.activity-refresh-countdown {
+  min-width: 82px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.activity-refresh-countdown.is-error {
+  color: var(--danger);
+}
+
 .channel-frequency-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

@@ -1,0 +1,15 @@
+.exact-time {
+  display: inline-block;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.encrypted {
+  color: var(--danger);
+  font-weight: 650;
+}

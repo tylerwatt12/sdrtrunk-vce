@@ -101,33 +101,6 @@ body[data-view="live"] .channel-diagnostic-header,
 body[data-view="live"] .channel-diagnostic-readouts {
   flex: 0 0 auto;
 }
-.live-connection {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  padding: 8px 10px;
-}
-
-.live-audio-pane {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(280px, 520px);
-  align-items: center;
-  gap: 12px;
-  padding: 10px;
-}
-
-.live-audio-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.live-audio-player {
-  width: 100%;
-  height: 36px;
-}
-
 .channels-live-tabs {
   min-height: 44px;
   display: flex;
@@ -614,20 +587,14 @@ body[data-view="live"] .channel-diagnostic-readouts {
   display: none;
 }
 
-.live-details-placeholder {
-  padding: 24px 12px;
-  color: var(--muted);
-  text-align: center;
-}
-
 .activity-status.state-call { color: var(--chart-call); background: color-mix(in srgb, var(--chart-call) 16%, var(--surface)); }
 .activity-status.state-encrypted { color: var(--chart-encrypted); background: color-mix(in srgb, var(--chart-encrypted) 16%, var(--surface)); }
 .activity-status.state-control { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, var(--surface)); }
 .activity-status.state-data { color: var(--chart-data); background: color-mix(in srgb, var(--chart-data) 16%, var(--surface)); }
 .activity-status.state-active { color: var(--chart-active); background: color-mix(in srgb, var(--chart-active) 16%, var(--surface)); }
-.activity-status.state-fade { color: var(--muted); background: var(--surface-2); }
-.activity-status.state-reset { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
+.activity-status.state-fade,
 .activity-status.state-teardown { color: var(--muted); background: var(--surface-2); }
+.activity-status.state-reset { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); }
 .activity-status.state-idle { color: var(--muted); background: var(--surface); }
 .control-current { color: var(--control); font-weight: 700; }
 .control-alternate { color: var(--alternate); font-weight: 700; }
@@ -658,7 +625,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .read-only-modal.live-filter-modal {
-  width: min(820px, 96vw);
+  width: min(var(--modal-size-editor), 96vw);
 }
 
 .live-filter-editor {
@@ -807,10 +774,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: minmax(210px, 1fr);
     overflow-y: auto;
-  }
-
-  .live-audio-pane {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

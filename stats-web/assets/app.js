@@ -2473,7 +2473,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   String(options.tableClass || '').split(/\s+/).filter(Boolean)
     .forEach((className) => element.classList.add(className));
   element.dataset.tableType = tableType;
-  if (options.mobileCards) element.dataset.mobileCards = 'true';
+  if (options.mobileCards) {
+    element.dataset.mobileCards = 'true';
+    element.classList.add('ui-mobile-cards');
+  }
   const columnGroup = node('colgroup');
   const columnElements = columns.map(() => node('col'));
   columnGroup.append(...columnElements);
@@ -4147,7 +4150,7 @@ function aliasActivityContent(response) {
       ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
       ['Data', 'data_observation_count']
     ]),
-    node('p', 'metric-meaning-note',
+    node('p', 'ui-section-note',
       'The total also includes other recognized signaling actions. Calls and signaling can describe the same ' +
       'transmission, so they should not be added together. Logout means unit deregistration, not leaving a group.')
   )));
@@ -4160,14 +4163,14 @@ function aliasActivityContent(response) {
       ['First Seen', aliasMetricTime(alias, 'first_evidence_ms')],
       ['Last Seen', aliasMetricTime(alias, 'last_evidence_ms')]
     ]),
-    node('p', 'metric-meaning-note',
+    node('p', 'ui-section-note',
       'Relationships and current affiliations are derived from retained call and signaling activity and are not ' +
       'included in the Signaling total. ' +
       'An em dash means unavailable; 0 means monitored with none observed.')
   )));
   wrapper.append(tableSection('Source Breakdown', sourceRows, aliasEditorSourceBreakdownColumns(),
     'No compatible monitored sources', { type: 'alias-editor-source-breakdown' },
-    node('p', 'metric-meaning-note',
+    node('p', 'ui-section-note',
       'Each source is a radio system or saved channel. Calls and signaling remain separate.')));
   return wrapper;
 }
@@ -5958,7 +5961,7 @@ function observedGroupIdentityDetail(row, selectedList) {
       ['Logout', 'logout_observation_count'], ['Denial', 'denial_observation_count'],
       ['Data', 'data_observation_count']
     ]),
-    node('p', 'metric-meaning-note',
+    node('p', 'ui-section-note',
       'The total also includes other recognized signaling actions. Calls and signaling can overlap.'))));
   identityColumn.append(section('Observed', keyValues([
     ['First Activity', observedGroupIdentityTime(row, row.first_seen_ms)],
@@ -6038,10 +6041,10 @@ function renderObservedGroupIdentities(main, page, selectedList, renderContext, 
     });
   host.append(observedTable);
   const block = section('Observed Groups', host, actions);
-  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-group-identity-section');
+  block.classList.add('alias-editor-table-section', 'observed-group-identity-section');
   const pagerHost = node('div');
   pagerHost.append(pager({ ...page, rows }));
-  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
+  block.append(node('p', 'ui-section-note',
     'This list contains talkgroups and patch groups observed on assigned systems or channels that do not have an ' +
     'exact alias. Existing range coverage appears beneath the identity.'), pagerHost);
   main.append(block);
@@ -6200,7 +6203,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   });
   actions.append(exportCsvLink('aliases', exportContext, { loading: true }));
   const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
-  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'scan-list-member-table-section');
+  block.classList.add('alias-editor-table-section', 'scan-list-member-table-section');
   bulkBar = scanListMemberBulkBar(scanList, () => {
     resetAliasEditorSelection(selectionScope);
     updateSelection();
@@ -6209,7 +6212,7 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
   updateSelection();
   const pagerHost = node('div');
   pagerHost.append(pager(page));
-  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
+  block.append(node('p', 'ui-section-note',
     'This view includes members from every alias list. Removing membership preserves each alias and its other ' +
       'scan-list memberships.'), pagerHost);
   main.append(block);
@@ -6500,14 +6503,14 @@ async function renderAliases() {
   const block = section(view === 'configure' ? 'Alias Configuration' :
     (view === 'activity' ? 'Activity' : 'Custom View'),
   tableHost, actions);
-  block.classList.add('alias-catalog-section', 'alias-editor-table-section');
+  block.classList.add('alias-editor-table-section');
   bulkBar = aliasBulkBar(() => {
     resetAliasEditorSelection(selectionScope);
     updateSelection();
   });
   block.append(bulkBar, selectionStatus);
   renderTable();
-  block.append(node('p', 'metric-meaning-note alias-catalog-guide', view === 'configure' ?
+  block.append(node('p', 'ui-section-note', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
     'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
       'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
@@ -6651,9 +6654,9 @@ function callSourceLink(row) {
 }
 
 function activityMetricGuide(includeCallMetrics = false) {
-  const details = node('details', 'metric-guide');
+  const details = node('details', 'ui-explainer');
   details.append(node('summary', '', 'What these activity metrics mean'));
-  const list = node('dl', 'metric-guide-list');
+  const list = node('dl', 'ui-explainer-list');
   const entries = includeCallMetrics ? [...CALL_METRIC_GUIDE, ...ACTION_METRIC_GUIDE] : ACTION_METRIC_GUIDE;
   entries.forEach(([label, description]) => {
     list.append(node('dt', '', label), node('dd', '', description));
@@ -10213,7 +10216,7 @@ function dashboardActivityRadioPager(page, onOffset) {
 }
 
 function dashboardActivityRadioNote(page, actionLabel) {
-  return node('p', 'metric-meaning-note',
+  return node('p', 'ui-section-note',
     `Hourly ${actionLabel.toLowerCase()} observations: ${number(page.action_observation_count)}. ` +
     `Exact currently retained detail: ${number(page.retained_observation_count)} observations; ` +
     `${number(page.identified_observation_count)} identify a source radio and ` +
@@ -10376,7 +10379,7 @@ async function renderDashboardActivity(renderContext) {
       selectedActionLabel = row.label;
       selectedOffset = 0;
       void loadRadios(0);
-    }), node('p', 'metric-meaning-note',
+    }), node('p', 'ui-section-note',
       'Percentages use the visible activity total. Repeated signaling can produce more than one event for the same ' +
       'call or radio.'));
     const mix = section(`Activity Mix · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
@@ -11975,7 +11978,7 @@ function diagnosticAudioPlayer(initialVolume = 0.7) {
 
 function tunerFrequencyAction(label, icon, hint, disabled = false) {
   const button = node(disabled ? 'span' : 'button',
-    `ui-button ui-button-secondary tuner-frequency-action ui-icon-button${disabled ? ' disabled-action' : ''}`);
+    'ui-button ui-button-secondary tuner-frequency-action ui-icon-button');
   if (!disabled) button.type = 'button';
   button.title = hint;
   button.setAttribute('aria-label', label);
@@ -16261,7 +16264,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
       const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
       countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
         `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
-      countdown.classList.toggle('error', refreshFailed && !refreshInFlight);
+      countdown.classList.toggle('is-error', refreshFailed && !refreshInFlight);
       pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
       pause.setAttribute('aria-pressed', String(paused));
     };
@@ -17098,6 +17101,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
         rowKey: (row) => row.configuration_id,
         rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
         tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
+        mobileCards: true,
         layoutMenuHost: toolbar
       });
     tableHost.append(channelTable);

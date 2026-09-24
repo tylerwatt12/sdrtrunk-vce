@@ -1,4 +1,4 @@
-/* Shared, opt-in data tables. Column measurement remains a legacy implementation detail. */
+/* Shared, opt-in data tables and responsive layouts. */
 .ui-table-wrap {
   min-width: 0;
   max-width: 100%;
@@ -254,6 +254,32 @@
   max-width: none;
 }
 
+/* Isolated intrinsic-size clone used by column auto-fit. */
+.ui-data-table.table-column-autofit-measurement {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: max-content;
+  min-width: 0;
+  max-width: 1200px;
+  table-layout: auto;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.ui-data-table.table-column-autofit-measurement :is(th, td) {
+  width: auto;
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.ui-data-table.table-column-autofit-measurement th :is(.table-sort-control, .table-column-label) {
+  width: auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* Opt-in labeled cards preserve table content on narrow screens. */
 @media (max-width: 760px) {
   .ui-data-table.ui-mobile-cards {
@@ -266,6 +292,7 @@
   .ui-mobile-cards :where(colgroup, thead) { display: none; }
   .ui-mobile-cards tbody { display: grid; gap: var(--space-3); }
   .ui-mobile-cards tbody > tr {
+    position: relative;
     display: grid;
     min-width: 0;
     overflow: hidden;
@@ -273,6 +300,23 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-control);
   }
+  .ui-mobile-cards tbody > tr.ui-table-row-group {
+    display: block;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+  .ui-data-table.ui-mobile-cards .ui-table-row-group > th {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+  .ui-mobile-cards .table-row-group-count { float: none; }
   .ui-data-table.ui-mobile-cards tbody td {
     display: grid;
     grid-template-columns: minmax(0, 35%) minmax(0, 1fr);

@@ -138,7 +138,7 @@ assert.ok(updateIndicator.indexOf('accountAlerts.active_count > 0') <
   updateIndicator.indexOf("className = 'healthy'"),
 'The all-disabled neutral state must be chosen before the healthy fallback.');
 
-assert.match(stylesheet, /\.receiver-health-indicator\.receiver-health-neutral\s*\{/);
+assert.match(stylesheet, /\.receiver-health-indicator\.receiver-health-neutral\s*,/);
 assert.match(stylesheet, /\.receiver-health-account-setting\s*\{/);
 assert.match(stylesheet, /\.receiver-health-account-setting \.link-button\s*\{/);
 assert.match(stylesheet, /\.read-only-modal\.health-alert-settings-modal\s*\{/);

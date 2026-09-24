@@ -143,13 +143,12 @@ class StatsWebFrequencyActionsUiContractTest
     {
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".admin-settings-form"));
-        assertTrue(css.contains(".admin-settings-form-stack"));
         assertTrue(css.contains("height: 36px;"));
         assertTrue(css.contains(".read-only-modal.frequency-action-modal"));
         assertTrue(css.contains(".tuner-frequency-popover"));
         assertTrue(css.contains(".read-only-modal.tuner-frequency-lookup-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
-        assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
+        assertTrue(css.contains(".ui-button[aria-disabled=\"true\"]"));
         assertTrue(css.contains("color: var(--muted);"));
         assertTrue(css.contains(".radioreference-result-grid"));
         assertTrue(css.contains(".radioreference-result-actions .ui-button"));

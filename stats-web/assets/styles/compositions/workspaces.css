@@ -90,6 +90,10 @@
   padding: 0;
 }
 
+.async-section-error .async-section-retry {
+  margin-top: var(--space-3);
+}
+
 .ui-section-title {
   min-height: 44px;
   display: flex;
@@ -110,6 +114,52 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+.access-denied-card {
+  max-width: 640px;
+  margin: 42px auto;
+}
+
+.ui-section-note {
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--muted);
+  line-height: var(--line-height-body);
+  border-top: 1px solid var(--line);
+}
+
+.ui-explainer {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.ui-explainer summary {
+  padding: var(--space-2) 10px;
+  color: var(--link);
+  font-size: var(--font-size-label);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ui-explainer-list {
+  display: grid;
+  grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+  padding: 0 10px 10px;
+  font-size: var(--font-size-label);
+}
+
+.ui-explainer-list dt {
+  font-weight: 650;
+}
+
+.ui-explainer-list dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
 }
 
 .identity-summary {
@@ -294,6 +344,19 @@
 }
 
 @media (max-width: 560px) {
+  .access-denied-card {
+    margin: 18px auto;
+  }
+
+  .ui-explainer-list {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .ui-explainer-list dd {
+    margin-bottom: 5px;
+  }
+
   .ui-section-title {
     flex-wrap: wrap;
   }

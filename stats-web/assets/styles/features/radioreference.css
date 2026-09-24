@@ -509,7 +509,7 @@
 }
 
 .read-only-modal.radioreference-import-modal {
-  width: min(820px, 96vw);
+  width: min(var(--modal-size-editor), 96vw);
 }
 
 .read-only-modal.radioreference-import-modal-complete {

@@ -220,7 +220,7 @@
   margin-left: auto;
 }
 
-.dashboard-activity-mix-body > .metric-meaning-note {
+.dashboard-activity-mix-body > .ui-section-note {
   margin: 0 var(--space-4) var(--space-3);
 }
 
@@ -231,12 +231,8 @@
   border-bottom: 1px solid var(--line);
 }
 
-.dashboard-activity-radio-result > .metric-meaning-note {
+.dashboard-activity-radio-result > .ui-section-note {
   border-top: 0;
-}
-
-:root[data-theme="dark"] .dashboard-coverage-protocol {
-  box-shadow: none;
 }
 
 @media (max-width: 1500px) {

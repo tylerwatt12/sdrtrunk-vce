@@ -1,4 +1,4 @@
-/* Opt-in modern control primitives. Legacy pages keep their existing controls until migrated. */
+/* Shared form and action controls used throughout the web interface. */
 .ui-select,
 .ui-input,
 .ui-textarea {
@@ -947,27 +947,6 @@
 
 .ui-empty-state > :where(h2, h3) {
   color: var(--ink);
-}
-
-:root[data-theme="dark"] .ui-button:not(.ui-button-primary):not(.ui-button-danger):not(.ui-button-danger-quiet) {
-  color: var(--ink);
-}
-
-:root[data-theme="dark"] .ui-button-primary {
-  color: var(--primary-control-ink);
-  background: var(--primary-control);
-  border-color: var(--primary-control);
-}
-
-:root[data-theme="dark"] .ui-button-primary:hover:not(:disabled) {
-  color: var(--primary-control-ink);
-  background: var(--primary-control-hover);
-  border-color: var(--primary-control-hover);
-}
-
-:root[data-theme="dark"] .ui-button-danger,
-:root[data-theme="dark"] .ui-button-danger-quiet {
-  color: var(--danger);
 }
 
 @media (max-width: 560px) {

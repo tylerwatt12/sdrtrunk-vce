@@ -362,6 +362,8 @@ async function main() {
   assert.match(appSource, /let layoutMutationPending = false/);
   assert.match(appCssSource, /\.resizable-table\.table-layout-busy \.column-resizer/);
   assert.match(appCssSource, /\.table-column-autofit-measurement \{/);
+  assert.match(appSource, /element\.classList\.add\('ui-mobile-cards'\)/,
+    'mobile card tables must opt into the shared responsive presentation');
   assert.match(appSource, /dataRows = prepend \? dataRows\.slice\(0, limit\) : dataRows\.slice\(-limit\)/);
   assert.match(appSource, /rows: \(\) => dataRows\.slice\(\)/);
   assert.match(appSource, /trigger\.setAttribute\('popovertarget', panelId\)/);
