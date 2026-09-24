@@ -282,6 +282,29 @@ class RadioReferenceDirectoryServiceTest
     }
 
     @Test
+    void browseCatalogKeepsOnlyImportableSystemTypesAndExposesUpdateDates() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.systemTypes = Map.of(1, "Project 25", 4, "DMR", 7, "LTR", 8, "NXDN");
+        gateway.county = new CountyDirectory(gateway.county.county(), List.of(
+            new TrunkedSystem(2002, "P25", "", 1, 0, 0, 1_700_000_000_000L),
+            new TrunkedSystem(2003, "LTR", "", 7, 0, 0, 1_800_000_000_000L),
+            new TrunkedSystem(2004, "NXDN", "", 8, 0, 0, 1_600_000_000_000L)),
+            gateway.county.agencies());
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            List<DirectoryEntry> entries = service.browseCatalog(new LocationSelection(1, 10, 100));
+            assertFalse(entries.stream().anyMatch(entry -> entry.name().equals("LTR")));
+            assertTrue(entries.stream().anyMatch(entry -> entry.name().equals("P25") &&
+                entry.lastUpdatedEpochMillis() == 1_700_000_000_000L));
+            assertTrue(entries.stream().anyMatch(entry -> entry.name().equals("NXDN")));
+            assertTrue(entries.stream().anyMatch(entry -> entry.type() == EntryType.CONVENTIONAL_AGENCY));
+        }
+    }
+
+    @Test
     void returnsBoundedConventionalAndTrunkedFrequencyMatchesWithStableLinks() throws Exception
     {
         FakeGateway gateway = populatedGateway();

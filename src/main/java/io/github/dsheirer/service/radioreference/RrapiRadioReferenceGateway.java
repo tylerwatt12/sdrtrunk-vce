@@ -739,7 +739,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             for(io.github.dsheirer.rrapi.type.System system: source)
             {
                 systems.add(new TrunkedSystem(system.getSystemId(), system.getName(), system.getCity(),
-                    system.getTypeId(), system.getFlavorId(), system.getVoiceId()));
+                    system.getTypeId(), system.getFlavorId(), system.getVoiceId(),
+                    system.getLastUpdated() == null ? 0 : system.getLastUpdated().getTime()));
             }
         }
 

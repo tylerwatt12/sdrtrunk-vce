@@ -31,7 +31,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/dashboard.css?v=2") layer(features);',
   '@import url("./styles/features/administration.css?v=2") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=2") layer(features);',
-  '@import url("./styles/features/radioreference.css?v=7") layer(features);',
+  '@import url("./styles/features/radioreference.css?v=8") layer(features);',
   '@import url("./styles/features/p25-settings.css") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=2") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=3") layer(utilities);',

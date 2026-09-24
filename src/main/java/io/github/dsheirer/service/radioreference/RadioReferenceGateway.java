@@ -129,8 +129,13 @@ public interface RadioReferenceGateway extends AutoCloseable
     {
     }
 
-    record TrunkedSystem(int id, String name, String city, int typeId, int flavorId, int voiceId)
+    record TrunkedSystem(int id, String name, String city, int typeId, int flavorId, int voiceId,
+                         long lastUpdatedEpochMillis)
     {
+        public TrunkedSystem(int id, String name, String city, int typeId, int flavorId, int voiceId)
+        {
+            this(id, name, city, typeId, flavorId, voiceId, 0);
+        }
     }
 
     record FrequencyResult(double downlinkMHz, double uplinkMHz, String callsign, String description,

@@ -124,6 +124,9 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/browse?country_id=1&state_id=10").GET())).at("/items/0/name").textValue());
                 assertEquals("State P25", data(send(client,
                     request(origin, "/browse/catalog?country_id=1&state_id=10").GET())).at("/0/name").textValue());
+                assertEquals(1_700_000_000_000L, data(send(client,
+                    request(origin, "/browse/catalog?country_id=1&state_id=10").GET()))
+                    .at("/0/last_updated_epoch_millis").longValue());
                 assertEquals("Project 25", data(send(client,
                     request(origin, "/systems/details?system_id=2001").GET())).at("/type").textValue());
                 assertEquals("Franklin Simulcast", data(send(client,
@@ -293,6 +296,12 @@ class RadioReferenceHttpControllerTest
     private static final class FakeGateway implements RadioReferenceGateway
     {
         @Override
+        public Map<Integer,String> systemTypes()
+        {
+            return Map.of(1, "Project 25");
+        }
+
+        @Override
         public Account account()
         {
             return new Account("test-user", "Never - Test Account");
@@ -316,7 +325,7 @@ class RadioReferenceHttpControllerTest
         {
             return new StateDirectory(new State(10, "Test State", "TS"),
                 List.of(new County(100, "Franklin", "Franklin County")),
-                List.of(new TrunkedSystem(2001, "State P25", "Capital", 1, 2, 3)),
+                List.of(new TrunkedSystem(2001, "State P25", "Capital", 1, 2, 3, 1_700_000_000_000L)),
                 List.of(new Agency(1001, "State Police", 2)));
         }
 

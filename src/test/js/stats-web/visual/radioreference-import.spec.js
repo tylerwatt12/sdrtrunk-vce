@@ -161,9 +161,17 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         { type: 'TRUNKED_SYSTEM', scope: 'COUNTY',
           name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
           secondary: 'Franklin County', system_type: dmr ? 'DMR' : nxdn ? 'NXDN' : 'Project 25',
-          updated: 'Today', detail: { id: 2001 } },
+          last_updated_epoch_millis: 1700000000000, detail: { id: 2001 } },
         { type: 'CONVENTIONAL_AGENCY', scope: 'COUNTY', name: 'County Fire', secondary: 'Franklin County',
-          detail: { id: 3001, kind: 'AGENCY' } }
+          detail: { id: 3001, kind: 'AGENCY' } },
+        ...(scenario === 'directory' ? [
+          { type: 'TRUNKED_SYSTEM', scope: 'COUNTY', name: 'Alpha DMR', system_type: 'DMR',
+            last_updated_epoch_millis: 1800000000000, detail: { id: 2002 } },
+          { type: 'TRUNKED_SYSTEM', scope: 'COUNTY', name: 'Zeta NXDN', system_type: 'NXDN',
+            last_updated_epoch_millis: 1600000000000, detail: { id: 2003 } },
+          { type: 'TRUNKED_SYSTEM', scope: 'COUNTY', name: 'Unsupported LTR', system_type: 'LTR',
+            last_updated_epoch_millis: 1900000000000, detail: { id: 2004 } }
+        ] : [])
       ];
       if (path.includes('/systems/details?')) return { system: {
         id: 2001, system_id: '2000', name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
@@ -358,7 +366,36 @@ test('location results show their scope and bookmarks show their route', async (
   await expect(page.locator('.radioreference-result-open').first()).toContainText('P25 · Trunked');
   await page.getByRole('button', { name: 'Add bookmark: Central County P25' }).click();
   await page.getByRole('button', { name: /Bookmarks/ }).click();
-  await expect(page.getByText('Ohio (OH) > Franklin County > Central County P25')).toBeVisible();
+  await expect(page.getByText('Ohio (OH) > Franklin County')).toBeVisible();
+  await expect(page.getByText('Central County P25', { exact: true })).toBeVisible();
+});
+
+test('directory sorts supported systems and filters types without another API request', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'directory');
+  const entries = page.locator('.radioreference-directory-item .radioreference-row-identity strong');
+  await expect(entries).toHaveText(['Alpha DMR', 'Central County P25', 'Zeta NXDN', 'County Fire']);
+  await expect(page.getByText('Unsupported LTR')).toHaveCount(0);
+  await page.getByLabel('Sort directory results').selectOption('alphabetical');
+  await expect(entries).toHaveText(['Alpha DMR', 'Central County P25', 'County Fire', 'Zeta NXDN']);
+  await page.getByLabel('Filter system type').selectOption('DMR');
+  await expect(entries).toHaveText(['Alpha DMR']);
+  await page.getByLabel('Filter system type').selectOption('CONVENTIONAL');
+  await expect(entries).toHaveText(['County Fire']);
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls
+    .filter(([path]) => path.includes('/browse/catalog?')).length);
+  expect(calls).toBe(1);
+});
+
+test('bookmarks keep breadcrumb and name readable on a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installWorkspace(page);
+  await page.getByRole('button', { name: 'Add bookmark: Central County P25' }).click();
+  await page.getByRole('button', { name: /Bookmarks/ }).click();
+  const row = page.locator('.radioreference-directory-item').first();
+  await expect(row.locator('.radioreference-bookmark-path')).toHaveText('Ohio (OH) > Franklin County');
+  await expect(row.locator('strong')).toHaveText('Central County P25');
+  await expect(row.locator('.ui-pill')).toContainText('P25');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('site sorting and preview use the RadioReference database system ID', async ({ page }) => {

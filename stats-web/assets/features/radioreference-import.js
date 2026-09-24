@@ -87,6 +87,17 @@ function systemTypeLabel(value) {
   return family === 'P25' || family === 'DMR' || family === 'NXDN' ? family : type;
 }
 
+function directoryFamily(value) {
+  return entryKind(value) === 'CONVENTIONAL_AGENCY' ? 'CONVENTIONAL' : compatibleFamily({
+    type: textValue(value, ['system_type', 'systemType'])
+  });
+}
+
+function directoryUpdated(value) {
+  const timestamp = Number(firstValue(value, ['last_updated_epoch_millis', 'lastUpdatedEpochMillis'], 0));
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+}
+
 function query(path, values) {
   const parameters = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -236,6 +247,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     browseRows: [],
     browseDocument: null,
     browseTab: 'browse',
+    directorySort: 'updated',
+    directoryType: 'ALL',
     bookmarks: [],
     siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
@@ -1308,11 +1321,19 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const renderDirectory = (listHost, detailHost, values, location) => {
-    if (!values.length) {
+    const supported = values.filter((entry) => ['CONVENTIONAL', 'P25', 'DMR', 'NXDN']
+      .includes(directoryFamily(entry)));
+    const filtered = supported.filter((entry) => state.directoryType === 'ALL' ||
+      directoryFamily(entry) === state.directoryType);
+    if (!filtered.length) {
       listHost.replaceChildren(empty('No systems or agencies here',
-        'Choose a broader country, state, or county to browse.'));
+        'Try another system type or choose a broader browse area.'));
       return;
     }
+    const compareNames = (left, right) => textValue(left, ['name']).localeCompare(textValue(right, ['name']),
+      undefined, { sensitivity: 'base', numeric: true });
+    const ordered = [...filtered].sort((left, right) => state.directorySort === 'alphabetical' ?
+      compareNames(left, right) : directoryUpdated(right) - directoryUpdated(left) || compareNames(left, right));
     const itemFor = (entry, trail) => {
       entry.breadcrumb = trail;
       const item = node('div', 'radioreference-directory-item');
@@ -1322,6 +1343,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       identity.append(node('strong', '', textValue(entry, ['name'], 'Unnamed')));
       const secondary = textValue(entry, ['secondary', 'location', 'description']);
       if (secondary) identity.append(node('small', 'muted', secondary));
+      const updated = directoryUpdated(entry);
+      if (updated) identity.append(node('small', 'muted',
+        `Updated ${new Date(updated).toLocaleDateString()}`));
       const trunked = entryKind(entry) === 'TRUNKED_SYSTEM';
       const kindLabel = trunked ? [systemTypeLabel(entry), 'Trunked'].filter(Boolean).join(' · ') :
         'Conventional';
@@ -1363,9 +1387,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       }
       return group;
     };
-    const national = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'NATIONAL');
-    const statewide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'STATE');
-    const countywide = values.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'COUNTY');
+    const national = ordered.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'NATIONAL');
+    const statewide = ordered.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'STATE');
+    const countywide = ordered.filter((entry) => textValue(entry, ['scope']).toUpperCase() === 'COUNTY');
     const tree = node('div', 'radioreference-directory-tree');
     const countyTrail = [location.region, location.county].filter(Boolean).join(' > ') || 'County';
     if (countywide.length) tree.append(branch(`${location.county || 'County'} results`, countywide,
@@ -1392,8 +1416,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const workbench = node('div', 'radioreference-workbench-grid');
     const resultHost = node('div', 'radioreference-directory-results ui-surface');
     const tabHost = node('div', 'radioreference-directory-tabs');
+    const filterHost = node('div', 'radioreference-directory-filters');
     const listHost = node('div', 'radioreference-directory-list');
-    resultHost.append(tabHost, listHost);
+    resultHost.append(tabHost, filterHost, listHost);
     const detailHost = node('div', 'radioreference-import-detail');
     detailHost.append(empty('Choose a result', 'Select a system or agency to review.'));
     workbench.append(resultHost, detailHost);
@@ -1412,7 +1437,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         TRUNKED_SYSTEM: 'Trunked systems', CONVENTIONAL_AGENCY: 'Conventional agencies',
         TALKGROUP_CATEGORY: 'Talkgroup categories', CONVENTIONAL_CATEGORY: 'Conventional categories'
       };
-      state.bookmarks.forEach((bookmark) => {
+      const sortedBookmarks = [...state.bookmarks].sort((left, right) => {
+        const kind = left.kind.localeCompare(right.kind);
+        return kind || left.name.localeCompare(right.name, undefined, { sensitivity: 'base', numeric: true });
+      });
+      sortedBookmarks.forEach((bookmark) => {
         if (bookmark.kind !== previousKind) {
           fragmentValue.append(node('div', 'radioreference-directory-group',
             labels[bookmark.kind] || 'Bookmarks'));
@@ -1431,13 +1460,16 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const savedPath = parentEntry ? [parentEntry.breadcrumb,
           bookmark.kind.includes('CATEGORY') ? textValue(parentEntry, ['name']) : ''].filter(Boolean).join(' > ') :
           bookmark.parentName;
-        const trail = [savedPath, bookmark.name].filter(Boolean).join(' > ');
-        identity.append(node('strong', '', trail));
+        if (savedPath) identity.append(node('small', 'muted radioreference-bookmark-path', savedPath));
+        identity.append(node('strong', '', bookmark.name));
         const preferredList = state.aliasLists.find((entry) =>
           aliasListId(entry) === bookmark.preferredAliasListId);
         if (preferredList) identity.append(node('small', 'muted',
           `Import talkgroups to ${textValue(preferredList, ['name'], 'Alias List')}`));
-        open.append(identity);
+        const parentType = parentEntry ? systemTypeLabel(parentEntry) : '';
+        const kindLabel = bookmark.kind === 'TRUNKED_SYSTEM' || bookmark.kind === 'TALKGROUP_CATEGORY' ?
+          parentType || 'Trunked' : 'Conventional';
+        open.append(identity, uiPill(kindLabel, 'neutral'));
         open.addEventListener('click', () => {
           listHost.querySelectorAll('.radioreference-directory-item.is-active').forEach((value) => {
             value.classList.remove('is-active');
@@ -1478,12 +1510,38 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       else if (state.browseDocument) renderDirectory(listHost, detailHost,
         state.browseRows, state.browseDocument.location);
     };
+    const renderFilters = () => {
+      filterHost.replaceChildren();
+      if (state.browseTab !== 'browse') return;
+      const type = select();
+      type.setAttribute('aria-label', 'Filter system type');
+      [['ALL', 'All supported'], ['CONVENTIONAL', 'Conventional'], ['P25', 'P25'],
+        ['DMR', 'DMR'], ['NXDN', 'NXDN']].forEach(([value, label]) => {
+        const option = node('option', '', label);
+        option.value = value;
+        type.append(option);
+      });
+      type.value = state.directoryType;
+      type.addEventListener('change', () => { state.directoryType = type.value; showCurrent(); });
+      const sort = select();
+      sort.setAttribute('aria-label', 'Sort directory results');
+      [['updated', 'Last updated'], ['alphabetical', 'Alphabetical']].forEach(([value, label]) => {
+        const option = node('option', '', label);
+        option.value = value;
+        sort.append(option);
+      });
+      sort.value = state.directorySort;
+      sort.addEventListener('change', () => { state.directorySort = sort.value; showCurrent(); });
+      filterHost.append(formField('System type', selectFrame(type)),
+        formField('Sort results', selectFrame(sort)));
+    };
     const renderTabs = () => {
       const tabs = uiSegmentedControl([
         { value: 'browse', label: 'Browse' },
         { value: 'bookmarks', label: '★ Bookmarks (' + formatNumber(state.bookmarks.length) + ')' }
       ], state.browseTab, (value) => {
         state.browseTab = value;
+        renderFilters();
         showCurrent();
       });
       tabs.setAttribute('aria-label', 'Browse or open RadioReference bookmarks');
@@ -1491,6 +1549,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     };
     state.onBookmarksChanged = () => { renderTabs(); showCurrent(); };
     renderTabs();
+    renderFilters();
 
     let locationSequence = 0;
     const loadCounties = async (selected = null, sequence = locationSequence) => {

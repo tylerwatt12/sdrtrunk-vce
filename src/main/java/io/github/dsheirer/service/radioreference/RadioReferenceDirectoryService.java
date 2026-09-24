@@ -429,22 +429,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         LocationSnapshot snapshot = invokePremium(gateway -> locationSnapshot(gateway, selection));
         Map<Integer,String> systemTypes = Map.of();
-        if(snapshot.state() != null || snapshot.county() != null)
+        if((snapshot.state() != null && !snapshot.state().systems().isEmpty()) ||
+            (snapshot.county() != null && !snapshot.county().systems().isEmpty()))
         {
-            try
+            // Type metadata is needed to exclude unsupported trunked systems; do not show a partial directory.
+            systemTypes = invokePremium(RadioReferenceGateway::systemTypes,
+                Math.min(mRequestDeadlineNanos, TYPE_LABEL_REQUEST_DEADLINE.toNanos()));
+            if(systemTypes.isEmpty())
             {
-                systemTypes = invokePremium(RadioReferenceGateway::systemTypes,
-                    Math.min(mRequestDeadlineNanos, TYPE_LABEL_REQUEST_DEADLINE.toNanos()));
-            }
-            catch(RadioReferenceDirectoryException exception)
-            {
-                if(exception.code() != RadioReferenceDirectoryException.Code.BUSY &&
-                    exception.code() != RadioReferenceDirectoryException.Code.TIMEOUT &&
-                    exception.code() != RadioReferenceDirectoryException.Code.UNAVAILABLE)
-                {
-                    throw exception;
-                }
-                //Type labels enrich the directory; transient lookup failures must not block browsing.
+                throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
             }
         }
         EntryAccumulator accumulator = new EntryAccumulator(normalizedSearch, group, scopeFilter, systemTypes);
@@ -1725,11 +1718,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
                 if(system != null && system.id() > 0 && matches(mSearch, system.name(), system.city()))
                 {
+                    String systemType = mSystemTypes.getOrDefault(system.typeId(), "");
+                    // Only list trunked systems for which the import workflow can create a decoder.
+                    if(!systemType.equalsIgnoreCase("Project 25") && !systemType.equalsIgnoreCase("DMR") &&
+                        !systemType.equalsIgnoreCase("NXDN"))
+                    {
+                        continue;
+                    }
                     RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                         RadioReferenceGateway.DetailKind.TRUNKED_SYSTEM, system.id());
                     put(new DirectoryEntry(text(system.name()), text(system.city()), EntryType.TRUNKED_SYSTEM,
                         scope, detail, system.typeId(), system.flavorId(), system.voiceId(),
-                        mSystemTypes.getOrDefault(system.typeId(), "")));
+                        systemType, system.lastUpdatedEpochMillis()));
                 }
             }
         }
@@ -1753,7 +1753,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                         RadioReferenceGateway.DetailKind.AGENCY, agency.id());
                     put(new DirectoryEntry(text(agency.name()), "", EntryType.CONVENTIONAL_AGENCY, scope,
-                        detail, agency.type(), 0, 0, ""));
+                        detail, agency.type(), 0, 0, "", 0));
                 }
             }
         }
@@ -1775,7 +1775,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 RadioReferenceGateway.DetailReference detail = new RadioReferenceGateway.DetailReference(
                     RadioReferenceGateway.DetailKind.COUNTY, county.id());
                 put(new DirectoryEntry(allName, "All county conventional frequencies",
-                    EntryType.CONVENTIONAL_AGENCY, EntryScope.COUNTY, detail, 0, 0, 0, ""));
+                    EntryType.CONVENTIONAL_AGENCY, EntryScope.COUNTY, detail, 0, 0, 0, "", 0));
             }
         }
 
@@ -2039,7 +2039,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public record DirectoryEntry(String name, String secondary, EntryType type, EntryScope scope,
                                  RadioReferenceGateway.DetailReference detail, int nativeTypeId,
-                                 int nativeFlavorId, int nativeVoiceId, String systemType)
+                                 int nativeFlavorId, int nativeVoiceId, String systemType,
+                                 long lastUpdatedEpochMillis)
     {
     }
 
