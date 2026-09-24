@@ -321,11 +321,13 @@ public final class RadioReferenceHttpController
                 }
 
                 requiredPositive(request.ownerId(), "owner_id");
+                Long aliasListId = request.aliasListId() == null ? null :
+                    requiredPositive(request.aliasListId(), "alias_list_id");
                 ApiHttpResponse.sendData(exchange, 200,
                     requireImport().previewConventional(new ConventionalImportRequest(
                         requiredPositive(request.subCategoryId(), "sub_category_id"),
-                        requiredPositive(request.frequencyId(), "frequency_id"), request.systemName(),
-                        request.siteName(), request.channelName())));
+                        requiredPositive(request.frequencyId(), "frequency_id"), aliasListId,
+                        request.systemName(), request.siteName(), request.channelName())));
             }
             else if((PATH + "/imports/talkgroups/preview").equals(path))
             {
@@ -1051,8 +1053,8 @@ public final class RadioReferenceHttpController
     }
 
     private record ConventionalPreviewRequest(String ownerKind, Integer ownerId, Integer subCategoryId,
-                                              Integer frequencyId, String systemName, String siteName,
-                                              String channelName)
+                                              Integer frequencyId, Long aliasListId, String systemName,
+                                              String siteName, String channelName)
     {
     }
 

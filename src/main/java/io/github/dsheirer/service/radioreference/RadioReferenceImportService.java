@@ -169,7 +169,8 @@ public final class RadioReferenceImportService
         ConventionalFrequency frequency = rows.getFirst();
         String protocolId = conventionalProtocol(frequency.mode());
         LocalChannelSnapshot local = localSnapshot();
-        long aliasListId = defaultAliasList(protocolId, local.options());
+        long aliasListId = request.aliasListId() == null ? defaultAliasList(protocolId, local.options()) :
+            requireCompatibleAliasList(request.aliasListId(), protocolId, local.options());
         ChannelDefinition template = mChannels.template(protocolId);
         Map<String,Object> settings = new LinkedHashMap<>(template.settings());
         applyConventionalSettings(protocolId, frequency.mode(), settings);
@@ -1056,8 +1057,8 @@ public final class RadioReferenceImportService
         }
     }
 
-    public record ConventionalImportRequest(int subCategoryId, int frequencyId, String systemName, String siteName,
-                                            String channelName)
+    public record ConventionalImportRequest(int subCategoryId, int frequencyId, Long aliasListId,
+                                            String systemName, String siteName, String channelName)
     {
     }
 

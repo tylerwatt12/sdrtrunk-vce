@@ -143,6 +143,16 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/conventional/frequencies?sub_category_id=501").GET()))
                     .at("/items/0/downlink_hz").longValue());
 
+                String invalidConventionalPreview = "{" +
+                    "\"owner_kind\":\"COUNTY\",\"owner_id\":100,\"sub_category_id\":501," +
+                    "\"frequency_id\":7101,\"alias_list_id\":0}";
+                HttpResponse<String> rejectedAliasList = send(client,
+                    jsonRequest(origin, "/imports/conventional/preview")
+                        .POST(HttpRequest.BodyPublishers.ofString(invalidConventionalPreview)));
+                assertEquals(400, rejectedAliasList.statusCode(), rejectedAliasList.body());
+                assertTrue(rejectedAliasList.body().contains("alias_list_id must be a positive integer"),
+                    rejectedAliasList.body());
+
                 String bookmarkBody = "{\"kind\":\"TRUNKED_SYSTEM\",\"id\":2001," +
                     "\"parent_id\":0,\"owner_kind\":\"\",\"name\":\"State P25\"," +
                     "\"parent_name\":\"\",\"preferred_alias_list_id\":12}";

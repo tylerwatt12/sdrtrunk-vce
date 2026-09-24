@@ -319,13 +319,38 @@ class RadioReferenceImportServiceTest
             fixture.directory.conventional = List.of(new ConventionalFrequency(7, 154_100_000L, null, "",
                 "County dispatch", "Dispatch", "", "", "", "", "FMN", 0, "", List.of(), 70));
             RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewConventional(
-                new RadioReferenceImportService.ConventionalImportRequest(70, 7, "County", "Public Safety", null));
+                new RadioReferenceImportService.ConventionalImportRequest(70, 7, null, "County", "Public Safety",
+                    null));
             assertEquals(RadioReferenceImportService.ChannelAction.CREATE, preview.action());
             assertEquals("nbfm", preview.channel().protocolId());
             assertEquals("Default Analog", fixture.channels.options().aliasLists().stream()
                 .filter(list -> list.id() == preview.channel().aliasListId()).findFirst().orElseThrow().name());
             assertEquals(List.of(154_100_000L), preview.channel().source().frequenciesHz());
             fixture.importer.applyChannel(preview.previewId());
+        }
+    }
+
+    @Test
+    void conventionalPreviewUsesAnExplicitCompatibleAliasListAndRejectsOtherFamilies() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.directory.conventional = List.of(new ConventionalFrequency(7, 154_100_000L, null, "",
+                "County dispatch", "Dispatch", "", "", "", "", "FMN", 0, "", List.of(), 70));
+            long selectedListId = fixture.aliases.createAliasList("County Analog", AliasListFamily.NBFM)
+                .aliasListId();
+            RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewConventional(
+                new RadioReferenceImportService.ConventionalImportRequest(70, 7, selectedListId, "County",
+                    "Public Safety", null));
+
+            assertEquals(selectedListId, preview.channel().aliasListId());
+
+            long incompatibleListId = aliasList(fixture, AliasListFamily.P25);
+            IllegalArgumentException incompatible = assertThrows(IllegalArgumentException.class,
+                () -> fixture.importer.previewConventional(
+                    new RadioReferenceImportService.ConventionalImportRequest(70, 7, incompatibleListId,
+                        "County", "Public Safety", null)));
+            assertTrue(incompatible.getMessage().contains("not compatible"));
         }
     }
 

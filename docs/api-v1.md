@@ -333,10 +333,11 @@ two-step contract:
 - `POST /api/v1/admin/radioreference/imports/{preview_id}/apply`
 
 Apply consumes the exact server-held preview. Site imports create one channel with the chosen control, alternate,
-selected, or complete frequency set. Conventional imports create one channel at a time. A matching saved channel is
-refreshed only when system, site, channel name, and protocol all match; only its RadioReference source frequencies are
-replaced, while decoder and local recording settings remain unchanged. Talkgroup updates replace RadioReference-owned
-name, description, and group fields while preserving local Alias behavior.
+selected, or complete frequency set. Conventional imports create one channel at a time and accept an optional
+`alias_list_id`; when omitted, the compatible default Alias List is used. A matching saved channel is refreshed only
+when system, site, channel name, and protocol all match; only its RadioReference source frequencies are replaced,
+while decoder and local recording settings remain unchanged. Talkgroup updates replace RadioReference-owned name,
+description, and group fields while preserving local Alias behavior.
 
 For a listener-facing explanation of browser playback, see
 [How Browser Listening and Scan Lists Work](browser-listening-and-scan-lists.md).
