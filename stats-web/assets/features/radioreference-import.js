@@ -66,18 +66,29 @@ function aliasListId(value) {
   return integerValue(value, ['aliasListId', 'alias_list_id', 'id']);
 }
 
+function normalizedAliasFamily(value) {
+  const family = String(value || '').trim().toUpperCase();
+  return family === 'ANALOG' ? 'NBFM' : family;
+}
+
 function aliasListFamily(value) {
-  return textValue(value, ['family', 'protocol_family', 'protocol']).toUpperCase();
+  return normalizedAliasFamily(textValue(value, ['family', 'protocol_family', 'protocol']));
 }
 
 function compatibleFamily(value) {
   const family = textValue(value, ['alias_list_family', 'protocol_family', 'family', 'protocol',
-    'decoder_type', 'recommended_decoder', 'type']).toUpperCase();
+    'decoder_type', 'recommended_decoder', 'mode_name', 'mode', 'type']).toUpperCase();
   if (family.includes('P25') || family.includes('PROJECT 25')) return 'P25';
   if (family.includes('DMR')) return 'DMR';
   if (family.includes('NXDN')) return 'NXDN';
-  if (family.includes('AM') || family.includes('FM') || family.includes('ANALOG')) return 'ANALOG';
+  if (family.includes('AM') || family.includes('FM') || family.includes('ANALOG')) return 'NBFM';
   return '';
+}
+
+function defaultAliasListName(family) {
+  const normalized = normalizedAliasFamily(family);
+  if (!normalized) return '';
+  return normalized === 'NBFM' ? 'Default Analog' : `Default ${normalized}`;
 }
 
 function systemTypeLabel(value) {
@@ -230,7 +241,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const {
     node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency, formatNumber, href, anchor,
-    modalFooter, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
+    modalFooter, createInlineAliasListCreator, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
   } = dependencies;
 
@@ -238,6 +249,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const state = {
     configuration: null,
     aliasLists: [],
+    aliasListRevision: 0,
     countries: [],
     initialized: false,
     initializing: false,
@@ -316,14 +328,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     return Boolean(control.value);
   };
   const aliasOptions = (family = '') => {
-    const normalized = String(family || '').toUpperCase();
+    const normalized = normalizedAliasFamily(family);
     const exact = state.aliasLists.filter((value) => !normalized || aliasListFamily(value) === normalized);
     return normalized ? exact : state.aliasLists;
   };
-  const aliasSelect = (family = '', selectedId = null) => {
-    const control = select();
-    control.required = true;
+  const populateAliasSelect = (control, family = '', selectedId = null) => {
     const options = aliasOptions(family);
+    control.replaceChildren();
     const placeholder = node('option', '', options.length ? 'Choose an Alias List' : 'No compatible Alias Lists');
     placeholder.value = '';
     control.append(placeholder);
@@ -336,8 +347,44 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
     const requested = String(selectedId || '');
     if (requested && [...control.options].some((option) => option.value === requested)) control.value = requested;
-    else if (control.options.length === 2) control.selectedIndex = 1;
+    else {
+      const canonicalName = defaultAliasListName(family).toLowerCase();
+      const canonical = options.find((value) => textValue(value, ['name']).toLowerCase() === canonicalName);
+      const canonicalId = aliasListId(canonical);
+      if (canonicalId) control.value = String(canonicalId);
+      else if (control.options.length === 2) control.selectedIndex = 1;
+    }
     return control;
+  };
+  const aliasSelect = (family = '', selectedId = null) => {
+    const control = select();
+    control.required = true;
+    populateAliasSelect(control, family, selectedId);
+    return control;
+  };
+  const aliasListField = (label, control, family, helperText) => {
+    control.setAttribute('aria-label', label);
+    const field = node('div', 'admin-form-field ui-field');
+    field.append(node('span', 'admin-form-label ui-field-label', label), selectFrame(control),
+      createInlineAliasListCreator({
+        select: control,
+        family: normalizedAliasFamily(family),
+        getRevision: () => state.aliasListRevision,
+        triggerLabel: '+ New list',
+        submitLabel: 'Create and use',
+        helperText,
+        onCreated: ({ aliasList, revision }) => {
+          const id = aliasListId(aliasList);
+          if (!id) return;
+          state.aliasLists = state.aliasLists.filter((value) => aliasListId(value) !== id);
+          state.aliasLists.push(aliasList);
+          const nextRevision = Number(revision);
+          if (Number.isSafeInteger(nextRevision) && nextRevision >= 0) state.aliasListRevision = nextRevision;
+          populateAliasSelect(control, family, id);
+          control.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }));
+    return field;
   };
   const api = (path, options = {}) => requestJson(path, {
     csrf: options.method && options.method !== 'GET' ? undefined : false,
@@ -667,7 +714,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     footer.firstElementChild.addEventListener('click', () => closeReadOnlyModal());
     const nameGrid = node('div', 'radioreference-form-grid');
     nameGrid.append(formField('System name', systemName), formField('Site name', siteName),
-      formField('Channel name', channelName), formField('Alias List', selectFrame(aliases)));
+      formField('Channel name', channelName), aliasListField('Alias List', aliases, family,
+        'Creates a compatible Alias List immediately and selects it for this channel import.'));
     form.append(node('div', 'radioreference-modal-intro',
       `Create one combined channel for ${siteName.value || 'this site'}.`), nameGrid, detection,
       formField('Frequencies', modeGrid), frequencyPanel, message, footer);
@@ -828,8 +876,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const systemIdValue = systemId(system);
     const systemName = textValue(systemDocument?.system || systemDocument || system, ['name'], 'System');
     const toolbar = node('div', 'radioreference-talkgroup-toolbar ui-catalog-toolbar');
-    const aliasList = aliasSelect(compatibleFamily(systemDocument?.system || systemDocument) ||
-      compatibleFamily(system), state.talkgroupAliasListId);
+    const family = compatibleFamily(systemDocument?.system || systemDocument) || compatibleFamily(system);
+    const aliasList = aliasSelect(family, state.talkgroupAliasListId);
     if (aliasList.value) state.talkgroupAliasListId = Number(aliasList.value);
     const category = select();
     const categoryStar = node('span', 'radioreference-category-star');
@@ -873,7 +921,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     commandRow.append(statusFilter, commandTools);
     const actions = node('div', 'radioreference-talkgroup-actions ui-selection-bar');
     actions.append(selectionBadge, clear, importSelected);
-    toolbar.append(formField('Compare with Alias List', selectFrame(aliasList)), categoryField,
+    toolbar.append(aliasListField('Compare with Alias List', aliasList, family,
+      'Creates a compatible Alias List immediately, selects it for this import, and refreshes the comparison.'),
+      categoryField,
       formField('Search talkgroups', searchFrame), commandRow);
     target.replaceChildren(toolbar, actions, status, tableHost);
 
@@ -1178,6 +1228,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
 
   const openConventionalImport = (entry, frequency, categoryId) => {
     const form = node('form', 'radioreference-conventional-form editor-workspace');
+    const family = compatibleFamily(frequency) || compatibleFamily(entry);
     const systemName = input();
     const siteName = input();
     const channelName = input();
@@ -1186,6 +1237,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     channelName.value = textValue(frequency, ['alpha_tag', 'alphaTag', 'description'],
       `${formatFrequency(frequencyHz(frequency))} MHz`);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
+    const aliases = aliasSelect(family);
     const facts = node('dl', 'radioreference-preview-facts');
     [['Frequency', `${formatFrequency(frequencyHz(frequency))} MHz`],
       ['Mode', textValue(frequency, ['mode_name', 'mode', 'protocol'], 'Detected by RadioReference')],
@@ -1200,10 +1252,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const footer = modalFooter(cancel, review);
     const nameGrid = node('div', 'radioreference-form-grid');
     nameGrid.append(formField('System name', systemName), formField('Site name', siteName),
-      formField('Channel name', channelName));
-    form.append(facts, nameGrid,
-      node('div', 'ui-notice', 'The receiver will use the compatible default Alias List for this protocol.'),
-      message, footer);
+      formField('Channel name', channelName), aliasListField('Alias List', aliases, family,
+        'Creates a compatible Alias List immediately and selects it for this conventional import.'));
+    form.append(facts, nameGrid, message, footer);
     const modal = openReadOnlyModal(`Import ${channelName.value}`, form, {
       id: 'radioreference-conventional-import', className: 'radioreference-import-modal',
       returnFocusSelector: '.radioreference-conventional-import'
@@ -1214,7 +1265,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     form.addEventListener('change', () => modal.setDirty(true));
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
+      if (!form.reportValidity()) {
+        message.textContent = 'Choose a compatible Alias List before reviewing this channel.';
+        return;
+      }
       modal.setDirty(false);
       closeReadOnlyModal(true);
       await openPreview({
@@ -1224,7 +1278,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         returnFocusSelector: '.radioreference-conventional-import',
         body: { owner_kind: textValue(entry?.detail || entry, ['owner_kind', 'kind'], 'AGENCY'),
           owner_id: ownerId(entry), sub_category_id: Number(categoryId), frequency_id: frequencyId(frequency),
-          system_name: systemName.value.trim(), site_name: siteName.value.trim(), channel_name: channelName.value.trim() }
+          alias_list_id: Number(aliases.value), system_name: systemName.value.trim(),
+          site_name: siteName.value.trim(), channel_name: channelName.value.trim() }
       });
     });
   };
@@ -1690,6 +1745,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       ]);
       state.aliasLists = Array.isArray(aliasesDocument?.alias_lists) ? aliasesDocument.alias_lists :
         rows(aliasesDocument);
+      const aliasListRevision = Number(aliasesDocument?.revision);
+      state.aliasListRevision = Number.isSafeInteger(aliasListRevision) && aliasListRevision >= 0 ?
+        aliasListRevision : 0;
       state.countries = rows(countriesDocument);
       state.bookmarks = rows(bookmarksDocument).map(normalizeBookmark);
       state.initialized = true;

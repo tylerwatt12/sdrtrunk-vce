@@ -154,18 +154,50 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       };
     };
     const calls = [];
-    window.radioReferenceVisual = { calls };
+    const inlineCreators = [];
+    window.radioReferenceVisual = { calls, inlineCreators };
     const scenario = new URLSearchParams(location.search).get('scenario');
     const dmr = scenario === 'dmr';
     const nxdn = scenario === 'nxdn';
+    let nextAliasListId = 100;
+    const createInlineAliasListCreator = (options) => {
+      const record = {
+        family: options.family,
+        triggerLabel: options.triggerLabel,
+        submitLabel: options.submitLabel,
+        helperText: options.helperText,
+        initialRevision: options.getRevision()
+      };
+      inlineCreators.push(record);
+      const host = node('div', 'ui-inline-alias-list-create');
+      host.hidden = scenario !== 'alias-create';
+      const trigger = node('button', 'ui-button ui-button-secondary', options.triggerLabel);
+      trigger.type = 'button';
+      trigger.addEventListener('click', () => {
+        const beforeRevision = options.getRevision();
+        const family = String(options.family || '').toUpperCase();
+        const aliasList = {
+          id: nextAliasListId++, name: family === 'NBFM' ? 'New Analog List' : `New ${family} List`,
+          family: family.toLowerCase()
+        };
+        options.onCreated({ aliasList, revision: beforeRevision + 1 });
+        record.created = { aliasList, beforeRevision, afterRevision: options.getRevision() };
+      });
+      host.append(trigger);
+      return host;
+    };
     const requestJson = async (path, options = {}) => {
       calls.push([path, options]);
-      if (path.startsWith('/api/v1/admin/alias-lists')) return { alias_lists: [
+      if (path.startsWith('/api/v1/admin/alias-lists')) return { revision: 41, alias_lists: [
         { alias_list_id: 7, name: 'County Public Safety', family: 'P25' },
         { alias_list_id: 10, name: 'Regional P25', family: 'P25' },
         { alias_list_id: 9, name: 'Plant DMR', family: 'DMR' },
         { alias_list_id: 11, name: 'Regional NXDN', family: 'NXDN' },
-        { alias_list_id: 8, name: 'Regional Conventional', family: 'ANALOG' }
+        { alias_list_id: 8, name: 'Regional Conventional', family: 'NBFM' },
+        ...(scenario === 'alias-create' ? [
+          { alias_list_id: 12, name: 'Default P25', family: 'P25' },
+          { alias_list_id: 13, name: 'Default Analog', family: 'NBFM' }
+        ] : [])
       ] };
       if (path.endsWith('/countries')) return { items: [{ id: 1, name: 'United States', abbreviation: 'US' }] };
       if (path.endsWith('/bookmarks')) {
@@ -281,7 +313,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     };
     const workspace = createRadioReferenceImportWorkspace({
       node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
-      openReadOnlyModal, closeReadOnlyModal, requestJson,
+      openReadOnlyModal, closeReadOnlyModal, requestJson, createInlineAliasListCreator,
       formatFrequency: (value) => (Number(value) / 1_000_000).toFixed(5),
       formatNumber: (value) => Number(value).toLocaleString('en-US'),
       href: (view, values = {}) => `/?view=${view}&${new URLSearchParams(values)}`,
@@ -298,6 +330,69 @@ async function openSystem(page) {
   await page.locator('.radioreference-result-open').first().click();
   await expect(page.getByText('Central Simulcast')).toBeVisible();
 }
+
+test('inline Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'alias-create');
+  await openSystem(page);
+
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('12');
+  await expect(siteModal.getByRole('button', { name: '+ New list' })).toBeVisible();
+  await siteModal.getByRole('button', { name: 'Close' }).click();
+
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  const talkgroupList = page.getByLabel('Compare with Alias List');
+  await expect(talkgroupList).toHaveValue('12');
+  const fire = page.getByRole('checkbox', { name: 'Select Fire Dispatch' });
+  await fire.check();
+  await page.getByRole('button', { name: '+ New list' }).click();
+  await expect(talkgroupList).toHaveValue('100');
+  await expect(page.getByRole('checkbox', { name: 'Select Fire Dispatch' })).toBeChecked();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.calls.some(([path]) => {
+    const url = new URL(path, location.href);
+    return url.pathname.endsWith('/systems/talkgroups/catalog') && url.searchParams.get('alias_list_id') === '100';
+  }))).toBe(true);
+
+  await page.locator('.radioreference-result-open').filter({ hasText: 'County Fire' }).click();
+  await page.locator('.radioreference-conventional-import').click();
+  const conventionalModal = page.getByRole('dialog', { name: /Import Fire Dispatch/ });
+  const conventionalList = conventionalModal.getByLabel('Alias List');
+  await expect(conventionalList).toHaveValue('13');
+  await conventionalModal.getByRole('button', { name: '+ New list' }).click();
+  await expect(conventionalList).toHaveValue('101');
+  await conventionalModal.getByRole('button', { name: 'Review Channel' }).click();
+  const previewModal = page.getByRole('dialog', { name: /Review Fire Dispatch/ });
+  await previewModal.getByRole('button', { name: 'Apply Channel' }).click();
+
+  const result = await page.evaluate(() => {
+    const preview = window.radioReferenceVisual.calls.find(
+      ([path]) => path.endsWith('/imports/conventional/preview'));
+    const apply = window.radioReferenceVisual.calls.find(
+      ([path]) => path.endsWith('/imports/frequency-preview/apply'));
+    return {
+      creators: window.radioReferenceVisual.inlineCreators,
+      previewBody: preview?.[1]?.body,
+      applyBody: apply?.[1]?.body
+    };
+  });
+  expect(result.previewBody.alias_list_id).toBe(101);
+  expect(result.applyBody).toEqual({});
+  expect(result.creators.map(({ family, triggerLabel, submitLabel }) =>
+    ({ family, triggerLabel, submitLabel }))).toEqual([
+    { family: 'P25', triggerLabel: '+ New list', submitLabel: 'Create and use' },
+    { family: 'P25', triggerLabel: '+ New list', submitLabel: 'Create and use' },
+    { family: 'NBFM', triggerLabel: '+ New list', submitLabel: 'Create and use' }
+  ]);
+  expect(result.creators.every(({ helperText }) =>
+    helperText.includes('immediately') && helperText.includes('selects it'))).toBe(true);
+  expect(result.creators.find((creator) => creator.created)?.created).toMatchObject({
+    beforeRevision: 41, afterRevision: 42, aliasList: { id: 100, family: 'p25' }
+  });
+  expect(result.creators.findLast((creator) => creator.created)?.created).toMatchObject({
+    beforeRevision: 42, afterRevision: 43, aliasList: { id: 101, family: 'nbfm' }
+  });
+});
 
 test('talkgroup selections persist through searches and clear explicitly', async ({ page }) => {
   await installWorkspace(page);

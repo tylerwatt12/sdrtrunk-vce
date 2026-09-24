@@ -490,6 +490,16 @@ async function main() {
   assert.match(radioReferenceImportSource, /href\('channel-setup', \{ channel: configurationId \}\)/);
   assert.match(radioReferenceImportSource, /catalog_id: state\.talkgroupCatalogId/);
   assert.match(radioReferenceImportSource, /preferredAliasListId/);
+  assert.match(radioReferenceImportSource, /aliasListRevision: 0/);
+  assert.match(radioReferenceImportSource, /getRevision: \(\) => state\.aliasListRevision/);
+  assert.match(radioReferenceImportSource,
+    /onCreated: \(\{ aliasList, revision \}\)[\s\S]+dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
+  assert.equal((radioReferenceImportSource.match(/aliasListField\('/g) || []).length, 3,
+    'RadioReference imports should define one shared Alias List field and use it for sites, talkgroups, and conventional channels');
+  assert.match(radioReferenceImportSource, /return normalized === 'NBFM' \? 'Default Analog' : `Default \$\{normalized\}`/);
+  assert.match(radioReferenceImportSource,
+    /kind: 'conventional'[\s\S]+alias_list_id: Number\(aliases\.value\)/);
+  assert.doesNotMatch(radioReferenceImportSource, /use the compatible default Alias List/);
   assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
   assert.match(radioReferenceImportSource, /browseCatalog/);
   assert.match(radioReferenceImportSource,
