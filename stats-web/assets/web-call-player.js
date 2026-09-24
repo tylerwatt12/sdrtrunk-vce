@@ -28,7 +28,7 @@ export class WebCallPlayer {
     this.idleDisplayDeadline = 0;
     this.source = null;
     this.analyserNode = null;
-    this.waveformSamples = null;
+    this.spectrumSamples = null;
     this.gainNode = null;
     this.audioContext = null;
     this.playbackStartedAt = 0;
@@ -1006,7 +1006,7 @@ export class WebCallPlayer {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.audioContext = new AudioContext();
       this.analyserNode = this.audioContext.createAnalyser();
-      this.analyserNode.fftSize = 256;
+      this.analyserNode.fftSize = 512;
       this.analyserNode.smoothingTimeConstant = 0.5;
       this.gainNode = this.audioContext.createGain();
       this.gainNode.gain.value = this.volume;
@@ -1015,23 +1015,32 @@ export class WebCallPlayer {
     }
   }
 
-  readAudioWaveform(levels) {
+  readAudioSpectrum(levels, maximumFrequencyHz = 8_000) {
     if (!levels?.length) return false;
     levels.fill(0);
     if (this.paused || !this.source || !this.analyserNode || this.audioContext?.state !== 'running') return false;
-    const sampleCount = this.analyserNode.fftSize;
-    if (!this.waveformSamples || this.waveformSamples.length !== sampleCount) {
-      this.waveformSamples = new Uint8Array(sampleCount);
+    const sampleCount = this.analyserNode.frequencyBinCount;
+    if (!this.spectrumSamples || this.spectrumSamples.length !== sampleCount) {
+      this.spectrumSamples = new Uint8Array(sampleCount);
     }
-    this.analyserNode.getByteTimeDomainData(this.waveformSamples);
+    this.analyserNode.getByteFrequencyData(this.spectrumSamples);
+    const nyquist = Number(this.audioContext.sampleRate) / 2;
+    const maximum = Number(maximumFrequencyHz);
+    const visibleBins = Number.isFinite(nyquist) && nyquist > 0 && Number.isFinite(maximum) && maximum > 0 ?
+      Math.max(2, Math.min(sampleCount, Math.ceil(maximum / nyquist * sampleCount))) : sampleCount;
     for (let bar = 0; bar < levels.length; bar++) {
-      const start = Math.floor(bar * sampleCount / levels.length);
-      const end = Math.max(start + 1, Math.floor((bar + 1) * sampleCount / levels.length));
+      const start = Math.max(1, Math.floor(bar * visibleBins / levels.length));
+      const end = Math.max(start + 1, Math.floor((bar + 1) * visibleBins / levels.length));
       let peak = 0;
-      for (let sample = start; sample < end; sample++) {
-        peak = Math.max(peak, Math.abs(this.waveformSamples[sample] - 128) / 128);
+      let total = 0;
+      for (let sample = start; sample < Math.min(end, visibleBins); sample++) {
+        const value = this.spectrumSamples[sample] / 255;
+        peak = Math.max(peak, value);
+        total += value;
       }
-      levels[bar] = peak < 0.01 ? 0 : Math.min(1, Math.sqrt(peak) * 1.15);
+      const average = total / Math.max(1, Math.min(end, visibleBins) - start);
+      const value = Math.max(peak * .72, average);
+      levels[bar] = value < .01 ? 0 : Math.min(1, Math.sqrt(value));
     }
     return true;
   }

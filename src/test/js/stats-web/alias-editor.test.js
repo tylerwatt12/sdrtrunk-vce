@@ -348,6 +348,8 @@ assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-destination',\s
 assert.doesNotMatch(transferModal, /node\('li', '', node\(/);
 assert.doesNotMatch(transferModal, /node\('div', 'alias-transfer-export-summary',\s*node\(/);
 assert.match(transferModal, /preview\.counts\.deleted > 0/);
+assert.match(transferModal, /node\('div', 'pager ui-pager'\)/,
+  'Alias transfer review pagination must use the shared padded pager');
 assert.match(transferModal, /exportFrame/);
 assert.match(transferModal, /Preparing the complete CSV/);
 assert.match(transferModal, /aliasTransferExportDownloadHref/);

@@ -40,11 +40,39 @@ const context = {};
 const squelchTunerSource = functionSource('function channelSquelchTuner(');
 vm.createContext(context);
 vm.runInContext(`
+  ${functionSource('function channelCreationProtocolLabel(profile)')}
+  ${functionSource('function channelDefaultAliasListName(aliasFamily)')}
+  ${functionSource('function channelCreationDefaults(channel, profile, options)')}
   ${functionSource('function channelEditorSectionId(value)')}
   ${functionSource('function channelEditorSectionPlan(sections)')}
   ${functionSource('function channelSquelchQuality(noise)')}
   ${functionSource('function channelSquelchNoise(quality)')}
 `, context);
+
+assert.equal(vm.runInContext(
+  "channelCreationProtocolLabel({ id: 'p25-phase2', label: 'P25 Phase 2' })", context),
+  'P25 Phase 2 TDMA Control Channel (Uncommon)');
+assert.equal(vm.runInContext(
+  "channelCreationProtocolLabel({ id: 'p25-phase1', label: 'P25 Phase 1' })", context), 'P25 Phase 1');
+const creationDefaults = JSON.parse(vm.runInContext(`JSON.stringify(channelCreationDefaults(
+  { alias_list_id: 10, name: 'Channel' },
+  { id: 'p25-phase1', alias_family: 'P25' },
+  { alias_lists: [
+    { id: 10, name: 'Regional', family: 'P25' },
+    { id: 11, name: ' Default P25 ', family: 'P25' },
+    { id: 12, name: 'Default DMR', family: 'DMR' }
+  ] }
+))`, context));
+assert.equal(creationDefaults.alias_list_id, 11,
+  'A new channel should prefer the protocol-compatible Default alias list');
+assert.equal(vm.runInContext("channelDefaultAliasListName('NBFM')", context), 'Default Analog',
+  'The analog protocol family must use its canonical factory Alias List name');
+const unchangedDefaults = JSON.parse(vm.runInContext(`JSON.stringify(channelCreationDefaults(
+  { alias_list_id: 10 }, { alias_family: 'P25' },
+  { alias_lists: [{ id: 12, name: 'Default DMR', family: 'DMR' }] }
+))`, context));
+assert.equal(unchangedDefaults.alias_list_id, 10,
+  'The template choice should remain when the selected protocol has no Default alias list');
 
 assert.equal(vm.runInContext('channelSquelchQuality(0.1)', context), 100);
 assert.equal(vm.runInContext('channelSquelchQuality(0.5)', context), 0);
@@ -89,6 +117,10 @@ assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify([
   { name: 'Alpha', protocol_label: 'NBFM' }
 ].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Alpha', 'Bravo', 'Zulu']);
 const channelModal = functionSource('async function openChannelEditorModal(');
+assert.match(channelModal, /if \(!editing\) channel = channelCreationDefaults\(channel, profile, options\)/,
+  'Creation defaults must not alter an existing channel');
+assert.match(channelModal, /label: channelCreationProtocolLabel\(candidate\)/,
+  'The creation protocol selector must use its purpose-specific labels');
 assert.match(channelModal, /action, configuration_ids: \[configurationId\]/,
   'The editor must start or stop only its own channel');
 assert.match(channelModal, /modal\.isDirty\(\)/,

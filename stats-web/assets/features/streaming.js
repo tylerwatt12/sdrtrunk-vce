@@ -1,22 +1,23 @@
 const ROOT = '/api/v1/admin/streaming';
 const POLL_MS = 3000;
 
-// Reuse map: data-workspace and ui-page-header for the approved destination-table layout;
-// shared ui table, status, feedback, fields, toggles, select frames, segmented tabs and modal lifecycle.
-// Only feature geometry lives in streaming.css; desktop/mobile and light/dark use shared tokens.
+// Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-facts and ui-status
+// compose the destination cards; shared table, feedback, fields, toggles, select frames,
+// segmented tabs, selection bar and modal lifecycle compose the editor. Only feature
+// geometry lives in streaming.css; desktop/mobile and light/dark use shared tokens.
 export function createStreamingWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table,
     openReadOnlyModal, requestJson, modalFooter, formatNumber, href, signal } = deps;
   const host = node('div', 'streaming-page data-workspace');
-  const toolbar = node('div', 'streaming-toolbar');
+  const toolbar = node('div', 'streaming-toolbar streaming-page-toolbar ui-catalog-toolbar');
   const summary = node('div', 'streaming-summary');
-  const actions = node('div', 'ui-action-row');
+  const actions = node('div', 'ui-action-row streaming-page-actions');
   const message = node('div');
   message.setAttribute('role', 'status');
-  const tableHost = node('div');
-  const attention = node('div', 'streaming-attention');
+  const destinationHost = node('div', 'streaming-destination-grid');
   const note = node('p', 'muted', 'Delivery counters belong to the current sender session and reset when the destination restarts.');
   const freshness = node('span', 'muted');
+  const pageMeta = node('footer', 'streaming-page-meta');
   let catalog = null, timer = null, loading = false, disposed = false, signature = '', modalActive = false;
   const cells = new Map();
   const button = (label, action, primary = false) => {
@@ -44,11 +45,12 @@ export function createStreamingWorkspace(deps) {
   function draw(documentValue) {
     catalog = documentValue;
     const rows = catalog.destinations || [];
-    summary.replaceChildren(uiStatus(`${rows.filter(row => row.state === 'CONNECTED').length} connected`, 'success'),
+    summary.replaceChildren(uiStatus(`${rows.length} destination${rows.length === 1 ? '' : 's'}`, 'neutral'),
+      uiStatus(`${rows.filter(row => row.state === 'CONNECTED').length} connected`, 'success'),
       uiStatus(`${rows.filter(row => row.attention).length} need attention`, rows.some(row => row.attention) ? 'danger' : 'neutral'),
       uiStatus(`${rows.filter(row => !row.enabled).length} disabled`, 'neutral'));
-    const nextSignature = JSON.stringify(rows.map(row => [row.configuration_id, row.name, row.provider]));
-    if (signature !== nextSignature || !tableHost.childElementCount) {
+    const nextSignature = JSON.stringify(rows.map(row => [row.configuration_id, row.name, row.provider, row.enabled]));
+    if (signature !== nextSignature || !destinationHost.childElementCount) {
       signature = nextSignature;
       cells.clear();
       const cell = (row, key) => {
@@ -57,37 +59,51 @@ export function createStreamingWorkspace(deps) {
         cells.get(row.configuration_id)[key] = element;
         return element;
       };
-      tableHost.replaceChildren(table(rows, [
-        { id: 'name', label: 'Destination', render: (row) => {
+      if (!rows.length) {
+        const empty = node('div', 'streaming-empty ui-surface');
+        empty.append(node('div', 'ui-feedback', 'No streaming destinations configured. Add a destination to get started.'));
+        destinationHost.replaceChildren(empty);
+      } else {
+        destinationHost.replaceChildren(...rows.map(row => {
+          const card = node('article', 'streaming-destination-card ui-surface');
+          const header = node('header', 'streaming-destination-header');
           const identity = node('div', 'streaming-identity');
+          const title = node('h2', 'streaming-destination-title');
           const open = button(row.name || 'Unnamed destination', () => openEditor(row.configuration_id));
-          open.className = 'link-button';
-          identity.append(open, node('small', 'muted', row.provider_label));
-          return identity;
-        } },
-        { id: 'status', label: 'Status', render: row => cell(row, 'state') },
-        ...[['queued', 'Queued'], ['sent', 'Sent / Uploaded'], ['aged_off', 'Aged off'], ['errors', 'Errors']].map(([key, label]) =>
-          ({ id: key, label, className: 'numeric', render: row => cell(row, key) })),
-        { id: 'last-error', label: 'Last error', render: row => cell(row, 'last_error') }
-      ], 'No streaming destinations configured. Add a destination to get started.',
-      { type: 'streaming-destinations', sortable: false, mobileCards: true, tableClass: 'ui-mobile-cards ui-data-table-quiet' }));
+          open.className = 'link-button streaming-destination-name';
+          title.append(open);
+          identity.append(title, node('small', 'muted', row.provider_label));
+          const statuses = node('div', 'streaming-destination-statuses');
+          statuses.append(cell(row, 'state'), cell(row, 'enabled'));
+          header.append(identity, statuses);
+
+          const facts = node('dl', 'ui-facts streaming-destination-metrics');
+          [['queued', 'Queued'], ['sent', 'Sent / uploaded'], ['aged_off', 'Aged off'], ['errors', 'Errors']]
+            .forEach(([key, label]) => {
+              const fact = node('div', 'ui-fact');
+              fact.append(node('dt', '', label), node('dd', 'streaming-destination-value', null));
+              fact.lastElementChild.append(cell(row, key));
+              facts.append(fact);
+            });
+          const error = node('div', 'streaming-destination-error ui-notice ui-notice-danger');
+          error.append(node('strong', '', 'Last error'), cell(row, 'last_error'));
+          const footer = node('footer', 'streaming-destination-actions ui-action-row');
+          footer.append(button('Manage destination', () => openEditor(row.configuration_id)));
+          card.append(header, facts, error, footer);
+          return card;
+        }));
+      }
     }
     rows.forEach(row => {
       const target = cells.get(row.configuration_id);
       if (!target) return;
       target.state.replaceChildren(uiStatus(row.state_label, statusTone(row)));
+      target.enabled.replaceChildren(uiStatus(row.enabled ? 'Enabled' : 'Disabled', row.enabled ? 'success' : 'neutral'));
       ['queued', 'sent', 'aged_off', 'errors'].forEach(key => { target[key].textContent = count(row[key]); });
-      target.last_error.textContent = row.last_error || '—';
+      const error = target.last_error.closest('.streaming-destination-error');
+      target.last_error.textContent = row.last_error || '';
+      error.hidden = !row.last_error;
     });
-    const problemSignature = JSON.stringify(rows.filter(row => row.attention).map(row => [row.configuration_id, row.state]));
-    if (attention.dataset.signature !== problemSignature) {
-      attention.dataset.signature = problemSignature;
-      attention.replaceChildren(...rows.filter(row => row.attention).map(row => {
-        const item = feedback(`${row.name}: ${row.state_label}`, 'error');
-        item.append(button('Review', () => openEditor(row.configuration_id, 'status')));
-        return item;
-      }));
-    }
     freshness.textContent = 'Status updated just now';
   }
 
@@ -149,23 +165,28 @@ export function createStreamingWorkspace(deps) {
     const assignedOnly = select([['false', 'All aliases'], ['true', 'Assigned only']], 'false');
     const aliasRows = node('div');
     const aliasCount = node('span', 'muted');
-    const aliasPager = node('div', 'streaming-toolbar');
+    const aliasPager = node('div', 'streaming-alias-pager pager ui-pager');
     const previous = button('Previous', () => { aliasOffset = Math.max(0, aliasOffset - 50); void loadAliases(); });
     const next = button('Next', () => { aliasOffset += 50; void loadAliases(); });
-    const aliasQuery = node('form', 'streaming-toolbar');
+    const aliasQuery = node('form', 'streaming-alias-filters ui-catalog-toolbar');
     const searchButton = button('Search'); searchButton.type = 'submit';
+    searchButton.classList.add('streaming-alias-search');
     const queryFields = [formField('Search aliases', aliasSearch), formField('Show', uiSelectFrame(assignedOnly))];
     queryFields.forEach(field => field.classList.add('streaming-query-field'));
     aliasQuery.append(...queryFields, searchButton);
     aliasQuery.addEventListener('submit', event => { event.preventDefault(); aliasOffset = 0; void loadAliases(); });
     assignedOnly.addEventListener('change', () => { aliasOffset = 0; void loadAliases(); });
+    const aliasActions = node('div', 'streaming-alias-actions ui-selection-bar');
     const bulk = node('div', 'ui-action-row');
+    const aliasLayoutHost = node('div', 'streaming-alias-layout');
+    const aliasTableController = {};
     const selectVisible = value => aliasRows.querySelectorAll('input[type=checkbox]').forEach(control => {
       if (control.checked !== value) { control.checked = value; control.dispatchEvent(new Event('change')); }
     });
     bulk.append(button('Select visible', () => selectVisible(true)), button('Clear visible', () => selectVisible(false)));
-    aliasPager.append(aliasCount, previous, next);
-    aliasesPanel.append(aliasQuery, bulk, aliasRows, aliasPager,
+    aliasActions.append(aliasCount, bulk, aliasLayoutHost);
+    aliasPager.append(previous, next);
+    aliasesPanel.append(aliasQuery, aliasActions, aliasRows, aliasPager,
       node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved, up to 500 per save.'));
 
     function setBusy(value) {
@@ -304,7 +325,9 @@ export function createStreamingWorkspace(deps) {
           } },
           { id: 'identifier', label: 'Identifier', render: row => row.identifier },
           { id: 'list', label: 'Alias List', render: row => row.alias_list_name }
-        ], 'No matching aliases', { type: 'streaming-aliases', sortable: false, mobileCards: true, tableClass: 'ui-mobile-cards ui-data-table-quiet' }));
+        ], 'No matching aliases', { type: 'streaming-aliases', sortable: false, mobileCards: true,
+          tableClass: 'ui-mobile-cards ui-data-table-quiet', layoutMenuHost: aliasLayoutHost,
+          controller: aliasTableController }));
         aliasCount.textContent = result.total ? `${aliasOffset + 1}–${Math.min(aliasOffset + result.limit, result.total)} of ${formatNumber(result.total)}` : 'No aliases';
       } catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
       finally { if (alive && sequence === aliasSequence) { searchButton.disabled = false; previous.disabled = aliasOffset === 0; next.disabled = aliasOffset + 50 >= aliasTotal; } }
@@ -430,7 +453,8 @@ export function createStreamingWorkspace(deps) {
 
   actions.append(button('Find Broadcastify feeds', () => void findFeeds()), button('Add destination', () => void openEditor(), true));
   toolbar.append(summary, actions);
-  host.append(toolbar, message, tableHost, attention, note, freshness);
+  pageMeta.append(note, freshness);
+  host.append(toolbar, message, destinationHost, pageMeta);
   const dispose = () => { disposed = true; clearTimeout(timer); };
   signal?.addEventListener('abort', dispose, { once: true });
   void poll();

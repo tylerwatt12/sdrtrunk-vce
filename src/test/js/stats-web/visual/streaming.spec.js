@@ -52,6 +52,7 @@ async function install(page, theme = 'light', empty = false) {
     };
     const uiStatus = (label, tone = 'neutral') => node('span', `ui-status ui-status-${tone}`, label);
     const table = (values, columns, emptyText, options = {}) => {
+      options.controller?.layoutMenuCleanup?.();
       const wrapper = node('div', `table-wrap ui-table-wrap ${options.wrapperClass || ''}`.trim());
       const element = node('table', `data-table resizable-table ui-data-table ${options.tableClass || ''}`);
       element.dataset.tableType = options.type || 'generic';
@@ -92,6 +93,14 @@ async function install(page, theme = 'light', empty = false) {
         });
       }
       element.append(colgroup, head, tableBody);
+      if (options.layoutMenuHost) {
+        const layoutMenu = node('div', 'table-layout-menu table-layout-menu-inline');
+        const columnsButton = iconButton('icon-columns', 'Choose table columns',
+          'ui-button ui-button-secondary ui-icon-button table-layout-trigger');
+        layoutMenu.append(columnsButton);
+        options.layoutMenuHost.append(layoutMenu);
+        if (options.controller) options.controller.layoutMenuCleanup = () => layoutMenu.remove();
+      }
       wrapper.append(element);
       return wrapper;
     };
@@ -154,6 +163,8 @@ for(const theme of ['light','dark']) for(const mobile of [false,true]) {
     await page.setViewportSize(mobile?{width:390,height:844}:{width:1440,height:1000});
     await install(page,theme);
     await expect(page.getByRole('button',{name:'County Calls',exact:true})).toBeVisible();
+    await expect(page.locator('.streaming-destination-card')).toHaveCount(2);
+    await expect(page.locator('table[data-table-type="streaming-destinations"]')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(mobile?390:1440);
     await expect(page).toHaveScreenshot(`streaming-${theme}-${mobile?'mobile':'desktop'}.png`,{fullPage:true});
     await page.getByRole('button',{name:'County Calls',exact:true}).click();
@@ -186,16 +197,36 @@ test('partial settings preserve saved credentials and stale edits remain reviewa
 test('alias changes survive paging and save only explicit selections',async({page})=>{
   await install(page);await page.getByRole('button',{name:'County Calls',exact:true}).click();
   const modal=page.getByRole('dialog');await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await expect(modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true})).toBeVisible();
+  await expect(modal.getByRole('button',{name:'Choose table columns',exact:true})).toBeVisible();
+  await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
+  await expect(modal.locator('.streaming-alias-pager')).toHaveClass(/ui-pager/);
+  await expect(modal).toHaveScreenshot('streaming-aliases-light-desktop.png');
   await modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true}).uncheck();
   await modal.getByRole('button',{name:'Next',exact:true}).click();
   await modal.getByRole('checkbox',{name:'Send Dispatch 52 to this destination',exact:true}).check();
+  await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
   await modal.getByRole('button',{name:'Previous',exact:true}).click();
   await expect(modal.getByRole('checkbox',{name:'Send Dispatch 1 to this destination',exact:true})).not.toBeChecked();
+  await expect(modal.getByRole('button',{name:'Choose table columns',exact:true})).toBeVisible();
+  await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
   await expect(modal.getByRole('link',{name:'Dispatch 1',exact:true})).toHaveAttribute('href','/?view=aliases&list=7&alias=1');
   await modal.getByRole('button',{name:'Save assignments'}).click();
   await expect(modal.getByText('Changes saved.',{exact:true})).toBeVisible();
   const writes=await page.evaluate(()=>window.streamingTest.calls.filter(([path,options])=>path.endsWith('/aliases')&&options.method==='POST'));
   expect(writes[0][1].body).toEqual({revision:'1:1:1',add:[52],remove:[1]});
+});
+
+test('alias assignment workspace stays usable in dark mobile layout',async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await install(page,'dark');
+  await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal=page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Aliases',exact:true}).click();
+  await expect(modal.getByRole('button',{name:'Choose table columns',exact:true})).toBeVisible();
+  await expect(modal.locator('.table-layout-menu')).toHaveCount(1);
+  expect(await modal.evaluate(element=>element.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(modal).toHaveScreenshot('streaming-aliases-dark-mobile.png');
 });
 
 test('new destinations enable assignment tabs only after saving',async({page})=>{

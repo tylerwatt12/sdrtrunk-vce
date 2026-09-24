@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=4';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=5';
+import * as tableDefaults from './core/table-defaults.js?v=6';
 import { Controller as PageTitleController } from './core/page-title.js';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -15,8 +15,8 @@ import {
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import * as rfPlanner from './features/rf-planner.js?v=4';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=14';
-import { createStreamingWorkspace } from './features/streaming.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=1';
+import { createStreamingWorkspace } from './features/streaming.js?v=3';
+import { WebCallPlayer } from './web-call-player.js?v=2';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -5279,7 +5279,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter reviewed aliases');
   const rowsHost = node('div');
-  const pagerHost = node('div', 'toolbar ui-toolbar');
+  const pagerHost = node('div', 'pager ui-pager');
   const confirm = node('input'); confirm.type = 'checkbox';
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
   const reviewBack = node('button', 'ui-button ui-button-secondary', 'Back'); reviewBack.type = 'button';
@@ -9370,11 +9370,12 @@ function renderScannerCall(host, state, channelMetadata) {
     const wave = host.querySelector('.scanner-audio-wave');
     if (wave) {
       wave.classList.toggle('paused', !state.playing);
-      wave.setAttribute('aria-label', state.playing ? 'Audio playing' : 'Audio idle');
+      wave.setAttribute('aria-label', state.playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
     }
     return;
   }
   host.dataset.renderKey = renderKey;
+  host.classList.toggle('is-idle', !call);
   host.replaceChildren();
   if (!call) {
     const idle = node('div', 'scanner-idle');
@@ -9393,11 +9394,12 @@ function renderScannerCall(host, state, channelMetadata) {
     ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call, channelMetadata)),
     node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
   const wave = node('div', `scanner-audio-wave${state.playing ? '' : ' paused'}`);
-  for (let index = 0; index < 24; index++) wave.append(node('i'));
-  wave.setAttribute('aria-label', state.playing ? 'Audio playing' : 'Audio idle');
+  wave.setAttribute('role', 'img');
+  for (let index = 0; index < 64; index++) wave.append(node('i'));
+  wave.setAttribute('aria-label', state.playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
   const instruments = node('div', 'scanner-call-instruments');
-  instruments.append(scannerVoiceMeter(call), wave);
-  intro.append(copy, instruments);
+  instruments.append(scannerVoiceMeter(call));
+  intro.append(copy, instruments, wave);
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => scannerNavigate(call, channelMetadata, destination);
@@ -9649,7 +9651,7 @@ function renderScanner() {
   const scanButtons = node('div', 'scanner-scan-buttons');
   scanPanel.append(scanHeading, scanButtons);
 
-  chassis.append(statusBar, displayShell, controls, utility);
+  chassis.append(statusBar, controls, utility, displayShell);
   page.append(chassis, scanPanel);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
@@ -9728,24 +9730,24 @@ function renderScanner() {
   };
   const unsubscribe = player.subscribeState(draw);
   renderContext.signal?.addEventListener('abort', unsubscribe, { once: true });
-  const waveformLevels = new Float32Array(24);
-  let waveformFrame = null;
-  const drawWaveform = () => {
+  const spectrumLevels = new Float32Array(64);
+  let spectrumFrame = null;
+  const drawSpectrum = () => {
     if (!renderIsCurrent(renderContext)) return;
     const wave = display.querySelector('.scanner-audio-wave');
     if (wave) {
-      const playing = player.readAudioWaveform(waveformLevels);
+      const playing = player.readAudioSpectrum(spectrumLevels, 8_000);
       wave.classList.toggle('paused', !playing);
-      wave.setAttribute('aria-label', playing ? 'Audio playing' : 'Audio idle');
+      wave.setAttribute('aria-label', playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
       [...wave.children].forEach((bar, index) => {
-        bar.style.height = `${playing ? Math.round(3 + waveformLevels[index] * 31) : 3}px`;
+        bar.style.height = `${playing ? Math.round(3 + spectrumLevels[index] * 31) : 3}px`;
       });
     }
-    waveformFrame = window.requestAnimationFrame(drawWaveform);
+    spectrumFrame = window.requestAnimationFrame(drawSpectrum);
   };
-  waveformFrame = window.requestAnimationFrame(drawWaveform);
+  spectrumFrame = window.requestAnimationFrame(drawSpectrum);
   renderContext.signal?.addEventListener('abort', () => {
-    if (waveformFrame !== null) window.cancelAnimationFrame(waveformFrame);
+    if (spectrumFrame !== null) window.cancelAnimationFrame(spectrumFrame);
   }, { once: true });
   pageInterval(updateAge, 1_000);
   modeBar.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
@@ -10190,7 +10192,7 @@ function dashboardActivityRangeLabel(range) {
 }
 
 function dashboardActivityRadioPager(page, onOffset) {
-  const navigation = node('nav', 'pager dashboard-activity-radio-pager');
+  const navigation = node('nav', 'pager ui-pager dashboard-activity-radio-pager');
   navigation.setAttribute('aria-label', 'Source radio pagination');
   navigation.tabIndex = -1;
   const first = page.offset + (page.rows.length ? 1 : 0);
@@ -10270,15 +10272,15 @@ async function renderDashboardActivity(renderContext) {
   const showRadioPrompt = () => {
     if (!radioHost || !radioStatus || !radioTitle) return;
     radioTitle.textContent = 'Source radios';
+    radioStatus.textContent = '';
+    radioStatus.hidden = true;
     const historyNotice = detailedHistoryNotice();
     if (!detailedHistoryAvailable()) {
-      radioStatus.textContent = 'Saved activity is unavailable.';
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(historyNotice);
       return;
     }
-    radioStatus.textContent = 'Select an activity type to list source radios.';
     radioHost.setAttribute('aria-busy', 'false');
     cleanupTableLayoutMenu(radioTableController);
     radioHost.replaceChildren(node('div', 'empty', 'Select an activity type to list source radios.'));
@@ -10291,6 +10293,7 @@ async function renderDashboardActivity(renderContext) {
     const action = selectedAction;
     const actionLabel = selectedActionLabel || semanticLabel(action);
     radioTitle.textContent = `${actionLabel} · Source radios`;
+    radioStatus.hidden = false;
     const historyNotice = detailedHistoryNotice();
     if (!detailedHistoryAvailable()) {
       radioStatus.textContent = 'Saved activity is unavailable.';
@@ -10303,7 +10306,8 @@ async function renderDashboardActivity(renderContext) {
       radioRequest?.controller.abort();
       radioRequest?.unlink();
       radioRequest = null;
-      radioStatus.textContent = 'Radio access is required to list source radios.';
+      radioStatus.textContent = '';
+      radioStatus.hidden = true;
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(node('div', 'empty',
@@ -10312,10 +10316,11 @@ async function renderDashboardActivity(renderContext) {
     }
     const request = nextRequest(radioRequest);
     radioRequest = request;
-    radioStatus.textContent = `Loading ${actionLabel.toLowerCase()} source radios.`;
+    radioStatus.textContent = '';
+    radioStatus.hidden = true;
     radioHost.setAttribute('aria-busy', 'true');
     cleanupTableLayoutMenu(radioTableController);
-    radioHost.replaceChildren(node('div', 'loading', 'Loading source radios'));
+    radioHost.replaceChildren(node('div', 'loading', `Loading ${actionLabel.toLowerCase()} source radios…`));
     try {
       const page = await apiPage('/api/v1/activity/radios', {
         range: selectedRange, action, limit: 100, offset: selectedOffset
@@ -10325,6 +10330,7 @@ async function renderDashboardActivity(renderContext) {
       selectedOffset = page.offset;
       radioStatus.textContent = `${number(page.total_count)} source radio` +
         `${Number(page.total_count) === 1 ? '' : 's'} found for ${actionLabel}.`;
+      radioStatus.hidden = false;
       const result = node('div', 'dashboard-activity-radio-result');
       const pager = dashboardActivityRadioPager(page,
         (nextOffset) => void loadRadios(nextOffset, true));
@@ -10348,6 +10354,7 @@ async function renderDashboardActivity(renderContext) {
         return;
       }
       radioStatus.textContent = `${actionLabel} source radios could not be loaded.`;
+      radioStatus.hidden = false;
       const failure = asyncSectionFailure(error, 'Source radios could not be loaded.',
         () => loadRadios(selectedOffset, restorePagingFocus));
       cleanupTableLayoutMenu(radioTableController);
@@ -12602,7 +12609,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   readouts.setAttribute('aria-label', 'Spectrum measurements');
   const moreMeasurements = node('details', 'tuner-spectrum-more-measurements');
   const moreReadouts = node('div', 'tuner-spectrum-more-readouts channel-diagnostic-readouts');
-  moreMeasurements.append(node('summary', '', 'More measurements'), moreReadouts);
+  moreMeasurements.append(node('summary', 'ui-button ui-button-secondary', 'More measurements'), moreReadouts);
   const readoutPanel = node('div', 'tuner-spectrum-measurement-panel');
   readoutPanel.append(readouts, moreMeasurements);
   const visualWindow = node('div', 'tuner-spectrum-visual-window');
@@ -15641,10 +15648,12 @@ function p25ChannelFrequencyColumns() {
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
     { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state),
       sortValue: (row) => row.state || '' },
-    { id: 'voice-observations', label: 'Voice', fullLabel: 'Voice Grant Observations', key: 'voice_grant_observations',
-      className: 'numeric' },
-    { id: 'data-observations', label: 'Data', fullLabel: 'Data Grant Observations', key: 'data_grant_observations',
-      className: 'numeric' },
+    { id: 'voice-observations', label: 'Voice', fullLabel: 'Voice Grant Observations',
+      render: (row) => number(row.voice_grant_observations), className: 'numeric',
+      sortValue: (row) => Number(row.voice_grant_observations || 0) },
+    { id: 'data-observations', label: 'Data', fullLabel: 'Data Grant Observations',
+      render: (row) => number(row.data_grant_observations), className: 'numeric',
+      sortValue: (row) => Number(row.data_grant_observations || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -15665,7 +15674,8 @@ function trunkedChannelFrequencyColumns() {
     { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
       render: (row) => frequency(row.uplink_hz), className: 'numeric' },
     { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state) },
-    { id: 'snapshots', label: 'Snapshots', key: 'observation_count', className: 'numeric' },
+    { id: 'snapshots', label: 'Snapshots', render: (row) => number(row.observation_count),
+      className: 'numeric', sortValue: (row) => Number(row.observation_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => stackedDateTime(row.last_seen_ms) }
   ];
@@ -15722,7 +15732,9 @@ function p25ChannelNeighborColumns() {
     { id: 'bands', label: 'Bands', key: 'band_count', className: 'numeric' },
     { id: 'advertised-status', label: 'Status', fullLabel: 'Advertised Status',
       render: (row) => neighborStatus(row.status), sortValue: (row) => row.status || '' },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations',
+      render: (row) => number(row.observation_count), className: 'numeric',
+      sortValue: (row) => Number(row.observation_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
@@ -15755,7 +15767,9 @@ function trunkedChannelNeighborColumns(channel) {
       render: (row) => frequency(row.frequency_hz), className: 'numeric' },
     { id: 'status', label: 'Status', render: (row) => trunkedNeighborStatus(row.statuses) },
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
-    { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Observations',
+      render: (row) => number(row.observation_count), className: 'numeric',
+      sortValue: (row) => Number(row.observation_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms) }
   ];
@@ -15849,7 +15863,9 @@ function renderTrunkedChannelBandPlans(channel, data) {
   ];
   if (!overrideActive) homeBandColumns.push(
     { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state), sortValue: (row) => row.state || '' },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations',
+      render: (row) => number(row.observation_count), className: 'numeric',
+      sortValue: (row) => Number(row.observation_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   );
   const bandSource = badge(overrideActive ? 'P25 override' : 'OTA band plan',
@@ -15869,7 +15885,9 @@ function renderTrunkedChannelBandPlans(channel, data) {
     { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
     { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
     { id: 'state', label: 'State', render: (row) => compactStateBadge(row.state), sortValue: (row) => row.state || '' },
-    { id: 'observations', label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
+    { id: 'observations', label: 'Obs', fullLabel: 'Observations',
+      render: (row) => number(row.observation_count), className: 'numeric',
+      sortValue: (row) => Number(row.observation_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => stackedDateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
   ], 'No ISSI-advertised band plans recorded', { type: 'channel-foreign-frequency-bands',
     tableClass: 'ui-data-table-calm' }) :
@@ -15965,7 +15983,9 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
           memberValues(radios.get(row.local_patch_group_id), (member) => member.alias_name ?
             radioLink(member, member.local_radio_id, member.alias_name) : '', omittedMembers(row, 'radios')) },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Observations', key: 'observation_count', className: 'numeric' },
+      { id: 'observations', label: 'Observations',
+        render: (row) => number(row.observation_count), className: 'numeric',
+        sortValue: (row) => Number(row.observation_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ];
     if (groups.some((row) => Number(row.version))) columns.splice(2, 0,
@@ -16184,7 +16204,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable, titleActions);
   if (historyNotice) block.insertBefore(historyNotice, activityTable);
-  const controls = node('div', 'pager');
+  const controls = node('div', 'pager ui-pager');
   let newestControl = null;
   let olderControl = null;
   const pagerControl = (current, enabled, label, target) => {
@@ -17123,6 +17143,25 @@ function channelFrequencyLines(values) {
   return (values || []).map(channelMHz).join('\n');
 }
 
+function channelCreationProtocolLabel(profile) {
+  return profile?.id === 'p25-phase2' ? 'P25 Phase 2 TDMA Control Channel (Uncommon)' :
+    (profile?.label || profile?.id || 'Protocol');
+}
+
+function channelDefaultAliasListName(aliasFamily) {
+  const family = String(aliasFamily || '').trim().toUpperCase();
+  if (!family) return '';
+  return family === 'NBFM' ? 'Default Analog' : `Default ${family}`;
+}
+
+function channelCreationDefaults(channel, profile, options) {
+  const defaultName = channelDefaultAliasListName(profile?.alias_family).toLowerCase();
+  const defaultAliasList = (options?.alias_lists || []).find((entry) =>
+    entry.family === profile?.alias_family &&
+    String(entry.name || '').trim().toLowerCase() === defaultName);
+  return defaultAliasList ? { ...channel, alias_list_id: defaultAliasList.id } : channel;
+}
+
 function channelFieldOptions(field, profile, options) {
   if (Array.isArray(field.options)) return field.options;
   if (field.path === 'alias_list_id') return (options.alias_lists || [])
@@ -17772,6 +17811,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
     let profile = profiles.find((candidate) => candidate.id === entry?.channel?.protocol_id) || profiles[0];
     let channel = entry?.channel || await requestJson(
       `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
+    if (!editing) channel = channelCreationDefaults(channel, profile, options);
     let baselineChannel = structuredClone(channel);
     let templateGeneration = 0;
     const host = node('div');
@@ -17798,7 +17838,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
       }
       if (!editing) {
         const protocolSelect = uiSelect(profiles.map((candidate) =>
-          ({ value: candidate.id, label: candidate.label })), profile.id);
+          ({ value: candidate.id, label: channelCreationProtocolLabel(candidate) })), profile.id);
         protocolSelect.addEventListener('change', async () => {
           const generation = ++templateGeneration;
           modal.setBusy(true);
@@ -17807,8 +17847,8 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             const loaded = await requestJson(
               `/api/v1/admin/channels/protocols/${encodeURIComponent(profile.id)}/template`, { csrf: false });
             if (generation !== templateGeneration || activeReadOnlyModal !== modal.state) return;
-            channel = loaded;
-            baselineChannel = structuredClone(loaded);
+            channel = channelCreationDefaults(loaded, profile, options);
+            baselineChannel = structuredClone(channel);
             draw();
             modal.setDirty(false);
           } catch (error) {
@@ -20096,7 +20136,7 @@ function receiverHealthIncidentList(incidents, resolved = false) {
 }
 
 function receiverHealthResolvedPager(page, onPage) {
-  const navigation = node('nav', 'pager receiver-health-resolved-pager');
+  const navigation = node('nav', 'pager ui-pager receiver-health-resolved-pager');
   navigation.setAttribute('aria-label', 'Recently cleared issues');
   navigation.dataset.receiverHealthFocus = 'resolved-pager';
   navigation.tabIndex = -1;

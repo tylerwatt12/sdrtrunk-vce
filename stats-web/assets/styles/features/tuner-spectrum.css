@@ -134,7 +134,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(260px, 1fr) auto;
-  align-items: end;
+  align-items: center;
   gap: var(--space-4);
   padding: var(--space-4);
   background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
@@ -155,6 +155,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-toolbar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
 }
 
@@ -783,17 +784,8 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-more-measurements summary {
-  min-height: var(--control-height-compact);
-  display: flex;
-  align-items: center;
-  padding: 6px 10px;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
+  --ui-control-height: var(--control-height-compact);
+  font-size: var(--font-size-meta);
 }
 
 .tuner-spectrum-more-readouts {
@@ -804,7 +796,9 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   right: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: var(--space-2);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
@@ -818,7 +812,18 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 .tuner-spectrum-more-readouts .channel-diagnostic-readout {
   min-width: 0;
   display: grid;
-  padding: var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.tuner-spectrum-more-readouts .channel-diagnostic-readout:nth-child(2n) {
+  border-right: 0;
+}
+
+.tuner-spectrum-more-readouts .channel-diagnostic-readout:nth-last-child(-n + 2) {
+  border-bottom: 0;
 }
 
 .tuner-spectrum-readouts .channel-diagnostic-readout small {

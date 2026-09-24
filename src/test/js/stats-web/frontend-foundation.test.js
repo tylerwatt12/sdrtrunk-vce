@@ -491,13 +491,22 @@ async function main() {
   assert.match(functionBinding(appSource, 'dashboardActivityMix'),
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
   assert.match(functionBinding(appSource, 'dashboardActivityRadioPager'),
-    /ui-button ui-button-secondary/);
+    /pager ui-pager dashboard-activity-radio-pager[\s\S]+ui-button ui-button-secondary/);
+  const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
+  assert.match(dashboardActivity,
+    /radioStatus\.textContent = '';\s*radioStatus\.hidden = true;[\s\S]+Loading \$\{actionLabel\.toLowerCase\(\)\} source radios…/,
+    'Dashboard activity must show one loading or prompt treatment instead of duplicate status rows');
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
   assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary ui-icon-button/);
   assert.match(tunerSpectrumPanel, /ui-button ui-button-secondary tuner-spectrum-options-summary/);
+  assert.match(tunerSpectrumPanel,
+    /node\('summary', 'ui-button ui-button-secondary', 'More measurements'\)/);
   assert.match(tunerSpectrumPanel, /const optionToggle = \(checked, label, detail\)[\s\S]+uiToggle\(checked, label\)/);
   assert.match(tunerSpectrumPanel, /tuner-spectrum-options-header/);
   assert.match(tunerSpectrumPanel, /uiSelectFrame\(targetSelect\)/);
+  assert.match(functionBinding(appSource, 'renderActivity'), /node\('div', 'pager ui-pager'\)/);
+  assert.match(functionBinding(appSource, 'receiverHealthResolvedPager'),
+    /pager ui-pager receiver-health-resolved-pager/);
   const coverageSource = functionBinding(appSource, 'renderAliasCoverageDirectory');
   const embeddedDirectoryPanel = functionBinding(appSource, 'radioDirectoryEmbeddedPanel');
   assert.match(embeddedDirectoryPanel, /radio-directory-panel-body/);
@@ -1041,7 +1050,18 @@ async function main() {
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequencies-p25', compactColumns,
     [130, 94, 86], { descriptor: 130 }, 400), [130, 94, 86]);
   assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
-    [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 94]);
+    [{ id: 'band' }, { id: 'base' }], [48, 94], {}, 400), [48, 352]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
+    [{ id: 'band' }, { id: 'base' }], [48, 94], { base: 94 }, 400), [48, 94]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
+    [{ id: 'band' }, { id: 'base' }, { id: 'last-seen' }], [48, 94, 116], { base: 94 }, 400),
+    [48, 94, 258]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands',
+    [{ id: 'band' }, { id: 'base' }, { id: 'last-seen' }], [48, 94, 116],
+    { base: 94, 'last-seen': 116 }, 400), [48, 94, 116]);
+  assert.deepEqual(tableDefaults.fittedWidths('channel-frequency-bands-override',
+    [{ id: 'band' }, { id: 'base' }, { id: 'offset' }], [48, 94, 92], { offset: 92 }, 400),
+    [48, 260, 92]);
   assert.equal(tableDefaults.width('channel-frequency-bands', { id: 'band' }), 64);
   assert.deepEqual(tableDefaults.layout('example', [{ id: 'calls' }, { id: 'name' }]), {
     schema: ['calls', 'name'], column_order: ['calls', 'name'],

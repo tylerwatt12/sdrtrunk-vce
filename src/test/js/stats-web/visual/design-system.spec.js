@@ -283,6 +283,21 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
+for(const [name, theme, viewport] of [
+  ['tuner-more-measurements-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['tuner-more-measurements-dark-mobile', 'dark', { width: 390, height: 844 }],
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=tuner-spectrum`);
+    await page.locator('.tuner-spectrum-options > summary').click();
+    await page.locator('.tuner-spectrum-more-measurements > summary').click();
+    await expect(page.locator('.tuner-spectrum-more-measurements')).toHaveAttribute('open', '');
+    await expect(page.locator('.tuner-spectrum-more-readouts')).toBeVisible();
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
 test('tuner-frequency-popover-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 720 });
   await page.goto('/design-system.html?theme=light&view=tuner-frequency-popover');
@@ -310,6 +325,9 @@ test('rf-planner-light-mobile', async ({ page }) => {
 test('scanner-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=scanner');
+  await expect(page.locator('.scanner-audio-wave > i')).toHaveCount(64);
+  expect(await page.locator('.scanner-workspace > *').evaluateAll((elements) => elements.map((element) => element.className)))
+    .toEqual(['scanner-status-bar', 'scanner-controls', 'scanner-utility-row', 'scanner-display-shell']);
   await expect(page.locator('body')).toHaveScreenshot('scanner-light-desktop.png', { fullPage: true });
 });
 

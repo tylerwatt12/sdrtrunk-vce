@@ -17,10 +17,6 @@ const COLUMN_WIDTHS = Object.freeze({
 });
 
 const TABLE_DEFAULTS = Object.freeze({
-  'streaming-destinations': {
-    widths: { name: 260, status: 180, queued: 80, sent: 132, aged_off: 85, errors: 75, 'last-error': 220 },
-    grow: ['name', 'last-error']
-  },
   'streaming-aliases': {
     widths: { selected: 88, name: 220, identifier: 145, list: 230 },
     grow: ['name', 'list']
@@ -35,12 +31,12 @@ const TABLE_DEFAULTS = Object.freeze({
   'channel-frequency-bands': {
     widths: { band: 64, base: 94, spacing: 68, bandwidth: 68, offset: 92,
       tdma: 60, slots: 56, state: 82, observations: 76, 'last-seen': 116 },
-    hidden: ['tdma'], grow: []
+    hidden: ['tdma'], grow: ['base', 'last-seen']
   },
   'channel-frequency-bands-override': {
     widths: { band: 64, base: 94, spacing: 68, bandwidth: 68, offset: 92,
       tdma: 60, slots: 56 },
-    hidden: ['tdma'], grow: []
+    hidden: ['tdma'], grow: ['base', 'offset']
   },
   'channel-catalog-admin-v1': {
     widths: { select: 48, name: 300, frequency: 260, protocol: 160,
@@ -84,8 +80,12 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { name: 220, identity: 180, calls: 80, signals: 85, first: 190, heard: 190 },
     grow: ['name', 'identity']
   },
-  'action-counts': { widths: { action: 160, count: 110 }, grow: [] },
-  'system-action-observations': { widths: { action: 160, observations: 110 }, grow: [] },
+  'action-counts': {
+    widths: { action: 160, count: 110 }, grow: ['action']
+  },
+  'system-action-observations': {
+    widths: { action: 160, observations: 110 }, grow: ['action']
+  },
   'radio-system-channels': {
     widths: { name: 180, details: 260, 'control-frequency': 100,
       channels: 56, neighbors: 56, 'last-seen': 174 },
@@ -94,7 +94,7 @@ const TABLE_DEFAULTS = Object.freeze({
   'dashboard-call-sources': {
     widths: { receiver: 300, mode: 80, 'logical-calls': 85,
       'recorded-logical-calls': 70, 'stream-submitted-logical-calls': 90 },
-    grow: ['receiver'], maxWidth: 900
+    grow: ['receiver']
   },
   'dashboard-destinations': {
     widths: { identity: 190, system: 200, mode: 80, 'logical-calls': 85,

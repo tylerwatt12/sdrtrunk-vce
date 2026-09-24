@@ -61,6 +61,25 @@ async function main() {
     assert.equal(presentation.displayCall(), null,
       'Releasing Hold must remove the retained call details');
 
+    const spectrum = Object.assign(Object.create(WebCallPlayer.prototype), {
+      paused: false,
+      source: {},
+      spectrumSamples: null,
+      audioContext: { state: 'running', sampleRate: 48_000 },
+      analyserNode: {
+        frequencyBinCount: 256,
+        getByteFrequencyData(samples) {
+          samples.fill(0);
+          samples.fill(128, 1, 86);
+          samples[200] = 255;
+        }
+      }
+    });
+    const spectrumLevels = new Float32Array(40);
+    assert.equal(spectrum.readAudioSpectrum(spectrumLevels, 8_000), true);
+    assert.ok(spectrumLevels.every((level) => level > 0 && level < 1),
+      'The Scanner visualizer must spread the voice band across its full width and ignore higher bins');
+
     const queuePlayer = Object.create(WebCallPlayer.prototype);
     Object.assign(queuePlayer, {
       queuedCalls: [],
