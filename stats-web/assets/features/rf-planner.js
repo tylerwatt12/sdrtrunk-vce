@@ -41,7 +41,7 @@ const PROFILES = Object.freeze({
   'sdrplay-duo': { label: 'SDRplay RSPduo · dual mode', rates: RSP_DUO_RATES.map((row) => row[0]),
     defaultRate: 2000000, usableHzForRate: (rate) => RSP_DUO_RATES.find((row) => row[0] === rate)?.[1],
     dc: 0, min: 100000, max: 2000000000 },
-  custom: { label: 'Custom sdrtrunk profile', rates: [2400000], defaultRate: 2400000, usable: 0.98,
+  custom: { label: 'Custom VCE profile', rates: [2400000], defaultRate: 2400000, usable: 0.98,
     dc: 5000, min: 0, max: 6000000000, custom: true }
 });
 
@@ -661,7 +661,7 @@ function createPlanner(loadTunerRows = null) {
       }
       if (!(hardware.min >= 0 && hardware.max > hardware.min)) errors.push(`${prefix} the tuning range is invalid.`);
       if (!channelizerGrid(hardware.rate)) {
-        errors.push(`${prefix} the sample rate is too low for sdrtrunk.`);
+        errors.push(`${prefix} the sample rate is too low for VCE.`);
       }
     });
     if (errors.length) {
@@ -673,7 +673,7 @@ function createPlanner(loadTunerRows = null) {
     if (rejected.length) {
       warnings.push(`${rejected.length} channel${rejected.length === 1 ? '' : 's'} could not be covered with these tuners: ${rejected.map((channel) => `${formatMHz(channel.frequency)} MHz`).join(', ')}.`);
     }
-    warnings.push('This plan assumes the listed channels need coverage at the same time. sdrtrunk may choose a different center frequency while a tuner is already in use.');
+    warnings.push('This plan assumes the listed channels need coverage at the same time. VCE may choose a different center frequency while a tuner is already in use.');
     const assigned = parsed.channels.length - rejected.length;
     results.innerHTML = `<div class="rfp-result-stack"><section class="rfp-summary ui-metric-grid" aria-label="Plan summary">
       ${summaryMetric('Channels entered', parsed.channels.length, 'icon-conventional')}
@@ -786,7 +786,7 @@ function createPlanner(loadTunerRows = null) {
     tunerSource.hidden = true;
   }
   const checks = modelChecks();
-  if (!checks.every(Boolean)) console.error('sdrtrunk RF planner self-test failed', checks);
+  if (!checks.every(Boolean)) console.error('VCE RF planner self-test failed', checks);
   return root;
 }
 

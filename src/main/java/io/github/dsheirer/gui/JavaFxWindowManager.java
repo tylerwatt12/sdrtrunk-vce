@@ -280,7 +280,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(getRecordingViewer(), 1100, 800);
             ThemeManager.getInstance().register(scene);
             mRecordingViewerStage = new Stage();
-            mRecordingViewerStage.setTitle("sdrtrunk-vce - Message Recording Viewer (.bits)");
+            mRecordingViewerStage.setTitle("VCE - Message Recording Viewer (.bits)");
             mRecordingViewerStage.setScene(scene);
             ApplicationIcon.apply(mRecordingViewerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mRecordingViewerStage, STAGE_MONITOR_KEY_RECORDING_VIEWER);
@@ -307,7 +307,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(getLogicalCallMonitor(), 1400, 800);
             ThemeManager.getInstance().register(scene);
             mLogicalCallMonitorStage = new Stage();
-            mLogicalCallMonitorStage.setTitle("sdrtrunk-vce - Call Matching Monitor");
+            mLogicalCallMonitorStage.setTitle("VCE - Call Matching Monitor");
             mLogicalCallMonitorStage.setScene(scene);
             mLogicalCallMonitorStage.setMinWidth(900);
             mLogicalCallMonitorStage.setMinHeight(600);
@@ -338,7 +338,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(getIconManager(), 500, 500);
             ThemeManager.getInstance().register(scene);
             mIconManagerStage = new Stage();
-            mIconManagerStage.setTitle("sdrtrunk-vce - Icon Manager");
+            mIconManagerStage.setTitle("VCE - Icon Manager");
             mIconManagerStage.setScene(scene);
             ApplicationIcon.apply(mIconManagerStage);
             mUserPreferences.getJavaFxPreferences().monitor(mIconManagerStage, STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR);
@@ -387,7 +387,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(getJmbeEditor(), 650, 650);
             ThemeManager.getInstance().register(scene);
             mJmbeEditorStage = new Stage();
-            mJmbeEditorStage.setTitle("sdrtrunk-vce - JMBE Library Updater");
+            mJmbeEditorStage.setTitle("VCE - JMBE Library Updater");
             mJmbeEditorStage.setOnHidden(event -> { if(mJmbeEditor != null) mJmbeEditor.cancelCreation(); });
             mJmbeEditorStage.setScene(scene);
             ApplicationIcon.apply(mJmbeEditorStage);
@@ -464,7 +464,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(mUserPreferencesLoadingShell.root(), 900, 500);
             ThemeManager.getInstance().register(scene);
             mUserPreferencesStage = new Stage();
-            mUserPreferencesStage.setTitle("sdrtrunk-vce - User Preferences");
+            mUserPreferencesStage.setTitle("VCE - User Preferences");
             mUserPreferencesStage.setScene(scene);
             ApplicationIcon.apply(mUserPreferencesStage);
             mUserPreferences.getJavaFxPreferences().monitor(mUserPreferencesStage, STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR);
@@ -645,7 +645,7 @@ public class JavaFxWindowManager extends Application
             Scene scene = new Scene(getEncryptionKeyPreferenceEditor(), 900, 500);
             ThemeManager.getInstance().register(scene);
             mEncryptionKeyStage = new Stage();
-            mEncryptionKeyStage.setTitle("sdrtrunk-vce - Encryption Keys");
+            mEncryptionKeyStage.setTitle("VCE - Encryption Keys");
             mEncryptionKeyStage.setScene(scene);
             ApplicationIcon.apply(mEncryptionKeyStage);
             mUserPreferences.getJavaFxPreferences().monitor(mEncryptionKeyStage, STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR);

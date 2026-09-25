@@ -218,7 +218,7 @@ public class IcecastTCPAudioBroadcaster extends IcecastAudioBroadcaster<IcecastT
                         {
                             if(mVerboseLogging)
                             {
-                                mLog.info("Socket error.  This usually indicates sdrtrunk can't reach the server " +
+                                mLog.info("Socket error.  This usually indicates VCE can't reach the server " +
                                         "address over the current network connection.  Setting state to " +
                                         "NETWORK UNAVAILABLE", rioe);
                             }

@@ -33,7 +33,7 @@ public final class StreamingAdminHttpController
         catch(StreamingAdministrationService.NotInitializedException exception)
         { sendError(exchange,503,"configuration_loading","Configuration is still loading"); }
         catch(ConfigurationManager.ConfigurationPublicationException exception)
-        { sendError(exchange,503,"publication_failed","Settings were saved but could not be applied. Restart SDRTrunk"); }
+        { sendError(exchange,503,"publication_failed","Settings were saved but could not be applied. Restart VCE"); }
         catch(ConfigurationManager.ConfigurationCommitException exception)
         { sendError(exchange,503,"storage_unavailable","The change could not be saved. The previous settings remain active"); }
         catch(IllegalArgumentException exception)

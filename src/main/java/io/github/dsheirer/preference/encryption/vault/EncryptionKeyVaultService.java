@@ -170,7 +170,7 @@ public class EncryptionKeyVaultService
 
         if(!Files.isRegularFile(mVaultPath))
         {
-            throw new EncryptionKeyVaultException("Encryption vault schema is missing. Restart SDRTrunk so startup " +
+            throw new EncryptionKeyVaultException("Encryption vault schema is missing. Restart VCE so startup " +
                 "schema preparation can create it.");
         }
 

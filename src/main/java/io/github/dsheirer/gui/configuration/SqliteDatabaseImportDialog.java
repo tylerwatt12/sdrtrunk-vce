@@ -49,7 +49,7 @@ public final class SqliteDatabaseImportDialog
         JFileChooser chooser = new JFileChooser(initialDirectory != null ? initialDirectory.toFile() : null);
         chooser.setDialogTitle(TITLE);
         chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
-        chooser.setFileFilter(new FileNameExtensionFilter("SDRTrunk SQLite Database (*.sqlite, *.db)",
+        chooser.setFileFilter(new FileNameExtensionFilter("VCE SQLite Database (*.sqlite, *.db)",
             "sqlite", "db"));
 
         if(chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION)
@@ -108,8 +108,8 @@ public final class SqliteDatabaseImportDialog
                 "optional modules, and other files will not be copied. Existing non-database files in the active " +
                 "portable data folder will remain in place. Stored portable paths in a database-only import are " +
                 "not remapped. If no usable administrator credential can be preserved, setup will require a new " +
-                "administrator password when SDRTrunk restarts.\n\n" +
-                "Receiving is stopped during setup. SDRTrunk will perform the replacement and restart automatically " +
+                "administrator password when VCE restarts.\n\n" +
+                "Receiving is stopped during setup. VCE will perform the replacement and restart automatically " +
                 "into setup to review the imported settings before receiving resumes." +
                 "\n\nSelected SQLite database:\n" + source +
                 "\n\nActive database to replace:\n" + activeDatabase.toAbsolutePath().normalize() +

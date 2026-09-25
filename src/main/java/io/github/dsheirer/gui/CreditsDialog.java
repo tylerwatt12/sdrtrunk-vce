@@ -68,7 +68,7 @@ public class CreditsDialog extends JDialog
             <html><body style="font-family:sans-serif;margin:12px;color:#18212a">
             <h1 style="font-size:20px">%s</h1>
             <p><b>Copyright &copy; 2014-2026 Dennis Sheirer and respective contributors.</b></p>
-            <p>sdrtrunk-vce is a modified version of <a href="https://github.com/DSheirer/sdrtrunk">SDRTrunk</a>,
+            <p>VCE is a modified version of <a href="https://github.com/DSheirer/sdrtrunk">SDRTrunk</a>,
             created by Dennis Sheirer. It includes work from SDRTrunk contributors and optimization and platform work
             associated with the <a href="https://github.com/bazineta/sdrtrunk">W6BAZ experimental fork</a>.</p>
             <h2 style="font-size:16px">License</h2>
@@ -140,7 +140,7 @@ public class CreditsDialog extends JDialog
 
     private String escape(String value)
     {
-        return value == null ? "sdrtrunk-vce" : value.replace("&", "&amp;").replace("<", "&lt;")
+        return value == null ? "VCE" : value.replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace("\"", "&quot;");
     }
 }

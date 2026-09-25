@@ -11,9 +11,9 @@ import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
   isReceiverHealthAlertEnabled
-} from './core/receiver-health-alerts.js';
+} from './core/receiver-health-alerts.js?v=2';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import * as rfPlanner from './features/rf-planner.js?v=4';
+import * as rfPlanner from './features/rf-planner.js?v=5';
 import {
   createAliasList,
   createInlineAliasListCreator as buildInlineAliasListCreator
@@ -21309,7 +21309,7 @@ function openStatusIconSettings(returnFocusSelector = null) {
   footer.append(message, actions);
   form.append(node('p', 'health-alert-settings-intro',
     'Choose which issues appear in the status icon at the top of the page. ' +
-    'Hiding an issue here changes only your icon. sdrtrunk-vce still monitors it, and current or recently cleared ' +
+    'Hiding an issue here changes only your icon. VCE still monitors it, and current or recently cleared ' +
     'issues still appear on Receiver status.'),
     settingsCardGrid(...cards), footer);
   const modal = openReadOnlyModal('Status icon choices', form, {
@@ -22231,7 +22231,7 @@ function renderCredits() {
   const project = node('div', 'credits-copy');
   project.append(node('p', '', 'Copyright © 2014-2026 Dennis Sheirer and respective contributors.'));
   const lineage = node('p');
-  lineage.append('sdrtrunk-vce is a modified version of ',
+  lineage.append('VCE is a modified version of ',
     externalAnchor('SDRTrunk', 'https://github.com/DSheirer/sdrtrunk'),
     ', created by Dennis Sheirer. It includes work from SDRTrunk contributors and optimization and platform work ',
     'associated with the ', externalAnchor('W6BAZ experimental fork', 'https://github.com/bazineta/sdrtrunk'), '.');

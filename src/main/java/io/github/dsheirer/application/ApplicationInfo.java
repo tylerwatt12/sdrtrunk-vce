@@ -15,7 +15,7 @@ import java.util.jar.Manifest;
  */
 public final class ApplicationInfo
 {
-    private static final String PRODUCT_NAME = "sdrtrunk-vce";
+    private static final String PRODUCT_NAME = "VCE";
     private static final String VERSION = "Implementation-Version";
     private static final String BUILD_TIMESTAMP = "Build-Timestamp";
     private static final String UPDATE_TRACK = "Update-Track";

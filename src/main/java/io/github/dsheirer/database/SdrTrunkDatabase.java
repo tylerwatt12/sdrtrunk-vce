@@ -96,7 +96,7 @@ public final class SdrTrunkDatabase
     {
         if(!java.nio.file.Files.isRegularFile(databasePath))
         {
-            throw new IOException("SDRTrunk SQLite database schema is missing: " + databasePath +
+            throw new IOException("VCE SQLite database schema is missing: " + databasePath +
                 ". Startup schema preparation must run before opening SQLite stores.");
         }
     }

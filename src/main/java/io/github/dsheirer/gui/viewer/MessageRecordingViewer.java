@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.viewer;
 
+import io.github.dsheirer.gui.ApplicationIcon;
 import io.github.dsheirer.preference.UserPreferences;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -179,8 +180,10 @@ public class MessageRecordingViewer extends VBox
             public void start(Stage primaryStage) throws Exception
             {
                 Scene scene = new Scene(new MessageRecordingViewer(), 1100, 800);
-                primaryStage.setTitle("Message Recording Viewer (.bits)");
+                primaryStage.setTitle("VCE - Message Recording Viewer (.bits)");
                 primaryStage.setScene(scene);
+                ApplicationIcon.applyTaskbarIcon();
+                ApplicationIcon.apply(primaryStage);
                 primaryStage.show();
             }
         };

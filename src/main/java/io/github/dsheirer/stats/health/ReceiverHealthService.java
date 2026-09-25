@@ -358,7 +358,7 @@ public final class ReceiverHealthService implements AutoCloseable
                     mIncidents.observe("receiver-iq-drop", "critical", "Radio data was lost before decoding", display,
                         now, nativeStatus.droppedBuffers(), nativeDropDelta + " new buffers; " +
                             nativeStatus.droppedMilliseconds() + " ms discarded since start",
-                        "The tuner delivered data faster than sdrtrunk-vce could process it",
+                        "The tuner delivered data faster than VCE could process it",
                         "Every channel using this tuner may lose sync or have missing audio",
                         "Check the USB connection, computer load, memory-cleanup activity, and incoming radio-data backlog");
                 }
@@ -371,7 +371,7 @@ public final class ReceiverHealthService implements AutoCloseable
                         display, now, nativeStatus.highWaterMilliseconds(), "current=" +
                             nativeStatus.queuedMilliseconds() + " ms; capacity=" +
                             nativeStatus.appliedDurationMilliseconds() + " ms",
-                        "Radio data is arriving faster than sdrtrunk-vce can process it",
+                        "Radio data is arriving faster than VCE can process it",
                         "If this continues, every channel using this tuner may lose data",
                         "Check USB delivery, computer load, memory-cleanup activity, channel separation, and the number of active channels");
                 }
@@ -386,7 +386,7 @@ public final class ReceiverHealthService implements AutoCloseable
                 {
                     mIncidents.observe("channelizer-drop", "critical", "Channels lost radio data",
                         display, now, pipeline.ifftDroppedBatches(), ifftDropDelta + " new channelizer batches",
-                        "sdrtrunk-vce ran out of room while separating this tuner's data into channels",
+                        "VCE ran out of room while separating this tuner's data into channels",
                         "Every channel using this tuner may have missing radio data",
                         "Check computer load, memory-cleanup activity, and per-channel backlogs; close unused diagnostic views or reduce active channels");
                 }
@@ -728,10 +728,10 @@ public final class ReceiverHealthService implements AutoCloseable
 
         long gcIntervalMs = mLastGcCollectionTimeMs >= 0 ? Math.max(0, gcTimeMs - mLastGcCollectionTimeMs) : 0;
         mLastGcCollectionTimeMs = gcTimeMs;
-        rows.add(row("host", "sdrtrunk-vce processor use", Double.isFinite(cpuPercent) ? round(cpuPercent) : "n/a", "%",
+        rows.add(row("host", "VCE processor use", Double.isFinite(cpuPercent) ? round(cpuPercent) : "n/a", "%",
             Double.isFinite(cpuPercent) && cpuPercent >= 90 ? "warning" : "healthy",
             "share of the computer's total processor capacity"));
-        rows.add(row("host", "sdrtrunk-vce memory use", round(heapPercent), "%", heapPercent >= 90 ? "critical" :
+        rows.add(row("host", "VCE memory use", round(heapPercent), "%", heapPercent >= 90 ? "critical" :
             heapPercent >= 80 ? "warning" : "healthy", "used=" + heapUsed + " bytes; max=" + heapMaximum +
                 " bytes"));
         rows.add(row("host", "Time spent freeing memory", gcIntervalMs, "ms in last sample",
@@ -748,7 +748,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(sustained("host:heap", heapPercent >= 90, now))
         {
-            mIncidents.observe("heap-pressure", "critical", "sdrtrunk-vce is low on memory", "Host", now, 1,
+            mIncidents.observe("heap-pressure", "critical", "VCE is low on memory", "Host", now, 1,
                 round(heapPercent) + "% of maximum heap",
                 "Waiting output work, too little memory assigned to the app, or an unexpected increase in memory use",
                 "Long memory-cleanup pauses can interrupt USB data and channel decoding",
@@ -757,7 +757,7 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(gcIntervalMs >= 500)
         {
-            mIncidents.observe("gc-pause", "warning", "sdrtrunk-vce spent extra time freeing memory", "Host", now,
+            mIncidents.observe("gc-pause", "warning", "VCE spent extra time freeing memory", "Host", now,
                 gcTimeMs, gcIntervalMs + " ms in the last sample", "High memory use or a burst of activity",
                 "This extra work can make incoming radio data and channel processing fall behind",
                 "Compare this with memory use, incoming radio-data backlogs, and open diagnostic views");

@@ -146,7 +146,7 @@ public class ApplicationLog
 
             Attributes atts = findManifestAttributes();
             if (atts != null) {
-                mLog.info("sdrtrunk-vce Version  : " + atts.getValue("Implementation-Version"));
+                mLog.info("VCE Version           : " + atts.getValue("Implementation-Version"));
                 mLog.info("Gradle Version    : " + atts.getValue("Created-By"));
                 mLog.info("Build Timestamp   : " + atts.getValue("Build-Timestamp"));
                 mLog.info("Build-JDK         : " + atts.getValue("Build-JDK"));
@@ -158,8 +158,8 @@ public class ApplicationLog
 
             mLog.info("");
             mLog.info("*******************************************************************");
-            mLog.info("**** sdrtrunk: a trunked radio and digital decoding application ***");
-            mLog.info("****  website: https://github.com/dsheirer/sdrtrunk             ***");
+            mLog.info("**** VCE: a trunked radio and digital decoding application ********");
+            mLog.info("****  website: https://github.com/tylerwatt12/sdrtrunk-vce      ***");
             mLog.info("*******************************************************************");
             mLog.info("Memory Logging Format: [Used/Allocated PercentUsed%]");
             mLog.info("Host OS Name:          " + System.getProperty("os.name"));

@@ -332,7 +332,7 @@ jar {
     manifest {
         attributes (
                 'Class-Path'            : runtimeManifestClassPath,
-                'Implementation-Title'  : 'sdrtrunk-vce project',
+                'Implementation-Title'  : 'VCE project',
                 'Implementation-Version' : archiveVersion,
                 'Update-Track'           : updateTrack,
                 'Update-Build'           : updateBuild,
@@ -472,7 +472,7 @@ def runtimeTargets = [
                 size: 145580094L,
                 sha256: '3f28b269a6e29a77187546da32eb2474fd4b8f4c8b73b7bb1c934d5f9b98bb8f',
                 releaseArchitecture: 'aarch64',
-                rootLauncher: 'Start SDRTrunk VCE.sh',
+                rootLauncher: 'Start VCE.sh',
                 windows: false
         ],
         [
@@ -485,7 +485,7 @@ def runtimeTargets = [
                 size: 142411056L,
                 sha256: '5dd2f7ef72c66b095f3c29ba1c2944e3b651870d534f4745ef46936d3d3447c8',
                 releaseArchitecture: 'x86_64',
-                rootLauncher: 'Start SDRTrunk VCE.sh',
+                rootLauncher: 'Start VCE.sh',
                 windows: false
         ],
         [
@@ -498,7 +498,7 @@ def runtimeTargets = [
                 size: 122063016L,
                 sha256: '72442fad43060b0e2f94b6559d5b375ccb45182b1b291d2e03c74eb7672c8383',
                 releaseArchitecture: 'aarch64',
-                rootLauncher: 'Start SDRTrunk VCE.command',
+                rootLauncher: 'Start VCE.command',
                 windows: false
         ],
         [
@@ -511,7 +511,7 @@ def runtimeTargets = [
                 size: 127114406L,
                 sha256: 'f928dd4a3d3b726645a03d2b987803b9163592c8a29a5e4cf0598136daa6a04e',
                 releaseArchitecture: 'x86_64',
-                rootLauncher: 'Start SDRTrunk VCE.command',
+                rootLauncher: 'Start VCE.command',
                 windows: false
         ],
         [
@@ -524,7 +524,7 @@ def runtimeTargets = [
                 size: 48590725L,
                 sha256: '2276f80f1a4dbbe531379a38cf00cb91ed79ce057dbc70f5cf2b53f5d24402ee',
                 releaseArchitecture: 'aarch64',
-                rootLauncher: 'Start SDRTrunk VCE.bat',
+                rootLauncher: 'Start VCE.bat',
                 windows: true
         ],
         [
@@ -537,7 +537,7 @@ def runtimeTargets = [
                 size: 118973801L,
                 sha256: '0d855829d51b49dd7a54bf0be930408ebbff8bbd487fdac287237468f2cd33c0',
                 releaseArchitecture: 'x86_64',
-                rootLauncher: 'Start SDRTrunk VCE.bat',
+                rootLauncher: 'Start VCE.bat',
                 windows: true
         ]
 ]
@@ -651,7 +651,7 @@ def verifyRuntimePackage = { Map target, File archive ->
         }
 
         def rootLaunchers = entries.findAll { entry ->
-            !entry.directory && entry.name.startsWith("${root}/Start SDRTrunk VCE.")
+            !entry.directory && entry.name.startsWith("${root}/Start VCE.")
         }*.name as Set
         Set<String> expectedRootLaunchers = ["${root}/${target.rootLauncher}"] as Set
 
@@ -737,6 +737,36 @@ def verifyRuntimePackage = { Map target, File archive ->
                     manifest.mainAttributes.getValue('Update-Track') != updateTrack ||
                     manifest.mainAttributes.getValue('Update-Build') != updateBuild) {
                 throw new GradleException("Application metadata does not match package ${archive.name}")
+            }
+
+            Set<String> applicationEntries = [] as Set
+            def applicationEntry
+
+            while((applicationEntry = applicationJarInput.getNextJarEntry()) != null) {
+                applicationEntries.add(applicationEntry.name)
+            }
+
+            Set<String> requiredApplicationIcons = [
+                    'images/app/vce-app-icon.png',
+                    'images/app/vce-app-icon.svg',
+                    'images/app/vce-wordmark.png'
+            ] as Set
+            Set<String> missingApplicationIcons = requiredApplicationIcons - applicationEntries
+
+            if(!missingApplicationIcons.isEmpty()) {
+                throw new GradleException("Application branding is missing from ${archive.name}: " +
+                        "${missingApplicationIcons}")
+            }
+
+            Set<String> retiredApplicationIcons = [
+                    'images/app/sdr-trunk-icon.png',
+                    'images/app/sdr-trunk-icon.svg'
+            ] as Set
+            Set<String> bundledRetiredApplicationIcons = retiredApplicationIcons.intersect(applicationEntries)
+
+            if(!bundledRetiredApplicationIcons.isEmpty()) {
+                throw new GradleException("Retired application branding remains in ${archive.name}: " +
+                        "${bundledRetiredApplicationIcons}")
             }
         }
 

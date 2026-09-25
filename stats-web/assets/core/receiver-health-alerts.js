@@ -24,7 +24,7 @@
       alert('tuner-allocation-failure', 'No tuner was available for a channel',
         'No enabled tuner could receive the requested frequency, so the channel may not start.')
     ]),
-    group('usb', 'USB connection', 'Problems moving radio data from USB tuners into sdrtrunk-vce.', [
+    group('usb', 'USB connection', 'Problems moving radio data from USB tuners into VCE.', [
       alert('usb-sample-loss', 'USB tuner data is incomplete',
         'The tuner sent missing or unusable radio data. Signal strength may still look normal while decoding fails.'),
       alert('usb-delivery-rate-low', 'USB tuner data is arriving too slowly',
@@ -51,12 +51,12 @@
       'Processor, memory, and storage problems that can interrupt receiving.', [
       alert('host-cpu-pressure', 'Computer is overloaded',
         'Processor use has stayed high enough that radio processing may fall behind.'),
-      alert('heap-pressure', 'sdrtrunk-vce is low on memory',
+      alert('heap-pressure', 'VCE is low on memory',
         'The app is using almost all the memory available to it, which can interrupt receiving.'),
-      alert('gc-pause', 'sdrtrunk-vce spent extra time freeing memory',
+      alert('gc-pause', 'VCE spent extra time freeing memory',
         'The app spent an unusually long time freeing memory, so receiving may fall behind.'),
       alert('disk-space', 'Storage space is low',
-        'The drive holding sdrtrunk-vce application data has little free space remaining.')
+        'The drive holding VCE application data has little free space remaining.')
     ]),
     group('outputs', 'Recordings and listening',
       'Problems saving calls, sending calls to a streaming service, or preparing browser audio.', [

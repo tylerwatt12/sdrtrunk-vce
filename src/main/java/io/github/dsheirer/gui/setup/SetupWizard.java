@@ -2,6 +2,7 @@ package io.github.dsheirer.gui.setup;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.FlatDarkLaf;
+import io.github.dsheirer.gui.ApplicationIcon;
 import io.github.dsheirer.gui.theme.Theme;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
@@ -198,7 +199,9 @@ public final class SetupWizard extends JDialog
 
     private SetupWizard(String[] args, Path dataRoot, PortableDataRootLock existingLock)
     {
-        super((Frame)null, "sdrtrunk-vce · Setup", true);
+        super((Frame)null, "VCE · Setup", true);
+        ApplicationIcon.apply(this);
+        ApplicationIcon.applyTaskbarIcon();
         root = dataRoot.toAbsolutePath().normalize();
         database = SdrTrunkDatabasePath.getDatabasePath(root);
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
@@ -494,7 +497,7 @@ public final class SetupWizard extends JDialog
             next.setText("Check my settings"); accept = inspect;
             return;
         }
-        paragraph("Welcome! Is this your first time using sdrtrunk-vce, or are you bringing settings from an older installation?");
+        paragraph("Welcome! Is this your first time using VCE, or are you bringing settings from an older installation?");
         ButtonGroup group = new ButtonGroup();
         WizardChoiceCard fresh = choice(group, "Start fresh — recommended for new users", "Begin with no saved channels. We’ll help you set up digital voice, access and decoding performance.", true);
         WizardChoiceCard folder = choice(group, "Copy a previous VCE installation / data folder", "Bring your saved settings and digital voice tools into this installation. Your old installation stays unchanged; recordings and logs are not copied.", false);
@@ -922,7 +925,7 @@ public final class SetupWizard extends JDialog
             accept=this::completeAndContinue;
             return;
         }
-        paragraph("Help sdrtrunk-vce decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices. This is not a computer score, and it won’t change your channels.");
+        paragraph("Help VCE decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices. This is not a computer score, and it won’t change your channels.");
         notice("Before you start", "Close other applications and pause downloads, games and backups. Leave this wizard open. A quiet computer gives more reliable results.",false);
         paragraph(pending + " checks to run · " + (manager.getCalibrationTypes().size()-pending) + " saved checks reused");
         details("Why are these checks needed?", manager.getPendingReason() + "\n\nOnly new, changed or missing checks run. Valid results are kept if you stop or retry. A different processor or Java version may require all checks again.");

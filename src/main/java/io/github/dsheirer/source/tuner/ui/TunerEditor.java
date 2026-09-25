@@ -646,7 +646,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         if(mEnabledButton == null)
         {
             mEnabledButton = new JButton(BUTTON_STATUS_ENABLE);
-            mEnabledButton.setToolTipText("Enable or disable the tuner for use by sdrtrunk");
+            mEnabledButton.setToolTipText("Enable or disable the tuner for use by VCE");
             mEnabledButton.addActionListener(e ->
             {
                 switch(getEnabledButton().getText())

@@ -151,7 +151,7 @@ public class EncryptionKeyPreferenceEditor extends BorderPane
     {
         if(mPromptOnLaunchCheckBox == null)
         {
-            mPromptOnLaunchCheckBox = new CheckBox("Prompt for vault password on SDRTrunk launch");
+            mPromptOnLaunchCheckBox = new CheckBox("Prompt for vault password on VCE launch");
             mPromptOnLaunchCheckBox.setSelected(mVaultService.isPromptOnLaunch());
             mPromptOnLaunchCheckBox.setOnAction(event ->
                 mVaultService.setPromptOnLaunch(mPromptOnLaunchCheckBox.isSelected()));

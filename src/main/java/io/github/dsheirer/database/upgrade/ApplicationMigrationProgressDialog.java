@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.gui.ApplicationIcon;
 import java.awt.BorderLayout;
 import java.awt.Dialog;
 import java.awt.Dimension;
@@ -83,6 +84,13 @@ public final class ApplicationMigrationProgressDialog
                                  AtomicReference<Exception> failure)
     {
         JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
+        ApplicationIcon.apply(dialog);
+
+        if(owner == null)
+        {
+            ApplicationIcon.applyTaskbarIcon();
+        }
+
         dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         JLabel status = new JLabel("Preparing migration...");
         JProgressBar progress = new JProgressBar();

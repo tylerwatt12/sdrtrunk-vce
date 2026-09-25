@@ -809,7 +809,7 @@ public final class ApplicationMigrationService
     {
         if(!Files.isRegularFile(database))
         {
-            throw new IOException("Staged SDRTrunk SQLite database does not exist: " + database);
+            throw new IOException("Staged VCE SQLite database does not exist: " + database);
         }
 
         try(Connection connection = openReadOnly(database))
@@ -1032,7 +1032,7 @@ public final class ApplicationMigrationService
             {
                 if(!resultSet.next() || resultSet.getInt(1) != 0)
                 {
-                    throw new IOException("The current database is in use. Close every other sdrtrunk-vce window " +
+                    throw new IOException("The current database is in use. Close every other VCE window " +
                         "and try again.");
                 }
             }
@@ -1044,7 +1044,7 @@ public final class ApplicationMigrationService
 
         if(Files.exists(wal) || Files.exists(sharedMemory) || Files.exists(rollbackJournal))
         {
-            throw new IOException("The current database is still active. Close every other sdrtrunk-vce window " +
+            throw new IOException("The current database is still active. Close every other VCE window " +
                 "and try again.");
         }
     }
@@ -1586,7 +1586,7 @@ public final class ApplicationMigrationService
                                               Throwable restoreFailure)
         {
             super("The updated database could not be validated, and the previous database could not be restored " +
-                "automatically. Do not retry the migration or start SDRTrunk with this database. Restore the " +
+                "automatically. Do not retry the migration or start VCE with this database. Restore the " +
                 "retained safety backup manually: " + safetyBackup, validationFailure);
             mDatabase = database;
             mSafetyBackup = safetyBackup;

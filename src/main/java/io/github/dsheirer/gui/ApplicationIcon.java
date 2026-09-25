@@ -21,13 +21,13 @@ package io.github.dsheirer.gui;
 
 import java.awt.GraphicsEnvironment;
 import java.awt.Taskbar;
+import java.awt.Window;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URL;
 import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import javax.imageio.ImageIO;
-import javax.swing.JFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
 public final class ApplicationIcon
 {
     private static final Logger mLog = LoggerFactory.getLogger(ApplicationIcon.class);
-    private static final String ICON_RESOURCE = "/images/app/sdr-trunk-icon.png";
+    private static final String ICON_RESOURCE = "/images/app/vce-app-icon.png";
     private static BufferedImage sBufferedImage;
     private static Image sFxImage;
 
@@ -45,13 +45,13 @@ public final class ApplicationIcon
     {
     }
 
-    public static void apply(JFrame frame)
+    public static void apply(Window window)
     {
         BufferedImage image = getBufferedImage();
 
-        if(frame != null && image != null)
+        if(window != null && image != null)
         {
-            frame.setIconImage(image);
+            window.setIconImage(image);
         }
     }
 

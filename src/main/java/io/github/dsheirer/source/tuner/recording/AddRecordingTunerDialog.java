@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.recording;
 
+import io.github.dsheirer.gui.ApplicationIcon;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
@@ -73,6 +74,7 @@ public class AddRecordingTunerDialog extends JFrame
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = tunerConfigurationManager;
 
+        ApplicationIcon.apply(this);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         setTitle("Select Recording File");
         setSize(new Dimension(500, 250));

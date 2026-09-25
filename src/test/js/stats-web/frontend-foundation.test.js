@@ -11,6 +11,7 @@ const appSource = fs.readFileSync(path.resolve(core, '../app.js'), 'utf8');
 const appCssSource = readStylesheetSource(path.resolve(core, '../app.css'));
 const indexSource = fs.readFileSync(path.resolve(core, '../../index.html'), 'utf8');
 const wordmarkSource = fs.readFileSync(path.resolve(core, '../vce-wordmark.svg'), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.resolve(core, '../site.webmanifest'), 'utf8'));
 const playerSource = fs.readFileSync(path.resolve(core, '../web-call-player.js'), 'utf8');
 const radioReferenceImportSource = fs.readFileSync(
   path.resolve(core, '../features/radioreference-import.js'), 'utf8');
@@ -234,12 +235,38 @@ async function main() {
   assert.match(indexSource, /id="global-status" class="visually-hidden"/);
   assert.match(indexSource, /<title>VCE<\/title>/);
   assert.match(indexSource,
-    /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=1" alt=""><\/a>/);
-  assert.match(wordmarkSource, /viewBox="0 0 124 44"/);
-  assert.match(wordmarkSource, /mask id="vce-brush-mask"/);
+    /<meta name="theme-color" content="#202a33" media="\(prefers-color-scheme: light\)">/);
+  assert.match(indexSource,
+    /<meta name="theme-color" content="#090e13" media="\(prefers-color-scheme: dark\)">/);
+  assert.match(indexSource,
+    /<link rel="icon" href="\/assets\/vce-favicon\.svg\?v=1" type="image\/svg\+xml">/);
+  assert.match(indexSource,
+    /<link rel="icon" href="\/assets\/vce-icon-32\.png\?v=1" type="image\/png" sizes="32x32">/);
+  assert.match(indexSource,
+    /<link rel="apple-touch-icon" href="\/assets\/vce-apple-touch-icon\.png\?v=1" sizes="180x180">/);
+  assert.match(indexSource, /<link rel="manifest" href="\/assets\/site\.webmanifest\?v=1">/);
+  assert.match(indexSource,
+    /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=2" alt=""><\/a>/);
+  assert.match(wordmarkSource, /<svg[^>]+viewBox="[^"]+"/);
+  assert.match(wordmarkSource, /<path[^>]+fill="#f2f5f7"/);
+  assert.doesNotMatch(wordmarkSource, /data:image/,
+    'The VCE header wordmark must remain a true vector asset.');
+  assert.equal(manifest.name, 'VCE');
+  assert.equal(manifest.short_name, 'VCE');
+  assert.equal(manifest.start_url, '/?view=dashboard');
+  assert.ok(manifest.icons.some((icon) => icon.src === '/assets/vce-icon-192.png?v=1'
+    && icon.sizes === '192x192' && icon.purpose === 'any'));
+  assert.ok(manifest.icons.some((icon) => icon.src === '/assets/vce-icon-512.png?v=1'
+    && icon.sizes === '512x512' && icon.purpose === 'any'));
+  assert.ok(manifest.icons.some((icon) => icon.src === '/assets/vce-icon-maskable-512.png?v=1'
+    && icon.sizes === '512x512' && icon.purpose === 'maskable'));
+  for (const icon of ['vce-icon-192.png', 'vce-icon-512.png', 'vce-icon-maskable-512.png']) {
+    assert.ok(fs.existsSync(path.resolve(core, '..', icon)), `${icon} must exist beside the web manifest`);
+  }
+  assert.match(appCssSource, /\.brand \{[^}]*width: 88px;[^}]*min-width: 88px;/s);
   assert.match(appCssSource, /\.brand-logo \{[^}]*width: 100%;[^}]*display: block;/s);
   assert.match(appCssSource,
-    /@media \(max-width: 560px\)[\s\S]*?\.topbar \{[^}]*grid-template-columns: var\(--icon-action-size\)[^}]*gap: 10px;[^}]*padding: 5px 8px;/);
+    /@media \(max-width: 560px\)[\s\S]*?\.topbar \{[^}]*grid-template-columns: var\(--icon-action-size\) minmax\(78px, 1fr\) max-content;[^}]*gap: 10px;[^}]*padding: 5px 8px;[\s\S]*?\.brand \{[^}]*width: 78px;[^}]*min-width: 78px;/);
   assert.match(appCssSource, /\.preference-status \{/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'),
     /preference-status ui-notice ui-notice-danger/);
@@ -997,7 +1024,7 @@ async function main() {
       receiverHealthText, RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS: 1_000
     });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'sdrtrunk-vce processor use', value: 42.5, unit: '%'
+    label: 'VCE processor use', value: 42.5, unit: '%'
   }))), { available: true, maximum: 100, value: 42.5 });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
     label: 'Time spent freeing memory', value: 250, unit: 'ms in last sample'
@@ -1006,7 +1033,7 @@ async function main() {
     label: 'Time spent freeing memory', value: 1400, unit: 'ms in last sample'
   }))), { available: true, maximum: 1000, value: 1000 });
   assert.deepEqual(JSON.parse(JSON.stringify(receiverHealthResourceScale({
-    label: 'sdrtrunk-vce processor use', value: 'n/a', unit: '%'
+    label: 'VCE processor use', value: 'n/a', unit: '%'
   }))), { available: false, maximum: 100, value: 0 });
 
   const radioTableType = vm.runInNewContext(

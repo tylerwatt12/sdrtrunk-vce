@@ -160,7 +160,7 @@ public final class TunerHardwareDiscovery
                 case LOAD_FAILED ->
                 {
                     errors.add("The SDRplay software couldn't load. Repair or reinstall the SDRplay API " +
-                        "software, then restart sdrtrunk-vce. Other radios are not affected.");
+                        "software, then restart VCE. Other radios are not affected.");
                     return;
                 }
                 case AVAILABLE -> { }
@@ -170,8 +170,8 @@ public final class TunerHardwareDiscovery
             {
                 if(!session.isAvailable())
                 {
-                    errors.add("The installed SDRplay software isn't compatible with this version of sdrtrunk-vce. " +
-                        "Update the SDRplay API software, then restart sdrtrunk-vce.");
+                    errors.add("The installed SDRplay software isn't compatible with this version of VCE. " +
+                        "Update the SDRplay API software, then restart VCE.");
                     return;
                 }
                 if(cancelled.getAsBoolean()) return;

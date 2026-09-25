@@ -36,8 +36,8 @@
 }
 
 .brand {
-  width: 74px;
-  min-width: 74px;
+  width: 88px;
+  min-width: 88px;
   display: inline-flex;
   align-items: center;
   color: var(--header-ink);
@@ -834,14 +834,14 @@
 
 @media (max-width: 560px) {
   .topbar {
-    grid-template-columns: var(--icon-action-size) minmax(66px, 1fr) max-content;
+    grid-template-columns: var(--icon-action-size) minmax(78px, 1fr) max-content;
     gap: 10px;
     padding: 5px 8px;
   }
 
   .brand {
-    width: 66px;
-    min-width: 66px;
+    width: 78px;
+    min-width: 78px;
   }
 
   .header-controls {

@@ -45,7 +45,7 @@ public final class SdrTrunkDatabaseStartup
 
         if(Files.exists(normalized))
         {
-            throw new IOException("Refusing to overwrite existing SDRTrunk SQLite database: " + normalized);
+            throw new IOException("Refusing to overwrite existing VCE SQLite database: " + normalized);
         }
 
         Files.createDirectories(normalized.getParent());
@@ -94,7 +94,7 @@ public final class SdrTrunkDatabaseStartup
 
     public static void validateGlobalDatabase(Path databasePath) throws IOException, SQLException
     {
-        Path normalized = requireDatabase(databasePath, "SDRTrunk");
+        Path normalized = requireDatabase(databasePath, "VCE");
 
         try(Connection connection = openReadOnly(normalized))
         {

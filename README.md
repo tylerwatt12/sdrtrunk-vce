@@ -1,6 +1,6 @@
-# sdrtrunk-vce
+# VCE
 
-`sdrtrunk-vce` is an independent, enhanced version of
+VCE (`sdrtrunk-vce`) is an independent, enhanced version of
 [SDRTrunk](https://github.com/DSheirer/sdrtrunk). It keeps the familiar receiver, decoder, recording, streaming, and
 Java configuration tools while adding a browser activity screen, a built-in website, portable storage, browser
 scan-list listening, long-term statistics, and performance improvements.
@@ -195,7 +195,7 @@ These older or experimental features are not included:
 1. Choose a [numbered Alpha](https://github.com/tylerwatt12/sdrtrunk-vce/releases/latest) or the
    [current Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly).
 2. Extract it into a new writable folder.
-3. Use the `Start SDRTrunk VCE` launcher in the extracted folder. Its extension identifies Windows (`.bat`), macOS
+3. Use the `Start VCE` launcher in the extracted folder. Its extension identifies Windows (`.bat`), macOS
    (`.command`), or Linux (`.sh`).
 4. Import XML, migrate a previous VCE setup, or start fresh.
 5. Review the imported channels and file locations before enabling auto-start.
@@ -257,7 +257,7 @@ upstream projects.
 
 ## Credits And License
 
-SDRTrunk was created by Dennis Sheirer. `sdrtrunk-vce` includes work from the official SDRTrunk community and
+SDRTrunk was created by Dennis Sheirer. VCE includes work from the official SDRTrunk community and
 optimization and platform work from the W6BAZ/bazineta experimental fork, followed by VCE-specific changes.
 
 - [Official SDRTrunk project](https://github.com/DSheirer/sdrtrunk)

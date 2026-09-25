@@ -109,7 +109,7 @@ assert.match(openAlerts, /modal\.setDirty\(true\)/);
 assert.match(openAlerts, /modal\.setBusy\(true\)/);
 assert.match(openAlerts, /if \(modal\.close\(\)\) void render\(\)/);
 assert.match(openAlerts, /Save status icon choices/);
-assert.match(openAlerts, /sdrtrunk-vce still monitors it/);
+assert.match(openAlerts, /VCE still monitors it/);
 assert.doesNotMatch(openAlerts, /content\.append/,
   'Status icon choices must open in the shared modal instead of rendering as a page.');
 

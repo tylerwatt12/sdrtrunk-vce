@@ -138,7 +138,7 @@ public class SDRTrunk
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
-    private static final String APPLICATION_MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
+    private static final String APPLICATION_MIGRATOR_TITLE = "VCE Application Migrator";
     private static final long SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS = 8_000L;
     private static final long CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
     private static final long STATISTICS_SHUTDOWN_DRAIN_MILLISECONDS = 2_000L;
@@ -834,7 +834,7 @@ public class SDRTrunk
         catch(Exception | LinkageError e)
         {
             CopyableErrorDialog.show(null, "SQLite Database Import Failed",
-                "The import could not finish safely. SDRTrunk will close without starting reception. Any completed " +
+                "The import could not finish safely. VCE will close without starting reception. Any completed " +
                     "safety backup remains available in database/backups.", exceptionMessage(e));
             //Do not release the lock or reopen stale preferences after an uncertain failure. The caller exits.
             return 1;
@@ -848,7 +848,7 @@ public class SDRTrunk
         catch(IOException e)
         {
             CopyableErrorDialog.show(null, "Restart Required",
-                "Your database was imported, but SDRTrunk could not restart. Start it manually to review the " +
+                "Your database was imported, but VCE could not restart. Start it manually to review the " +
                     "imported settings before receiving.", exceptionMessage(e));
         }
         return 0;
@@ -1328,7 +1328,7 @@ public class SDRTrunk
     public static void main(String[] args)
     {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
-        System.setProperty("apple.awt.application.name", "sdrtrunk-vce");
+        System.setProperty("apple.awt.application.name", "VCE");
         PortableDataRootLock dataRootLock = null;
 
         try
@@ -1416,14 +1416,14 @@ public class SDRTrunk
                 System.exit(0);
                 return;
             }
-            String message = "sdrtrunk-vce could not start.\n\n" + e.getMessage();
+            String message = "VCE could not start.\n\n" + e.getMessage();
             System.err.println(message);
             e.printStackTrace(System.err);
 
             if(!GraphicsEnvironment.isHeadless())
             {
-                CopyableErrorDialog.show(null, "sdrtrunk-vce Startup Error",
-                    "sdrtrunk-vce could not start. Receiver services were not started.", exceptionMessage(e));
+                CopyableErrorDialog.show(null, "VCE Startup Error",
+                    "VCE could not start. Receiver services were not started.", exceptionMessage(e));
             }
 
             System.exit(1);

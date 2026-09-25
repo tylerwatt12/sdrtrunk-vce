@@ -280,7 +280,7 @@ public class VectorCalibrationPreferenceEditor extends HBox
         if(mVectorEnabled == null)
         {
             mVectorEnabled = new ToggleSwitch();
-            mVectorEnabled.setTooltip(new Tooltip("Allow sdrtrunk to use optimized vector operations when supported by your CPU"));
+            mVectorEnabled.setTooltip(new Tooltip("Allow VCE to use optimized vector operations when supported by your CPU"));
             mVectorEnabled.setSelected(mPreference.isVectorEnabled());
             mVectorEnabled.selectedProperty()
                 .addListener((observable, oldValue, enabled) -> mPreference.setVectorEnabled(enabled));

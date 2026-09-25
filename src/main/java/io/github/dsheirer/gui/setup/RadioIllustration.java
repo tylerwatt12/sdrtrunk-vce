@@ -1,12 +1,16 @@
 package io.github.dsheirer.gui.setup;
 
 import java.awt.*;
+import java.net.URL;
+import javax.swing.ImageIcon;
 import javax.swing.JPanel;
 
 /** Bundled, resolution-independent dusk-radio artwork; no downloads or additional rendering framework. */
 final class RadioIllustration extends JPanel
 {
-    RadioIllustration() { setPreferredSize(new Dimension(235, 215)); getAccessibleContext().setAccessibleName("Radio tower at dusk"); }
+    private static final Image VCE_WORDMARK = loadWordmark();
+
+    RadioIllustration() { setPreferredSize(new Dimension(235, 215)); getAccessibleContext().setAccessibleName("VCE radio tower at dusk"); }
     @Override protected void paintComponent(Graphics graphics)
     {
         super.paintComponent(graphics);
@@ -24,8 +28,14 @@ final class RadioIllustration extends JPanel
             g.drawLine(95,134,124,113); g.drawLine(100,113,129,134); g.drawLine(112,62,112,47);
             g.setColor(new Color(246,157,123)); g.drawArc(85,31,54,48,135,90); g.drawArc(95,40,34,30,135,90);
             g.drawArc(85,31,54,48,-45,90); g.drawArc(95,40,34,30,-45,90);
-            g.setColor(Color.WHITE); g.setFont(getFont().deriveFont(Font.BOLD,19f)); g.drawString("sdrtrunk-vce",19,190);
+            g.drawImage(VCE_WORDMARK,19,174,73,22,this);
         }
         finally { g.dispose(); }
+    }
+
+    private static Image loadWordmark()
+    {
+        URL resource = RadioIllustration.class.getResource("/images/app/vce-wordmark.png");
+        return resource != null ? new ImageIcon(resource).getImage() : null;
     }
 }

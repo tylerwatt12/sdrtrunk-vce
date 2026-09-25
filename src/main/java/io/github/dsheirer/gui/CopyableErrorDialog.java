@@ -64,6 +64,13 @@ public final class CopyableErrorDialog
         Window window = owner instanceof Window ownerWindow ? ownerWindow :
             (owner == null ? null : SwingUtilities.getWindowAncestor(owner));
         JDialog dialog = new JDialog(window, title, Dialog.ModalityType.APPLICATION_MODAL);
+        ApplicationIcon.apply(dialog);
+
+        if(window == null)
+        {
+            ApplicationIcon.applyTaskbarIcon();
+        }
+
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         ErrorPanel panel = new ErrorPanel(summary, details, clipboardWriter, dialog::dispose, () -> {
             dialog.pack();

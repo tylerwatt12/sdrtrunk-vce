@@ -90,7 +90,7 @@ record UpdateManifest(int format, String track, long build, String version, URI 
             releaseUri.getPath() == null ||
             !releaseUri.getPath().startsWith("/tylerwatt12/sdrtrunk-vce/releases/"))
         {
-            throw new IOException("Update manifest release URL is not an allowed sdrtrunk-vce release page");
+            throw new IOException("Update manifest release URL is not an allowed VCE release page");
         }
 
         return new UpdateManifest(format, track, build, version, releaseUri);

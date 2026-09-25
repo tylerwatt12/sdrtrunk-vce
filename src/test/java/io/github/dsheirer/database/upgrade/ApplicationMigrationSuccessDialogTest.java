@@ -168,7 +168,7 @@ class ApplicationMigrationSuccessDialogTest
             "kept, setup will ask you to create a new administrator password after restart.\n\n" + helper +
             "\n\nSelected source:\n" + source.toAbsolutePath().normalize() +
             "\n\nBackup of the database that was replaced:\n" + backup +
-            "\n\nSDRTrunk will restart so you can review the imported settings before receiving.", replacement);
+            "\n\nVCE will restart so you can review the imported settings before receiving.", replacement);
 
         String repairedHelper = "OUTCOME: Migration completed with itemized repairs, resets, or skipped items.";
         ApplicationMigrationService.MigrationResult repaired = new ApplicationMigrationService.MigrationResult(

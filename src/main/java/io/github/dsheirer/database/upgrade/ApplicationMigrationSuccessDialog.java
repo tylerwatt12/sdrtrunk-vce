@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.gui.ApplicationIcon;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dialog;
@@ -91,6 +92,13 @@ public final class ApplicationMigrationSuccessDialog
         Window window = owner instanceof Window ownerWindow ? ownerWindow :
             (owner == null ? null : SwingUtilities.getWindowAncestor(owner));
         JDialog dialog = new JDialog(window, title, Dialog.ModalityType.APPLICATION_MODAL);
+        ApplicationIcon.apply(dialog);
+
+        if(window == null)
+        {
+            ApplicationIcon.applyTaskbarIcon();
+        }
+
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         Timer[] timer = new Timer[1];
         CompletionPanel content = new CompletionPanel(report, seconds, clipboardWriter, () -> {
@@ -173,7 +181,7 @@ public final class ApplicationMigrationSuccessDialog
             "password after restart.\n\n" + migration.helperOutput() +
             "\n\nSelected source:\n" + sourceDatabase.toAbsolutePath().normalize() +
             "\n\nBackup of the database that was replaced:\n" + migration.safetyBackup() +
-            "\n\nSDRTrunk will restart so you can review the imported settings before receiving.";
+            "\n\nVCE will restart so you can review the imported settings before receiving.";
     }
 
     /** Lightweight view kept separate from the top-level window so button and countdown wiring is testable headless. */

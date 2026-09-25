@@ -79,11 +79,11 @@ public final class SdrTrunkDatabaseBootstrap
             else if(options.upgradeData() != null)
             {
                 var source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
-                    new IOException("The selected location does not contain portable sdrtrunk-vce data: " + options.upgradeData()));
+                    new IOException("The selected location does not contain portable VCE data: " + options.upgradeData()));
                 var result = migrationService.importPrevious(source, normalized, System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
             }
-            else throw new IOException("No portable SDRTrunk database exists at " + database +
+            else throw new IOException("No portable VCE database exists at " + database +
                 ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder-or-sqlite-file>. " +
                 "New headless installations also require --admin-password-file <path>.");
             InitialAdminSetup.initializeNewProfile(database);

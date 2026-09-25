@@ -354,7 +354,7 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await expect(playbackMenu).toHaveAttribute('open', '');
   const header = page.locator('.visual-app-chrome-example .app-header');
   const brand = header.getByRole('link', { name: 'VCE home' });
-  await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=1');
+  await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=2');
   await expect(header.getByText('RadioReference', { exact: true })).toBeAttached();
   await expect(header.getByText('Streaming', { exact: true })).toBeAttached();
   await expect(header.getByText('Hardware', { exact: true })).toBeAttached();

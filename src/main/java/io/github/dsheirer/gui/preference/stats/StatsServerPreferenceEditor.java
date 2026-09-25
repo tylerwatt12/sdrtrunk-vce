@@ -207,7 +207,7 @@ public class StatsServerPreferenceEditor extends HBox
                 "Deletes P25, DMR, and NXDN Stats Server summaries and history only."));
             mResetButton.setOnAction(event -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                    "Reset deletes Stats Server summaries and history. SDRTrunk configuration is unchanged. Continue?",
+                    "Reset deletes Stats Server summaries and history. VCE configuration is unchanged. Continue?",
                     ButtonType.YES, ButtonType.NO);
                 alert.setHeaderText("Reset Lifetime Stats");
                 Optional<ButtonType> result = alert.showAndWait();

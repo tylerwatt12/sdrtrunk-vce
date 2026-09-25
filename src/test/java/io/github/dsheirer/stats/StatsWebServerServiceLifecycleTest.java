@@ -53,6 +53,14 @@ class StatsWebServerServiceLifecycleTest
     Path mTemporaryDirectory;
 
     @Test
+    void servesWebBrandingAssetsWithBrowserMediaTypes()
+    {
+        assertEquals("image/svg+xml", StatsWebServerService.contentType(Path.of("vce-favicon.svg")));
+        assertEquals("image/png", StatsWebServerService.contentType(Path.of("vce-icon-32.png")));
+        assertEquals("application/manifest+json", StatsWebServerService.contentType(Path.of("site.webmanifest")));
+    }
+
+    @Test
     void preservesSessionsAcrossRebindRetainsWorkingListenerOnFailureAndRevokesPrimaryReset() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("data");

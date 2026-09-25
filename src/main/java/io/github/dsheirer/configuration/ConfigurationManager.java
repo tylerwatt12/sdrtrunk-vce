@@ -356,7 +356,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         if(mExternalConfigurationOperation)
         {
             throw new ConfigurationPublicationException(
-                "Configuration saves are suspended until SDRTrunk restarts");
+                "Configuration saves are suspended until VCE restarts");
         }
 
         saveNow();
@@ -485,7 +485,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         if(mExternalConfigurationOperation)
         {
             throw new ConfigurationPublicationException(
-                "Configuration saves are suspended until SDRTrunk restarts");
+                "Configuration saves are suspended until VCE restarts");
         }
         Objects.requireNonNull(proposed, "Proposed channel configuration cannot be null");
         Set<String> changed = Set.copyOf(Objects.requireNonNull(changedConfigurationIds,
@@ -532,7 +532,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 publicationFailure.addSuppressed(recoveryFailure);
                 mExternalConfigurationOperation = true;
                 throw new ConfigurationPublicationException(
-                    "Channel configuration committed but could not be published; restart SDRTrunk",
+                    "Channel configuration committed but could not be published; restart VCE",
                     publicationFailure);
             }
         }
@@ -602,7 +602,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public synchronized void commitAndPublishStreamingConfiguration(List<BroadcastConfiguration> proposed, String changedId)
     {
         if(mExternalConfigurationOperation)
-            throw new ConfigurationPublicationException("Configuration saves are suspended until SDRTrunk restarts");
+            throw new ConfigurationPublicationException("Configuration saves are suspended until VCE restarts");
         List<BroadcastConfiguration> committed;
         try
         {
@@ -627,7 +627,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             {
                 mExternalConfigurationOperation = true;
                 throw new ConfigurationPublicationException(
-                    "Streaming configuration saved but could not be applied; restart SDRTrunk", recoveryFailure);
+                    "Streaming configuration saved but could not be applied; restart VCE", recoveryFailure);
             }
         }
     }
@@ -662,7 +662,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         if(mExternalConfigurationOperation)
         {
             throw new ConfigurationPublicationException(
-                "Configuration saves are suspended until SDRTrunk restarts");
+                "Configuration saves are suspended until VCE restarts");
         }
 
         Objects.requireNonNull(proposed, "Proposed Alias configuration cannot be null");
@@ -725,7 +725,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 publicationFailure.addSuppressed(recoveryFailure);
                 mExternalConfigurationOperation = true;
                 throw new ConfigurationPublicationException(
-                    "Alias configuration committed but could not be published; restart SDRTrunk", publicationFailure);
+                    "Alias configuration committed but could not be published; restart VCE", publicationFailure);
             }
         }
     }

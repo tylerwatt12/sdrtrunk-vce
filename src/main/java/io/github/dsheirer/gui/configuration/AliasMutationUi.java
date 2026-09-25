@@ -52,8 +52,8 @@ public final class AliasMutationUi
         {
             mLog.error("Alias configuration committed but could not be loaded into the running application",
                 exception);
-            show(owner, title, "Alias changes were saved, but SDRTrunk must restart",
-                "Restart SDRTrunk before making more configuration changes.");
+            show(owner, title, "Alias changes were saved, but VCE must restart",
+                "Restart VCE before making more configuration changes.");
         }
         catch(AliasAdministrationService.NotInitializedException |
               AliasAdministrationService.ConfigurationBusyException exception)

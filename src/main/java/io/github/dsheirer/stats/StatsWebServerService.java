@@ -2221,11 +2221,11 @@ public class StatsWebServerService implements AutoCloseable
             <html lang="en">
             <head>
               <meta charset="utf-8">
-              <title>sdrtrunk-vce</title>
+              <title>VCE</title>
               <style>body{font-family:Arial,sans-serif;margin:2rem;line-height:1.4}</style>
             </head>
             <body>
-              <h1>sdrtrunk-vce</h1>
+              <h1>VCE</h1>
               <p>No web assets were found in:</p>
               <pre>%s</pre>
             </body>
@@ -2256,7 +2256,7 @@ public class StatsWebServerService implements AutoCloseable
         return false;
     }
 
-    private static String contentType(Path file)
+    static String contentType(Path file)
     {
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
 
@@ -2275,6 +2275,10 @@ public class StatsWebServerService implements AutoCloseable
         else if(name.endsWith(".json"))
         {
             return "application/json; charset=utf-8";
+        }
+        else if(name.endsWith(".webmanifest"))
+        {
+            return "application/manifest+json";
         }
         else if(name.endsWith(".txt"))
         {

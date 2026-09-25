@@ -153,7 +153,7 @@ public final class PortableDataRootLock implements AutoCloseable
     private static IOException alreadyInUse(Path dataRoot, Exception cause)
     {
         String message = "Portable data is already in use: " + dataRoot +
-            ". Close the running sdrtrunk-vce app before continuing.";
+            ". Close the running VCE app before continuing.";
         return cause == null ? new IOException(message) : new IOException(message, cause);
     }
 }

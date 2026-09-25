@@ -306,7 +306,7 @@ public class SqlitePreferencesFactory implements PreferencesFactory
             }
             catch(BackingStoreException e)
             {
-                System.err.println("Unable to save portable SDRTrunk preferences: " + e.getMessage());
+                System.err.println("Unable to save portable VCE preferences: " + e.getMessage());
             }
 
             mWriter.shutdown();
@@ -325,7 +325,7 @@ public class SqlitePreferencesFactory implements PreferencesFactory
                     }
                     catch(BackingStoreException e)
                     {
-                        System.err.println("Unable to save portable SDRTrunk preferences: " + e.getMessage());
+                        System.err.println("Unable to save portable VCE preferences: " + e.getMessage());
                     }
                 }, WRITE_DELAY_MILLISECONDS, TimeUnit.MILLISECONDS);
             }
