@@ -7,6 +7,10 @@
     background: var(--accent-soft);
     animation: none;
   }
+  .channel-catalog-table tbody tr.channel-order-row-moved > td {
+    background: var(--success-soft);
+    animation: none;
+  }
 
   .primary-nav,
   .playback-progress.ending {

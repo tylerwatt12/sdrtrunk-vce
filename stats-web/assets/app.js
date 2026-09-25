@@ -17705,12 +17705,31 @@ async function renderModernChannelCatalog(renderContext, editable) {
       return true;
     };
     let autoStartMoveInFlight = false;
-    const restoreOrderMovePosition = (configurationId, direction, scrollPosition, restoreFocus) => {
+    let orderMoveHighlightSequence = 0;
+    const highlightedOrderRows = new Map();
+    const highlightOrderMoveRow = (configurationId) => {
+      const highlightSequence = String(++orderMoveHighlightSequence);
+      highlightedOrderRows.set(configurationId, highlightSequence);
+      const row = tableHost.querySelector(`tr[data-id="${CSS.escape(configurationId)}"]`);
+      if (row) {
+        row.classList.remove('channel-order-row-moved');
+        void row.offsetWidth;
+        row.classList.add('channel-order-row-moved');
+      }
+      pageTimeout(() => {
+        if (highlightedOrderRows.get(configurationId) !== highlightSequence) return;
+        highlightedOrderRows.delete(configurationId);
+        tableHost.querySelector(`tr[data-id="${CSS.escape(configurationId)}"]`)
+          ?.classList.remove('channel-order-row-moved');
+      }, 1_000);
+    };
+    const restoreOrderMovePosition = (configurationId, direction, scrollPosition, restoreFocus, highlightRow) => {
       window.requestAnimationFrame(() => {
         if (!wrapper.isConnected) return;
         window.scrollTo(scrollPosition.x, scrollPosition.y);
-        if (!restoreFocus) return;
         const row = tableHost.querySelector(`tr[data-id="${CSS.escape(configurationId)}"]`);
+        if (highlightRow) highlightOrderMoveRow(configurationId);
+        if (!restoreFocus) return;
         const requested = row?.querySelector(`[data-channel-order-direction="${direction}"]:not(:disabled)`);
         const fallback = row?.querySelector('[data-channel-order-direction]:not(:disabled)');
         (requested || fallback)?.focus({ preventScroll: true });
@@ -17745,6 +17764,11 @@ async function renderModernChannelCatalog(renderContext, editable) {
               refreshed.revision = Math.max(Number(refreshed.revision) || 0, committedRevision);
               verificationPending = !alreadyConfirmed;
             }
+            const previousOrder = catalogBeforeMove.channels?.find((row) =>
+              row.configuration_id === configurationId)?.auto_start_order ?? null;
+            const confirmedOrder = refreshed?.channels?.find((row) =>
+              row.configuration_id === configurationId)?.auto_start_order ?? null;
+            const orderChanged = previousOrder !== confirmedOrder;
             const scrollPosition = { x: window.scrollX, y: window.scrollY };
             const restoreFocus = shouldRestoreFocus?.() === true;
             if (refreshed && applyCatalog(refreshed)) draw();
@@ -17752,7 +17776,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
               autoStartVerificationNotice = uiStatus('Order saved; live verification is pending', 'warning');
               statusHost.replaceChildren(autoStartVerificationNotice);
             }
-            restoreOrderMovePosition(configurationId, direction, scrollPosition, restoreFocus);
+            restoreOrderMovePosition(configurationId, direction, scrollPosition, restoreFocus, orderChanged);
           }
         );
       } finally {
@@ -17803,7 +17827,10 @@ async function renderModernChannelCatalog(renderContext, editable) {
             revealRowGroups: () => Boolean(search.value.trim())
           } : {}),
           rowKey: (row) => row.configuration_id,
-          rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
+          rowClass: (row) => [
+            selected.has(row.configuration_id) ? 'selected' : '',
+            highlightedOrderRows.has(row.configuration_id) ? 'channel-order-row-moved' : ''
+          ].filter(Boolean).join(' '),
           tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
           mobileCards: true,
           layoutMenuHost: toolbar,

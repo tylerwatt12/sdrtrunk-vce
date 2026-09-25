@@ -71,6 +71,15 @@
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+@keyframes channel-order-row-highlight {
+  from { background-color: var(--success-soft); }
+  to { background-color: transparent; }
+}
+
+.channel-catalog-table tbody tr.channel-order-row-moved > td {
+  animation: channel-order-row-highlight 1s ease-out;
+}
+
 .channel-catalog-table td {
   height: max(var(--ui-row-height), 52px);
   padding: 9px 10px;

@@ -21,7 +21,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=4") layer(compositions);',
   '@import url("./styles/features/about.css?v=1") layer(features);',
-  '@import url("./styles/features/channels.css?v=9") layer(features);',
+  '@import url("./styles/features/channels.css?v=10") layer(features);',
   '@import url("./styles/features/entity-details.css?v=10") layer(features);',
   '@import url("./styles/features/live.css?v=13") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
@@ -37,7 +37,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/streaming.css?v=4") layer(features);',
   '@import url("./styles/features/p25-settings.css?v=1") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=4") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css?v=7") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=8") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
