@@ -2,16 +2,32 @@
 
 import { BALANCED_CONFIG } from './config.js';
 
-const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=1';
+const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=2';
 const LINK_SEGMENTS = 16;
-const LABEL_CELL_WIDTH = 56;
-const LABEL_CELL_HEIGHT = 28;
-const LABEL_PADDING = 4;
-const MINIMUM_CAMERA_DISTANCE = 72;
-const DEFAULT_CAMERA_DISTANCE = 96;
+const LABEL_CELL_WIDTH = 72;
+const LABEL_CELL_HEIGHT = 34;
+const LABEL_PADDING = 6;
+const LABEL_RENDER_INTERVAL_MS = 80;
+const LABEL_RESIDENCE_MS = 420;
+const MINIMUM_CAMERA_DISTANCE = 68;
+const DEFAULT_CAMERA_DISTANCE = 112;
 const EFFECT_SEEN_MULTIPLIER = 2;
 const OVERVIEW_DISTANCE_RATIO = 0.85;
 const MID_DISTANCE_RATIO = 0.32;
+const DEFAULT_ANIMATION = Object.freeze({
+  txAttackMs: 180,
+  txReleaseMs: 2_400,
+  pulseDurationMs: 700,
+  particleFlightMs: 1_500,
+  pulseScale: 0.1,
+  migrationMotionMs: 1_400,
+  effectCoalesceMs: 500,
+  softAnimatedEffects: 24,
+  cameraTransitionMs: 720,
+  cameraBackTransitionMs: 620,
+  autoRotateIdleDelayMs: 2_400,
+  autoRotateSpeed: 0.35
+});
 
 let vendorPromise = null;
 
@@ -27,6 +43,12 @@ function finite(value, fallback = 0) {
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function easeInOutCubic(value) {
+  const progress = clamp(finite(value), 0, 1);
+  return progress < 0.5 ? 4 * progress * progress * progress :
+    1 - Math.pow(-2 * progress + 2, 3) / 2;
 }
 
 function nodeKey(node) {
@@ -137,35 +159,56 @@ function chooseLabelPlacements(candidates, viewport, budget, options = {}) {
     if (accepted.length >= maximum) break;
     const labelWidth = Math.max(1, finite(candidate.width, 80));
     const labelHeight = Math.max(1, finite(candidate.height, 22));
-    const left = Math.round(finite(candidate.x) + finite(candidate.offsetX, 7));
-    const top = Math.round(finite(candidate.y) - labelHeight / 2 + finite(candidate.offsetY));
-    const rectangle = { left, top, right: left + labelWidth, bottom: top + labelHeight };
-    if (rectangle.right < 0 || rectangle.left > width || rectangle.bottom < 0 || rectangle.top > height) continue;
+    const offsets = Array.isArray(candidate.offsets) && candidate.offsets.length ? candidate.offsets :
+      [{ x: finite(candidate.offsetX, 7), y: finite(candidate.offsetY), index: 0 }];
+    let placement = null;
+    let occupiedCells = null;
+    const offsetCandidates = offsets.map((offset, offsetOrder) => {
+      const left = Math.round(finite(candidate.x) + finite(offset?.x, 7));
+      const top = Math.round(finite(candidate.y) - labelHeight / 2 + finite(offset?.y));
+      const rectangle = { left, top, right: left + labelWidth, bottom: top + labelHeight };
+      const visibleWidth = Math.max(0, Math.min(width, rectangle.right) - Math.max(0, rectangle.left));
+      const visibleHeight = Math.max(0, Math.min(height, rectangle.bottom) - Math.max(0, rectangle.top));
+      return { offset, offsetOrder, left, top, rectangle,
+        contained: rectangle.left >= 0 && rectangle.top >= 0 && rectangle.right <= width &&
+          rectangle.bottom <= height,
+        visibleArea: visibleWidth * visibleHeight };
+    }).filter((entry) => entry.visibleArea > 0).sort((left, right) =>
+      Number(right.contained) - Number(left.contained) ||
+      (left.contained ? left.offsetOrder - right.offsetOrder :
+        right.visibleArea - left.visibleArea || left.offsetOrder - right.offsetOrder));
+    for (const entry of offsetCandidates) {
+      const { offset, offsetOrder, left, top, rectangle } = entry;
 
-    const minimumColumn = Math.floor((rectangle.left - padding) / cellWidth);
-    const maximumColumn = Math.floor((rectangle.right + padding) / cellWidth);
-    const minimumRow = Math.floor((rectangle.top - padding) / cellHeight);
-    const maximumRow = Math.floor((rectangle.bottom + padding) / cellHeight);
-    const possible = new Set();
-    for (let column = minimumColumn; column <= maximumColumn; column += 1) {
-      for (let row = minimumRow; row <= maximumRow; row += 1) {
-        (grid.get(`${column}:${row}`) || []).forEach((index) => possible.add(index));
+      const minimumColumn = Math.floor((rectangle.left - padding) / cellWidth);
+      const maximumColumn = Math.floor((rectangle.right + padding) / cellWidth);
+      const minimumRow = Math.floor((rectangle.top - padding) / cellHeight);
+      const maximumRow = Math.floor((rectangle.bottom + padding) / cellHeight);
+      const possible = new Set();
+      const cells = [];
+      for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+        for (let row = minimumRow; row <= maximumRow; row += 1) {
+          const cell = `${column}:${row}`;
+          cells.push(cell);
+          (grid.get(cell) || []).forEach((index) => possible.add(index));
+        }
       }
+      if ([...possible].some((index) => rectanglesOverlap(rectangle, accepted[index].rectangle, padding))) continue;
+      placement = { ...candidate, left, top, rectangle,
+        offsetIndex: Number.isSafeInteger(offset?.index) ? offset.index : offsetOrder };
+      occupiedCells = cells;
+      break;
     }
-    if ([...possible].some((index) => rectanglesOverlap(rectangle, accepted[index].rectangle, padding))) continue;
-
-    const placement = { ...candidate, left, top, rectangle };
+    if (!placement) continue;
     delete placement.__order;
+    delete placement.offsets;
     const acceptedIndex = accepted.length;
     accepted.push(placement);
-    for (let column = minimumColumn; column <= maximumColumn; column += 1) {
-      for (let row = minimumRow; row <= maximumRow; row += 1) {
-        const key = `${column}:${row}`;
-        const contents = grid.get(key) || [];
-        contents.push(acceptedIndex);
-        grid.set(key, contents);
-      }
-    }
+    occupiedCells.forEach((key) => {
+      const contents = grid.get(key) || [];
+      contents.push(acceptedIndex);
+      grid.set(key, contents);
+    });
   }
   return accepted;
 }
@@ -199,9 +242,10 @@ function allocateParticles(links, budget) {
 }
 
 function nodeVisualState(node, effect = null) {
-  if (node?.active || effect?.type === 'destination_highlight' || effect?.type === 'tx_pulse') return 'active';
+  if (node?.active || effect?.type === 'tx_pulse') return 'active';
   if (node?.pending) return 'pending';
-  if (effect?.type === 'affiliation_arrival' || effect?.type === 'migration') return 'arrival';
+  if (effect?.type === 'affiliation_arrival' || effect?.type === 'migration' ||
+      effect?.type === 'destination_highlight') return 'arrival';
   if (effect?.type === 'afterglow' || node?.afterglow) return 'afterglow';
   if (node?.quiet || node?.stale) return 'quiet';
   return nodeType(node);
@@ -223,8 +267,16 @@ function linkIsDashed(link) {
 
 function nodeRadius(node) {
   const specified = finite(node?.radius ?? node?.renderRadius, NaN);
-  if (Number.isFinite(specified) && specified > 0) return clamp(specified, 0.6, 24);
-  return ({ universe: 8.5, group: 4.8, aggregate: 3.6, radio: 1.9 })[nodeType(node)];
+  if (Number.isFinite(specified) && specified > 0) return clamp(specified, 0.8, 32);
+  return ({ universe: 22, group: 9, aggregate: 6, radio: 3.8 })[nodeType(node)];
+}
+
+function linkWidth(link) {
+  const state = linkVisualState(link);
+  if (state === 'active') return 4;
+  if (state === 'migration') return 3;
+  if (state === 'faded') return 1.25;
+  return 2.25;
 }
 
 function labelPriority(node, explicitRank = 0) {
@@ -315,6 +367,9 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     setGraphData: () => emptyDiagnostics(),
     refresh: () => {}, resize: () => {}, setMode: () => '3d', setFrozen: (value) => Boolean(value),
     fitAll: () => false, focus: () => false, setPinned: () => false, pulse: () => false,
+    frameScope: () => false, getCameraPose: () => null, restoreCameraPose: () => false,
+    setNavigationScope: (value = {}) => value, setAutoRotate: (value) => Boolean(value),
+    setArrange: (value) => Boolean(value),
     setPalette: () => {}, setReducedMotion: (value) => Boolean(value),
     setLabelBudget: () => 0, setParticleBudget: () => 0,
     clearEffects: () => {}, clear: () => {},
@@ -351,6 +406,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   const callbacks = options.callbacks || {};
   const config = options.config || BALANCED_CONFIG;
+  const animation = { ...DEFAULT_ANIMATION, ...(config.animation || {}) };
   const clock = typeof options.clock === 'function' ? options.clock : Date.now;
   const configuredMaximumNodes = Math.max(1, Math.floor(finite(config.render?.hardNodes,
     BALANCED_CONFIG.render.hardNodes)));
@@ -382,8 +438,15 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let paused = false;
   let contextLost = false;
   let cameraInteracted = false;
-  let autoFitPerformed = false;
+  let heroFramed = false;
+  let bootstrapStartedAt = 0;
   let focusedKey = '';
+  let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
+  let lastScopeCenter = null;
+  let arrangeMode = Boolean(options.arrange);
+  let autoRotateRequested = options.autoRotate ?? animation.autoRotateDefault ?? true;
+  let autoRotatePaused = false;
+  let programmaticCamera = false;
   let lastOffscreenActivityCount = -1;
   let currentGeneration = options.generation ?? null;
   let currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
@@ -391,8 +454,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let requestedLabelKeys = [];
   let particleAllocation = new Map();
   let labelFrame = null;
+  let labelTimer = null;
+  let lastLabelRenderAt = 0;
   let cameraFrame = null;
-  let autoFitFrame = null;
+  let cameraTweenFrame = null;
+  let heroFrameTimer = null;
+  let autoRotateTimer = null;
   let cameraTrackUntil = 0;
   let effectFrame = null;
   let resizeObserver = null;
@@ -408,12 +475,48 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const labelElements = new Map();
   const dragging = new Map();
   const steadyParticleCounts = new Map();
-  const pulseTimers = new Set();
+  const pulseReservations = new Map();
   const seenEffects = new Map();
   const animatedEffects = new Map();
   const nodeEffects = new Map();
+  const effectCooldowns = new Map();
+  const labelResidence = new Map();
+  const labelAnchorIndexes = new Map();
   const geometries = new Map();
   const materials = new Map();
+  const ownedNodeMaterials = new Map();
+  const ownDisposableResource = (resource) => {
+    if (!resource || typeof resource.dispose !== 'function') return resource;
+    const dispose = resource.dispose.bind(resource);
+    let resourceDisposed = false;
+    resource.dispose = () => {
+      if (resourceDisposed) return;
+      resourceDisposed = true;
+      dispose();
+    };
+    return resource;
+  };
+  const sharedResourceDisposers = new Map();
+  const protectSharedResource = (resource) => {
+    if (!resource || sharedResourceDisposers.has(resource)) return resource;
+    const dispose = typeof resource.dispose === 'function' ? resource.dispose.bind(resource) : null;
+    sharedResourceDisposers.set(resource, dispose);
+    // 3d-force-graph recursively disposes removed custom objects. Cached resources are shared by
+    // retained objects, so defer their real disposal until this renderer is torn down.
+    if (dispose) resource.dispose = () => {};
+    return resource;
+  };
+  const disposeSharedResources = () => {
+    for (const [resource, dispose] of sharedResourceDisposers) {
+      dispose?.();
+      sharedResourceDisposers.delete(resource);
+    }
+  };
+  const sharedParticleGeometry = protectSharedResource(new library.SphereGeometry(0.9, 8, 6));
+  const sharedParticleMaterial = protectSharedResource(new library.MeshLambertMaterial({ color: palette.active,
+    transparent: true, opacity: 0.9, depthWrite: false }));
+  geometries.set('particle:shared', sharedParticleGeometry);
+  materials.set('particle:shared', { material: sharedParticleMaterial, state: 'active', category: 'particle' });
 
   const prefersReducedMotion = () => reducedMotionOverride ?? Boolean(mediaQuery?.matches);
 
@@ -422,8 +525,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function materialOpacity(state) {
-    return ({ quiet: 0.28, faded: 0.16, activity: 0.42, affiliation: 0.48,
-      afterglow: 0.62, universe: 0.38 })[state] ?? 0.88;
+    return ({ quiet: 0.22, faded: 0.12, activity: 0.38, affiliation: 0.34,
+      afterglow: 0.58, universe: 0.42, group: 0.68, radio: 0.6, aggregate: 0.58,
+      active: 0.9, migration: 0.74, arrival: 0.72 })[state] ?? 0.76;
   }
 
   function meshMaterial(kind, state) {
@@ -436,6 +540,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     }) : new library.MeshLambertMaterial({
       color: materialColor(state), transparent: true, opacity: materialOpacity(state), depthWrite: false
     });
+    protectSharedResource(material);
     materials.set(key, { material, state, category: 'node' });
     return material;
   }
@@ -444,9 +549,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = `special:${name}`;
     if (materials.has(key)) return materials.get(key).material;
     const state = name === 'outline' ? 'selected' : 'encrypted';
-    const material = new library.MeshBasicMaterial({ color: materialColor(state), transparent: true,
-      opacity: name === 'outline' ? 0.98 : 0.82, wireframe: name === 'encrypted',
-      side: name === 'outline' ? library.BackSide : undefined, depthWrite: false });
+    const settings = { color: materialColor(state), transparent: true,
+      opacity: name === 'outline' ? 0.98 : 0.82, wireframe: name === 'encrypted', depthWrite: false };
+    if (name === 'outline') settings.side = library.BackSide;
+    const material = protectSharedResource(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'special' });
     return material;
   }
@@ -456,9 +562,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = `line:${state}:${pattern}`;
     if (materials.has(key)) return materials.get(key).material;
     const settings = { color: materialColor(state), transparent: true, opacity: materialOpacity(state),
-      depthWrite: false };
-    const material = pattern !== 'solid' ? new library.LineDashedMaterial({ ...settings,
-      dashSize: encrypted ? 2.4 : 8, gapSize: encrypted ? 2.4 : 5, scale: 1 }) : new library.LineBasicMaterial(settings);
+      depthWrite: false, linewidth: linkWidth({ type: state, active: state === 'active', faded: state === 'faded' }),
+      worldUnits: false, dashed: pattern !== 'solid', dashScale: 1,
+      dashSize: encrypted ? 2.4 : 8, gapSize: encrypted ? 2.4 : 5, alphaToCoverage: true };
+    const material = protectSharedResource(new library.LineMaterial(settings));
+    material.dashed = pattern !== 'solid';
+    material.resolution?.set(Math.max(1, surface.clientWidth || host.clientWidth || 1),
+      Math.max(1, surface.clientHeight || host.clientHeight || 1));
     materials.set(key, { material, state, category: 'line' });
     return material;
   }
@@ -466,24 +576,55 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function geometry(kind) {
     if (geometries.has(kind)) return geometries.get(kind);
     let value;
-    if (kind === 'universe') value = new library.IcosahedronGeometry(1, 1);
+    if (kind === 'universe') value = new library.IcosahedronGeometry(1, 2);
     else if (kind === 'conventional-universe') value = new library.TorusGeometry(1, 0.13, 8, 28);
     else if (kind === 'conventional-group') value = new library.BoxGeometry(1.55, 0.42, 1.55);
-    else if (kind === 'group') value = new library.CylinderGeometry(1, 1, 0.42, 18, 1, false);
+    else if (kind === 'group') value = new library.CylinderGeometry(1, 1, 0.34, 32, 1, false);
     else if (kind === 'aggregate') value = new library.BoxGeometry(1.45, 1.45, 1.45);
     else if (kind === 'encrypted') value = new library.TorusGeometry(1.28, 0.11, 6, 18);
-    else value = new library.SphereGeometry(1, 10, 8);
+    else value = new library.SphereGeometry(1, 18, 14);
+    protectSharedResource(value);
     geometries.set(kind, value);
     return value;
   }
 
   function activeNodeEffect(key) {
     const effect = nodeEffects.get(key);
-    if (!effect || finite(effect.expiresAtMs) <= clock()) {
+    const visualEnd = finite(effect?.animationEndsAtMs, finite(effect?.expiresAtMs));
+    if (!effect || visualEnd <= clock()) {
       if (effect) nodeEffects.delete(key);
       return null;
     }
     return effect;
+  }
+
+  function underlyingNodeState(node, visualState) {
+    if (['active', 'afterglow', 'arrival'].includes(visualState)) {
+      return node?.quiet || node?.stale ? 'quiet' : nodeType(node);
+    }
+    return visualState;
+  }
+
+  function emphasisForState(state) {
+    if (state === 'active') return { state: 'active', intensity: 1 };
+    if (state === 'afterglow') return { state: 'active', intensity: 0.34 };
+    if (state === 'arrival') return { state: 'arrival', intensity: 0.72 };
+    return { state: 'arrival', intensity: 0 };
+  }
+
+  function ownedEmphasisMaterial(key, state = 'arrival') {
+    let metadata = ownedNodeMaterials.get(key);
+    if (!metadata) {
+      const material = ownDisposableResource(new library.MeshBasicMaterial({ color: materialColor(state),
+        transparent: true, opacity: 0, depthWrite: false }));
+      metadata = { material, state, current: 0, target: 0, updatedAt: clock() };
+      ownedNodeMaterials.set(key, metadata);
+    }
+    if (metadata.state !== state) {
+      metadata.state = state;
+      metadata.material.color?.set(materialColor(state));
+    }
+    return metadata;
   }
 
   function applyNodeVisual(node, object = nodeObjects.get(nodeKey(node))) {
@@ -491,6 +632,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const kind = nodeGeometryKind(node);
     const state = nodeVisualState(node, activeNodeEffect(nodeKey(node)));
     const base = object.userData.visualizerBase;
+    const emphasisMesh = object.userData.visualizerEmphasis;
     const outline = object.userData.visualizerOutline;
     const encrypted = object.userData.visualizerEncrypted;
     const radius = nodeRadius(node);
@@ -499,12 +641,20 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (object.userData.visualizerStyleSignature === signature) return;
     object.userData.visualizerStyleSignature = signature;
     if (base.geometry !== geometry(kind)) base.geometry = geometry(kind);
-    base.material = meshMaterial(kind, state);
+    base.material = meshMaterial(kind, underlyingNodeState(node, state));
     outline.geometry = geometry(kind);
     outline.material = specialMaterial('outline');
     outline.visible = Boolean(node.selected);
     encrypted.material = specialMaterial('encrypted');
     encrypted.visible = encryptedVisible;
+    const emphasis = emphasisForState(state);
+    const existingEmphasis = ownedNodeMaterials.get(nodeKey(node));
+    const emphasisMetadata = ownedEmphasisMaterial(nodeKey(node),
+      emphasis.intensity > 0 ? emphasis.state : (existingEmphasis?.state || emphasis.state));
+    emphasisMetadata.target = emphasis.intensity;
+    emphasisMetadata.updatedAt ||= clock();
+    emphasisMesh.material = emphasisMetadata.material;
+    emphasisMesh.visible = emphasisMetadata.current > 0.005 || emphasisMetadata.target > 0.005;
     object.userData.visualizerBaseRadius = radius;
     if (!object.userData.visualizerAnimating) object.scale.setScalar(radius);
     object.visible = node.visible !== false;
@@ -515,15 +665,19 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const object = new library.Group();
     const kind = nodeGeometryKind(node);
     const base = new library.Mesh(geometry(kind), meshMaterial(kind, nodeVisualState(node)));
+    const emphasis = new library.Mesh(geometry(kind), ownedEmphasisMaterial(key).material);
+    emphasis.scale.setScalar(1.08);
+    emphasis.visible = false;
     const outline = new library.Mesh(geometry(kind), specialMaterial('outline'));
     outline.scale.setScalar(1.18);
     outline.visible = false;
     const encrypted = new library.Mesh(geometry('encrypted'), specialMaterial('encrypted'));
     encrypted.scale.setScalar(0.92);
     encrypted.visible = false;
-    object.add(base, outline, encrypted);
+    object.add(base, emphasis, outline, encrypted);
     object.userData.visualizerKey = key;
     object.userData.visualizerBase = base;
+    object.userData.visualizerEmphasis = emphasis;
     object.userData.visualizerOutline = outline;
     object.userData.visualizerEncrypted = encrypted;
     nodeObjects.set(key, object);
@@ -531,19 +685,35 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return object;
   }
 
+  const nodeObjectAccessor = (node) => {
+    return nodeObjects.get(nodeKey(node)) || createNodeObject(node);
+  };
+
   function createLinkObject(link) {
     const key = linkKey(link);
     const positions = new Float32Array((LINK_SEGMENTS + 1) * 3);
-    const linkGeometry = new library.BufferGeometry();
-    const attribute = new library.Float32BufferAttribute(positions, 3);
-    attribute.setUsage(library.DynamicDrawUsage);
-    linkGeometry.setAttribute('position', attribute);
-    const line = new library.Line(linkGeometry,
+    const linkGeometry = ownDisposableResource(new library.LineGeometry());
+    linkGeometry.setPositions(positions);
+    const line = new library.Line2(linkGeometry,
       lineMaterial(linkVisualState(link), linkIsDashed(link), Boolean(link.encrypted)));
+    line.computeLineDistances?.();
+    const segmentBuffer = linkGeometry.attributes?.instanceStart?.data || null;
+    const distanceBuffer = linkGeometry.attributes?.instanceDistanceStart?.data || null;
+    segmentBuffer?.setUsage?.(library.DynamicDrawUsage);
+    distanceBuffer?.setUsage?.(library.DynamicDrawUsage);
     line.userData.visualizerKey = key;
+    line.userData.visualizerPositions = positions;
+    line.userData.visualizerPath = new Float64Array(7);
+    line.userData.visualizerPath.fill(Number.NaN);
+    line.userData.visualizerSegmentBuffer = segmentBuffer;
+    line.userData.visualizerDistanceBuffer = distanceBuffer;
     linkObjects.set(key, line);
     return line;
   }
+
+  const linkObjectAccessor = (link) => {
+    return linkObjects.get(linkKey(link)) || createLinkObject(link);
+  };
 
   function applyLinkVisual(link, object = linkObjects.get(linkKey(link))) {
     if (!object) return;
@@ -559,8 +729,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function updateLinkPosition(object, start, end, link) {
-    if (!object?.geometry?.attributes?.position) return false;
-    const array = object.geometry.attributes.position.array;
+    if (!object?.geometry?.setPositions) return false;
+    const array = object.userData.visualizerPositions;
     const startX = finite(start?.x), startY = finite(start?.y), startZ = mode === 'flat' ? 0 : finite(start?.z);
     const endX = finite(end?.x), endY = finite(end?.y), endZ = mode === 'flat' ? 0 : finite(end?.z);
     const deltaX = endX - startX, deltaY = endY - startY, deltaZ = endZ - startZ;
@@ -570,7 +740,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const path = object.userData.visualizerPath;
     if (path && path[0] === startX && path[1] === startY && path[2] === startZ &&
         path[3] === endX && path[4] === endY && path[5] === endZ && path[6] === curvature) return true;
-    object.userData.visualizerPath = [startX, startY, startZ, endX, endY, endZ, curvature];
+    path[0] = startX;
+    path[1] = startY;
+    path[2] = startZ;
+    path[3] = endX;
+    path[4] = endY;
+    path[5] = endZ;
+    path[6] = curvature;
     let perpendicularX = deltaY, perpendicularY = -deltaX, perpendicularZ = 0;
     if (Math.hypot(perpendicularX, perpendicularY) < 0.001) {
       perpendicularX = -deltaZ;
@@ -590,9 +766,40 @@ async function createNetworkVisualizerRenderer(options = {}) {
       array[index + 1] = inverse * inverse * startY + 2 * inverse * progress * controlY + progress * progress * endY;
       array[index + 2] = inverse * inverse * startZ + 2 * inverse * progress * controlZ + progress * progress * endZ;
     }
-    object.geometry.attributes.position.needsUpdate = true;
-    object.geometry.computeBoundingSphere();
-    if (object.material?.isLineDashedMaterial) object.computeLineDistances();
+    const segmentBuffer = object.userData.visualizerSegmentBuffer;
+    const segmentArray = segmentBuffer?.array;
+    if (segmentArray && segmentArray.length >= LINK_SEGMENTS * 6) {
+      const distanceBuffer = object.userData.visualizerDistanceBuffer;
+      const distanceArray = distanceBuffer?.array;
+      let cumulativeDistance = 0;
+      for (let segment = 0; segment < LINK_SEGMENTS; segment += 1) {
+        const pointIndex = segment * 3;
+        const nextPointIndex = pointIndex + 3;
+        const segmentIndex = segment * 6;
+        segmentArray[segmentIndex] = array[pointIndex];
+        segmentArray[segmentIndex + 1] = array[pointIndex + 1];
+        segmentArray[segmentIndex + 2] = array[pointIndex + 2];
+        segmentArray[segmentIndex + 3] = array[nextPointIndex];
+        segmentArray[segmentIndex + 4] = array[nextPointIndex + 1];
+        segmentArray[segmentIndex + 5] = array[nextPointIndex + 2];
+        if (distanceArray && distanceArray.length >= LINK_SEGMENTS * 2) {
+          const distanceIndex = segment * 2;
+          distanceArray[distanceIndex] = cumulativeDistance;
+          cumulativeDistance += Math.hypot(array[nextPointIndex] - array[pointIndex],
+            array[nextPointIndex + 1] - array[pointIndex + 1],
+            array[nextPointIndex + 2] - array[pointIndex + 2]);
+          distanceArray[distanceIndex + 1] = cumulativeDistance;
+        }
+      }
+      segmentBuffer.needsUpdate = true;
+      if (distanceBuffer) distanceBuffer.needsUpdate = true;
+    } else {
+      // Retain compatibility with small test doubles and older compatible LineGeometry builds.
+      object.geometry.setPositions(array);
+      if (object.material?.dashed) object.computeLineDistances?.();
+    }
+    object.geometry.computeBoundingBox?.();
+    object.geometry.computeBoundingSphere?.();
     return true;
   }
 
@@ -625,6 +832,43 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (!object || !source || !target) continue;
       updateLinkPosition(object, renderedPosition(source), renderedPosition(target), link);
     }
+    if (controls && !programmaticCamera && navigationScope.level !== 'overview') {
+      const center = scopeCenter();
+      if (lastScopeCenter) {
+        const dx = center.x - lastScopeCenter.x;
+        const dy = center.y - lastScopeCenter.y;
+        const dz = center.z - lastScopeCenter.z;
+        if (Math.hypot(dx, dy, dz) > 0.001) {
+          controls.target.set(controls.target.x + dx, controls.target.y + dy, controls.target.z + dz);
+          const camera = graph?.camera();
+          camera?.position?.set(camera.position.x + dx, camera.position.y + dy, camera.position.z + dz);
+        }
+      }
+      lastScopeCenter = center;
+    }
+  }
+
+  function synchronizeFromLiveSources() {
+    const nodeFields = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'fx', 'fy', 'fz', 'pinned', 'selected', 'active',
+      'quiet', 'stale', 'afterglow', 'pending', 'encrypted', 'visible', 'renderRadius', 'labelPriority'];
+    for (const node of renderNodes.values()) {
+      if (dragging.has(nodeKey(node))) continue;
+      const source = node.__source;
+      if (!source || source === node) continue;
+      for (const field of nodeFields) {
+        if (Object.hasOwn(source, field)) node[field] = source[field];
+        else if (field === 'fx' || field === 'fy' || field === 'fz') delete node[field];
+      }
+    }
+    const linkFields = ['active', 'faded', 'dashed', 'encrypted', 'visible', 'curvature', 'curveDirection',
+      'particleCount'];
+    for (const link of renderLinks.values()) {
+      const source = link.__source;
+      if (!source || source === link) continue;
+      for (const field of linkFields) {
+        if (Object.hasOwn(source, field)) link[field] = source[field];
+      }
+    }
   }
 
   function reconcileNodes(nodes) {
@@ -656,6 +900,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
       nodeObjects.delete(key);
       dragging.delete(key);
       nodeEffects.delete(key);
+      labelResidence.delete(key);
+      labelAnchorIndexes.delete(key);
+      const label = labelElements.get(key);
+      label?.remove();
+      labelElements.delete(key);
+      ownedNodeMaterials.get(key)?.material?.dispose?.();
+      ownedNodeMaterials.delete(key);
     }
     return result;
   }
@@ -691,6 +942,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const removed = [];
     for (const key of [...renderLinks.keys()]) {
       if (next.has(key)) continue;
+      const removedLink = renderLinks.get(key);
+      drainPulseLink(removedLink);
+      releasePulseReservations(removedLink);
       renderLinks.delete(key);
       steadyParticleCounts.delete(key);
       const object = linkObjects.get(key);
@@ -730,6 +984,30 @@ async function createNetworkVisualizerRenderer(options = {}) {
     effectFrame = null;
   }
 
+  function updateNodeEmphasis(now, immediate = false) {
+    let continuing = false;
+    for (const [key, metadata] of ownedNodeMaterials) {
+      const object = nodeObjects.get(key);
+      const mesh = object?.userData?.visualizerEmphasis;
+      if (!object || !mesh) continue;
+      const elapsed = Math.max(0, Math.min(64, now - finite(metadata.updatedAt, now)));
+      metadata.updatedAt = now;
+      const rising = metadata.target > metadata.current;
+      const duration = metadata.state === 'active' ?
+        (rising ? animation.txAttackMs : animation.txReleaseMs) : animation.pulseDurationMs;
+      if (immediate || prefersReducedMotion() || duration <= 0) metadata.current = metadata.target;
+      else {
+        const response = 1 - Math.exp(-elapsed / Math.max(16, duration * 0.22));
+        metadata.current += (metadata.target - metadata.current) * response;
+        if (Math.abs(metadata.target - metadata.current) < 0.004) metadata.current = metadata.target;
+      }
+      metadata.material.opacity = clamp(metadata.current * materialOpacity(metadata.state), 0, 0.94);
+      mesh.visible = metadata.current > 0.005 || metadata.target > 0.005;
+      if (metadata.current !== metadata.target) continuing = true;
+    }
+    return continuing;
+  }
+
   function resetAnimatedNodeVisuals() {
     for (const node of renderNodes.values()) {
       const object = nodeObjects.get(nodeKey(node));
@@ -738,6 +1016,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       object.scale.setScalar(object.userData.visualizerBaseRadius || nodeRadius(node));
       applyNodeVisual(node, object);
     }
+    updateNodeEmphasis(clock(), true);
   }
 
   function animateEffects() {
@@ -748,12 +1027,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
       return;
     }
     const now = clock();
-    let continuing = false;
+    let continuing = updateNodeEmphasis(now);
     for (const [id, effect] of animatedEffects) {
       const node = renderNodes.get(effectNodeKey(effect));
       const object = node && nodeObjects.get(nodeKey(node));
       const start = finite(effect.createdAtMs, now);
-      const end = Math.max(start + 1, finite(effect.expiresAtMs, start + 800));
+      const end = Math.max(start + 1, finite(effect.animationEndsAtMs,
+        Math.min(finite(effect.expiresAtMs, start + animation.pulseDurationMs),
+          start + animation.pulseDurationMs)));
       if (!object || now >= end) {
         animatedEffects.delete(id);
         if (object) {
@@ -765,7 +1046,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       }
       continuing = true;
       const progress = clamp((now - start) / (end - start), 0, 1);
-      const pulse = 1 + Math.sin(progress * Math.PI) * (1 - progress) * 0.32;
+      const pulse = 1 + Math.sin(progress * Math.PI) * (1 - progress) * animation.pulseScale;
       object.userData.visualizerAnimating = true;
       object.scale.setScalar((object.userData.visualizerBaseRadius || nodeRadius(node)) * pulse);
     }
@@ -773,7 +1054,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function scheduleEffectAnimation() {
-    if (effectFrame === null && animatedEffects.size && !prefersReducedMotion() && !documentValue.hidden) {
+    const transitioning = [...ownedNodeMaterials.values()].some((value) => value.current !== value.target);
+    if (effectFrame === null && (animatedEffects.size || transitioning) &&
+        !prefersReducedMotion() && !documentValue.hidden) {
       effectFrame = requestAnimationFrame(animateEffects);
     }
   }
@@ -786,15 +1069,56 @@ async function createNetworkVisualizerRenderer(options = {}) {
       (!target || link.__targetKey === target) && ['tx', 'activity', 'migration'].includes(normalizedLinkType(link))) || null;
   }
 
+  function drainPulseLink(link) {
+    const group = link?.__singleHopPhotonsObj;
+    if (!group) return;
+    while (group.children?.length) {
+      const particle = group.children[0];
+      if (typeof group.remove === 'function') group.remove(particle);
+      else group.children.shift();
+    }
+    group.parent?.remove?.(group);
+    delete link.__singleHopPhotonsObj;
+  }
+
+  function releasePulseReservations(link = null) {
+    for (const [reservation, reservedLink] of pulseReservations) {
+      if (link && reservedLink !== link) continue;
+      clearTimeout(reservation.timer);
+      pulseReservations.delete(reservation);
+    }
+  }
+
+  function drainPulseParticles() {
+    const links = new Set([...renderLinks.values(), ...pulseReservations.values()]);
+    links.forEach(drainPulseLink);
+  }
+
   function pulse(linkOrKey) {
     if (!graph || disposed || documentValue.hidden || prefersReducedMotion()) return false;
     const link = typeof linkOrKey === 'object' ? linkOrKey : renderLinks.get(String(linkOrKey));
     if (!link || !renderLinks.has(linkKey(link))) return false;
     const steady = [...steadyParticleCounts.values()].reduce((total, count) => total + count, 0);
-    if (steady + pulseTimers.size >= particleBudget) return false;
+    if (steady + pulseReservations.size >= particleBudget) return false;
     graph.emitParticle(link);
-    const timer = setTimeout(() => pulseTimers.delete(timer), 1_500);
-    pulseTimers.add(timer);
+    const group = link.__singleHopPhotonsObj;
+    const particle = group?.children?.at?.(-1) || null;
+    const reservation = { link, particle, timer: null };
+    const releaseWhenRemoved = () => {
+      reservation.timer = null;
+      if (!pulseReservations.has(reservation)) return;
+      const currentGroup = link.__singleHopPhotonsObj;
+      if (!particle) return;
+      if (!currentGroup?.children?.includes(particle)) {
+        pulseReservations.delete(reservation);
+        return;
+      }
+      reservation.timer = setTimeout(releaseWhenRemoved,
+        Math.max(120, Math.min(500, animation.particleFlightMs / 4)));
+    };
+    reservation.timer = setTimeout(releaseWhenRemoved,
+      Math.max(120, Math.min(500, animation.particleFlightMs / 4)));
+    pulseReservations.set(reservation, link);
     return true;
   }
 
@@ -808,16 +1132,30 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const key = effectNodeKey(effect);
       if (key) {
         const current = nodeEffects.get(key);
-        if (!current || finite(current.expiresAtMs) <= finite(effect.expiresAtMs)) nodeEffects.set(key, effect);
+        const currentEnd = finite(current?.animationEndsAtMs, finite(current?.expiresAtMs));
+        const nextEnd = finite(effect.animationEndsAtMs, finite(effect.expiresAtMs));
+        if (!current || currentEnd <= nextEnd) nodeEffects.set(key, effect);
       }
-      if (['affiliation_arrival', 'migration', 'destination_highlight', 'tx_pulse'].includes(effect.type) &&
-          animatedEffects.size < particleBudget) animatedEffects.set(id, effect);
-      if (['tx_pulse', 'migration'].includes(effect.type) && !documentValue.hidden && !prefersReducedMotion()) {
+      const visualKey = String(effect.coalesceKey ||
+        `${effect.type}:${effectNodeKey(effect)}:${effect.sourceKey || ''}:${effect.targetKey || ''}`);
+      const previousAt = finite(effectCooldowns.get(visualKey), -Infinity);
+      const coalesced = now - previousAt < animation.effectCoalesceMs;
+      effectCooldowns.set(visualKey, now);
+      if (!coalesced && ['affiliation_arrival', 'migration', 'destination_highlight', 'tx_pulse'].includes(effect.type) &&
+          animatedEffects.size < animation.softAnimatedEffects) animatedEffects.set(id, effect);
+      if (!coalesced && ['tx_pulse', 'migration'].includes(effect.type) &&
+          !documentValue.hidden && !prefersReducedMotion()) {
         const link = findEffectLink(effect);
         if (link) queueMicrotask(() => { if (!disposed) pulse(link); });
       }
     }
+    for (const [key, observedAt] of effectCooldowns) {
+      if (now - observedAt > Math.max(5_000, animation.effectCoalesceMs * 4)) effectCooldowns.delete(key);
+    }
+    const maximumCooldowns = Math.max(32, effectLimit * EFFECT_SEEN_MULTIPLIER);
+    while (effectCooldowns.size > maximumCooldowns) effectCooldowns.delete(effectCooldowns.keys().next().value);
     expireSeenEffects();
+    for (const node of renderNodes.values()) applyNodeVisual(node);
     scheduleEffectAnimation();
   }
 
@@ -853,7 +1191,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (!Number.isFinite(minimumX)) return 'overview';
     const span = Math.hypot(maximumX - minimumX, maximumY - minimumY, maximumZ - minimumZ);
     const target = graph.controls()?.target || new library.Vector3();
-    return labelZoomTier(camera.position.distanceTo(target), span, Boolean(focusedKey));
+    const explicitlyFocused = Boolean(focusedKey && renderNodes.get(focusedKey)?.selected);
+    const distanceTier = labelZoomTier(camera.position.distanceTo(target), span, explicitlyFocused);
+    // Hierarchy navigation establishes the semantic detail floor. Camera distance may reveal more detail,
+    // but a fitted system must keep every admitted talkgroup discoverable and a fitted group must expose
+    // its budgeted radio labels even when the containing cluster has a wide 3D span.
+    if (navigationScope.level === 'group') return 'close';
+    if (navigationScope.level === 'system' && distanceTier === 'overview') return 'mid';
+    return distanceTier;
   }
 
   function updateOffscreenActivityCount(width, height) {
@@ -879,6 +1224,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function renderLabels() {
     labelFrame = null;
     if (!graph || disposed || documentValue.hidden || contextLost) return;
+    const renderedAt = performance.now();
+    lastLabelRenderAt = renderedAt;
     const width = Math.max(0, surface.clientWidth || host.clientWidth);
     const height = Math.max(0, surface.clientHeight || host.clientHeight);
     if (!width || !height) return;
@@ -895,9 +1242,29 @@ async function createNetworkVisualizerRenderer(options = {}) {
         continue;
       }
       const text = labelText(node);
+      const recentlyVisible = renderedAt - finite(labelResidence.get(nodeKey(node)), -Infinity) <=
+        LABEL_RESIDENCE_MS;
+      const kind = nodeType(node);
+      const radius = nodeRadius(node);
+      const labelWidth = clamp(text.length * 8.2 + (node.encrypted ? 30 : 18), 64, 300);
+      const labelHeight = kind === 'universe' ? 38 : kind === 'group' ? 32 : 28;
+      const allowAlternateAnchors = kind === 'universe' || kind === 'group' || node.selected || node.active;
+      const rawOffsets = allowAlternateAnchors ? [
+        { x: radius + 7, y: 0, index: 0 },
+        { x: -radius - 7 - labelWidth, y: 0, index: 1 },
+        { x: radius + 7, y: -labelHeight - 8, index: 2 },
+        { x: radius + 7, y: labelHeight + 8, index: 3 },
+        { x: -radius - 7 - labelWidth, y: -labelHeight - 8, index: 4 },
+        { x: -radius - 7 - labelWidth, y: labelHeight + 8, index: 5 }
+      ] : [{ x: radius + 7, y: 0, index: 0 }];
+      const preferredAnchor = labelAnchorIndexes.get(nodeKey(node));
+      const offsets = Number.isSafeInteger(preferredAnchor) ? [
+        ...rawOffsets.filter((offset) => offset.index === preferredAnchor),
+        ...rawOffsets.filter((offset) => offset.index !== preferredAnchor)
+      ] : rawOffsets;
       candidates.push({ key: nodeKey(node), node, text, x: screen.x, y: screen.y,
-        offsetX: nodeRadius(node) + 5, width: clamp(text.length * 7 + (node.encrypted ? 24 : 12), 48, 240),
-        height: nodeType(node) === 'universe' ? 30 : 22, priority: labelPriority(node, rank) });
+        offsets, width: labelWidth, height: labelHeight,
+        priority: labelPriority(node, rank) + (recentlyVisible ? 250 : 0) });
     }
     const placements = chooseLabelPlacements(candidates, { width, height }, labelBudget);
     const visible = new Set();
@@ -910,6 +1277,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
         labelLayer.append(element);
       }
       visible.add(placement.key);
+      labelResidence.set(placement.key, renderedAt);
+      labelAnchorIndexes.set(placement.key, placement.offsetIndex);
       element.textContent = `${placement.node.encrypted ? '🔒 ' : ''}${placement.text}`;
       element.dataset.type = nodeType(placement.node);
       element.dataset.active = String(Boolean(placement.node.active));
@@ -918,16 +1287,25 @@ async function createNetworkVisualizerRenderer(options = {}) {
       element.dataset.quiet = String(Boolean(placement.node.quiet));
       element.style.transform = `translate3d(${placement.left}px, ${placement.top}px, 0)`;
       element.hidden = false;
+      element.dataset.visible = 'true';
     }
     for (const [key, element] of labelElements) {
       if (visible.has(key)) continue;
-      element.remove();
-      labelElements.delete(key);
+      element.dataset.visible = 'false';
     }
   }
 
   function scheduleLabels() {
-    if (labelFrame === null && !disposed && !documentValue.hidden) labelFrame = requestAnimationFrame(renderLabels);
+    if (labelFrame !== null || labelTimer !== null || disposed || documentValue.hidden) return;
+    const delay = Math.max(0, LABEL_RENDER_INTERVAL_MS - (performance.now() - lastLabelRenderAt));
+    if (delay > 1) {
+      labelTimer = setTimeout(() => {
+        labelTimer = null;
+        scheduleLabels();
+      }, delay);
+      return;
+    }
+    labelFrame = requestAnimationFrame(renderLabels);
   }
 
   function trackCamera(duration = 0) {
@@ -944,6 +1322,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function refresh(optionsValue = {}) {
     if (!graph || disposed) return;
+    // The external force layout mutates the stable source objects between structural graph updates.
+    // Pull those coordinates into the renderer-owned objects so motion remains continuous without
+    // asking force-graph to tear down and rebuild the scene on every animation frame.
+    synchronizeFromLiveSources();
     for (const node of renderNodes.values()) applyNodeVisual(node);
     for (const link of renderLinks.values()) applyLinkVisual(link);
     synchronizeVisualPositions();
@@ -951,16 +1333,34 @@ async function createNetworkVisualizerRenderer(options = {}) {
     // unnecessary because custom objects are updated in place.
     if (optionsValue.rebuild === true) graph.refresh();
     scheduleLabels();
+    scheduleEffectAnimation();
   }
 
   function clearEffects() {
     clearEffectAnimationFrame();
     animatedEffects.clear();
     nodeEffects.clear();
+    effectCooldowns.clear();
     seenEffects.clear();
-    pulseTimers.forEach(clearTimeout);
-    pulseTimers.clear();
+    drainPulseParticles();
+    releasePulseReservations();
+    for (const node of renderNodes.values()) applyNodeVisual(node);
     resetAnimatedNodeVisuals();
+  }
+
+  function scheduleHeroFrame() {
+    if (heroFramed || cameraInteracted || navigationScope.level !== 'overview' || !renderNodes.size ||
+        disposed || documentValue.hidden) return;
+    if (!bootstrapStartedAt) bootstrapStartedAt = performance.now();
+    if (heroFrameTimer !== null) clearTimeout(heroFrameTimer);
+    const elapsed = performance.now() - bootstrapStartedAt;
+    const delay = elapsed >= 2_400 ? 0 : 360;
+    heroFrameTimer = setTimeout(() => {
+      heroFrameTimer = null;
+      if (disposed || cameraInteracted || navigationScope.level !== 'overview' || !renderNodes.size) return;
+      heroFramed = true;
+      frameScope({ duration: animation.cameraTransitionMs, padding: 1.18, hero: true });
+    }, delay);
   }
 
   function setGraphData(value = {}) {
@@ -984,16 +1384,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
     }
     processEffects(bounded.effects);
     refresh();
-    // Custom objects are created by the graph update; refresh once more only after a structural change.
+    // The graph digests custom objects asynchronously; apply their final state once that update lands.
     if (structureChanged) queueMicrotask(() => { if (!disposed) refresh(); });
     else if (particlesChanged) graph.refresh();
-    if (nodes.length && !autoFitPerformed && !cameraInteracted && options.autoFitOnFirstData !== false) {
-      autoFitPerformed = true;
-      autoFitFrame = requestAnimationFrame(() => {
-        autoFitFrame = null;
-        if (!disposed && !cameraInteracted) fitAll();
-      });
-    }
+    if (nodes.length && options.autoFitOnFirstData !== false) scheduleHeroFrame();
+    updateAutoRotate();
     if (bounded.rendererLimits.suppressedNodes || bounded.rendererLimits.suppressedLinks ||
         bounded.rendererLimits.suppressedEffects) callbacks.onLimit?.(bounded.rendererLimits);
     return diagnostics();
@@ -1004,6 +1399,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const width = Math.max(1, Math.floor(surface.clientWidth || host.clientWidth || 1));
     const height = Math.max(1, Math.floor(surface.clientHeight || host.clientHeight || 1));
     graph.width(width).height(height);
+    materials.forEach(({ material, category }) => {
+      if (category === 'line') material.resolution?.set(width, height);
+    });
     scheduleLabels();
   }
 
@@ -1011,39 +1409,279 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return prefersReducedMotion() ? 0 : Math.max(0, finite(requested, 360));
   }
 
-  function fitAll(duration = 360, padding = 48) {
-    if (!graph || disposed || !renderNodes.size) return false;
-    focusedKey = '';
-    const milliseconds = cameraDuration(duration);
-    graph.zoomToFit(milliseconds, Math.max(0, finite(padding, 48)), (node) => node.visible !== false);
-    trackCamera(milliseconds);
+  function clearAutoRotateTimer() {
+    if (autoRotateTimer !== null) clearTimeout(autoRotateTimer);
+    autoRotateTimer = null;
+  }
+
+  function updateAutoRotate() {
+    if (!controls) return false;
+    const effective = Boolean(autoRotateRequested && !autoRotatePaused && !programmaticCamera &&
+      !arrangeMode && dragging.size === 0 &&
+      mode === '3d' && !prefersReducedMotion() && !documentValue.hidden && renderNodes.size &&
+      (navigationScope.level !== 'overview' || heroFramed || cameraInteracted));
+    controls.autoRotate = effective;
+    controls.autoRotateSpeed = animation.autoRotateSpeed;
+    callbacks.onAutoRotateState?.({ requested: autoRotateRequested, effective,
+      paused: autoRotateRequested && !effective });
+    return effective;
+  }
+
+  function scheduleAutoRotateResume() {
+    clearAutoRotateTimer();
+    if (!autoRotateRequested || mode !== '3d' || prefersReducedMotion() || documentValue.hidden ||
+        arrangeMode || dragging.size) {
+      if (arrangeMode || dragging.size) autoRotatePaused = true;
+      updateAutoRotate();
+      return;
+    }
+    autoRotatePaused = true;
+    updateAutoRotate();
+    autoRotateTimer = setTimeout(() => {
+      autoRotateTimer = null;
+      resumeAutoRotateAroundScope();
+    }, animation.autoRotateIdleDelayMs);
+  }
+
+  function resumeAutoRotateAroundScope() {
+    if (!autoRotateRequested || mode !== '3d' || prefersReducedMotion() || documentValue.hidden || !controls ||
+        !graph || !renderNodes.size || arrangeMode || dragging.size) {
+      updateAutoRotate();
+      return false;
+    }
+    const target = scopeCenter();
+    const currentTarget = controls.target;
+    const delta = Math.hypot(target.x - currentTarget.x, target.y - currentTarget.y, target.z - currentTarget.z);
+    if (delta > 0.25) {
+      const camera = graph.camera();
+      const position = {
+        x: target.x + camera.position.x - currentTarget.x,
+        y: target.y + camera.position.y - currentTarget.y,
+        z: target.z + camera.position.z - currentTarget.z
+      };
+      return tweenCamera(position, target, Math.min(360, animation.cameraBackTransitionMs),
+        { resumeAutoRotateImmediately: true });
+    }
+    autoRotatePaused = false;
+    updateAutoRotate();
     return true;
   }
 
-  function focus(keyOrNode, duration = 420) {
+  function stopCameraTween({ resumeAutoRotate = true } = {}) {
+    if (cameraTweenFrame !== null) cancelAnimationFrame(cameraTweenFrame);
+    cameraTweenFrame = null;
+    programmaticCamera = false;
+    if (resumeAutoRotate) scheduleAutoRotateResume();
+    else updateAutoRotate();
+  }
+
+  function cameraPose() {
+    if (!graph || !controls) return null;
+    const camera = graph.camera();
+    return Object.freeze({
+      position: Object.freeze({ x: finite(camera.position.x), y: finite(camera.position.y),
+        z: finite(camera.position.z) }),
+      target: Object.freeze({ x: finite(controls.target.x), y: finite(controls.target.y),
+        z: finite(controls.target.z) })
+    });
+  }
+
+  function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs, optionsValue = {}) {
+    if (!graph || disposed || !controls) return false;
+    stopCameraTween({ resumeAutoRotate: false });
+    clearAutoRotateTimer();
+    autoRotatePaused = true;
+    programmaticCamera = true;
+    updateAutoRotate();
+    const camera = graph.camera();
+    const startedAt = performance.now();
+    const duration = cameraDuration(requestedDuration);
+    const fromPosition = { x: finite(camera.position.x), y: finite(camera.position.y), z: finite(camera.position.z) };
+    const fromTarget = { x: finite(controls.target.x), y: finite(controls.target.y), z: finite(controls.target.z) };
+    const toPosition = { x: finite(position?.x), y: finite(position?.y), z: finite(position?.z) };
+    const toTarget = { x: finite(target?.x), y: finite(target?.y), z: finite(target?.z) };
+    const apply = (progress) => {
+      const eased = easeInOutCubic(progress);
+      camera.position.set(
+        fromPosition.x + (toPosition.x - fromPosition.x) * eased,
+        fromPosition.y + (toPosition.y - fromPosition.y) * eased,
+        fromPosition.z + (toPosition.z - fromPosition.z) * eased);
+      controls.target.set(
+        fromTarget.x + (toTarget.x - fromTarget.x) * eased,
+        fromTarget.y + (toTarget.y - fromTarget.y) * eased,
+        fromTarget.z + (toTarget.z - fromTarget.z) * eased);
+      camera.lookAt?.(controls.target);
+      controls.update?.();
+      scheduleLabels();
+    };
+    if (!duration) {
+      apply(1);
+      programmaticCamera = false;
+      if (optionsValue.resumeAutoRotateImmediately) {
+        autoRotatePaused = false;
+        updateAutoRotate();
+      } else scheduleAutoRotateResume();
+      return true;
+    }
+    const frame = (at) => {
+      cameraTweenFrame = null;
+      if (disposed || documentValue.hidden) {
+        programmaticCamera = false;
+        updateAutoRotate();
+        return;
+      }
+      const progress = clamp((at - startedAt) / duration, 0, 1);
+      apply(progress);
+      if (progress < 1) cameraTweenFrame = requestAnimationFrame(frame);
+      else {
+        programmaticCamera = false;
+        if (optionsValue.resumeAutoRotateImmediately) {
+          autoRotatePaused = false;
+          updateAutoRotate();
+        } else scheduleAutoRotateResume();
+      }
+    };
+    cameraTweenFrame = requestAnimationFrame(frame);
+    return true;
+  }
+
+  function scopeCenter() {
+    const focalKey = navigationScope.level === 'group' ? navigationScope.groupKey :
+      navigationScope.level === 'system' ? navigationScope.universeKey : '';
+    const focal = focalKey && renderNodes.get(focalKey);
+    if (focal) return renderedPosition(focal);
+    const visible = [...renderNodes.values()].filter((node) => node.visible !== false);
+    if (!visible.length) return { x: 0, y: 0, z: 0 };
+    return visible.reduce((center, node) => {
+      const position = renderedPosition(node);
+      center.x += position.x / visible.length;
+      center.y += position.y / visible.length;
+      center.z += position.z / visible.length;
+      return center;
+    }, { x: 0, y: 0, z: 0 });
+  }
+
+  function scopeBounds(nodes = [...renderNodes.values()].filter((node) => node.visible !== false)) {
+    if (!nodes.length) return null;
+    let minimumX = Infinity, minimumY = Infinity, minimumZ = Infinity;
+    let maximumX = -Infinity, maximumY = -Infinity, maximumZ = -Infinity;
+    nodes.forEach((node) => {
+      const position = renderedPosition(node);
+      const radius = nodeRadius(node);
+      minimumX = Math.min(minimumX, position.x - radius);
+      minimumY = Math.min(minimumY, position.y - radius);
+      minimumZ = Math.min(minimumZ, position.z - radius);
+      maximumX = Math.max(maximumX, position.x + radius);
+      maximumY = Math.max(maximumY, position.y + radius);
+      maximumZ = Math.max(maximumZ, position.z + radius);
+    });
+    const center = { x: (minimumX + maximumX) / 2, y: (minimumY + maximumY) / 2,
+      z: mode === 'flat' ? 0 : (minimumZ + maximumZ) / 2 };
+    const radius = Math.max(1, Math.hypot(maximumX - minimumX, maximumY - minimumY,
+      mode === 'flat' ? 0 : maximumZ - minimumZ) / 2);
+    return { center, radius };
+  }
+
+  function frameScope(optionsValue = {}) {
+    if (!graph || disposed || !renderNodes.size) return false;
+    const keys = Array.isArray(optionsValue.keys) ? new Set(optionsValue.keys.map(String)) : null;
+    if (!keys) focusedKey = '';
+    const nodes = [...renderNodes.values()].filter((node) => node.visible !== false && (!keys || keys.has(nodeKey(node))));
+    const bounds = scopeBounds(nodes);
+    if (!bounds) return false;
+    const target = keys ? bounds.center : scopeCenter();
+    const targetRadius = nodes.reduce((maximum, node) => {
+      const position = renderedPosition(node);
+      return Math.max(maximum, Math.hypot(position.x - target.x, position.y - target.y,
+        mode === 'flat' ? 0 : position.z - target.z) + nodeRadius(node));
+    }, 1);
+    const camera = graph.camera();
+    const aspect = Math.max(0.25, (surface.clientWidth || host.clientWidth || 1) /
+      Math.max(1, surface.clientHeight || host.clientHeight || 1));
+    const verticalHalfFov = clamp(finite(camera.fov, 60), 25, 100) * Math.PI / 360;
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * aspect);
+    const limitingHalfFov = Math.max(0.1, Math.min(verticalHalfFov, horizontalHalfFov));
+    const padding = clamp(finite(optionsValue.padding, 1.22), 1, 2);
+    const scopedMinimum = navigationScope.level === 'overview' ? 150 :
+      navigationScope.level === 'system' ? 170 : 115;
+    const distance = Math.max(scopedMinimum, targetRadius * padding / Math.sin(limitingHalfFov));
+    const currentDirection = new library.Vector3().copy(camera.position).sub(controls.target).normalize();
+    if (!Number.isFinite(currentDirection.x) || currentDirection.lengthSq() < 0.001 || optionsValue.hero === true) {
+      currentDirection.set(mode === 'flat' ? 0 : 0.72, mode === 'flat' ? 0 : 0.48, 1).normalize();
+    }
+    const position = mode === 'flat' ? { x: target.x, y: target.y, z: distance } : {
+      x: target.x + currentDirection.x * distance,
+      y: target.y + currentDirection.y * distance,
+      z: target.z + currentDirection.z * distance
+    };
+    return tweenCamera(position, target, optionsValue.duration ?? animation.cameraTransitionMs);
+  }
+
+  function fitAll(duration = animation.cameraTransitionMs, padding = 48) {
+    return frameScope({ duration, padding: 1 + Math.max(0, finite(padding, 48)) / 220 });
+  }
+
+  function focus(keyOrNode, duration = animation.cameraTransitionMs) {
     if (!graph || disposed) return false;
     const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
     const node = renderNodes.get(key);
     if (!node) return false;
     focusedKey = key;
-    const target = renderedPosition(node);
-    const controls = graph.controls();
-    const camera = graph.camera();
-    const distance = Math.max(MINIMUM_CAMERA_DISTANCE, finite(node.focusDistance,
-      nodeRadius(node) * 10 + DEFAULT_CAMERA_DISTANCE));
-    let cameraPosition;
-    if (mode === 'flat') cameraPosition = { x: target.x, y: target.y, z: distance };
-    else {
-      const direction = new library.Vector3().copy(camera.position)
-        .sub(controls?.target || new library.Vector3()).normalize();
-      if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001) direction.set(0.65, 0.45, 1).normalize();
-      cameraPosition = { x: target.x + direction.x * distance, y: target.y + direction.y * distance,
-        z: target.z + direction.z * distance };
+    return frameScope({ keys: [key], duration, padding: 1.35 });
+  }
+
+  function restoreCameraPose(pose, duration = animation.cameraBackTransitionMs) {
+    if (!pose?.position || !pose?.target) return false;
+    return tweenCamera(pose.position, pose.target, duration);
+  }
+
+  function setNavigationScope(value = {}) {
+    const level = value.level === 'group' || value.level === 'talkgroup' ? 'group' :
+      value.level === 'system' ? 'system' : 'overview';
+    const next = { level, universeKey: String(value.universeKey || ''),
+      groupKey: String(value.groupKey || '') };
+    const changed = next.level !== navigationScope.level || next.universeKey !== navigationScope.universeKey ||
+      next.groupKey !== navigationScope.groupKey;
+    navigationScope = next;
+    if (changed) focusedKey = '';
+    lastScopeCenter = null;
+    if (changed) {
+      clearAutoRotateTimer();
+      autoRotatePaused = true;
+      updateAutoRotate();
     }
-    const milliseconds = cameraDuration(duration);
-    graph.cameraPosition(cameraPosition, target, milliseconds);
-    trackCamera(milliseconds);
-    return true;
+    return { ...navigationScope };
+  }
+
+  function setAutoRotate(value) {
+    autoRotateRequested = Boolean(value);
+    autoRotatePaused = false;
+    clearAutoRotateTimer();
+    if (autoRotateRequested && cameraInteracted && controls?.target && mode === '3d' && !prefersReducedMotion() &&
+        !documentValue.hidden && renderNodes.size) {
+      const center = scopeCenter();
+      if (Math.hypot(center.x - controls.target.x, center.y - controls.target.y,
+        center.z - controls.target.z) > 0.25) {
+        autoRotatePaused = true;
+        updateAutoRotate();
+        resumeAutoRotateAroundScope();
+        return autoRotateRequested;
+      }
+    }
+    updateAutoRotate();
+    return autoRotateRequested;
+  }
+
+  function setArrange(value) {
+    arrangeMode = Boolean(value);
+    graph?.enableNodeDrag?.(arrangeMode);
+    dragging.clear();
+    clearAutoRotateTimer();
+    if (arrangeMode) {
+      autoRotatePaused = true;
+      updateAutoRotate();
+    } else scheduleAutoRotateResume();
+    return arrangeMode;
   }
 
   function setMode(nextMode, optionsValue = {}) {
@@ -1057,6 +1695,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
       controls.enablePan = true;
       controls.enableZoom = true;
       controls.screenSpacePanning = true;
+      controls.zoomToCursor = true;
+      if (library.MOUSE && library.TOUCH && controls.mouseButtons && controls.touches) {
+        controls.mouseButtons.LEFT = mode === 'flat' ? library.MOUSE.PAN : library.MOUSE.ROTATE;
+        controls.mouseButtons.MIDDLE = library.MOUSE.DOLLY;
+        controls.mouseButtons.RIGHT = library.MOUSE.PAN;
+        controls.touches.ONE = mode === 'flat' ? library.TOUCH.PAN : library.TOUCH.ROTATE;
+        controls.touches.TWO = mode === 'flat' ? library.TOUCH.DOLLY_PAN : library.TOUCH.DOLLY_ROTATE;
+      }
     }
     if (mode === 'flat') {
       const target = controls?.target || { x: 0, y: 0, z: 0 };
@@ -1064,9 +1710,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
         new library.Vector3()));
       graph.camera().up.set(0, 1, 0);
       const milliseconds = cameraDuration(optionsValue.duration ?? 320);
-      graph.cameraPosition({ x: target.x, y: target.y, z: distance }, { x: target.x, y: target.y, z: 0 }, milliseconds);
-      trackCamera(milliseconds);
+      tweenCamera({ x: target.x, y: target.y, z: distance }, { x: target.x, y: target.y, z: 0 }, milliseconds);
+    } else {
+      scheduleAutoRotateResume();
     }
+    updateAutoRotate();
     synchronizeVisualPositions();
     graph.refresh();
     callbacks.onModeChange?.(mode);
@@ -1109,6 +1757,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
       metadata.material.color?.set(materialColor(metadata.state));
       metadata.material.needsUpdate = true;
     }
+    for (const metadata of ownedNodeMaterials.values()) {
+      metadata.material.color?.set(materialColor(metadata.state));
+      metadata.material.needsUpdate = true;
+    }
     graph?.backgroundColor(palette.background);
     refresh();
   }
@@ -1117,10 +1769,19 @@ async function createNetworkVisualizerRenderer(options = {}) {
     reducedMotionOverride = typeof value === 'boolean' ? value : null;
     const particlesChanged = updateParticleAllocation();
     if (prefersReducedMotion()) {
+      if (cameraTweenFrame !== null || programmaticCamera) stopCameraTween({ resumeAutoRotate: false });
+      clearAutoRotateTimer();
+      autoRotatePaused = true;
+      updateAutoRotate();
       clearEffectAnimationFrame();
       animatedEffects.clear();
+      drainPulseParticles();
+      releasePulseReservations();
       resetAnimatedNodeVisuals();
-    } else scheduleEffectAnimation();
+    } else {
+      scheduleEffectAnimation();
+      scheduleAutoRotateResume();
+    }
     if (particlesChanged) graph?.refresh();
     return prefersReducedMotion();
   }
@@ -1148,18 +1809,33 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function clear() {
+    stopCameraTween({ resumeAutoRotate: false });
+    if (heroFrameTimer !== null) clearTimeout(heroFrameTimer);
+    heroFrameTimer = null;
+    heroFramed = false;
+    bootstrapStartedAt = 0;
+    cameraInteracted = false;
+    setNavigationScope({ level: 'overview' });
     clearEffects();
+    clearAutoRotateTimer();
+    stopCameraTween({ resumeAutoRotate: false });
+    if (heroFrameTimer !== null) clearTimeout(heroFrameTimer);
     requestedLabelKeys = [];
     currentStructure = '';
     currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
     focusedKey = '';
     renderNodes.clear();
     renderLinks.clear();
+    dragging.clear();
     nodeObjects.clear();
     linkObjects.forEach((object) => object.geometry?.dispose());
     linkObjects.clear();
     labelElements.forEach((element) => element.remove());
     labelElements.clear();
+    labelResidence.clear();
+    labelAnchorIndexes.clear();
+    ownedNodeMaterials.forEach(({ material }) => material.dispose?.());
+    ownedNodeMaterials.clear();
     particleAllocation.clear();
     steadyParticleCounts.clear();
     graph?.graphData({ nodes: [], links: [] });
@@ -1167,6 +1843,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       lastOffscreenActivityCount = 0;
       callbacks.onOffscreenActivity?.({ count: 0 });
     }
+    scheduleAutoRotateResume();
   }
 
   function diagnostics() {
@@ -1181,8 +1858,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
       available: Boolean(graph), disposed, layoutOwner: 'external', mode, frozen,
       nodes: renderNodes.size, links: renderLinks.size, labels: labelElements.size,
       steadyParticles: [...steadyParticleCounts.values()].reduce((total, count) => total + count, 0),
-      pendingParticles: pulseTimers.size, animatedEffects: animatedEffects.size,
-      contextLost, paused, rendererMemory, limits: currentDocument.rendererLimits || {}
+      pendingParticles: pulseReservations.size, animatedEffects: animatedEffects.size,
+      contextLost, paused, autoRotateRequested,
+      autoRotateEffective: Boolean(controls?.autoRotate), arrangeMode,
+      scope: { ...navigationScope }, camera: cameraPose(), rendererMemory,
+      limits: currentDocument.rendererLimits || {}
     });
   }
 
@@ -1190,9 +1870,15 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let controls = null;
   const onControlsStart = () => {
     cameraInteracted = true;
-    focusedKey = '';
+    if (heroFrameTimer !== null) clearTimeout(heroFrameTimer);
+    heroFrameTimer = null;
+    stopCameraTween({ resumeAutoRotate: false });
+    autoRotatePaused = true;
+    clearAutoRotateTimer();
+    updateAutoRotate();
     callbacks.onCameraInteraction?.();
   };
+  const onControlsEnd = () => scheduleAutoRotateResume();
   const onControlsChange = () => scheduleLabels();
   const onContextLost = (event) => {
     event.preventDefault();
@@ -1213,10 +1899,15 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const onVisibilityChange = () => {
     if (!graph || disposed) return;
     if (documentValue.hidden) {
+      clearAutoRotateTimer();
+      stopCameraTween({ resumeAutoRotate: false });
+      updateAutoRotate();
       graph.pauseAnimation();
       paused = true;
       if (labelFrame !== null) cancelAnimationFrame(labelFrame);
+      if (labelTimer !== null) clearTimeout(labelTimer);
       labelFrame = null;
+      labelTimer = null;
       if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
       cameraFrame = null;
       clearEffects();
@@ -1229,6 +1920,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       resetAnimatedNodeVisuals();
       refresh();
       scheduleEffectAnimation();
+      scheduleAutoRotateResume();
     }
   };
   const onFullscreenChange = () => {
@@ -1245,11 +1937,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
       .backgroundColor(palette.background)
       .nodeId('id')
       .nodeVal(1)
-      .nodeThreeObject((node) => nodeObjects.get(nodeKey(node)) || createNodeObject(node))
+      .nodeThreeObject(nodeObjectAccessor)
       .nodeThreeObjectExtend(false)
       .linkSource('source')
       .linkTarget('target')
-      .linkThreeObject((link) => linkObjects.get(linkKey(link)) || createLinkObject(link))
+      .linkThreeObject(linkObjectAccessor)
       .linkThreeObjectExtend(false)
       .linkPositionUpdate((object, coordinates, link) =>
         updateLinkPosition(object, coordinates.start, coordinates.end, link))
@@ -1259,10 +1951,17 @@ async function createNetworkVisualizerRenderer(options = {}) {
       .linkDirectionalParticleWidth((link) => normalizedLinkType(link) === 'tx' ? 1.8 : 1.2)
       .linkDirectionalParticleSpeed(() => prefersReducedMotion() ? 0 : 0.012)
       .linkDirectionalParticleColor(() => palette.active)
+      .linkDirectionalParticleThreeObject(() =>
+        new library.Mesh(sharedParticleGeometry, sharedParticleMaterial))
       .onNodeClick((node, event) => callbacks.onNodeClick?.(node.__source || node, event))
       .onBackgroundClick((event) => callbacks.onBackgroundClick?.(event))
       .onNodeDrag((node, translate) => {
         const key = nodeKey(node);
+        if (!dragging.has(key)) {
+          clearAutoRotateTimer();
+          autoRotatePaused = true;
+          updateAutoRotate();
+        }
         const start = dragging.get(key) || { x: finite(node.x) - finite(translate.x),
           y: finite(node.y) - finite(translate.y), z: finite(node.z) - finite(translate.z) };
         dragging.set(key, start);
@@ -1281,6 +1980,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
         callbacks.onNodeDragEnd?.({ key, position,
           delta: { x: position.x - start.x, y: position.y - start.y, z: position.z - start.z },
           node: node.__source || node });
+        if (!arrangeMode) scheduleAutoRotateResume();
         scheduleLabels();
       })
       .onEngineTick(() => {
@@ -1299,20 +1999,34 @@ async function createNetworkVisualizerRenderer(options = {}) {
     controls = graph.controls();
     if (controls) {
       controls.autoRotate = false;
+      controls.autoRotateSpeed = animation.autoRotateSpeed;
       controls.enableDamping = true;
-      controls.dampingFactor = 0.09;
+      controls.dampingFactor = 0.07;
+      controls.rotateSpeed = 0.45;
+      controls.zoomSpeed = 0.65;
       controls.enablePan = true;
       controls.enableZoom = true;
       controls.enableRotate = mode !== 'flat';
       controls.screenSpacePanning = true;
+      controls.zoomToCursor = true;
+      if (library.MOUSE && library.TOUCH && controls.mouseButtons && controls.touches) {
+        controls.mouseButtons.LEFT = mode === 'flat' ? library.MOUSE.PAN : library.MOUSE.ROTATE;
+        controls.mouseButtons.MIDDLE = library.MOUSE.DOLLY;
+        controls.mouseButtons.RIGHT = library.MOUSE.PAN;
+        controls.touches.ONE = mode === 'flat' ? library.TOUCH.PAN : library.TOUCH.ROTATE;
+        controls.touches.TWO = mode === 'flat' ? library.TOUCH.DOLLY_PAN : library.TOUCH.DOLLY_ROTATE;
+      }
       controls.addEventListener('start', onControlsStart);
+      controls.addEventListener('end', onControlsEnd);
       controls.addEventListener('change', onControlsChange);
     }
+    graph.enableNodeDrag?.(arrangeMode);
     rendererCanvas = graph.renderer()?.domElement || null;
     rendererCanvas?.addEventListener('webglcontextlost', onContextLost, false);
     rendererCanvas?.addEventListener('webglcontextrestored', onContextRestored, false);
   } catch (error) {
     try { graph?._destructor?.(); } catch (_) { /* The partial renderer is already unavailable. */ }
+    disposeSharedResources();
     graph = null;
     return createUnavailableRenderer(host, surface, labelLayer, status, error, callbacks, options.signal);
   }
@@ -1339,13 +2053,21 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    if (cameraTweenFrame !== null) cancelAnimationFrame(cameraTweenFrame);
+    if (heroFrameTimer !== null) clearTimeout(heroFrameTimer);
+    if (autoRotateTimer !== null) clearTimeout(autoRotateTimer);
+    cameraTweenFrame = null;
+    heroFrameTimer = null;
+    autoRotateTimer = null;
+    programmaticCamera = false;
+    if (controls) controls.autoRotate = false;
     clearEffects();
     if (labelFrame !== null) cancelAnimationFrame(labelFrame);
+    if (labelTimer !== null) clearTimeout(labelTimer);
     if (cameraFrame !== null) cancelAnimationFrame(cameraFrame);
-    if (autoFitFrame !== null) cancelAnimationFrame(autoFitFrame);
     labelFrame = null;
+    labelTimer = null;
     cameraFrame = null;
-    autoFitFrame = null;
     resizeObserver?.disconnect();
     if (resizeFallback) window.removeEventListener('resize', resizeFallback);
     themeObserver?.disconnect();
@@ -1354,6 +2076,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     documentValue.removeEventListener('fullscreenchange', onFullscreenChange);
     options.signal?.removeEventListener('abort', abort);
     controls?.removeEventListener('start', onControlsStart);
+    controls?.removeEventListener('end', onControlsEnd);
     controls?.removeEventListener('change', onControlsChange);
     rendererCanvas?.removeEventListener('webglcontextlost', onContextLost, false);
     rendererCanvas?.removeEventListener('webglcontextrestored', onContextRestored, false);
@@ -1368,6 +2091,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     linkObjects.forEach((object) => object.geometry?.dispose());
     geometries.forEach((value) => value.dispose?.());
     materials.forEach(({ material }) => material.dispose?.());
+    ownedNodeMaterials.forEach(({ material }) => material.dispose?.());
+    disposeSharedResources();
     labelElements.forEach((element) => element.remove());
     renderNodes.clear();
     renderLinks.clear();
@@ -1379,6 +2104,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
     steadyParticleCounts.clear();
     geometries.clear();
     materials.clear();
+    ownedNodeMaterials.clear();
+    labelResidence.clear();
+    labelAnchorIndexes.clear();
+    effectCooldowns.clear();
     requestedLabelKeys = [];
     currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
     currentStructure = '';
@@ -1426,7 +2155,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
       return particleBudget;
     },
     fitAll,
+    frameScope,
     focus,
+    getCameraPose: cameraPose,
+    restoreCameraPose,
+    setNavigationScope,
+    setAutoRotate,
+    setArrange,
     pulse,
     clearEffects,
     clear,
@@ -1442,10 +2177,13 @@ export {
   boundedGraphData,
   chooseLabelPlacements,
   createNetworkVisualizerRenderer,
+  easeInOutCubic,
   labelEligible,
   labelZoomTier,
   linkIsDashed,
   linkVisualState,
+  linkWidth,
   nodeGeometryKind,
+  nodeRadius,
   nodeVisualState
 };

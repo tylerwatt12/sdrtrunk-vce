@@ -43,7 +43,7 @@ const BALANCED_DEFAULTS = {
     activeOverflowTtlMs: 30_000
   },
   layout: {
-    universeSpacing: 720,
+    universeSpacing: 105,
     groupOrbitRadius: 190,
     radioOrbitRadius: 54,
     maximumVelocity: 180,
@@ -55,14 +55,30 @@ const BALANCED_DEFAULTS = {
     collisionCellSize: 30,
     collisionPadding: 5,
     maximumDeltaMs: 50
+  },
+  animation: {
+    txAttackMs: 180,
+    txReleaseMs: 2_400,
+    pulseDurationMs: 700,
+    particleFlightMs: 1_500,
+    pulseScale: 0.10,
+    migrationMotionMs: 1_400,
+    effectCoalesceMs: 500,
+    softAnimatedEffects: 24,
+    cameraTransitionMs: 720,
+    cameraBackTransitionMs: 560,
+    autoRotateDefault: true,
+    autoRotateIdleDelayMs: 2_200,
+    autoRotateSpeed: 0.35
   }
 };
 
 const EXACT_KEYS = Object.freeze({
-  root: Object.freeze(['profile', 'render', 'state', 'layout']),
+  root: Object.freeze(['profile', 'render', 'state', 'layout', 'animation']),
   render: Object.freeze(Object.keys(BALANCED_DEFAULTS.render)),
   state: Object.freeze(Object.keys(BALANCED_DEFAULTS.state)),
-  layout: Object.freeze(Object.keys(BALANCED_DEFAULTS.layout))
+  layout: Object.freeze(Object.keys(BALANCED_DEFAULTS.layout)),
+  animation: Object.freeze(Object.keys(BALANCED_DEFAULTS.animation))
 });
 
 function plain(value, label) {
@@ -91,6 +107,11 @@ function finite(value, minimum, maximum, label) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
     throw new TypeError(`${label} is invalid.`);
   }
+  return value;
+}
+
+function boolean(value, label) {
+  if (typeof value !== 'boolean') throw new TypeError(`${label} is invalid.`);
   return value;
 }
 
@@ -124,6 +145,7 @@ function validateConfig(candidate) {
   exact(candidate.render, EXACT_KEYS.render, 'Network Visualizer render configuration');
   exact(candidate.state, EXACT_KEYS.state, 'Network Visualizer state configuration');
   exact(candidate.layout, EXACT_KEYS.layout, 'Network Visualizer layout configuration');
+  exact(candidate.animation, EXACT_KEYS.animation, 'Network Visualizer animation configuration');
   if (candidate.profile !== 'balanced') throw new TypeError('Only the balanced Network Visualizer profile is supported.');
 
   const render = {
@@ -136,7 +158,7 @@ function validateConfig(candidate) {
     hardLabels: integer(candidate.render.hardLabels, 1, 5_000, 'hardLabels'),
     hardParticles: integer(candidate.render.hardParticles, 0, 5_000, 'hardParticles'),
     hardMigrationTrails: integer(candidate.render.hardMigrationTrails, 0, 1_000, 'hardMigrationTrails'),
-    migrationTrailTtlMs: integer(candidate.render.migrationTrailTtlMs, 1, 60_000, 'migrationTrailTtlMs'),
+    migrationTrailTtlMs: integer(candidate.render.migrationTrailTtlMs, 1, 8_000, 'migrationTrailTtlMs'),
     radioQuietAfterMs: integer(candidate.render.radioQuietAfterMs, 1_000, 24 * 60 * 60_000, 'radioQuietAfterMs'),
     radioHideAfterMs: integer(candidate.render.radioHideAfterMs, 1_000, 24 * 60 * 60_000, 'radioHideAfterMs'),
     groupCollapseAfterMs: integer(candidate.render.groupCollapseAfterMs, 1_000, 24 * 60 * 60_000,
@@ -201,7 +223,28 @@ function validateConfig(candidate) {
     maximumDeltaMs: integer(candidate.layout.maximumDeltaMs, 1, 1_000, 'maximumDeltaMs')
   };
 
-  return deepFreeze({ profile: 'balanced', render, state, layout });
+  const animation = {
+    txAttackMs: integer(candidate.animation.txAttackMs, 0, 5_000, 'txAttackMs'),
+    txReleaseMs: integer(candidate.animation.txReleaseMs, 0, 30_000, 'txReleaseMs'),
+    pulseDurationMs: integer(candidate.animation.pulseDurationMs, 0, 10_000, 'pulseDurationMs'),
+    particleFlightMs: integer(candidate.animation.particleFlightMs, 100, 10_000, 'particleFlightMs'),
+    pulseScale: finite(candidate.animation.pulseScale, 0, 0.5, 'pulseScale'),
+    migrationMotionMs: integer(candidate.animation.migrationMotionMs, 0, 30_000, 'migrationMotionMs'),
+    effectCoalesceMs: integer(candidate.animation.effectCoalesceMs, 0, 10_000, 'effectCoalesceMs'),
+    softAnimatedEffects: integer(candidate.animation.softAnimatedEffects, 0, 1_000, 'softAnimatedEffects'),
+    cameraTransitionMs: integer(candidate.animation.cameraTransitionMs, 0, 10_000, 'cameraTransitionMs'),
+    cameraBackTransitionMs: integer(candidate.animation.cameraBackTransitionMs, 0, 10_000,
+      'cameraBackTransitionMs'),
+    autoRotateDefault: boolean(candidate.animation.autoRotateDefault, 'autoRotateDefault'),
+    autoRotateIdleDelayMs: integer(candidate.animation.autoRotateIdleDelayMs, 0, 60_000,
+      'autoRotateIdleDelayMs'),
+    autoRotateSpeed: finite(candidate.animation.autoRotateSpeed, 0.01, 10, 'autoRotateSpeed')
+  };
+  if (animation.migrationMotionMs > render.migrationTrailTtlMs) {
+    throw new TypeError('migrationMotionMs cannot exceed migrationTrailTtlMs.');
+  }
+
+  return deepFreeze({ profile: 'balanced', render, state, layout, animation });
 }
 
 function createConfig(overrides = {}) {

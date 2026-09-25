@@ -38,7 +38,10 @@ function groupActive(group) {
 }
 
 function universeActive(state, universe) {
-  return [...universe.groupKeys].some((key) => groupActive(state.groups.get(key) || { activeCallKeys: new Set() }));
+  const bucketActive = (bucket) => Boolean(bucket && (bucket.count > 0 || bucket.saturated));
+  return bucketActive(state.overflowActive.get(universe.key)) || [...universe.groupKeys].some((key) =>
+    groupActive(state.groups.get(key) || { activeCallKeys: new Set() }) ||
+    bucketActive(state.overflowActive.get(key)));
 }
 
 function residenceBoost(state, key, atMs) {
@@ -145,6 +148,9 @@ function universeSignals(state, atMs, query) {
     signal.pinned ||= radio.pinned;
     if (query) signal.matched ||= queryMatch(radio, query);
   });
+  state.overflowActive.forEach((bucket) => {
+    if (bucket.count > 0 || bucket.saturated) signalFor(bucket.universeKey).active = true;
+  });
   return signals;
 }
 
@@ -213,7 +219,54 @@ function filteredUniverses(state, options) {
   });
 }
 
-function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, atMs) {
+function resolveScope(state, requested, universes) {
+  if (!requested || typeof requested !== 'object') return Object.freeze({ level: 'all' });
+  const availableUniverseKeys = new Set(universes.map((universe) => universe.key));
+  if (requested.level === 'system' || requested.level === 'group') {
+    const universeKey = String(requested.universeKey || '');
+    if (!universeKey || !availableUniverseKeys.has(universeKey)) {
+      return Object.freeze({ level: 'overview' });
+    }
+    if (requested.level === 'group') {
+      const groupKey = String(requested.groupKey || '');
+      const group = state.groups.get(groupKey);
+      if (group && group.universeKey === universeKey) {
+        return Object.freeze({ level: 'group', universeKey, groupKey });
+      }
+    }
+    return Object.freeze({ level: 'system', universeKey });
+  }
+  return Object.freeze({ level: 'overview' });
+}
+
+function scopedUniverses(universes, scope) {
+  if (scope.level !== 'system' && scope.level !== 'group') return universes;
+  return universes.filter((universe) => universe.key === scope.universeKey);
+}
+
+function scopeIncludesGroup(scope, group) {
+  if (!group || scope.level === 'overview') return false;
+  if (scope.level === 'all') return true;
+  if (group.universeKey !== scope.universeKey) return false;
+  return scope.level === 'system' || group.key === scope.groupKey;
+}
+
+function scopeIncludesRadio(state, scope, radio) {
+  if (!radio || (scope.level !== 'all' && scope.level !== 'system' && scope.level !== 'group')) return false;
+  if (scope.level === 'all') return true;
+  if (radio.universeKey !== scope.universeKey) return false;
+  if (scope.level === 'system') return true;
+  return state.groups.get(scope.groupKey)?.radioKeys.has(radio.key) === true;
+}
+
+function scopeIncludesOverflowBucket(scope, bucket, allowedUniverseKeys) {
+  if (!bucket || !allowedUniverseKeys.has(bucket.universeKey)) return false;
+  if (scope.level === 'overview') return true;
+  if (scope.level === 'group') return bucket.groupKey === scope.groupKey;
+  return scope.level === 'all' || scope.level === 'system';
+}
+
+function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, atMs, scope) {
   const candidates = [];
   const entityFor = (key) => state.radios.get(key) || state.groups.get(key) || state.universes.get(key);
   const entityPath = (entity) => {
@@ -221,11 +274,19 @@ function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, at
     const universeKey = entity.type === 'universe' ? entity.key : entity.universeKey;
     if (!allowedUniverseKeys.has(universeKey)) return null;
     const path = { universeKeys: new Set([universeKey]), groupKeys: new Set(), radioKeys: new Set() };
-    if (entity.type === 'group') path.groupKeys.add(entity.key);
+    if (entity.type === 'group' && scopeIncludesGroup(scope, entity)) path.groupKeys.add(entity.key);
     if (entity.type === 'radio') {
+      if (!scopeIncludesRadio(state, scope, entity)) {
+        if (scope.level === 'system') {
+          const parent = state.groups.get(entity.visualParentGroupKey);
+          if (parent && scopeIncludesGroup(scope, parent)) path.groupKeys.add(parent.key);
+        }
+        return scope.level === 'overview' || path.groupKeys.size ? path : null;
+      }
       path.radioKeys.add(entity.key);
-      const parent = state.groups.get(entity.visualParentGroupKey);
-      if (parent && parent.universeKey === universeKey) path.groupKeys.add(parent.key);
+      const parentKey = scope.level === 'group' ? scope.groupKey : entity.visualParentGroupKey;
+      const parent = state.groups.get(parentKey);
+      if (parent && scopeIncludesGroup(scope, parent)) path.groupKeys.add(parent.key);
     }
     return path;
   };
@@ -248,9 +309,12 @@ function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, at
     const radio = state.radios.get(call.radioKey);
     const universeKey = group?.universeKey || radio?.universeKey || call.universeKey;
     if (!universeKey || !allowedUniverseKeys.has(universeKey)) return;
+    if (group && !scopeIncludesGroup(scope, group) && scope.level !== 'overview') return;
     const path = { universeKeys: new Set([universeKey]), groupKeys: new Set(), radioKeys: new Set() };
-    if (group?.universeKey === universeKey) path.groupKeys.add(group.key);
-    if (radio?.universeKey === universeKey) path.radioKeys.add(radio.key);
+    if (group?.universeKey === universeKey && scopeIncludesGroup(scope, group)) path.groupKeys.add(group.key);
+    if (radio?.universeKey === universeKey && scopeIncludesRadio(state, scope, radio)) {
+      path.radioKeys.add(radio.key);
+    }
     addCandidate({ tier: 400, observedAtMs: call.lastObservedAtMs || call.startedAtMs || 0,
       key: `active:${call.key}`, path });
   });
@@ -259,13 +323,17 @@ function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, at
       const radio = state.radios.get(effect.nodeKey);
       if (!radio || !allowedUniverseKeys.has(radio.universeKey)) return;
       const destination = state.groups.get(effect.targetKey);
+      const source = state.groups.get(effect.sourceKey);
+      if (!scopeIncludesRadio(state, scope, radio) && scope.level !== 'overview' &&
+          !scopeIncludesGroup(scope, destination) && !scopeIncludesGroup(scope, source)) return;
       const path = { universeKeys: new Set([radio.universeKey]), groupKeys: new Set(),
-        radioKeys: new Set([radio.key]) };
-      if (destination?.universeKey === radio.universeKey) path.groupKeys.add(destination.key);
+        radioKeys: new Set(scopeIncludesRadio(state, scope, radio) ? [radio.key] : []) };
+      if (destination?.universeKey === radio.universeKey && scopeIncludesGroup(scope, destination)) {
+        path.groupKeys.add(destination.key);
+      }
       addCandidate({ tier: 300, observedAtMs: effect.createdAtMs || radio.lastMigrationAtMs,
         key: `migration:${effect.id}`, path });
-      const source = state.groups.get(effect.sourceKey);
-      if (source?.universeKey === radio.universeKey) {
+      if (source?.universeKey === radio.universeKey && scopeIncludesGroup(scope, source)) {
         addCandidate({ tier: 299, observedAtMs: effect.createdAtMs || radio.lastMigrationAtMs,
           key: `migration-source:${effect.id}`,
           path: { universeKeys: new Set([radio.universeKey]), groupKeys: new Set([source.key]),
@@ -299,21 +367,24 @@ function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, at
     candidate.path.groupKeys.forEach((key) => highPriorityGroupKeys.add(key));
     candidate.path.radioKeys.forEach((key) => highPriorityRadioKeys.add(key));
   });
-  const highPriorityNodes = highPriorityUniverseKeys.size + highPriorityGroupKeys.size +
+  const highPriorityNodes = (scope.level === 'group' ? 0 : highPriorityUniverseKeys.size) + highPriorityGroupKeys.size +
     highPriorityRadioKeys.size;
   const hasOverflowActivity = [...state.overflowActive.values()]
-    .some((bucket) => (allowedUniverseKeys.has(bucket.universeKey) ||
-      !state.universes.has(bucket.universeKey)) && (bucket.count > 0 || bucket.saturated));
+    .some((bucket) => (scopeIncludesOverflowBucket(scope, bucket, allowedUniverseKeys) ||
+      ((scope.level === 'all' || scope.level === 'overview') && !state.universes.has(bucket.universeKey))) &&
+      (bucket.count > 0 || bucket.saturated));
   const reserveActiveAggregate = hasOverflowActivity || (hasActiveCandidate && highPriorityNodes > maximumNodes);
   const pathBudget = Math.max(1, maximumNodes - (reserveActiveAggregate ? 1 : 0));
   const universeKeys = new Set();
   const groupKeys = new Set();
   const radioKeys = new Set();
   candidates.forEach((candidate) => {
-    const additions = [...candidate.path.universeKeys].filter((key) => !universeKeys.has(key)).length +
+    const additions = (scope.level === 'group' ? 0 :
+      [...candidate.path.universeKeys].filter((key) => !universeKeys.has(key)).length) +
       [...candidate.path.groupKeys].filter((key) => !groupKeys.has(key)).length +
       [...candidate.path.radioKeys].filter((key) => !radioKeys.has(key)).length;
-    if (universeKeys.size + groupKeys.size + radioKeys.size + additions > pathBudget) return;
+    const currentSize = (scope.level === 'group' ? 0 : universeKeys.size) + groupKeys.size + radioKeys.size;
+    if (currentSize + additions > pathBudget) return;
     candidate.path.universeKeys.forEach((key) => universeKeys.add(key));
     candidate.path.groupKeys.forEach((key) => groupKeys.add(key));
     candidate.path.radioKeys.forEach((key) => radioKeys.add(key));
@@ -352,10 +423,15 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   const nodes = [];
   const aggregates = [];
   const visibleKeys = new Set();
+  const availableUniverses = filteredUniverses(state, options);
+  const scope = resolveScope(state, options.scope, availableUniverses);
+  const showScopedGroups = scope.level === 'all' || scope.level === 'system' || scope.level === 'group';
+  const showScopedRadios = scope.level === 'all' || scope.level === 'system' || scope.level === 'group';
   const signals = universeSignals(state, now, query);
-  const universes = filteredUniverses(state, options);
+  const universes = scopedUniverses(availableUniverses, scope);
+  const renderUniverseNodes = scope.level !== 'group';
   const allowedUniverseKeys = new Set(universes.map((universe) => universe.key));
-  const protectedPaths = prioritizedVisibilityPaths(state, allowedUniverseKeys, limits.hardNodes, now);
+  const protectedPaths = prioritizedVisibilityPaths(state, allowedUniverseKeys, limits.hardNodes, now, scope);
   const entityNodeLimit = Math.max(1,
     limits.hardNodes - (protectedPaths.reserveActiveAggregate ? 1 : 0));
   const universeRanks = universes
@@ -376,12 +452,12 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   });
   const shownUniverseKeys = new Set(shownUniverses.map((rank) => rank.key));
   const hiddenUniverses = universeRanks.filter((rank) => !shownUniverseKeys.has(rank.key));
-  shownUniverses.forEach(({ entity }) => {
+  if (renderUniverseNodes) shownUniverses.forEach(({ entity }) => {
     const node = commonNode(state, entity, 'universe', now);
     nodes.push(node);
     visibleKeys.add(node.key);
   });
-  if (hiddenUniverses.length && nodes.length < limits.hardNodes - reservedDescendants) {
+  if (renderUniverseNodes && hiddenUniverses.length && nodes.length < limits.hardNodes - reservedDescendants) {
     const active = hiddenUniverses.some((rank) => rank.active);
     const aggregate = aggregateNode('aggregate:universes', `+${hiddenUniverses.length} retained universes`, '', '',
       hiddenUniverses.length, 0, 'universes', false, hiddenUniverses[0]?.key || '');
@@ -392,8 +468,8 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
     visibleKeys.add(aggregate.key);
   }
 
-  const forcedUniverses = shownUniverses.filter((rank) => rank.forced ||
-    protectedPaths.universeKeys.has(rank.key));
+  const forcedUniverses = showScopedGroups ? shownUniverses.filter((rank) => rank.forced ||
+    protectedPaths.universeKeys.has(rank.key) || scope.level === 'system' || scope.level === 'group') : [];
   const expandedUniverseRanks = [...forcedUniverses];
   shownUniverses.forEach((rank) => {
     if (expandedUniverseRanks.length < limits.softExpandedUniverses && !expandedUniverseRanks.includes(rank)) {
@@ -404,8 +480,9 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   shownUniverses.forEach((rank) => {
     const node = nodes.find((candidate) => candidate.key === rank.key);
     if (!node) return;
-    node.collapsed = !expandedUniverseKeys.has(node.key) ||
+    node.collapsed = !showScopedGroups || !expandedUniverseKeys.has(node.key) ||
       (!rank.forced &&
+        scope.level === 'all' &&
         now - node.entity.lastMeaningfulAtMs >= limits.universeCollapseAfterMs);
     if (node.collapsed) expandedUniverseKeys.delete(node.key);
   });
@@ -413,9 +490,10 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   const groupRanks = [];
   const hiddenGroupsByUniverse = new Map();
   shownUniverses.forEach(({ entity: universe }) => {
-    const groups = [...universe.groupKeys].map((key) => state.groups.get(key)).filter(Boolean);
+    const groups = showScopedGroups ? [...universe.groupKeys].map((key) => state.groups.get(key))
+      .filter((group) => scopeIncludesGroup(scope, group)) : [];
     if (!expandedUniverseKeys.has(universe.key)) {
-      hiddenGroupsByUniverse.set(universe.key, groups);
+      if (showScopedGroups) hiddenGroupsByUniverse.set(universe.key, groups);
       return;
     }
     groups.forEach((group) => groupRanks.push(groupRank(state, group, now, query)));
@@ -434,8 +512,9 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   });
   const needsGroupAggregateSlot = groupRanks.length > 0 ||
     [...hiddenGroupsByUniverse.values()].some((groups) => groups.length > 0);
+  const renderedUniverseCount = renderUniverseNodes ? shownUniverses.length : 0;
   const groupSlotsBeforeAggregate = Math.max(0, (protectedPaths.reserveActiveAggregate ?
-    entityNodeLimit - shownUniverses.length : limits.hardNodes - nodes.length) - protectedPaths.radioKeys.size);
+    entityNodeLimit - renderedUniverseCount : limits.hardNodes - nodes.length) - protectedPaths.radioKeys.size);
   const hiddenGroupsWithoutAggregate = [...hiddenGroupsByUniverse.values()].some((groups) => groups.length > 0) ||
     groupRanks.length > Math.min(selectedGroupRanks.length, groupSlotsBeforeAggregate);
   const reserveGroupAggregate = !protectedPaths.reserveActiveAggregate && needsGroupAggregateSlot &&
@@ -451,8 +530,8 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   shownGroupRanks.forEach((rank) => {
     const { entity } = rank;
     const node = commonNode(state, entity, 'group', now);
-    node.collapsed = !rank.forced &&
-      now - entity.lastMeaningfulAtMs >= limits.groupCollapseAfterMs;
+    node.collapsed = !showScopedRadios || (!rank.forced && scope.level === 'all' &&
+      now - entity.lastMeaningfulAtMs >= limits.groupCollapseAfterMs);
     nodes.push(node);
     visibleKeys.add(node.key);
   });
@@ -474,7 +553,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
     });
     selected.forEach((rank) => radioRanks.push({ ...rank, groupKey: group.key }));
   });
-  shownUniverses.forEach(({ entity: universe }) => {
+  if (scope.level === 'all' || scope.level === 'system') shownUniverses.forEach(({ entity: universe }) => {
     if (!expandedUniverseKeys.has(universe.key)) return;
     universe.radioKeys.forEach((key) => {
       const radio = state.radios.get(key);
@@ -510,7 +589,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
       selectedRadioRanks.push(rank);
     }
   });
-  const entityNodesBeforeRadios = shownUniverses.length + shownGroupRanks.length;
+  const entityNodesBeforeRadios = renderedUniverseCount + shownGroupRanks.length;
   const radioSlotsBeforeAggregate = Math.max(0, protectedPaths.reserveActiveAggregate ?
     entityNodeLimit - entityNodesBeforeRadios : limits.hardNodes - nodes.length);
   const hiddenRadiosWithoutAggregate = radioRanks.length >
@@ -528,7 +607,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   });
 
   const hiddenRadioCandidates = new Map();
-  shownGroupRanks.forEach(({ entity: group }) => {
+  if (showScopedRadios) shownGroupRanks.forEach(({ entity: group }) => {
     group.radioKeys.forEach((key) => {
       const radio = state.radios.get(key);
       if (radio && !shownRadioKeys.has(radio.key)) hiddenRadioCandidates.set(radio.key, radio);
@@ -568,9 +647,9 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   aggregateCandidates.sort((left, right) => right.activeRadioKeys.size - left.activeRadioKeys.size ||
     Number(right.activeSignal) - Number(left.activeSignal) || right.count - left.count ||
     left.groupKey.localeCompare(right.groupKey));
-  const suppressedActiveRadioKeys = new Set([...state.radios.values()]
-    .filter((radio) => allowedUniverseKeys.has(radio.universeKey) && radioActive(state, radio) &&
-      !shownRadioKeys.has(radio.key)).map((radio) => radio.key));
+  const suppressedActiveRadioKeys = new Set(showScopedRadios ? [...state.radios.values()]
+    .filter((radio) => allowedUniverseKeys.has(radio.universeKey) && scopeIncludesRadio(state, scope, radio) &&
+      radioActive(state, radio) && !shownRadioKeys.has(radio.key)).map((radio) => radio.key) : []);
   const accountedActiveRadioKeys = new Set();
   const hiddenUniverseKeys = new Set(hiddenUniverses.map((rank) => rank.key));
   const universeAggregate = aggregates.find((aggregate) => aggregate.key === 'aggregate:universes');
@@ -601,8 +680,8 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
   });
 
   const visibleOverflowBuckets = [...state.overflowActive.values()]
-    .filter((bucket) => allowedUniverseKeys.has(bucket.universeKey) ||
-      !state.universes.has(bucket.universeKey));
+    .filter((bucket) => scopeIncludesOverflowBucket(scope, bucket, allowedUniverseKeys) ||
+      ((scope.level === 'all' || scope.level === 'overview') && !state.universes.has(bucket.universeKey)));
   const visibleOverflowBucketKeys = new Set(visibleOverflowBuckets.map((bucket) => bucket.key));
   const visibleOverflowCalls = [...state.overflowCalls.values()]
     .filter((record) => visibleOverflowBucketKeys.has(record.groupKey));
@@ -706,28 +785,15 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
         const call = calls[0];
         const affiliationLink = linkCandidates.find((link) => link.type === 'affiliation' &&
           link.source === radio.key && link.target === groupKey);
-        if (affiliationLink) {
-          if (call) Object.assign(affiliationLink, {
-            type: 'tx',
-            active: true,
-            faded: false,
-            dashed: false,
-            affiliation: true,
-            encrypted: calls.some((candidate) => candidate.encrypted === true),
-            priority: 5_000_000,
-            entity: call
-          });
-          return;
-        }
         linkCandidates.push({
-          id: `${call ? 'tx' : 'activity'}:${radio.key}:${groupKey}`,
-          key: `${call ? 'tx' : 'activity'}:${radio.key}:${groupKey}`,
+          id: `activity:${radio.key}:${groupKey}`,
+          key: `activity:${radio.key}:${groupKey}`,
           source: radio.key,
           target: groupKey,
           type: call ? 'tx' : 'activity',
           active: Boolean(call),
           faded: !call,
-          dashed: true,
+          dashed: !call || !affiliationLink,
           affiliation: false,
           encrypted: calls.some((candidate) => candidate.encrypted === true),
           priority: call ? 5_000_000 : 1_000_000,
@@ -822,6 +888,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
       groupKey: entity.type === 'group' ? entity.key : (entity.visualParentGroupKey || '')
     })) : [];
   return Object.freeze({
+    scope,
     nodes: Object.freeze(nodes),
     links: Object.freeze(links),
     labels: Object.freeze(labels),

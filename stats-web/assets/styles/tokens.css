@@ -86,7 +86,7 @@
   --network-space: #081019;
   --network-space-ink: #e7f2f6;
   --network-space-muted: #8ea1ac;
-  --network-grid: rgb(116 150 166 / 14%);
+  --network-grid: rgb(116 150 166 / 9%);
   --network-system: #73a8bc;
   --network-hub: #8fc4d3;
   --network-radio: #78909c;
@@ -101,6 +101,16 @@
   --network-panel: rgb(14 25 35 / 94%);
   --network-panel-line: rgb(145 179 194 / 32%);
   --network-shadow: 0 20px 55px rgb(0 0 0 / 36%);
+  --network-label-radio-size: 13px;
+  --network-label-group-size: 15px;
+  --network-label-system-size: 18px;
+  --network-label-max-width: 300px;
+  --network-label-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+  --network-overlay-blur: 14px;
+  --network-panel-blur: 18px;
+  --network-grid-size: 64px;
+  --network-scope-max-width: 560px;
+  --network-inspector-width: 320px;
   --interactive-border: #8b9aa7;
   --focus-ring: #16877d;
   --success: #16794f;
@@ -240,7 +250,7 @@
   --network-space: #050a10;
   --network-space-ink: #edf7fa;
   --network-space-muted: #91a5b0;
-  --network-grid: rgb(124 164 181 / 12%);
+  --network-grid: rgb(124 164 181 / 8%);
   --network-system: #79b9cf;
   --network-hub: #a2d4df;
   --network-radio: #8299a5;
@@ -255,4 +265,5 @@
   --network-panel: rgb(10 18 27 / 95%);
   --network-panel-line: rgb(150 191 207 / 28%);
   --network-shadow: 0 22px 62px rgb(0 0 0 / 52%);
+  --network-label-shadow: 0 9px 28px rgb(0 0 0 / 42%);
 }

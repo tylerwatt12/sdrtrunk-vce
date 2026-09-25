@@ -29,10 +29,18 @@ without creating a synthetic radio or talkgroup.
 
 ## Controls
 
-Use the toolbar to search retained entities, filter relationship detail, fit the canvas, focus the current selection,
-switch the same scene between 3D and Flatten, freeze only the layout physics, open the bounded event drawer, enter
-fullscreen, or change display density. Drag a system to translate its cluster, drag a talkgroup to move its unpinned
-radios, and use the inspector to pin an entity. **Unlock saved layout** releases all pins and saved coordinates.
+The 3D overview begins with observed systems only. Select a system to enter its live network, then select a talkgroup
+to focus its retained radios. The breadcrumb back button returns through those levels without replacing the canvas.
+Camera moves are animated unless reduced motion is enabled. Left-dragging the 3D canvas orbits the current level,
+right-dragging pans it, and the mouse wheel zooms toward the pointer. Selecting a system or talkgroup also opens its
+inspector while the shared canvas drills into that level. **Auto rotate** is enabled by default, pauses during manual
+camera interaction or node arrangement, and resumes around the current level after a short idle period.
+
+Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
+selection, switch the same scene between 3D and Flatten, freeze only the layout physics, open the bounded event drawer,
+enter fullscreen, or change display density. Enable **Arrange** before dragging nodes: drag a system to translate its
+cluster or a talkgroup to move its unpinned radios. Use the inspector to pin an entity. **Unlock saved layout** releases
+all pins and saved coordinates.
 
 **Clear map** clears this browser session's nodes, counters, selection, transitions, active effects, and comparison
 state and establishes a new live edge. It does not stop receivers, delete receiver history, change Hold/Avoid, or alter

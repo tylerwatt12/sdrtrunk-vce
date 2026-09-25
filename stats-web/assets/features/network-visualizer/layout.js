@@ -50,18 +50,40 @@ function createLayoutState(config = BALANCED_CONFIG, options = {}) {
     saved: new Map(),
     pinned: new Set(),
     graphKeys: new Set(),
+    universeOrder: new Map(),
+    settledFrames: 0,
+    sleeping: false,
+    snapToParents: false,
     disposed: false,
     lastStepAtMs: 0
   };
 }
 
 function universeAnchor(layout, key) {
-  const hash = stableHash(key);
+  if (!layout.universeOrder.has(key)) {
+    const limit = layout.config.state.hardUniverses;
+    if (layout.universeOrder.size >= limit) {
+      const activeUniverseKeys = new Set();
+      layout.positions.forEach((record) => {
+        if (record.universeKey) activeUniverseKeys.add(record.universeKey);
+      });
+      const removable = [...layout.universeOrder.keys()].find((candidate) =>
+        !activeUniverseKeys.has(candidate) && !layout.saved.has(candidate));
+      const evicted = removable || layout.universeOrder.keys().next().value;
+      if (evicted !== undefined) layout.universeOrder.delete(evicted);
+    }
+    const used = new Set(layout.universeOrder.values());
+    let ordinal = 0;
+    while (used.has(ordinal) && ordinal < limit) ordinal += 1;
+    layout.universeOrder.set(key, Math.min(ordinal, Math.max(0, limit - 1)));
+  }
+  const index = layout.universeOrder.get(key);
   const spacing = layout.config.layout.universeSpacing;
-  const column = (hash % 9) - 4;
-  const row = (Math.floor(hash / 9) % 9) - 4;
-  const layer = (Math.floor(hash / 81) % 5) - 2;
-  return { x: column * spacing, y: row * spacing, z: layout.mode === 'flat' ? 0 : layer * spacing * 0.42 };
+  if (index === 0) return { x: 0, y: 0, z: 0 };
+  const angle = index * Math.PI * (3 - Math.sqrt(5));
+  const radius = spacing * Math.sqrt(index);
+  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius,
+    z: layout.mode === 'flat' ? 0 : ((index % 5) - 2) * spacing * 0.12 };
 }
 
 function initialRecord(layout, node, graphNodes, atMs) {
@@ -122,7 +144,9 @@ function initialRecord(layout, node, graphNodes, atMs) {
     localX: boundedCoordinate(local.x),
     localY: boundedCoordinate(local.y),
     localZ: layout.mode === 'flat' ? 0 : boundedCoordinate(local.z),
-    pinned: Boolean(reconciledRecord?.pinned || saved?.pinned || node.pinned),
+    // Saved coordinates are advisory until the independently observed entity is admitted through
+    // the semantic pin budget. The accepted node flag prevents saved records bypassing that cap.
+    pinned: Boolean(reconciledRecord?.pinned || node.pinned),
     createdAtMs: atMs,
     updatedAtMs: atMs
   };
@@ -152,6 +176,7 @@ function applyRecord(node, record, velocity, mode) {
 
 function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
   if (layout.disposed) return graph;
+  const previousKeys = layout.graphKeys;
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const ordered = [...nodes].sort((left, right) => {
     const order = { universe: 0, group: 1, radio: 2, aggregate: 3 };
@@ -165,9 +190,16 @@ function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
     nextKeys.add(key);
     let record = layout.positions.get(key);
     if (!record) record = initialRecord(layout, node, ordered, atMs);
+    const previousUniverseKey = record.universeKey;
+    const previousGroupKey = record.groupKey;
     record.type = TYPES.has(node.type) ? node.type : record.type;
     record.universeKey = String(node.universeKey || (record.type === 'universe' ? key : record.universeKey));
     record.groupKey = String(node.groupKey || (record.type === 'group' ? key : record.groupKey));
+    const parentChanged = record.universeKey !== previousUniverseKey || record.groupKey !== previousGroupKey;
+    if (parentChanged) {
+      layout.sleeping = false;
+      layout.settledFrames = 0;
+    }
     const reconciledFromKey = String(node.entity?.reconciledFromKey || '');
     let hadReconciledSavedPosition = false;
     if (reconciledFromKey && reconciledFromKey !== key) {
@@ -184,9 +216,27 @@ function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
     if (hadReconciledSavedPosition) updateSaved(layout, record, atMs);
     const velocity = layout.velocities.get(key) || { x: 0, y: 0, z: 0 };
     layout.velocities.set(key, velocity);
+    if (record.type === 'radio' && !record.pinned && layout.reducedMotion &&
+        (parentChanged || layout.snapToParents)) {
+      const parent = layout.positions.get(record.groupKey || record.universeKey);
+      if (parent) {
+        record.x = boundedCoordinate(parent.x + record.localX);
+        record.y = boundedCoordinate(parent.y + record.localY);
+        record.z = layout.mode === 'flat' ? 0 : boundedCoordinate(parent.z + record.localZ);
+        record.updatedAtMs = atMs;
+        velocity.x = 0;
+        velocity.y = 0;
+        velocity.z = 0;
+      }
+    }
     applyRecord(node, record, velocity, layout.mode);
   });
+  layout.snapToParents = false;
   layout.graphKeys = nextKeys;
+  if (previousKeys.size !== nextKeys.size || [...nextKeys].some((key) => !previousKeys.has(key))) {
+    layout.sleeping = false;
+    layout.settledFrames = 0;
+  }
   for (const [key, record] of layout.positions) {
     if (nextKeys.has(key) || record.pinned) continue;
     layout.positions.delete(key);
@@ -213,10 +263,12 @@ function targetFor(layout, record, migrations = new Map(), atMs = Date.now()) {
   if (migration) {
     const oldGroup = layout.positions.get(migration.sourceKey);
     const newGroup = layout.positions.get(migration.targetKey);
-    const duration = Math.max(1, migration.expiresAtMs - migration.createdAtMs);
+    const motionEndsAtMs = Number.isFinite(Number(migration.animationEndsAtMs)) ?
+      Math.min(migration.expiresAtMs, Number(migration.animationEndsAtMs)) : migration.expiresAtMs;
+    const duration = Math.max(1, motionEndsAtMs - migration.createdAtMs);
     const progress = Math.max(0, Math.min(1, (atMs - migration.createdAtMs) / duration));
     const envelope = Math.sin(progress * Math.PI);
-    if (oldGroup && newGroup && envelope > 0) {
+    if (oldGroup && newGroup && progress > 0 && progress < 1) {
       const dx = newGroup.x - oldGroup.x;
       const dy = newGroup.y - oldGroup.y;
       const distance = Math.hypot(dx, dy) || 1;
@@ -292,12 +344,20 @@ function collisionImpulse(layout) {
 function stepLayout(layout, graph = {}, deltaMs = 16, atMs = Date.now()) {
   synchronizeLayout(layout, graph, atMs);
   if (layout.disposed || layout.frozen || layout.reducedMotion) return graph;
+  const hasMigration = (Array.isArray(graph.effects) ? graph.effects : [])
+    .some((effect) => effect?.type === 'migration' &&
+      Number(effect.animationEndsAtMs || effect.expiresAtMs) > atMs);
+  if (hasMigration) {
+    layout.sleeping = false;
+    layout.settledFrames = 0;
+  } else if (layout.sleeping) return graph;
   const milliseconds = Math.max(0, Math.min(layout.config.layout.maximumDeltaMs, finite(deltaMs, 16)));
   const scale = milliseconds / 16.6667;
   const damping = Math.pow(layout.config.layout.damping, scale);
   const migrations = new Map((Array.isArray(graph.effects) ? graph.effects : [])
     .filter((effect) => effect?.type === 'migration' && effect.nodeKey && effect.expiresAtMs > atMs)
     .map((effect) => [effect.nodeKey, effect]));
+  let maximumMotion = 0;
   layout.graphKeys.forEach((key) => {
     const record = layout.positions.get(key);
     const velocity = layout.velocities.get(key);
@@ -322,6 +382,7 @@ function stepLayout(layout, graph = {}, deltaMs = 16, atMs = Date.now()) {
       velocity.y *= damping;
       velocity.z *= damping;
       const magnitude = Math.hypot(velocity.x, velocity.y, velocity.z);
+      maximumMotion = Math.max(maximumMotion, magnitude);
       if (magnitude > layout.config.layout.maximumVelocity) {
         const ratio = layout.config.layout.maximumVelocity / magnitude;
         velocity.x *= ratio;
@@ -343,6 +404,9 @@ function stepLayout(layout, graph = {}, deltaMs = 16, atMs = Date.now()) {
     if (node && record && velocity) applyRecord(node, record, velocity, layout.mode);
   });
   layout.lastStepAtMs = atMs;
+  if (!hasMigration && maximumMotion < 0.012) layout.settledFrames += 1;
+  else layout.settledFrames = 0;
+  layout.sleeping = layout.settledFrames >= 24;
   return graph;
 }
 
@@ -352,16 +416,24 @@ function setLayoutMode(layout, mode) {
     layout.positions.forEach((record) => { record.z = 0; });
     layout.velocities.forEach((velocity) => { velocity.z = 0; });
   }
+  layout.sleeping = false;
+  layout.settledFrames = 0;
   return layout.mode;
 }
 
 function setLayoutFrozen(layout, frozen = true) {
   layout.frozen = Boolean(frozen);
+  if (!layout.frozen) {
+    layout.sleeping = false;
+    layout.settledFrames = 0;
+  }
   return layout.frozen;
 }
 
 function setReducedMotion(layout, reduced = true) {
-  layout.reducedMotion = Boolean(reduced);
+  const next = Boolean(reduced);
+  if (next && !layout.reducedMotion) layout.snapToParents = true;
+  layout.reducedMotion = next;
   if (layout.reducedMotion) {
     layout.velocities.forEach((velocity) => {
       velocity.x = 0;
@@ -395,11 +467,13 @@ function updateSaved(layout, record, atMs = Date.now()) {
 function translateEntity(layout, key, delta = {}, atMs = Date.now()) {
   const root = layout.positions.get(String(key || ''));
   if (!root || layout.disposed) return false;
+  layout.sleeping = false;
+  layout.settledFrames = 0;
   const offset = copyPosition(delta);
   const targets = [];
   layout.positions.forEach((record) => {
     if (record.key === root.key) targets.push(record);
-    else if (root.type === 'universe' && record.universeKey === root.key) targets.push(record);
+    else if (root.type === 'universe' && record.universeKey === root.key && !record.pinned) targets.push(record);
     else if (root.type === 'group' && record.groupKey === root.key && !record.pinned) targets.push(record);
   });
   targets.forEach((record) => {
@@ -432,16 +506,26 @@ function dragEntity(layout, key, position, atMs = Date.now()) {
   const record = layout.positions.get(String(key || ''));
   if (!record) return false;
   const next = copyPosition(position);
-  return translateEntity(layout, record.key, {
+  const translated = translateEntity(layout, record.key, {
     x: next.x - record.x,
     y: next.y - record.y,
     z: layout.mode === 'flat' ? 0 : next.z - record.z
   }, atMs);
+  if (!translated) return false;
+  // Preserve the exact pointer-plane coordinate instead of retaining floating-point residue from
+  // translating an already-computed orbit position. Descendants still receive the same cluster delta.
+  record.x = next.x;
+  record.y = next.y;
+  record.z = layout.mode === 'flat' ? 0 : next.z;
+  updateSaved(layout, record, atMs);
+  return true;
 }
 
 function setLayoutPinned(layout, key, pinned = true, position = null, atMs = Date.now()) {
   const record = layout.positions.get(String(key || ''));
   if (!record) return false;
+  layout.sleeping = false;
+  layout.settledFrames = 0;
   if (position) dragEntity(layout, record.key, position, atMs);
   if (pinned && !record.pinned && layout.pinned.size >= layout.config.state.hardPinnedEntities) return false;
   record.pinned = Boolean(pinned);
@@ -458,6 +542,8 @@ function setLayoutPinned(layout, key, pinned = true, position = null, atMs = Dat
 
 function unlockLayout(layout, key = null) {
   const selected = key === null ? null : String(key || '');
+  layout.sleeping = false;
+  layout.settledFrames = 0;
   layout.positions.forEach((record) => {
     if (selected !== null && record.key !== selected) return;
     record.pinned = false;
@@ -497,6 +583,20 @@ function restoreLayoutRecords(layout, records = []) {
   return restored;
 }
 
+function resetLayoutSession(layout) {
+  if (!layout || layout.disposed) return false;
+  layout.positions.clear();
+  layout.velocities.clear();
+  layout.pinned.clear();
+  layout.graphKeys.clear();
+  layout.universeOrder.clear();
+  layout.settledFrames = 0;
+  layout.sleeping = false;
+  layout.snapToParents = false;
+  layout.lastStepAtMs = 0;
+  return true;
+}
+
 function disposeLayout(layout) {
   layout.disposed = true;
   layout.positions.clear();
@@ -504,12 +604,14 @@ function disposeLayout(layout) {
   layout.saved.clear();
   layout.pinned.clear();
   layout.graphKeys.clear();
+  layout.universeOrder.clear();
 }
 
 export {
   createLayoutState,
   disposeLayout,
   dragEntity,
+  resetLayoutSession,
   restoreLayoutRecords,
   savedLayoutRecords,
   setLayoutFrozen,

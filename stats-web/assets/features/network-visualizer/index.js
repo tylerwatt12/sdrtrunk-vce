@@ -19,6 +19,7 @@ import {
   createLayoutState,
   disposeLayout,
   dragEntity,
+  resetLayoutSession,
   restoreLayoutRecords,
   savedLayoutRecords,
   setLayoutFrozen,
@@ -83,6 +84,7 @@ function filterSuppressedEffects(graph, suppressedEffectIds) {
 function loadPreferences(profileKey, config = BALANCED_CONFIG) {
   const defaults = {
     mode: '3d',
+    autoRotate: config.animation?.autoRotateDefault !== false,
     filters: { affiliations: true, activity: true, quiet: true },
     softRadiosTotal: config.render.softRadiosTotal,
     hardLabels: config.render.hardLabels,
@@ -102,6 +104,7 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
     });
     return {
       mode: raw.mode === 'flat' ? 'flat' : '3d',
+      autoRotate: raw.autoRotate !== false,
       filters: {
         affiliations: raw.filters?.affiliations !== false,
         activity: raw.filters?.activity !== false,
@@ -130,6 +133,7 @@ function persistPreferences(profileKey, preferences, layout, config = BALANCED_C
     localStorage.setItem(profileStorageKey(profileKey), JSON.stringify({
       version: 1,
       mode: preferences.mode,
+      autoRotate: preferences.autoRotate !== false,
       filters: preferences.filters,
       softRadiosTotal: preferences.softRadiosTotal,
       hardLabels: preferences.hardLabels,
@@ -172,7 +176,9 @@ function selectedEntityView(state) {
   const txGroup = activeCalls.map((call) => state.groups.get(call.groupKey)).find(Boolean);
   const siteEvidence = entity.siteEvidence?.[0] || null;
   const p25 = entity.protocol === 'p25' || universe?.protocol === 'p25';
-  const affiliationCapability = entity.type === 'radio' ? (p25 ? 'supported' : 'unsupported') : 'not_applicable';
+  const provenTrunkedP25 = p25 && universe?.kind === 'radio_system' && Boolean(universe?.radioSystemKey);
+  const affiliationCapability = entity.type === 'radio' ?
+    (provenTrunkedP25 ? 'supported' : 'unsupported') : 'not_applicable';
   const affiliationLabel = affiliationCapability === 'unsupported' ? 'Unsupported by this live feed' :
     (entity.affiliationAmbiguous ?
       `Ambiguous across observation scopes${affiliationNames ? ` · ${affiliationNames}` : ''}` :
@@ -266,6 +272,10 @@ function createNetworkVisualizer(dependencies = {}) {
   let controller = null;
   let searchPendingFocus = false;
   let pendingFocusKey = '';
+  let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
+  const navigationHistory = [];
+  let pendingCameraAction = null;
+  let arrangeMode = false;
   const suppressedEffectIds = new Set();
   const fixtureMode = new URLSearchParams(window.location.search).get('network_fixture') === '1' &&
     FIXTURE_HOSTS.has(window.location.hostname);
@@ -279,6 +289,9 @@ function createNetworkVisualizer(dependencies = {}) {
     ...dependencies,
     config,
     initialFilters: preferences.filters,
+    initialAutoRotate: preferences.autoRotate,
+    initialArrange: arrangeMode,
+    reducedMotion: Boolean(reducedMotionMedia?.matches),
     callbacks: {
       onFilters: (filters) => {
         preferences.filters = filters;
@@ -290,7 +303,7 @@ function createNetworkVisualizer(dependencies = {}) {
         searchPendingFocus = true;
         invalidateGraph();
       },
-      onFit: () => renderer?.fitAll?.(),
+      onFit: () => renderer?.frameScope?.(),
       onFocus: () => {
         if (state.visual.selectedKey) renderer?.focus?.(state.visual.selectedKey);
       },
@@ -301,6 +314,18 @@ function createNetworkVisualizer(dependencies = {}) {
         ui.setMode(preferences.mode);
         invalidateGraph();
         schedulePersist();
+      },
+      onBack: () => navigateBack(),
+      onAutoRotate: (value) => {
+        preferences.autoRotate = Boolean(value);
+        renderer?.setAutoRotate?.(preferences.autoRotate);
+        ui.setAutoRotate(preferences.autoRotate);
+        schedulePersist();
+      },
+      onArrange: (value) => {
+        arrangeMode = Boolean(value);
+        renderer?.setArrange?.(arrangeMode);
+        ui.setArrange(arrangeMode);
       },
       onFreeze: (value) => {
         frozen = Boolean(value);
@@ -332,6 +357,10 @@ function createNetworkVisualizer(dependencies = {}) {
     }
   });
   ui.setMode(preferences.mode);
+  ui.setAutoRotate(preferences.autoRotate);
+  ui.setReducedMotion(Boolean(reducedMotionMedia?.matches));
+  ui.setArrange(arrangeMode);
+  ui.setScope({ level: 'overview', title: 'Observed radio systems', canGoBack: false });
 
   function schedulePersist(immediate = false) {
     if (persistTimer !== null) window.clearTimeout(persistTimer);
@@ -352,6 +381,105 @@ function createNetworkVisualizer(dependencies = {}) {
     ui.setTransport(status, hadGap ? 'A live observation interval was lost; active call continuity is uncertain.' : '');
   }
 
+  function normalizeScope(value = {}) {
+    const level = value.level === 'group' || value.level === 'talkgroup' ? 'group' :
+      value.level === 'system' ? 'system' : 'overview';
+    return { level, universeKey: level === 'overview' ? '' : String(value.universeKey || ''),
+      groupKey: level === 'group' ? String(value.groupKey || '') : '' };
+  }
+
+  function sameScope(left, right) {
+    return left?.level === right?.level && left?.universeKey === right?.universeKey &&
+      left?.groupKey === right?.groupKey;
+  }
+
+  function scopeView(value = navigationScope) {
+    const scope = normalizeScope(value);
+    if (scope.level === 'overview') {
+      return { ...scope, title: 'Observed radio systems', path: ['Overview'], canGoBack: false };
+    }
+    const universe = state.universes.get(scope.universeKey);
+    const systemLabel = universe?.label || 'Radio system';
+    if (scope.level === 'system') {
+      return { ...scope, title: systemLabel, path: ['Overview', systemLabel], canGoBack: true,
+        backLabel: 'Back to all systems' };
+    }
+    const group = state.groups.get(scope.groupKey);
+    const groupLabel = group?.label || 'Talkgroup';
+    return { ...scope, title: groupLabel, parentLabel: systemLabel,
+      path: ['Overview', systemLabel, groupLabel], canGoBack: true,
+      backLabel: `Back to ${systemLabel}` };
+  }
+
+  function scopeForEntity(entity) {
+    if (!entity) return { level: 'overview', universeKey: '', groupKey: '' };
+    if (entity.type === 'universe') return { level: 'system', universeKey: entity.key, groupKey: '' };
+    if (entity.type === 'group') return { level: 'group', universeKey: entity.universeKey, groupKey: entity.key };
+    const groupKey = entity.visualParentGroupKey || entity.recentTxGroupKey ||
+      [...(entity.relatedGroupKeys || [])][0] || '';
+    return groupKey ? { level: 'group', universeKey: entity.universeKey, groupKey } :
+      { level: 'system', universeKey: entity.universeKey, groupKey: '' };
+  }
+
+  function pushNavigationHistory(scope, pose) {
+    navigationHistory.push({ scope: normalizeScope(scope), pose: pose || null });
+    while (navigationHistory.length > 3) navigationHistory.shift();
+  }
+
+  function navigateToScope(value, optionsValue = {}) {
+    const next = normalizeScope(value);
+    if (sameScope(next, navigationScope)) {
+      if (optionsValue.frame !== false) renderer?.frameScope?.();
+      return false;
+    }
+    if (!optionsValue.back) {
+      const pose = renderer?.getCameraPose?.() || null;
+      if (navigationScope.level === 'overview' && next.level === 'group') {
+        pushNavigationHistory(navigationScope, pose);
+        pushNavigationHistory({ level: 'system', universeKey: next.universeKey }, null);
+      } else pushNavigationHistory(navigationScope, pose);
+    }
+    navigationScope = next;
+    renderer?.setNavigationScope?.(navigationScope);
+    ui.setScope(scopeView());
+    setSelectedEntity(state, null);
+    ui.setSelection(null);
+    pendingCameraAction = optionsValue.pose ? { type: 'restore', pose: optionsValue.pose } :
+      (optionsValue.frame === false ? null : { type: 'frame' });
+    invalidateGraph();
+    return true;
+  }
+
+  function navigateBack() {
+    const parentScope = navigationScope.level === 'group' ?
+      normalizeScope({ level: 'system', universeKey: navigationScope.universeKey }) :
+      navigationScope.level === 'system' ? normalizeScope({ level: 'overview' }) : null;
+    if (!parentScope) return false;
+    const parentIndex = navigationHistory.findLastIndex((entry) => sameScope(entry.scope, parentScope));
+    const parentEntry = parentIndex >= 0 ? navigationHistory[parentIndex] : null;
+    if (parentIndex >= 0) navigationHistory.splice(parentIndex);
+    else if (parentScope.level === 'overview') navigationHistory.splice(0);
+    else {
+      for (let index = navigationHistory.length - 1; index >= 0; index -= 1) {
+        if (navigationHistory[index].scope.level !== 'overview') navigationHistory.splice(index, 1);
+      }
+    }
+    return navigateToScope(parentScope, { back: true, pose: parentEntry?.pose || null });
+  }
+
+  function navigateToEntity(entity, { inspectRadio = true } = {}) {
+    if (!entity) return false;
+    const targetScope = scopeForEntity(entity);
+    const scopeChanged = navigateToScope(targetScope, { frame: entity.type !== 'radio' });
+    if (entity.type === 'radio' && inspectRadio) {
+      setSelectedEntity(state, entity.key);
+      ui.setSelection(selectedEntityView(state), selectedTransitions(state));
+      pendingFocusKey = entity.key;
+      invalidateGraph();
+    }
+    return scopeChanged;
+  }
+
   function selectEntity(value) {
     let key = typeof value === 'string' ? value : value?.key || value?.id || null;
     if (value?.type === 'aggregate') {
@@ -370,6 +498,23 @@ function createNetworkVisualizer(dependencies = {}) {
     currentGraph.nodes?.forEach((nodeValue) => { nodeValue.selected = nodeValue.key === state.visual.selectedKey; });
     renderer?.refresh?.();
     invalidateGraph();
+  }
+
+  function handleNodeClick(value) {
+    if (!value) return;
+    if (value.type === 'aggregate') {
+      const focus = entityForKey(state, value.focusKey || value.groupKey || value.universeKey);
+      if (focus) navigateToEntity(focus, { inspectRadio: false });
+      else ui.showNotice(value.label || 'Additional live activity is retained in the bounded aggregate.');
+      return;
+    }
+    const entity = entityForKey(state, value.key || value.id) || value.entity;
+    if (entity?.type === 'universe' || entity?.type === 'group') {
+      navigateToEntity(entity, { inspectRadio: false });
+      selectEntity(entity);
+      return;
+    }
+    selectEntity(value);
   }
 
   function pinEntity(key, value) {
@@ -416,7 +561,7 @@ function createNetworkVisualizer(dependencies = {}) {
       labelBudget: preferences.hardLabels,
       particleBudget: config.render.hardParticles,
       callbacks: {
-        onNodeClick: (value) => selectEntity(value),
+        onNodeClick: (value) => handleNodeClick(value),
         onBackgroundClick: () => selectEntity(null),
         onNodeDrag: (payload) => onRendererDrag(payload),
         onNodeDragEnd: (payload) => onRendererDrag(payload, true),
@@ -440,6 +585,9 @@ function createNetworkVisualizer(dependencies = {}) {
       ui.setWebglState(value?.available === false ? 'failed' : 'ready');
       renderer.setMode?.(preferences.mode);
       renderer.setFrozen?.(frozen);
+      renderer.setNavigationScope?.(navigationScope);
+      renderer.setAutoRotate?.(preferences.autoRotate);
+      renderer.setArrange?.(arrangeMode);
       invalidateGraph();
     }).catch((error) => {
       if (closed) return;
@@ -459,10 +607,9 @@ function createNetworkVisualizer(dependencies = {}) {
     });
     const complete = fullActivitySnapshot(Number(snapshot.revision) || 0);
     const generation = state.generation;
-    const effectsBefore = state.pendingEffects.length;
     ingestChannelActivitySnapshot(state, complete, generation, Date.now());
     if (suppressNextSnapshotEffects || document.hidden) {
-      state.pendingEffects.slice(effectsBefore).forEach((effect) => suppressedEffectIds.add(effect.id));
+      state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
     suppressNextSnapshotEffects = false;
     invalidateGraph();
@@ -474,21 +621,20 @@ function createNetworkVisualizer(dependencies = {}) {
     if (!id) return;
     if (update.operation === 'remove') activityTables.delete(id);
     else if (update.table) activityTables.set(id, update.table);
-    const effectsBefore = state.pendingEffects.length;
     ingestChannelActivitySnapshot(state, fullActivitySnapshot(Number(update.revision) || 0), state.generation,
       Date.now());
     if (document.hidden) {
-      state.pendingEffects.slice(effectsBefore).forEach((effect) => suppressedEffectIds.add(effect.id));
+      state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
     invalidateGraph();
   }
 
-  function observeGap(detail = {}) {
+  function observeGap(detail = {}, optionsValue = {}) {
     const now = Date.now();
     const first = !hadGap;
     hadGap = true;
     suppressNextSnapshotEffects = true;
-    markTransportGap(state, detail, state.generation, now);
+    if (!optionsValue.stateAlreadyMarked) markTransportGap(state, detail, state.generation, now);
     suppressedEffectIds.clear();
     renderer?.clearEffects?.();
     if (first) ui.showNotice('Live observation gap — active transmission continuity is uncertain.', true);
@@ -515,7 +661,11 @@ function createNetworkVisualizer(dependencies = {}) {
     connection.addEventListener('network_event', (event) => {
       if (closed || generation !== state.generation) return;
       const value = parseEventData(event);
-      if (value) enqueueObservation(state, value, generation, Date.now());
+      if (!value) return;
+      const queued = enqueueObservation(state, value, generation, Date.now());
+      if (!queued.accepted && queued.reason === 'queue_capacity') {
+        observeGap(state.transport.gap || { reason: 'incoming_queue_overflow' }, { stateAlreadyMarked: true });
+      }
     });
     connection.addEventListener('live_gap', (event) => {
       if (closed || generation !== state.generation) return;
@@ -584,10 +734,16 @@ function createNetworkVisualizer(dependencies = {}) {
   function clearMap() {
     clearNetworkState(state, Date.now());
     establishChannelActivityBoundary(state, fullActivitySnapshot(), state.generation, Date.now());
+    resetLayoutSession(layout);
     suppressedEffectIds.clear();
     currentGraph = { nodes: [], links: [], counts: {} };
-    renderer?.clearEffects?.();
-    renderer?.setGraphData?.(currentGraph);
+    navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
+    navigationHistory.length = 0;
+    pendingCameraAction = null;
+    renderer?.clear?.();
+    renderer?.setNavigationScope?.(navigationScope);
+    renderer?.setAutoRotate?.(preferences.autoRotate);
+    ui.setScope(scopeView());
     ui.setCounts({ visibleRadios: 0, retainedRadios: 0, renderedNodes: 0 });
     ui.setSelection(null);
     ui.setEvents([]);
@@ -612,7 +768,7 @@ function createNetworkVisualizer(dependencies = {}) {
 
   function applySavedPins() {
     let count = 0;
-    preferences.positions.forEach((record) => {
+    savedLayoutRecords(layout).forEach((record) => {
       if (!record.pinned || count >= config.state.hardPinnedEntities || !entityForKey(state, record.key)) return;
       if (setEntityPinned(state, record.key, true)) {
         setLayoutPinned(layout, record.key, true);
@@ -630,9 +786,12 @@ function createNetworkVisualizer(dependencies = {}) {
   }
 
   function updateUiFromState() {
-    if (lastEventsRevision !== state.nextHistoryId) {
+    const historyChanged = lastEventsRevision !== state.nextHistoryId;
+    if (historyChanged) {
       lastEventsRevision = state.nextHistoryId;
       ui.setEvents(eventViews(state));
+    }
+    if (historyChanged || state.visual.selectedKey) {
       ui.setSelection(selectedEntityView(state), selectedTransitions(state));
     }
     consumeEffects();
@@ -640,12 +799,12 @@ function createNetworkVisualizer(dependencies = {}) {
 
   function ingest() {
     if (closed) return;
-    const effectsBefore = state.pendingEffects.length;
+    const suppressBatchEffects = document.hidden || suppressNextIngestEffects;
     const results = drainObservationQueue(state);
-    if (document.hidden || suppressNextIngestEffects) {
-      state.pendingEffects.slice(effectsBefore).forEach((effect) => suppressedEffectIds.add(effect.id));
+    if (suppressBatchEffects) {
+      state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
-    suppressNextIngestEffects = false;
+    if (suppressNextIngestEffects) suppressNextIngestEffects = state.incomingQueue.length > 0;
     if (results.some((result) => result?.applied)) invalidateGraph();
     const now = Date.now();
     if (now - lastTickAt >= 250) {
@@ -664,36 +823,61 @@ function createNetworkVisualizer(dependencies = {}) {
     updateUiFromState();
   }
 
+  function decorateGraphForScope(graph) {
+    const resolved = normalizeScope(graph?.scope || navigationScope);
+    const radii = resolved.level === 'overview' ? { universe: 22, aggregate: 8, group: 9, radio: 4 } :
+      resolved.level === 'system' ? { universe: 14, group: 10, aggregate: 7, radio: 4 } :
+        { universe: 10, group: 12, aggregate: 6, radio: 4.5 };
+    const nodes = (graph?.nodes || []).map((value) => ({ ...value,
+      renderRadius: radii[value.type] || 4, scopeLevel: resolved.level }));
+    return { ...graph, scope: resolved, nodes };
+  }
+
   function draw(frameAt) {
     if (closed) return;
     raf = window.requestAnimationFrame(draw);
     if (document.hidden || frameAt - lastFrameAt < 30) return;
     const delta = Math.min(config.layout.maximumDeltaMs, Math.max(1, frameAt - lastFrameAt));
     lastFrameAt = frameAt;
-    if (!dirty && (frozen || layout.reducedMotion)) return;
+    if (!dirty) return;
     const now = Date.now();
     if (graphDirty) applySavedPins();
     const selectionChanged = graphDirty;
+    let searchChangedScope = false;
     if (selectionChanged) {
-      currentGraph = filterSuppressedEffects(selectVisibleGraph(state, now, {
+      currentGraph = decorateGraphForScope(filterSuppressedEffects(selectVisibleGraph(state, now, {
         filters: preferences.filters,
         query: ui.searchInput.value,
         softRadiosTotal: preferences.softRadiosTotal,
-        hardLabels: preferences.hardLabels
-      }), suppressedEffectIds);
+        hardLabels: preferences.hardLabels,
+        scope: navigationScope
+      }), suppressedEffectIds));
+      const resolvedScope = normalizeScope(currentGraph.scope || navigationScope);
+      if (!sameScope(resolvedScope, navigationScope)) {
+        navigationScope = resolvedScope;
+        navigationHistory.length = 0;
+        pendingCameraAction = { type: 'frame' };
+        renderer?.setNavigationScope?.(navigationScope);
+        ui.setScope(scopeView());
+      }
       graphDirty = false;
       if (searchPendingFocus) {
         searchPendingFocus = false;
         const match = currentGraph.searchResults?.[0];
         if (match) {
-          selectEntity(match.key);
-          queueMicrotask(() => renderer?.focus?.(match.key));
+          const entity = entityForKey(state, match.key);
+          if (entity) searchChangedScope = navigateToEntity(entity);
         } else if (ui.searchInput.value.trim()) ui.showNotice('No retained entity matches that search.');
       }
+    }
+    if (searchChangedScope) {
+      dirty = true;
+      return;
     }
     synchronizeLayout(layout, currentGraph, now);
     if (!frozen) stepLayout(layout, currentGraph, delta);
     if (selectionChanged) {
+      renderer?.setNavigationScope?.(navigationScope);
       renderer?.setGraphData?.(currentGraph);
       const counts = currentGraph.counts || {};
       ui.setCounts({
@@ -708,10 +892,18 @@ function createNetworkVisualizer(dependencies = {}) {
         pendingFocusKey = '';
         queueMicrotask(() => renderer?.focus?.(key));
       }
+      if (pendingCameraAction && sameScope(currentGraph.scope, navigationScope)) {
+        const action = pendingCameraAction;
+        pendingCameraAction = null;
+        queueMicrotask(() => {
+          if (action.type === 'restore' && action.pose) renderer?.restoreCameraPose?.(action.pose);
+          else renderer?.frameScope?.();
+        });
+      }
     } else {
       renderer?.refresh?.();
     }
-    dirty = graphDirty || (!frozen && !layout.reducedMotion && currentGraph.nodes.length > 0);
+    dirty = graphDirty || (!frozen && !layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
   }
 
   function handleVisibility() {
@@ -732,6 +924,7 @@ function createNetworkVisualizer(dependencies = {}) {
     const reduced = Boolean(event?.matches);
     setReducedMotion(layout, reduced);
     renderer?.setReducedMotion?.(reduced);
+    ui.setReducedMotion(reduced);
     invalidateGraph();
   }
 
@@ -758,7 +951,16 @@ function createNetworkVisualizer(dependencies = {}) {
   }
 
   const handleAbort = () => controller?.close();
+  const handleStageKeyDown = (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (state.visual.selectedKey) selectEntity(null);
+    else if (navigationScope.level !== 'overview') navigateBack();
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
   document.addEventListener('visibilitychange', handleVisibility);
+  ui.stage.addEventListener('keydown', handleStageKeyDown);
   reducedMotionMedia?.addEventListener?.('change', handleReducedMotion);
   dependencies.signal?.addEventListener('abort', handleAbort, { once: true });
   ingestionTimer = window.setInterval(ingest, 50);
@@ -779,6 +981,8 @@ function createNetworkVisualizer(dependencies = {}) {
           counts: currentGraph.counts || {}
         },
         renderer: renderer?.diagnostics?.() || null,
+        navigation: { scope: { ...navigationScope }, depth: navigationHistory.length,
+          arrange: arrangeMode, autoRotate: preferences.autoRotate !== false },
         subscriptions: { channel: Boolean(channelConnection), network: Boolean(networkConnection) },
         timers: { ingestion: ingestionTimer !== null, animation: raf !== null },
         generation: state.generation,
@@ -789,6 +993,7 @@ function createNetworkVisualizer(dependencies = {}) {
       if (closed) return;
       closed = true;
       document.removeEventListener('visibilitychange', handleVisibility);
+      ui.stage.removeEventListener('keydown', handleStageKeyDown);
       reducedMotionMedia?.removeEventListener?.('change', handleReducedMotion);
       dependencies.signal?.removeEventListener?.('abort', handleAbort);
       if (ingestionTimer !== null) window.clearInterval(ingestionTimer);

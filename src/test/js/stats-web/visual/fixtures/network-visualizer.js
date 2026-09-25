@@ -5,7 +5,7 @@ import { createNetworkVisualizer } from '/assets/features/network-visualizer/ind
 const host = document.querySelector('#network-visualizer-fixture');
 const bootStartedAt = performance.now();
 const FIXED_LIVE_EDGE_MS = 1_700_000_000_000;
-Date.now = () => FIXED_LIVE_EDGE_MS;
+Date.now = () => FIXED_LIVE_EDGE_MS + Math.floor(globalThis.performance.now() - bootStartedAt);
 
 function node(tag, className = '', text = null) {
   const element = document.createElement(tag);

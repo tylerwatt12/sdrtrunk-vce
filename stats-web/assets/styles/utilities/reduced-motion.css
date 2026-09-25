@@ -46,6 +46,10 @@
     transition: none;
   }
 
+  .network-visualizer-label {
+    transition: none;
+  }
+
   .scanner-audio-wave i {
     transition: none;
   }

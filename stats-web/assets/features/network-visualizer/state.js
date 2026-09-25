@@ -118,7 +118,19 @@ function addEffect(state, effect) {
     state.overflow.effectsDropped += 1;
     return null;
   }
-  const value = Object.freeze({ id: `effect-${state.nextEffectId++}`, ...effect });
+  const createdAtMs = eventTime(effect.createdAtMs);
+  const expiresAtMs = Math.max(createdAtMs, eventTime(effect.expiresAtMs, createdAtMs));
+  const requestedAnimationEnd = Number(effect.animationEndsAtMs);
+  const animationEndsAtMs = Math.min(expiresAtMs, Number.isSafeInteger(requestedAnimationEnd) ?
+    Math.max(createdAtMs, requestedAnimationEnd) : expiresAtMs);
+  const value = Object.freeze({
+    id: `effect-${state.nextEffectId++}`,
+    ...effect,
+    createdAtMs,
+    animationEndsAtMs,
+    expiresAtMs,
+    coalesceKey: String(effect.coalesceKey || '').slice(0, 512)
+  });
   state.pendingEffects.push(value);
   while (state.pendingEffects.length > maximum) {
     state.pendingEffects.shift();
@@ -493,13 +505,17 @@ function applyAffiliation(state, event) {
       targetKey: group.key,
       nodeKey: radio.key,
       createdAtMs: event.observedAtMs,
+      animationEndsAtMs: event.observedAtMs + state.config.animation.migrationMotionMs,
+      coalesceKey: `radio-motion:${radio.key}`,
       expiresAtMs: event.observedAtMs + state.config.render.migrationTrailTtlMs
     });
     addEffect(state, {
       type: 'destination_highlight',
       nodeKey: group.key,
       createdAtMs: event.observedAtMs,
-      expiresAtMs: event.observedAtMs + Math.min(2_000, state.config.render.migrationTrailTtlMs)
+      animationEndsAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+      expiresAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+      coalesceKey: `target-highlight:${group.key}`
     });
   } else if (continuityUnknown) {
     radio.visualParentGroupKey = group.key;
@@ -536,7 +552,9 @@ function applyAffiliation(state, event) {
       nodeKey: radio.key,
       targetKey: group.key,
       createdAtMs: event.observedAtMs,
-      expiresAtMs: event.observedAtMs + 1_500
+      animationEndsAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+      expiresAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+      coalesceKey: `radio-arrival:${radio.key}`
     });
   } else if (!radio.visualParentGroupKey && affiliatedGroups.size === 1) {
     radio.visualParentGroupKey = [...affiliatedGroups][0];
@@ -815,11 +833,13 @@ function detachCall(state, call, observedAtMs, proven, reason) {
   radio?.activeCallKeys.delete(call.key);
   refreshRadioGroupMembership(state, radio);
   if (group) {
-    group.afterglowUntilMs = Math.max(group.afterglowUntilMs, observedAtMs + 2_000);
+    group.afterglowUntilMs = Math.max(group.afterglowUntilMs,
+      observedAtMs + state.config.animation.txReleaseMs);
     group.lastObservedAtMs = Math.max(group.lastObservedAtMs, observedAtMs);
   }
   if (radio) {
-    radio.afterglowUntilMs = Math.max(radio.afterglowUntilMs, observedAtMs + 2_000);
+    radio.afterglowUntilMs = Math.max(radio.afterglowUntilMs,
+      observedAtMs + state.config.animation.txReleaseMs);
     radio.lastObservedAtMs = Math.max(radio.lastObservedAtMs, observedAtMs);
   }
   state.activeCalls.delete(call.key);
@@ -828,7 +848,9 @@ function detachCall(state, call, observedAtMs, proven, reason) {
     nodeKey: radio?.key || group?.key || call.universeKey,
     targetKey: group?.key || '',
     createdAtMs: observedAtMs,
-    expiresAtMs: observedAtMs + 2_000,
+    animationEndsAtMs: observedAtMs + state.config.animation.txReleaseMs,
+    expiresAtMs: observedAtMs + state.config.animation.txReleaseMs,
+    coalesceKey: `release:${radio?.key || group?.key || call.universeKey}`,
     uncertain: !proven
   });
   appendHistory(state, {
@@ -872,11 +894,9 @@ function applyCall(state, event) {
   const group = ensureGroup(state, universe, event, event.group, event.groupKey);
   if (event.phase === 'granted') {
     const radio = event.radio ? ensureRadio(state, universe, event, event.radio, event.radioKey) : null;
-    if (radio && group) {
-      radio.recentTxGroupKey = group.key;
-      if (!radio.visualParentGroupKey && !radio.affiliations.size) radio.visualParentGroupKey = group.key;
-      refreshRadioGroupMembership(state, radio);
-    }
+    // A grant can introduce real identities, but it is not evidence that the named radio transmitted to the
+    // granted group. Keep it independent from both TX recency and affiliation/visual-parent relationships.
+    if (radio) refreshRadioGroupMembership(state, radio);
     if (group) group.pendingGrantUntilMs = Math.max(group.pendingGrantUntilMs, event.observedAtMs + 4_000);
     universe.pendingGrantUntilMs = Math.max(universe.pendingGrantUntilMs, event.observedAtMs + 4_000);
     appendHistory(state, {
@@ -961,7 +981,9 @@ function applyCall(state, event) {
         targetKey: group.key,
         nodeKey: radio?.key || group.key,
         createdAtMs: event.observedAtMs,
-        expiresAtMs: event.observedAtMs + 1_200,
+        animationEndsAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+        expiresAtMs: event.observedAtMs + state.config.animation.pulseDurationMs,
+        coalesceKey: `target-highlight:${group.key}`,
         encrypted: call.encrypted
       });
     }
@@ -1177,13 +1199,17 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
       ended += 1;
     }
   });
-  const snapshotOverflow = state.snapshotRows.size - state.config.state.hardDedupeEntries;
-  if (snapshotOverflow > 0) {
-    [...state.snapshotRows.entries()].sort((left, right) =>
-      left[1].lastObservedAtMs - right[1].lastObservedAtMs || left[0].localeCompare(right[0]))
-      .slice(0, snapshotOverflow).forEach(([key]) => state.snapshotRows.delete(key));
-  }
+  trimSnapshotRows(state);
   return { applied: true, introduced, updated, ended };
+}
+
+function trimSnapshotRows(state) {
+  const snapshotOverflow = state.snapshotRows.size - state.config.state.hardDedupeEntries;
+  if (snapshotOverflow <= 0) return 0;
+  [...state.snapshotRows.entries()].sort((left, right) =>
+    left[1].lastObservedAtMs - right[1].lastObservedAtMs || left[0].localeCompare(right[0]))
+    .slice(0, snapshotOverflow).forEach(([key]) => state.snapshotRows.delete(key));
+  return snapshotOverflow;
 }
 
 function establishChannelActivityBoundary(state, snapshot, generation = state.generation, receivedAtMs = Date.now()) {
@@ -1215,6 +1241,7 @@ function establishChannelActivityBoundary(state, snapshot, generation = state.ge
       recorded += 1;
     });
   });
+  trimSnapshotRows(state);
   return { applied: true, recorded };
 }
 
