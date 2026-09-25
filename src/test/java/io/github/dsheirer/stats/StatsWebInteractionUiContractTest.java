@@ -1275,6 +1275,8 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String selection = function(source, "function liveDetailSelection(tableValue, row, bindingRow = row)");
         String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
+        String rowsChangedSelection = function(source,
+            "function liveDetailSelectionAfterRowsChanged(tableValue, selection)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
         String filters = function(source, "function liveDetailFilterController(options)");
         String messages = function(source, "function liveMessagesPane()");
@@ -1481,9 +1483,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("liveTable.tableController.replaceRows"));
         assertTrue(showTable.contains("displayed.control_active ? liveCurrentControlRow(displayed) : null"));
         assertTrue(showTable.contains("selectRow(displayed, currentControl)"));
-        assertTrue(updateVisibleRows.contains("liveCurrentControlRow(displayed)"));
-        assertTrue(updateVisibleRows.contains("selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
-        assertTrue(updateVisibleRows.contains("liveDetailSelection(displayed, controlIntent, null)"));
+        assertTrue(updateVisibleRows.contains(
+            "liveDetailSelectionAfterRowsChanged(displayed, selection)"));
+        assertTrue(rowsChangedSelection.contains(
+            "selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL"));
+        assertTrue(rowsChangedSelection.contains("liveCurrentControlRow(tableValue)"));
+        assertTrue(rowsChangedSelection.contains("liveDetailSelection(tableValue, controlIntent, null)"));
+        assertTrue(rowsChangedSelection.contains("row?.key === selection.rowKey"));
+        assertTrue(rowsChangedSelection.contains(
+            "selectedRow ? liveDetailRowSelection(tableValue, selectedRow) : null"));
         assertTrue(css.contains("grid-template-columns: minmax(260px, 1fr) minmax(0, 3fr)"));
         assertTrue(css.contains("body[data-view=\"live\"] .content > .live-split.picker-collapsed"));
         assertTrue(css.contains(".live-split.picker-collapsed > .live-channel-picker"));

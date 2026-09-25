@@ -245,7 +245,9 @@ assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.ro
   'Live updates must reconcile stable row cells instead of rebuilding the table body');
 assert.match(channels, /if \(!tableIds\.has\(tableId\)\) removeTable\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
-assert.match(channels, /if \(activeFilter && selection && !incoming\.has\(selection\.rowKey\)\) clearSelection\(\)/);
+assert.match(channels,
+  /const nextSelection = liveDetailSelectionAfterRowsChanged\(displayed, selection\)/,
+  'Live table updates must reconcile logical control intent before clearing a missing exact row');
 assert.match(channels, /const requestedMatch = liveRequestedChannelMatch\(value, requestedChannel\)/,
   'Live deep links must resolve both table-level and row-level channel configurations');
 assert.match(channels, /selectRow\(displayed, requestedRow\)/,

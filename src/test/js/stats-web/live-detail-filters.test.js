@@ -114,6 +114,7 @@ vm.runInContext([
   functionSource('function liveDetailSelection(tableValue, row, bindingRow = row)'),
   functionSource('function liveCurrentControlRow(tableValue)'),
   functionSource('function liveDetailRowSelection(tableValue, row)'),
+  functionSource('function liveDetailSelectionAfterRowsChanged(tableValue, selection)'),
   functionSource('function liveDetailSelectionDelta(previous, next)'),
   functionSource('function liveMessageTransportChanged(previous, next)'),
   functionSource('function liveMessageSourceMatchesSelection(selection, subscriptionId, source)'),
@@ -319,6 +320,30 @@ assert.equal(waitingControl.kind, 'CONTROL');
 assert.equal(waitingControl.logicalKey, controlA.logicalKey);
 assert.equal(waitingControl.bindingFrequencyHz, null);
 assert.equal(waitingControl.rowKey, null);
+const controlLost = context.liveDetailSelectionAfterRowsChanged({
+  ...site, control_active: false, rows: []
+}, controlA);
+assert.notEqual(controlLost, null);
+assert.equal(controlLost.logicalKey, controlA.logicalKey);
+assert.equal(controlLost.bindingFrequencyHz, null);
+assert.equal(controlLost.rowKey, null);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(controlA, controlLost))), {
+  logicalChanged: false, transportChanged: true
+});
+const controlRotated = context.liveDetailSelectionAfterRowsChanged({
+  ...site, control_active: true, rows: [currentRow]
+}, controlLost);
+assert.equal(controlRotated.logicalKey, controlA.logicalKey);
+assert.equal(controlRotated.bindingFrequencyHz, 852_012_500);
+assert.equal(controlRotated.rowKey, 'control-b');
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(controlLost, controlRotated))), {
+  logicalChanged: false, transportChanged: true
+});
+const directlyRotated = context.liveDetailSelectionAfterRowsChanged({
+  ...site, control_active: true, rows: [currentRow]
+}, controlA);
+assert.equal(directlyRotated.logicalKey, controlA.logicalKey);
+assert.equal(directlyRotated.transportKey, controlB.transportKey);
 
 // Traffic and conventional rows remain exact even if legacy display tags suggest control activity.
 const voice = context.liveDetailSelection(site, {
@@ -327,6 +352,14 @@ const voice = context.liveDetailSelection(site, {
 assert.equal(voice.kind, 'EXACT');
 assert.equal(voice.bindingFrequencyHz, 853_012_500);
 assert.equal(voice.bindingTimeslot, 2);
+assert.equal(context.liveDetailSelectionAfterRowsChanged({ ...site, rows: [] }, voice), null);
+const refreshedVoice = context.liveDetailSelectionAfterRowsChanged({
+  ...site, rows: [{
+    key: 'voice-a', role: 'TRAFFIC', frequency_hz: 853_012_500, timeslot: 2, lcn: '1-101'
+  }]
+}, voice);
+assert.equal(refreshedVoice.logicalKey, voice.logicalKey);
+assert.equal(refreshedVoice.rowKey, voice.rowKey);
 const conventional = context.liveDetailSelection({
   table_id: 'conventional', title: 'Conventional', configuration_id: 'channel-config'
 }, { key: 'channel-a', role: 'CONVENTIONAL', frequency_hz: 155_730_000 });

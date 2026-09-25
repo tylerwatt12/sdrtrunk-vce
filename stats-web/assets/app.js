@@ -10803,6 +10803,23 @@ function liveDetailRowSelection(tableValue, row) {
   return liveDetailSelection(tableValue, row, controlIntent ? controlBinding : row);
 }
 
+function liveDetailSelectionAfterRowsChanged(tableValue, selection) {
+  if (!tableValue || !selection) return null;
+  const rows = Array.isArray(tableValue.rows) ? tableValue.rows : [];
+  if (selection.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL) {
+    const currentControl = tableValue.control_active === true ? liveCurrentControlRow(tableValue) : null;
+    if (currentControl) return liveDetailRowSelection(tableValue, currentControl);
+    const controlIntent = rows.find((row) =>
+      LIVE_DETAIL_CONTROL_ROLES.has(String(row?.role || '').toUpperCase())) || {
+      configuration_id: selection.configurationId,
+      role: 'CURRENT_CONTROL'
+    };
+    return liveDetailSelection(tableValue, controlIntent, null);
+  }
+  const selectedRow = rows.find((row) => row?.key === selection.rowKey);
+  return selectedRow ? liveDetailRowSelection(tableValue, selectedRow) : null;
+}
+
 function liveDetailSelectionDelta(previous, next) {
   return {
     logicalChanged: next?.logicalKey !== previous?.logicalKey,
@@ -15407,25 +15424,11 @@ function liveChannelsSection(onSelectionChange) {
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
-    const incoming = new Map(displayed.rows.map((row) => [row.key, row]));
-    const activeFilter = presentation.show_only_active_trunked_channels && value.table_id !== 'conventional';
-    if (activeFilter && selection && !incoming.has(selection.rowKey)) clearSelection();
-    if (selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL) {
-      const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
-      if (currentControl) selectRow(displayed, currentControl, false);
-      else {
-        const controlIntent = displayed.rows.find((row) =>
-          LIVE_DETAIL_CONTROL_ROLES.has(String(row?.role || '').toUpperCase())) || {
-          configuration_id: selection.configurationId,
-          role: 'CURRENT_CONTROL'
-        };
-        selection = liveDetailSelection(displayed, controlIntent, null);
-        onSelectionChange(selection);
-      }
-    } else if (selection) {
-      const selectedRow = incoming.get(selection.rowKey);
-      if (selectedRow) selectRow(displayed, selectedRow, false);
-      else clearSelection();
+    const nextSelection = liveDetailSelectionAfterRowsChanged(displayed, selection);
+    if (!nextSelection) clearSelection();
+    else if (!liveDetailSelectionUnchanged(selection, nextSelection)) {
+      selection = nextSelection;
+      onSelectionChange(selection);
     }
     liveTable.tableController.reconcileRows(displayed.rows);
     updateSelectedView(value);
