@@ -930,10 +930,16 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     commandRow.append(statusFilter, commandTools);
     const actions = node('div', 'radioreference-talkgroup-actions ui-selection-bar');
     actions.append(selectionBadge, clear, importSelected);
-    toolbar.append(aliasListField('Compare with Alias List', aliasList, family,
-      'Creates a compatible Alias List immediately, selects it for this import, and refreshes the comparison.'),
-      categoryField,
-      formField('Search talkgroups', searchFrame), commandRow);
+    const aliasField = aliasListField('Compare with Alias List', aliasList, family,
+      'Creates a compatible Alias List immediately, selects it for this import, and refreshes the comparison.');
+    aliasField.classList.add('radioreference-talkgroup-alias-field');
+    const aliasCreator = aliasField.querySelector('.ui-inline-create');
+    aliasCreator?.classList.add('radioreference-talkgroup-alias-creator');
+    aliasCreator?.querySelector('.ui-inline-create-panel')?.classList.add(
+      'radioreference-talkgroup-alias-creator-panel');
+    const searchField = formField('Search talkgroups', searchFrame);
+    searchField.classList.add('radioreference-talkgroup-search-field');
+    toolbar.append(aliasField, categoryField, searchField, commandRow);
     target.replaceChildren(toolbar, actions, status, tableHost);
 
     const selected = state.selectedTalkgroups;

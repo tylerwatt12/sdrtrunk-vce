@@ -426,21 +426,46 @@
 
 .radioreference-talkgroup-toolbar {
   flex: none;
-  display: grid;
-  grid-template-columns: minmax(165px, .9fr) minmax(165px, .8fr) minmax(190px, 1.2fr);
+  align-items: flex-start;
   gap: var(--space-2);
 }
 
-.radioreference-talkgroup-toolbar > .admin-form-field:nth-child(3) {
-  align-self: end;
+.radioreference-talkgroup-alias-field {
+  flex: 1 1 270px;
+}
+
+.radioreference-category-field {
+  flex: 1 1 230px;
+}
+
+.radioreference-talkgroup-search-field {
+  flex: 1.2 1 320px;
+}
+
+.radioreference-talkgroup-search {
+  min-width: 0;
+  width: 100%;
+}
+
+.radioreference-talkgroup-alias-creator {
+  position: relative;
+}
+
+.radioreference-talkgroup-alias-creator-panel {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  width: min(420px, calc(100vw - var(--space-4) - var(--space-4)));
 }
 
 .radioreference-talkgroup-command-row {
   min-width: 0;
-  grid-column: 1 / -1;
+  flex: 1 0 100%;
   display: flex;
   align-items: end;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
@@ -728,14 +753,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .radioreference-talkgroup-toolbar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .radioreference-talkgroup-search {
-    grid-column: 1 / -1;
-  }
-
   .radioreference-site-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -771,13 +788,19 @@
   .radioreference-browse-fields,
   .radioreference-form-grid,
   .radioreference-frequency-modes,
-  .radioreference-preview-summary,
-  .radioreference-talkgroup-toolbar {
+  .radioreference-preview-summary {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .radioreference-talkgroup-search {
-    grid-column: auto;
+  .radioreference-talkgroup-alias-field,
+  .radioreference-category-field,
+  .radioreference-talkgroup-search-field {
+    flex-basis: 100%;
+  }
+
+  .radioreference-talkgroup-alias-creator-panel {
+    position: static;
+    width: 100%;
   }
 
   .radioreference-sites-toolbar > .admin-form-field:nth-child(2) {

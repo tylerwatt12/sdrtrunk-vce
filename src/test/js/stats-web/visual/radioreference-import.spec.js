@@ -332,6 +332,44 @@ async function openSystem(page) {
   await expect(page.getByText('Central Simulcast')).toBeVisible();
 }
 
+async function installRealTalkgroupAliasCreator(page) {
+  await page.evaluate(async () => {
+    const { createInlineAliasListCreator } = await import(
+      '/assets/features/alias-list-create.js?visual-layout-test=1');
+    const aliasField = document.querySelector('.radioreference-talkgroup-alias-field');
+    const existing = aliasField?.querySelector('.ui-inline-alias-list-create');
+    const select = aliasField?.querySelector('select');
+    if (!aliasField || !existing || !select) throw new Error('Talkgroup Alias List field is unavailable.');
+    const node = (tag, className = '', text = null) => {
+      const element = document.createElement(tag);
+      element.className = className;
+      if (text !== null) element.textContent = String(text);
+      return element;
+    };
+    const iconGlyph = () => {
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('aria-hidden', 'true');
+      return icon;
+    };
+    const uiPill = (label, tone) => {
+      const pill = node('span', `ui-pill ui-pill-${tone}`);
+      pill.append(node('span', '', label));
+      return pill;
+    };
+    const creator = createInlineAliasListCreator({
+      node, iconGlyph, uiPill,
+      requestJson: async () => ({ alias_list_id: 99, revision: 42 })
+    }, {
+      select, family: 'P25', getRevision: async () => 41, onCreated: async () => {},
+      helperText: 'Creates a compatible Alias List immediately and selects it for this import.'
+    });
+    creator.classList.add('radioreference-talkgroup-alias-creator');
+    creator.querySelector('.ui-inline-create-panel')?.classList.add(
+      'radioreference-talkgroup-alias-creator-panel');
+    existing.replaceWith(creator);
+  });
+}
+
 test('inline Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
   await installWorkspace(page, 'light', false, false, 'alias-create');
   await openSystem(page);
@@ -441,6 +479,87 @@ test('talkgroup filters and import tools share one compact command row', async (
   ]);
   expect(tableBox.width).toBeGreaterThanOrEqual(tableHostBox.width - 1);
 });
+
+test('talkgroup tools wrap to their pane and the Alias List creator does not distort desktop controls',
+  async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 900 });
+    await installWorkspace(page);
+    await openSystem(page);
+    await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+    await installRealTalkgroupAliasCreator(page);
+
+    const toolbar = page.locator('.radioreference-talkgroup-toolbar');
+    const aliasField = toolbar.locator('.radioreference-talkgroup-alias-field');
+    const categoryField = toolbar.locator('.radioreference-category-field');
+    const searchField = toolbar.locator('.radioreference-talkgroup-search-field');
+    const before = await Promise.all([
+      toolbar.boundingBox(), aliasField.boundingBox(), categoryField.boundingBox(), searchField.boundingBox()
+    ]);
+    const [toolbarBox, aliasBox, categoryBox, searchBox] = before;
+    for (const box of [aliasBox, categoryBox, searchBox]) {
+      expect(box.x).toBeGreaterThanOrEqual(toolbarBox.x - 1);
+      expect(box.x + box.width).toBeLessThanOrEqual(toolbarBox.x + toolbarBox.width + 1);
+    }
+    expect(Math.abs(aliasBox.y - categoryBox.y)).toBeLessThanOrEqual(1);
+    expect(searchBox.y).toBeGreaterThanOrEqual(aliasBox.y);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    await toolbar.getByRole('button', { name: 'New list' }).click();
+    const panel = toolbar.locator('.ui-inline-create-panel');
+    await expect(panel).toBeVisible();
+    const [afterToolbarBox, afterCategoryBox, afterSearchBox, triggerBox, panelBox] = await Promise.all([
+      toolbar.boundingBox(), categoryField.boundingBox(), searchField.boundingBox(),
+      toolbar.getByRole('button', { name: 'New list' }).boundingBox(), panel.boundingBox()
+    ]);
+    expect(Math.abs(afterToolbarBox.height - toolbarBox.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(afterCategoryBox.y - categoryBox.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(afterSearchBox.y - searchBox.y)).toBeLessThanOrEqual(1);
+    expect(panelBox.y).toBeGreaterThanOrEqual(triggerBox.y + triggerBox.height);
+    expect(panelBox.x).toBeGreaterThanOrEqual(8);
+    expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(972);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.locator('body')).toHaveScreenshot('radioreference-talkgroups-alias-create-light-compact.png',
+      { fullPage: true });
+  });
+
+test('talkgroup tools and the open Alias List creator stay inside a phone viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installWorkspace(page, 'dark');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await installRealTalkgroupAliasCreator(page);
+  const toolbar = page.locator('.radioreference-talkgroup-toolbar');
+  const beforeHeight = (await toolbar.boundingBox()).height;
+  await toolbar.getByRole('button', { name: 'New list' }).click();
+  const panel = toolbar.locator('.ui-inline-create-panel');
+  const [toolbarBox, panelBox] = await Promise.all([toolbar.boundingBox(), panel.boundingBox()]);
+  expect(toolbarBox.height).toBeGreaterThan(beforeHeight);
+  expect(panelBox.x).toBeGreaterThanOrEqual(toolbarBox.x - 1);
+  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(toolbarBox.x + toolbarBox.width + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator('body')).toHaveScreenshot('radioreference-talkgroups-alias-create-dark-mobile.png',
+    { fullPage: true });
+});
+
+for (const width of [768, 760]) {
+  test(`talkgroup tools stay within the page at the ${width}px workspace boundary`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installWorkspace(page);
+    await openSystem(page);
+    await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+    const toolbar = page.locator('.radioreference-talkgroup-toolbar');
+    const toolbarBox = await toolbar.boundingBox();
+    for (const selector of [
+      '.radioreference-talkgroup-alias-field', '.radioreference-category-field',
+      '.radioreference-talkgroup-search-field', '.radioreference-talkgroup-command-row'
+    ]) {
+      const box = await toolbar.locator(selector).boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(toolbarBox.x - 1);
+      expect(box.x + box.width).toBeLessThanOrEqual(toolbarBox.x + toolbarBox.width + 1);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
 
 test('single changed talkgroup preview shows the RadioReference-owned field changes', async ({ page }) => {
   await installWorkspace(page);
