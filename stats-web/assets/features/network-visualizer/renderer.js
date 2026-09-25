@@ -559,7 +559,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const state = name === 'outline' ? 'selected' : field ? 'universe' : pending ? 'arrival' : 'encrypted';
     const settings = { color: materialColor(state), transparent: true,
       opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.075 :
-        name === 'system-field' ? 0.34 : pending ? 0.34 : 0.82,
+        name === 'system-field' ? 0.34 : name === 'system-field-ring' ? 0.42 : pending ? 0.34 : 0.82,
       wireframe: name === 'encrypted' || name === 'system-field', depthWrite: false };
     if (name === 'outline') settings.side = library.BackSide;
     const material = protectSharedResource(new library.MeshBasicMaterial(settings));
@@ -589,6 +589,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     let value;
     if (kind === 'universe') value = new library.IcosahedronGeometry(1, 2);
     else if (kind === 'universe-field') value = new library.IcosahedronGeometry(1, 3);
+    else if (kind === 'universe-field-ring') value = new library.TorusGeometry(1, 0.012, 8, 96);
     else if (kind === 'pending-ring') value = new library.TorusGeometry(1.28, 0.055, 8, 36);
     else if (kind === 'conventional-universe') value = new library.TorusGeometry(1, 0.13, 8, 28);
     else if (kind === 'conventional-group') value = new library.BoxGeometry(1.55, 0.42, 1.55);
@@ -664,11 +665,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const fieldFill = object.userData.visualizerFieldFill;
     const fieldEmphasis = object.userData.visualizerFieldEmphasis;
     const fieldOutline = object.userData.visualizerFieldOutline;
+    const fieldRings = object.userData.visualizerFieldRings || [];
     const radius = nodeRadius(node);
     const encryptedVisible = Boolean(node.encrypted || node.entity?.encrypted);
     const expandedField = kind === 'universe' && node.expandedField === true;
     const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.pending)}:${encryptedVisible}:` +
-      `${expandedField}:${node.visible !== false}:${radius}`;
+      `${expandedField}:${node.visible !== false}:${radius}:${mode}`;
     if (object.userData.visualizerStyleSignature === signature) return;
     object.userData.visualizerStyleSignature = signature;
     if (base.geometry !== geometry(kind)) base.geometry = geometry(kind);
@@ -704,6 +706,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       fieldEmphasis.visible = expandedField &&
         (emphasisMetadata.current > 0.005 || emphasisMetadata.target > 0.005);
       fieldOutline.visible = expandedField && Boolean(node.selected);
+      fieldRings.forEach((ring, index) => { ring.visible = expandedField && (mode !== 'flat' || index === 0); });
     }
     object.userData.visualizerBaseRadius = radius;
     if (kind !== 'universe' && !object.userData.visualizerAnimating) object.scale.setScalar(radius);
@@ -732,15 +735,20 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const fieldBase = new library.Mesh(geometry('universe-field'), specialMaterial('system-field'));
       const fieldEmphasis = new library.Mesh(geometry('universe-field'), ownedEmphasisMaterial(key).material);
       const fieldOutline = new library.Mesh(geometry('universe-field'), specialMaterial('outline'));
-      [fieldFill, fieldBase, fieldEmphasis, fieldOutline].forEach((mesh) => {
+      const fieldRings = [0, 1, 2].map(() =>
+        new library.Mesh(geometry('universe-field-ring'), specialMaterial('system-field-ring')));
+      fieldRings[1].rotation.x = Math.PI / 2;
+      fieldRings[2].rotation.y = Math.PI / 2;
+      [fieldFill, fieldBase, fieldEmphasis, fieldOutline, ...fieldRings].forEach((mesh) => {
         mesh.visible = false;
         mesh.raycast = () => {};
       });
-      object.add(fieldFill, fieldBase, fieldEmphasis, fieldOutline);
+      object.add(fieldFill, fieldBase, fieldEmphasis, fieldOutline, ...fieldRings);
       object.userData.visualizerFieldFill = fieldFill;
       object.userData.visualizerFieldBase = fieldBase;
       object.userData.visualizerFieldEmphasis = fieldEmphasis;
       object.userData.visualizerFieldOutline = fieldOutline;
+      object.userData.visualizerFieldRings = fieldRings;
       object.userData.visualizerFieldScale = { x: 0, y: 0, z: 0, updatedAt: clock() };
     }
     object.userData.visualizerKey = key;
@@ -916,6 +924,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
       setMeshScale(object.userData.visualizerFieldBase, state.x, state.y, state.z);
       setMeshScale(object.userData.visualizerFieldEmphasis, state.x * 1.018, state.y * 1.018, state.z * 1.018);
       setMeshScale(object.userData.visualizerFieldOutline, state.x * 1.035, state.y * 1.035, state.z * 1.035);
+      const rings = object.userData.visualizerFieldRings || [];
+      setMeshScale(rings[0], state.x, state.y, Math.max(2.5, state.z));
+      setMeshScale(rings[1], state.x, state.z, Math.max(2.5, state.y));
+      setMeshScale(rings[2], state.z, state.y, Math.max(2.5, state.x));
     }
   }
 

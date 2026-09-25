@@ -138,6 +138,7 @@ function fakeRendererLibrary(documentValue, lifecycle) {
       this.children = [];
       this.userData = {};
       this.position = new Vector3();
+      this.rotation = { x: 0, y: 0, z: 0 };
       this.scale = { value: 1, setScalar: (value) => { this.scale.value = value; } };
       this.visible = true;
     }
@@ -568,6 +569,9 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
         'focused systems replace their compact glyph with an enclosing field');
       assert.equal(systemObject.children[5].visible, true);
       assert.equal(systemObject.children[6].visible, true);
+      assert.equal(systemObject.children[9].visible, true);
+      assert.equal(systemObject.children[10].visible, true);
+      assert.equal(systemObject.children[11].visible, true);
       assert.equal(systemObject.children[5].raycast(), undefined,
         'system field surfaces do not steal talkgroup clicks');
       assert.equal(renderer.diagnostics().expandedFields, 1);
