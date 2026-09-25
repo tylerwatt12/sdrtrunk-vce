@@ -558,8 +558,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const pending = name === 'pending';
     const state = name === 'outline' ? 'selected' : field ? 'universe' : pending ? 'arrival' : 'encrypted';
     const settings = { color: materialColor(state), transparent: true,
-      opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.075 :
-        name === 'system-field' ? 0.34 : name === 'system-field-ring' ? 0.42 : pending ? 0.34 : 0.82,
+      opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.12 :
+        name === 'system-field' ? 0.55 : name === 'system-field-ring' ? 0.82 : pending ? 0.34 : 0.82,
       wireframe: name === 'encrypted' || name === 'system-field', depthWrite: false };
     if (name === 'outline') settings.side = library.BackSide;
     const material = protectSharedResource(new library.MeshBasicMaterial(settings));
@@ -589,7 +589,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     let value;
     if (kind === 'universe') value = new library.IcosahedronGeometry(1, 2);
     else if (kind === 'universe-field') value = new library.IcosahedronGeometry(1, 3);
-    else if (kind === 'universe-field-ring') value = new library.TorusGeometry(1, 0.012, 8, 96);
+    else if (kind === 'universe-field-ring') value = new library.TorusGeometry(1, 0.018, 8, 96);
     else if (kind === 'pending-ring') value = new library.TorusGeometry(1.28, 0.055, 8, 36);
     else if (kind === 'conventional-universe') value = new library.TorusGeometry(1, 0.13, 8, 28);
     else if (kind === 'conventional-group') value = new library.BoxGeometry(1.55, 0.42, 1.55);
