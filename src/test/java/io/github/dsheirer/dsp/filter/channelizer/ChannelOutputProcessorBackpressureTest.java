@@ -24,6 +24,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
 import java.lang.reflect.Field;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -433,6 +434,112 @@ class ChannelOutputProcessorBackpressureTest
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void retuneDuringOutputUpdateRemainsPendingForTheNextNativeBuffer() throws Exception
+    {
+        long initialCenter = 100_000_000L;
+        long firstCenter = 100_001_000L;
+        long latestCenter = 100_002_000L;
+        PolyphaseChannelManager manager = new PolyphaseChannelManager(new EmptyNativeBufferProvider(),
+            initialCenter, 100_000.0);
+        BlockingUpdateChannelSource source = new BlockingUpdateChannelSource(
+            new TunerChannel(initialCenter, 12_500),
+            new ChannelCalculator(100_000.0, 4, initialCenter, 2.0));
+        Field sourcesField = PolyphaseChannelManager.class.getDeclaredField("mChannelSources");
+        sourcesField.setAccessible(true);
+        ((List<PolyphaseChannelSource>)sourcesField.get(manager)).add(source);
+        PolyphaseChannelManager.NativeBufferReceiver receiver = nativeBufferReceiver(manager);
+        Thread firstBuffer = new Thread(() -> receiver.receive(EmptyNativeBuffer.INSTANCE),
+            "overlapping tuner retune regression");
+
+        try
+        {
+            receiver.receive(SourceEvent.frequencyChange(null, firstCenter));
+            firstBuffer.start();
+            assertTrue(source.mFirstUpdateQueued.await(5, TimeUnit.SECONDS));
+
+            source.receiveChannelResults(emptyChannelResultsBuffer());
+            assertEquals(firstCenter, (long)source.getTunerCenterFrequency(),
+                "the first center must be applied before the overlapping retune");
+
+            receiver.receive(SourceEvent.frequencyChange(null, latestCenter));
+            source.mAllowFirstUpdateReturn.countDown();
+            firstBuffer.join(TimeUnit.SECONDS.toMillis(5));
+            assertFalse(firstBuffer.isAlive());
+
+            receiver.receive(EmptyNativeBuffer.INSTANCE);
+            source.receiveChannelResults(emptyChannelResultsBuffer());
+
+            assertEquals(2, source.mUpdateCount.get(),
+                "the retune arriving during the first pass must cause a second update pass");
+            assertEquals(latestCenter, (long)source.getTunerCenterFrequency(),
+                "the source must converge on the latest tuner center");
+        }
+        finally
+        {
+            source.mAllowFirstUpdateReturn.countDown();
+            firstBuffer.join(TimeUnit.SECONDS.toMillis(5));
+            source.stopOutputProcessorForRemoval();
+            manager.dispose();
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void newerPendingOutputUpdateSurvivesTheCurrentConsumer() throws Exception
+    {
+        long channelFrequency = 100_000_000L;
+        long firstCenter = 100_001_000L;
+        long latestCenter = 100_002_000L;
+        ChannelCalculator initial = new ChannelCalculator(100_000.0, 4, channelFrequency, 2.0);
+        ChannelCalculator first = new ChannelCalculator(100_000.0, 4, firstCenter, 2.0);
+        ChannelCalculator latest = new ChannelCalculator(100_000.0, 4, latestCenter, 2.0);
+        SynthesisFilterManager filterManager = new SynthesisFilterManager();
+        PolyphaseChannelSource source = new PolyphaseChannelSource(
+            new TunerChannel(channelFrequency, 12_500), initial, filterManager, ignored -> {},
+            "pending output update race test", null);
+        BlockingPendingOutputProcessorUpdate blockingUpdate =
+            new BlockingPendingOutputProcessorUpdate(source, first, filterManager);
+        Field pendingField = PolyphaseChannelSource.class.getDeclaredField("mPendingOutputProcessorUpdate");
+        pendingField.setAccessible(true);
+        Object pendingUpdates = pendingField.get(source);
+
+        if(pendingUpdates instanceof AtomicReference<?> atomicPendingUpdates)
+        {
+            ((AtomicReference<PolyphaseChannelSource.PendingOutputProcessorUpdate>)atomicPendingUpdates)
+                .set(blockingUpdate);
+        }
+        else
+        {
+            //This branch keeps the regression red against the former plain-field implementation.
+            pendingField.set(source, blockingUpdate);
+        }
+        Thread firstConsumer = new Thread(() -> source.receiveChannelResults(emptyChannelResultsBuffer()),
+            "pending output update consumer regression");
+
+        try
+        {
+            firstConsumer.start();
+            assertTrue(blockingUpdate.mFilterManagerRequested.await(5, TimeUnit.SECONDS));
+            source.updateOutputProcessor(latest, filterManager);
+            blockingUpdate.mAllowFilterManagerReturn.countDown();
+            firstConsumer.join(TimeUnit.SECONDS.toMillis(5));
+            assertFalse(firstConsumer.isAlive());
+            assertEquals(firstCenter, (long)source.getTunerCenterFrequency());
+
+            source.receiveChannelResults(emptyChannelResultsBuffer());
+            assertEquals(latestCenter, (long)source.getTunerCenterFrequency(),
+                "a newer update published while the current update is consumed must remain pending");
+        }
+        finally
+        {
+            blockingUpdate.mAllowFilterManagerReturn.countDown();
+            firstConsumer.join(TimeUnit.SECONDS.toMillis(5));
+            source.stopOutputProcessorForRemoval();
+        }
+    }
+
+    @Test
     void channelSourceStopWinsAConcurrentOutputProcessorStart() throws Exception
     {
         ChannelCalculator calculator = new ChannelCalculator(50_000.0, 2, 100_000_000L, 2.0);
@@ -767,6 +874,22 @@ class ChannelOutputProcessorBackpressureTest
         return (AtomicLong)field.get(manager);
     }
 
+    private static PolyphaseChannelManager.NativeBufferReceiver nativeBufferReceiver(PolyphaseChannelManager manager)
+        throws Exception
+    {
+        Field field = PolyphaseChannelManager.class.getDeclaredField("mNativeBufferReceiver");
+        field.setAccessible(true);
+        return (PolyphaseChannelManager.NativeBufferReceiver)field.get(manager);
+    }
+
+    private static ComplexPolyphaseChannelizerM2.ChannelResultsBuffer emptyChannelResultsBuffer()
+    {
+        ComplexPolyphaseChannelizerM2.ChannelResultsBuffer buffer =
+            new ComplexPolyphaseChannelizerM2.ChannelResultsBuffer(1, ignored -> {});
+        buffer.prepareForConsumers(1);
+        return buffer;
+    }
+
     private static ComplexPolyphaseChannelizerM2.ChannelResultsBuffer buffer(AtomicInteger recycled,
                                                                                CountDownLatch allRecycled)
     {
@@ -1008,6 +1131,98 @@ class ChannelOutputProcessorBackpressureTest
         ComplexPolyphaseChannelizerM2 createChannelizer(double sampleRate) throws FilterDesignException
         {
             throw new FilterDesignException("intentional replacement failure");
+        }
+    }
+
+    private static class BlockingUpdateChannelSource extends PolyphaseChannelSource
+    {
+        private final AtomicInteger mUpdateCount = new AtomicInteger();
+        private final CountDownLatch mFirstUpdateQueued = new CountDownLatch(1);
+        private final CountDownLatch mAllowFirstUpdateReturn = new CountDownLatch(1);
+
+        private BlockingUpdateChannelSource(TunerChannel tunerChannel, ChannelCalculator calculator)
+        {
+            super(tunerChannel, calculator, new SynthesisFilterManager(), ignored -> {},
+                "overlapping tuner retune regression", null);
+        }
+
+        @Override
+        public void updateOutputProcessor(ChannelCalculator calculator, SynthesisFilterManager filterManager)
+        {
+            super.updateOutputProcessor(calculator, filterManager);
+
+            if(mUpdateCount.incrementAndGet() == 1)
+            {
+                mFirstUpdateQueued.countDown();
+
+                try
+                {
+                    mAllowFirstUpdateReturn.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+    private static class BlockingPendingOutputProcessorUpdate extends
+        PolyphaseChannelSource.PendingOutputProcessorUpdate
+    {
+        private final CountDownLatch mFilterManagerRequested = new CountDownLatch(1);
+        private final CountDownLatch mAllowFilterManagerReturn = new CountDownLatch(1);
+
+        private BlockingPendingOutputProcessorUpdate(PolyphaseChannelSource source, ChannelCalculator calculator,
+                                                     SynthesisFilterManager filterManager)
+        {
+            source.super(calculator, filterManager);
+        }
+
+        @Override
+        public SynthesisFilterManager getSynthesisFilterManager()
+        {
+            mFilterManagerRequested.countDown();
+
+            try
+            {
+                mAllowFilterManagerReturn.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return super.getSynthesisFilterManager();
+        }
+    }
+
+    private enum EmptyNativeBuffer implements INativeBuffer
+    {
+        INSTANCE;
+
+        @Override
+        public Iterator<ComplexSamples> iterator()
+        {
+            return List.<ComplexSamples>of().iterator();
+        }
+
+        @Override
+        public Iterator<InterleavedComplexSamples> iteratorInterleaved()
+        {
+            return List.<InterleavedComplexSamples>of().iterator();
+        }
+
+        @Override
+        public int sampleCount()
+        {
+            return 0;
+        }
+
+        @Override
+        public long getTimestamp()
+        {
+            return 0;
         }
     }
 

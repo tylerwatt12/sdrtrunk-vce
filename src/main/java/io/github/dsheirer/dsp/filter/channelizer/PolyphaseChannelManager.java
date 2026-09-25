@@ -762,13 +762,14 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      * Processes the incoming buffer stream from the provider and transfers the buffers to the polyphase channelizer.
      *
      * This monitor incorporates a source event handler that queues a center frequency update so that it can be
-     * handled on the buffer processing thread, avoiding having to lock on the output processor thread.  Since we
-     * anticipate that these two threads will contend for access to this update required flag, we use an update lock
-     * to protect access to the flag.
+     * handled on the buffer processing thread.  A generation counter publishes each update without making either
+     * thread wait.  If another center frequency change arrives while an update is being queued to the channel
+     * sources, the newer generation remains pending for the next native buffer.
      */
     public class NativeBufferReceiver implements Listener<INativeBuffer>
     {
-        private boolean mOutputProcessorUpdateRequired = false;
+        private final AtomicLong mRequestedOutputProcessorUpdateGeneration = new AtomicLong();
+        private long mAppliedOutputProcessorUpdateGeneration;
 
         /**
          * Updates each of the output processors for any changes in the tuner's center frequency or sample rate, which
@@ -803,7 +804,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             {
                 //Update the channel calculator frequency so that it's ready when the output processor update occurs
                 mChannelCalculator.setCenterFrequency(frequency);
-                mOutputProcessorUpdateRequired = true;
+                mRequestedOutputProcessorUpdateGeneration.incrementAndGet();
             }
         }
 
@@ -815,7 +816,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         @Override
         public void receive(INativeBuffer nativeBuffer)
         {
-            if(mOutputProcessorUpdateRequired)
+            long requestedGeneration = mRequestedOutputProcessorUpdateGeneration.get();
+
+            if(mAppliedOutputProcessorUpdateGeneration != requestedGeneration)
             {
                 try
                 {
@@ -825,7 +828,12 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 {
                     mLog.error("Error updating polyphase channel output processors");
                 }
-                mOutputProcessorUpdateRequired = false;
+                finally
+                {
+                    //Record only the generation captured before this pass.  A newer request arriving during the pass
+                    //remains visible as a mismatch and is applied on the next native buffer.
+                    mAppliedOutputProcessorUpdateGeneration = requestedGeneration;
+                }
             }
 
             ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;

@@ -32,6 +32,7 @@ import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,7 +58,8 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     private double mTunerSampleRate;
     private double mTunerCenterFrequency;
     private long mFrequencyCorrection;
-    private PendingOutputProcessorUpdate mPendingOutputProcessorUpdate;
+    private final AtomicReference<PendingOutputProcessorUpdate> mPendingOutputProcessorUpdate =
+        new AtomicReference<>();
 
     /**
      * Constructs an instance
@@ -283,7 +285,7 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     {
         if(!mOutputProcessorStopping)
         {
-            mPendingOutputProcessorUpdate = new PendingOutputProcessorUpdate(channelCalculator, filterManager);
+            mPendingOutputProcessorUpdate.set(new PendingOutputProcessorUpdate(channelCalculator, filterManager));
         }
     }
 
@@ -436,12 +438,19 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     {
         try
         {
-            if(mPendingOutputProcessorUpdate != null)
+            PendingOutputProcessorUpdate pendingUpdate = mPendingOutputProcessorUpdate.get();
+
+            if(pendingUpdate != null)
             {
-                ChannelCalculator channelCalculator = mPendingOutputProcessorUpdate.getChannelCalculator();
-                SynthesisFilterManager filterManager = mPendingOutputProcessorUpdate.getSynthesisFilterManager();
-                mPendingOutputProcessorUpdate = null;
-                doUpdateOutputProcessor(channelCalculator, filterManager);
+                //Only use an atomic exchange when an update is actually pending.  A newer update published after the
+                //exchange remains queued for the next results batch instead of being cleared by this consumer.
+                pendingUpdate = mPendingOutputProcessorUpdate.getAndSet(null);
+
+                if(pendingUpdate != null)
+                {
+                    doUpdateOutputProcessor(pendingUpdate.getChannelCalculator(),
+                        pendingUpdate.getSynthesisFilterManager());
+                }
             }
 
             IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
