@@ -30,8 +30,8 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(javascript.contains("action('Stop', 'icon-stop', 'STOP')"));
         assertTrue(javascript.contains("action('Clone', 'icon-copy', 'CLONE')"));
         assertTrue(javascript.contains("action('Delete', 'icon-trash', 'DELETE'"));
-        assertTrue(javascript.contains("direction: 'EARLIER'"));
-        assertTrue(javascript.contains("direction: 'LATER'"));
+        assertTrue(javascript.contains("moveAutoStart(row.configuration_id, 'EARLIER'"));
+        assertTrue(javascript.contains("moveAutoStart(row.configuration_id, 'LATER'"));
         assertTrue(javascript.contains("uiSelectFrame(protocolSelect, 'channel-protocol-select')"));
         assertTrue(javascript.contains("control instanceof HTMLSelectElement ? uiSelectFrame(control) : control"));
         assertTrue(javascript.contains("function channelEditorSectionPlan(sections)"));
@@ -49,7 +49,7 @@ class StatsWebChannelAdministrationUiContractTest
         assertTrue(stylesheet.contains(".channel-protocol-picker"));
         assertTrue(stylesheet.contains(".channel-restart-notice svg"));
         assertTrue(stylesheet.contains(".channel-map-mobile-label"));
-        assertTrue(stylesheet.contains(".channel-catalog-table td.empty"));
+        assertTrue(stylesheet.contains(".ui-data-table.ui-mobile-cards td.empty"));
         assertFalse(stylesheet.contains("max-height: min(70dvh, 720px)"));
         assertTrue(stylesheet.contains(".data-workspace"));
         assertTrue(stylesheet.contains(".editor-workspace"));

@@ -17007,7 +17007,7 @@ function channelInlineNavigation(row, nameLinksToDetails = false) {
   return links;
 }
 
-async function channelAdminMutation(path, options, statusHost) {
+async function channelAdminMutation(path, options, statusHost, onSuccess = renderChannelSetup) {
   try {
     statusHost?.replaceChildren(node('span', 'muted', 'Working…'));
     const result = await requestJson(path, { timeoutMs: 30_000, ...options });
@@ -17015,7 +17015,7 @@ async function channelAdminMutation(path, options, statusHost) {
     if (failed.length) throw new Error(failed.map((entry) => entry.message ||
       `${entry.configuration_id} could not be changed`).join(' '));
     statusHost?.replaceChildren();
-    await renderChannelSetup();
+    await onSuccess?.(result);
     return result;
   } catch (error) {
     statusHost?.replaceChildren(node('span', 'ui-status ui-status-danger', error.message));
@@ -17023,7 +17023,20 @@ async function channelAdminMutation(path, options, statusHost) {
   }
 }
 
-function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader) {
+function asyncControlFocusGuard(control) {
+  let retained = document.activeElement === control;
+  const onFocusIn = (event) => {
+    if (event.target !== control) retained = false;
+  };
+  if (retained) document.addEventListener('focusin', onFocusIn, true);
+  return {
+    shouldRestore: () => retained,
+    release: () => document.removeEventListener('focusin', onFocusIn, true)
+  };
+}
+
+function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader,
+  moveAutoStart) {
   const selectedChanged = (id, checked, shiftKey, checkbox) => {
     const rows = [...checkbox.closest('tbody').querySelectorAll('tr[data-id]')];
     const visibleIds = rows.map((row) => row.dataset.id);
@@ -17093,24 +17106,38 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       if (!editable) return node('span', 'channel-order-readonly',
         row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');
+      const restoreControls = () => {
+        earlier.disabled = false;
+        later.disabled = row.auto_start_order == null;
+      };
       const earlier = uiActionButton('', 'icon-arrow-up', async () => {
+        const focusGuard = asyncControlFocusGuard(earlier);
         earlier.disabled = later.disabled = true;
         try {
-          await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
-            { method: 'POST', body: { revision: state.revision, direction: 'EARLIER' } }, statusHost);
-        } catch (_) { earlier.disabled = later.disabled = false; }
+          await moveAutoStart(row.configuration_id, 'EARLIER', focusGuard.shouldRestore);
+        } catch (_) {
+          restoreControls();
+        } finally {
+          focusGuard.release();
+        }
       }, 'ui-button ui-icon-button');
+      earlier.dataset.channelOrderDirection = 'EARLIER';
       earlier.title = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
       earlier.setAttribute('aria-label', earlier.title);
       const order = node('span', 'channel-order-number', row.auto_start_order == null ? '—' : row.auto_start_order);
       const later = uiActionButton('', 'icon-arrow-down', async () => {
         if (row.auto_start_order == null) return;
+        const focusGuard = asyncControlFocusGuard(later);
         later.disabled = earlier.disabled = true;
         try {
-          await channelAdminMutation(`/api/v1/admin/channels/${encodeURIComponent(row.configuration_id)}/auto-start/move`,
-            { method: 'POST', body: { revision: state.revision, direction: 'LATER' } }, statusHost);
-        } catch (_) { later.disabled = earlier.disabled = false; }
+          await moveAutoStart(row.configuration_id, 'LATER', focusGuard.shouldRestore);
+        } catch (_) {
+          restoreControls();
+        } finally {
+          focusGuard.release();
+        }
       }, 'ui-button ui-icon-button');
+      later.dataset.channelOrderDirection = 'LATER';
       later.disabled = row.auto_start_order == null;
       later.title = 'Start later; moving the last channel later disables auto start';
       later.setAttribute('aria-label', later.title);
@@ -17143,6 +17170,46 @@ function channelProtocolOrder(left, right) {
   if (byProtocol) return byProtocol;
   return String(left.name || '').localeCompare(String(right.name || ''), undefined,
     { numeric: true, sensitivity: 'base' });
+}
+
+function channelAutoStartOrder(left, right) {
+  const leftOrder = Number(left.auto_start_order);
+  const rightOrder = Number(right.auto_start_order);
+  const leftEnabled = Number.isInteger(leftOrder) && leftOrder > 0;
+  const rightEnabled = Number.isInteger(rightOrder) && rightOrder > 0;
+  if (leftEnabled !== rightEnabled) return leftEnabled ? -1 : 1;
+  if (leftEnabled && leftOrder !== rightOrder) return leftOrder - rightOrder;
+  return String(left.name || '').localeCompare(String(right.name || ''), undefined,
+    { numeric: true, sensitivity: 'base' }) ||
+    String(left.configuration_id || '').localeCompare(String(right.configuration_id || ''));
+}
+
+function channelCatalogAfterAutoStartMove(catalog, configurationId, direction) {
+  const channels = (catalog.channels || []).map((row, index) => ({ row, index }));
+  const enabled = channels.filter(({ row }) => row.auto_start_order != null).sort((left, right) => {
+    const byOrder = Number(left.row.auto_start_order || Number.MAX_SAFE_INTEGER) -
+      Number(right.row.auto_start_order || Number.MAX_SAFE_INTEGER);
+    return byOrder || left.index - right.index ||
+      String(left.row.configuration_id || '').localeCompare(String(right.row.configuration_id || ''));
+  }).map(({ row }) => row.configuration_id);
+  const position = enabled.indexOf(configurationId);
+  if (direction === 'EARLIER') {
+    if (position < 0) enabled.push(configurationId);
+    else if (position > 0) [enabled[position - 1], enabled[position]] =
+      [enabled[position], enabled[position - 1]];
+  } else if (direction === 'LATER' && position >= 0 && position < enabled.length - 1) {
+    [enabled[position], enabled[position + 1]] = [enabled[position + 1], enabled[position]];
+  } else if (direction === 'LATER' && position === enabled.length - 1) {
+    enabled.splice(position, 1);
+  }
+  const orderById = new Map(enabled.map((id, index) => [id, index + 1]));
+  return {
+    ...catalog,
+    channels: (catalog.channels || []).map((row) => ({
+      ...row,
+      auto_start_order: orderById.get(row.configuration_id) ?? null
+    }))
+  };
 }
 
 function radioDirectoryAliasLists(row) {
@@ -17532,7 +17599,16 @@ async function renderModernChannelCatalog(renderContext, editable) {
     search.setAttribute('aria-label', search.placeholder);
     searchWrap.append(search);
     let activeStatus = 'all';
+    let activeCatalogView = 'grouped';
     let draw = () => {};
+    const viewToggle = uiSegmentedControl([
+      { value: 'grouped', label: 'Grouped' },
+      { value: 'auto-start', label: 'Startup order' }
+    ], activeCatalogView, (value) => {
+      activeCatalogView = value;
+      draw({ rebuild: true });
+    });
+    viewToggle.setAttribute('aria-label', 'Channel table view');
     const statusFilter = uiSelect([
       { value: 'all', label: 'All statuses' },
       { value: 'running', label: 'Running' },
@@ -17555,7 +17631,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
       editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.title = 'Refresh channels';
-    toolbar.append(searchWrap, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
+    toolbar.append(searchWrap, viewToggle, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
       exportLink, refresh, statusHost);
 
     const tableHost = node('div', 'channel-catalog-table-host');
@@ -17611,6 +17687,76 @@ async function renderModernChannelCatalog(renderContext, editable) {
       tableHost.querySelectorAll('tr.selected').forEach((row) => row.classList.remove('selected'));
       updateSelection();
     });
+    let autoStartVerificationNotice = null;
+    const applyCatalog = (refreshed) => {
+      const revision = Number(refreshed.revision);
+      if (!Number.isFinite(revision) || revision < state.revision) return false;
+      state.revision = revision;
+      state.catalog = refreshed;
+      const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
+      [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
+      summaryHost.replaceChildren(channelSummaryCards(refreshed, editable));
+      if (autoStartVerificationNotice) {
+        if (statusHost.firstElementChild === autoStartVerificationNotice) statusHost.replaceChildren();
+        autoStartVerificationNotice = null;
+      }
+      return true;
+    };
+    let autoStartMoveInFlight = false;
+    const restoreOrderMovePosition = (configurationId, direction, scrollPosition, restoreFocus) => {
+      window.requestAnimationFrame(() => {
+        if (!wrapper.isConnected) return;
+        window.scrollTo(scrollPosition.x, scrollPosition.y);
+        if (!restoreFocus) return;
+        const row = tableHost.querySelector(`tr[data-id="${CSS.escape(configurationId)}"]`);
+        const requested = row?.querySelector(`[data-channel-order-direction="${direction}"]:not(:disabled)`);
+        const fallback = row?.querySelector('[data-channel-order-direction]:not(:disabled)');
+        (requested || fallback)?.focus({ preventScroll: true });
+        window.scrollTo(scrollPosition.x, scrollPosition.y);
+      });
+    };
+    const moveAutoStart = async (configurationId, direction, shouldRestoreFocus) => {
+      if (autoStartMoveInFlight) throw new Error('Another startup-order change is still being saved');
+      autoStartMoveInFlight = true;
+      const expectedRevision = state.revision;
+      const catalogBeforeMove = state.catalog;
+      try {
+        await channelAdminMutation(
+          `/api/v1/admin/channels/${encodeURIComponent(configurationId)}/auto-start/move`,
+          { method: 'POST', body: { revision: expectedRevision, direction } }, statusHost,
+          async (result) => {
+            const committedRevision = Number(result.revision);
+            if (!Number.isFinite(committedRevision)) throw new Error('The receiver returned an invalid revision');
+            state.revision = Math.max(state.revision, committedRevision);
+            let refreshed = null;
+            let verificationPending = false;
+            try {
+              refreshed = await requestChannelConfigurationJson('/api/v1/admin/channels', { csrf: false });
+              const confirmedRevision = Number(refreshed.revision);
+              if (!Number.isFinite(confirmedRevision) || confirmedRevision < committedRevision) {
+                throw new Error('The refreshed channel catalog is older than the saved startup order');
+              }
+            } catch (_) {
+              const alreadyConfirmed = Number(state.catalog.revision) >= committedRevision;
+              refreshed = alreadyConfirmed ? state.catalog :
+                channelCatalogAfterAutoStartMove(catalogBeforeMove, configurationId, direction);
+              refreshed.revision = Math.max(Number(refreshed.revision) || 0, committedRevision);
+              verificationPending = !alreadyConfirmed;
+            }
+            const scrollPosition = { x: window.scrollX, y: window.scrollY };
+            const restoreFocus = shouldRestoreFocus?.() === true;
+            if (refreshed && applyCatalog(refreshed)) draw();
+            if (verificationPending) {
+              autoStartVerificationNotice = uiStatus('Order saved; live verification is pending', 'warning');
+              statusHost.replaceChildren(autoStartVerificationNotice);
+            }
+            restoreOrderMovePosition(configurationId, direction, scrollPosition, restoreFocus);
+          }
+        );
+      } finally {
+        autoStartMoveInFlight = false;
+      }
+    };
     const action = (label, icon, actionName, confirmMessage = null, danger = false) =>
       uiActionButton(label, icon, async () => {
         const ids = [...selected];
@@ -17633,52 +17779,56 @@ async function renderModernChannelCatalog(renderContext, editable) {
 
     const filteredRows = () => {
       const term = search.value.trim().toLowerCase();
-      return (state.catalog.channels || []).filter((row) =>
+      const rows = (state.catalog.channels || []).filter((row) =>
         (activeStatus === 'all' || activeStatus === 'running' && row.processing_state === 'RUNNING' ||
           activeStatus === 'stopped' && row.processing_state !== 'RUNNING' ||
           activeStatus === 'auto-start' && row.auto_start_order != null) &&
         (!term || [row.name, row.system, row.site, row.protocol_label, row.alias_list_name,
           channelAdminFrequencyList(row.frequencies_hz)].some((value) =>
-            String(value || '').toLowerCase().includes(term))))
-        .sort(channelProtocolOrder);
+            String(value || '').toLowerCase().includes(term))));
+      return rows.sort(activeCatalogView === 'auto-start' ? channelAutoStartOrder : channelProtocolOrder);
     };
-    draw = () => {
+    let channelTable = null;
+    const renderChannelTable = () => {
+      channelTable = table(state.visibleRows,
+        channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader,
+          moveAutoStart),
+        'No channels match this view', {
+          type: editable ? 'channel-catalog-admin-v2' : 'channel-catalog-readonly-v1',
+          sortable: false, controller: tableController,
+          ...(activeCatalogView === 'grouped' ? {
+            rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
+            revealRowGroups: () => Boolean(search.value.trim())
+          } : {}),
+          rowKey: (row) => row.configuration_id,
+          rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
+          tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
+          mobileCards: true,
+          layoutMenuHost: toolbar,
+          wrapper: channelTable || undefined
+        });
+      if (!channelTable.parentElement) tableHost.append(channelTable);
+    };
+    draw = ({ rebuild = false } = {}) => {
       state.visibleRows = filteredRows();
-      tableController.reconcileRows?.(state.visibleRows);
+      if (rebuild || !tableController.reconcileRows) renderChannelTable();
+      else tableController.reconcileRows(state.visibleRows);
       updateSelection();
     };
-    search.addEventListener('input', draw);
-    state.visibleRows = filteredRows();
-    const channelTable = table(state.visibleRows,
-      channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader),
-      'No channels match this view', {
-        type: editable ? 'channel-catalog-admin-v2' : 'channel-catalog-readonly-v1',
-        sortable: false, controller: tableController,
-        rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
-        revealRowGroups: () => Boolean(search.value.trim()),
-        rowKey: (row) => row.configuration_id,
-        rowClass: (row) => selected.has(row.configuration_id) ? 'selected' : '',
-        tableClass: 'channel-catalog-table', wrapperClass: 'channel-catalog-table-wrap',
-        mobileCards: true,
-        layoutMenuHost: toolbar
-      });
-    tableHost.append(channelTable);
+    search.addEventListener('input', () => draw());
+    draw({ rebuild: true });
     wrapper.append(summaryHost, toolbar, editable ? selectedBar : node('span'), tableHost);
     updateSelection();
 
     let refreshInFlight = false;
     pageInterval(async () => {
-      if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
+      if (refreshInFlight || autoStartMoveInFlight || !renderIsCurrent(renderContext) ||
+          !wrapper.isConnected || document.hidden) return;
       refreshInFlight = true;
       try {
         const refreshed = await requestJson(editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog',
           { csrf: false });
-        state.revision = Number(refreshed.revision);
-        state.catalog = refreshed;
-        const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
-        [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
-        summaryHost.replaceChildren(channelSummaryCards(refreshed, editable));
-        draw();
+        if (applyCatalog(refreshed)) draw();
       } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
     }, 5_000);

@@ -5,6 +5,7 @@ const http = require('node:http');
 const path = require('node:path');
 
 const repository = path.resolve(__dirname, '../../../..');
+const webRoot = path.join(repository, 'stats-web');
 const assets = path.join(repository, 'stats-web', 'assets');
 const fixtures = path.join(__dirname, 'visual', 'fixtures');
 const port = Number(process.env.PORT || 4173);
@@ -27,6 +28,9 @@ function target(requestUrl) {
   const pathname = new URL(requestUrl, `http://127.0.0.1:${port}`).pathname;
   if(pathname === '/' || pathname === '/design-system.html') {
     return path.join(fixtures, 'design-system-gallery.html');
+  }
+  if(pathname === '/app.html') {
+    return path.join(webRoot, 'index.html');
   }
   if(pathname.startsWith('/assets/')) {
     const candidate = path.resolve(assets, pathname.slice('/assets/'.length));

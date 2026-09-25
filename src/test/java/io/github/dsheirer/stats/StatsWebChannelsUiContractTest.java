@@ -26,9 +26,7 @@ class StatsWebChannelsUiContractTest
         String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
         String configurationRequest = function(source,
             "async function requestChannelConfigurationJson(path, options = {})");
-        String columns = function(source,
-            "function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, " +
-                "renderSelectionHeader)");
+        String columns = function(source, "function channelAdminColumns(");
 
         assertTrue(setup.contains("renderModernChannelCatalog(renderContext, true)"));
         assertTrue(directory.contains("renderModernChannelCatalog(renderContext, false)"));
@@ -82,9 +80,17 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("label: 'All statuses'"));
         assertTrue(catalog.contains("statusFilter.setAttribute('aria-label', 'Filter channels by status')"));
         assertTrue(catalog.contains("rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'"));
+        assertTrue(catalog.contains("{ value: 'grouped', label: 'Grouped' }"));
+        assertTrue(catalog.contains("{ value: 'auto-start', label: 'Startup order' }"));
+        assertTrue(catalog.contains("viewToggle.setAttribute('aria-label', 'Channel table view')"));
+        assertTrue(catalog.contains("activeCatalogView === 'grouped' ?"));
+        assertTrue(catalog.contains("activeCatalogView === 'auto-start' ? channelAutoStartOrder : " +
+            "channelProtocolOrder"));
+        assertTrue(catalog.contains("wrapper: channelTable || undefined"));
         assertTrue(catalog.contains("revealRowGroups: () => Boolean(search.value.trim())"));
         assertTrue(catalog.contains("Select all matching channels"));
-        assertTrue(catalog.contains(".sort(channelProtocolOrder)"));
+        assertTrue(catalog.contains("rows.sort(activeCatalogView === 'auto-start' ? channelAutoStartOrder : " +
+            "channelProtocolOrder)"));
         assertFalse(catalog.contains("value: 'trunked'"));
         assertFalse(catalog.contains("value: 'conventional'"));
         assertFalse(catalog.contains("uiSegmentedControl(filterEntries"));

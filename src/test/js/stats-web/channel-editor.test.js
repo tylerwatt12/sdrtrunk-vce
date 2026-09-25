@@ -99,6 +99,19 @@ const channelCatalog = functionSource('async function renderModernChannelCatalog
 assert.match(channelCatalog, /channel-catalog-admin-v2/);
 assert.match(channelCatalog, /rowGroup: channelProtocolGroup, rowGroupNoun: 'channel'/);
 assert.match(channelCatalog, /revealRowGroups: \(\) => Boolean\(search\.value\.trim\(\)\)/);
+assert.match(channelCatalog, /value: 'grouped', label: 'Grouped'/);
+assert.match(channelCatalog, /value: 'auto-start', label: 'Startup order'/);
+assert.match(channelCatalog, /activeCatalogView === 'grouped'/,
+  'Only the grouped view should supply protocol row groups');
+assert.match(channelCatalog, /activeCatalogView === 'auto-start' \? channelAutoStartOrder : channelProtocolOrder/);
+assert.match(channelCatalog, /wrapper: channelTable \|\| undefined/,
+  'Switching views should reuse the table host instead of rebuilding the page');
+assert.match(channelCatalog, /requestChannelConfigurationJson\('\/api\/v1\/admin\/channels'/,
+  'A startup-order mutation should reconcile against a confirmed catalog response');
+assert.match(channelCatalog, /window\.scrollTo\(scrollPosition\.x, scrollPosition\.y\)/,
+  'Startup-order reconciliation must restore the current page position');
+assert.match(channelCatalog, /focus\(\{ preventScroll: true \}\)/,
+  'Startup-order reconciliation must restore keyboard focus without moving the page');
 assert.match(channelCatalog, /Select all matching channels/);
 assert.match(channelCatalog, /label: 'All statuses'/);
 assert.match(channelCatalog, /Filter channels by status/);
@@ -109,6 +122,8 @@ vm.createContext(protocolContext);
 vm.runInContext(`
   ${functionSource('function channelProtocolGroup(row)')}
   ${functionSource('function channelProtocolOrder(left, right)')}
+  ${functionSource('function channelAutoStartOrder(left, right)')}
+  ${functionSource('function channelCatalogAfterAutoStartMove(catalog, configurationId, direction)')}
 `, protocolContext);
 assert.deepEqual(JSON.parse(vm.runInContext(
   "JSON.stringify(channelProtocolGroup({ protocol_id: 'p25-phase2', protocol_label: 'P25 Phase 2' }))",
@@ -122,6 +137,46 @@ assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify([
   { name: 'Bravo', protocol_id: 'nbfm', protocol_label: 'NBFM' },
   { name: 'Alpha', protocol_id: 'nbfm', protocol_label: 'NBFM' }
 ].sort(channelProtocolOrder).map((row) => row.name))`, protocolContext)), ['Alpha', 'Bravo', 'Zulu']);
+const startupRows = JSON.parse(vm.runInContext(`JSON.stringify([
+  { configuration_id: 'off-zulu', name: 'Zulu', protocol_id: 'p25', auto_start_order: null },
+  { configuration_id: 'third', name: 'Third', protocol_id: 'nbfm', auto_start_order: 3 },
+  { configuration_id: 'first', name: 'First', protocol_id: 'dmr', auto_start_order: 1 },
+  { configuration_id: 'off-alpha', name: 'Alpha', protocol_id: 'am', auto_start_order: null },
+  { configuration_id: 'second', name: 'Second', protocol_id: 'p25', auto_start_order: 2 }
+].sort(channelAutoStartOrder).map((row) => row.configuration_id))`, protocolContext));
+assert.deepEqual(startupRows, ['first', 'second', 'third', 'off-alpha', 'off-zulu'],
+  'Startup-order view must ignore protocol, show enabled channels numerically, and keep disabled channels last');
+const movedEarlier = JSON.parse(vm.runInContext(`JSON.stringify(channelCatalogAfterAutoStartMove({
+  revision: 8,
+  channels: [
+    { configuration_id: 'first', auto_start_order: 1 },
+    { configuration_id: 'second', auto_start_order: 2 },
+    { configuration_id: 'third', auto_start_order: 3 },
+    { configuration_id: 'off', auto_start_order: null }
+  ]
+}, 'third', 'EARLIER').channels.map((row) => [row.configuration_id, row.auto_start_order]))`,
+protocolContext));
+assert.deepEqual(movedEarlier, [['first', 1], ['second', 3], ['third', 2], ['off', null]],
+  'Moving earlier must swap the selected channel with its immediate startup predecessor');
+const enabledAtEnd = JSON.parse(vm.runInContext(`JSON.stringify(channelCatalogAfterAutoStartMove({
+  channels: [
+    { configuration_id: 'first', auto_start_order: 1 },
+    { configuration_id: 'second', auto_start_order: 2 },
+    { configuration_id: 'off', auto_start_order: null }
+  ]
+}, 'off', 'EARLIER').channels.map((row) => [row.configuration_id, row.auto_start_order]))`,
+protocolContext));
+assert.deepEqual(enabledAtEnd, [['first', 1], ['second', 2], ['off', 3]],
+  'Moving a disabled channel earlier must enable it at the end of the startup queue');
+const disabledAtEnd = JSON.parse(vm.runInContext(`JSON.stringify(channelCatalogAfterAutoStartMove({
+  channels: [
+    { configuration_id: 'first', auto_start_order: 1 },
+    { configuration_id: 'second', auto_start_order: 2 }
+  ]
+}, 'second', 'LATER').channels.map((row) => [row.configuration_id, row.auto_start_order]))`,
+protocolContext));
+assert.deepEqual(disabledAtEnd, [['first', 1], ['second', null]],
+  'Moving the final startup channel later must disable its auto-start setting');
 vm.runInContext(`${functionSource('function radioDirectoryConventionalGroups(rows)')}`, protocolContext);
 const conventionalGroups = JSON.parse(vm.runInContext(`JSON.stringify(radioDirectoryConventionalGroups([
   { name: 'Dispatch 2', system: 'County Radio', site: 'West', protocol_label: 'NBFM',
