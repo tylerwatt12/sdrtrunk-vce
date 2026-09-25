@@ -448,7 +448,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
       entity.configurationId, entity.rfssId, entity.siteId, entity.nac, entity.timeslot,
       entity.affiliationCapability, entity.affiliationLabel, entity.affiliationEvidenceType,
       entity.affiliationObservedAtMs, entity.txTargetLabel, entity.txContinuityUncertain,
-      entity.lastMeaningfulAtMs, entity.lastObservedAtMs, entity.encrypted, entity.pinned,
+      Math.floor(Number(entity.lastMeaningfulAtMs || entity.lastObservedAtMs || 0) / 1_000),
+      entity.encrypted, entity.pinned,
       (Array.isArray(transitions) ? transitions : []).slice(-5).map((item) =>
         [item.id, item.oldGroupKey, item.newGroupKey, item.observedAtMs])
     ]);

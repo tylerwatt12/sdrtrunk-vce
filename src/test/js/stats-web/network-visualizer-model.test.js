@@ -135,7 +135,9 @@ async function main() {
     particleFlightMs: 1_500,
     pulseScale: 0.10,
     migrationMotionMs: 1_400,
-    effectCoalesceMs: 500,
+    effectCoalesceMs: 2_200,
+    labelMinimumResidenceMs: 1_600,
+    labelHiddenResidenceMs: 420,
     softAnimatedEffects: 24,
     cameraTransitionMs: 720,
     cameraBackTransitionMs: 560,
@@ -235,7 +237,7 @@ async function main() {
   // Fresh state is empty. Confirmed evidence builds incrementally, while refreshes and conflicting scopes stay honest.
   const affiliationState = model.createNetworkState(config.BALANCED_CONFIG, BASE_TIME);
   assert.deepEqual(model.networkStateCounts(affiliationState), {
-    generation: 1, universes: 0, groups: 0, radios: 0, activeCalls: 0, semanticEvents: 0,
+    generation: 1, universes: 0, groups: 0, radios: 0, activeCalls: 0, pendingGrants: 0, semanticEvents: 0,
     dedupeEntries: 0, queuedObservations: 0, pendingEffects: 0, pinnedEntities: 0, overflowActive: 0
   });
   assert.equal(model.applyObservation(affiliationState, affiliation({ sequence: 1 }), 1, BASE_TIME + 1).first, true);
@@ -509,8 +511,9 @@ async function main() {
   assert.equal(txGroup.activeCallKeys.size, 3);
   const targetEffects = txState.pendingEffects.filter((effect) =>
     ['tx_pulse', 'destination_highlight'].includes(effect.type) && effect.targetKey === txGroup.key);
-  assert.equal(targetEffects.length, 3);
-  assert(targetEffects.every((effect) => effect.coalesceKey === `target-highlight:${txGroup.key}`));
+  assert.equal(targetEffects.length, 1,
+    'overlapping call legs update activity state without replaying the already-lit target animation');
+  assert.equal(targetEffects[0].coalesceKey, `tx-start:${radioKey}`);
   assert(targetEffects.every((effect) => effect.animationEndsAtMs - effect.createdAtMs ===
     config.BALANCED_CONFIG.animation.pulseDurationMs));
   assert.equal(txState.semanticEvents.filter((event) => event.type === 'transmission_start').length, 3);
@@ -551,8 +554,9 @@ async function main() {
   assert(sameTargetLinks.some((link) => link.type === 'affiliation' && link.affiliation && !link.dashed));
   const sameTargetRecent = sameTargetLinks.find((link) => link.key === sameTargetActivityKey);
   assert.deepEqual({ type: sameTargetRecent.type, active: sameTargetRecent.active,
-    affiliation: sameTargetRecent.affiliation, dashed: sameTargetRecent.dashed, faded: sameTargetRecent.faded },
-  { type: 'activity', active: false, affiliation: false, dashed: true, faded: true });
+    affiliation: sameTargetRecent.affiliation, afterglow: sameTargetRecent.afterglow,
+    dashed: sameTargetRecent.dashed, faded: sameTargetRecent.faded },
+  { type: 'activity', active: false, affiliation: false, afterglow: true, dashed: false, faded: false });
   assert.equal(sameTargetGraph.nodes.find((node) => node.key === sameTargetRadio.key).afterglow, true);
   assert.equal(sameTargetGraph.nodes.find((node) => node.key === sameTargetGroup.key).afterglow, true);
   const afterglowEffect = sameTargetState.pendingEffects.find((effect) => effect.type === 'afterglow');
@@ -563,6 +567,10 @@ async function main() {
     BASE_TIME + 4 + config.BALANCED_CONFIG.animation.txReleaseMs + 1);
   assert.equal(expiredAfterglowGraph.nodes.find((node) => node.key === sameTargetRadio.key).afterglow, false);
   assert.equal(expiredAfterglowGraph.nodes.find((node) => node.key === sameTargetGroup.key).afterglow, false);
+  const expiredRecent = expiredAfterglowGraph.links.find((link) => link.key === sameTargetActivityKey);
+  assert.equal(expiredRecent.afterglow, false);
+  assert.equal(expiredRecent.dashed, true);
+  assert.equal(expiredRecent.faded, true);
 
   // Explicit hierarchy scopes filter retained state before allocating render budgets.
   const scopedConfig = config.createConfig({
@@ -692,6 +700,8 @@ async function main() {
   assert(!pendingState.pendingEffects.some((effect) => effect.type === 'tx_pulse'));
   const pendingGraph = visibility.selectVisibleGraph(pendingState, BASE_TIME + 2);
   assert(pendingGraph.nodes.some((node) => node.type === 'group' && node.pending && !node.active));
+  assert(!pendingGraph.nodes.some((node) => node.type === 'radio'),
+    'a grant-only source remains retained without displacing meaningful subscriber nodes');
   assert.equal(pendingGraph.links.length, 0,
     'a grant without observed transmission must not create an activity-only relationship');
 
@@ -700,12 +710,26 @@ async function main() {
   const grantSnapshot = snapshot(1, 'active', 'grant-only-leg', { omit_tx_state: true, status: 'CALL' });
   assert.equal(normalize.snapshotRowActive(grantSnapshot.tables[0].rows[0]), false);
   assert.equal(normalize.snapshotRowPending(grantSnapshot.tables[0].rows[0]), true);
-  model.ingestChannelActivitySnapshot(grantSnapshotState, grantSnapshot, 1, BASE_TIME + 1);
+  const firstGrantSnapshot = model.ingestChannelActivitySnapshot(grantSnapshotState, grantSnapshot, 1, BASE_TIME + 1);
+  assert.equal(firstGrantSnapshot.pendingChanged, 1);
   assert.equal(grantSnapshotState.activeCalls.size, 0);
   assert.equal(grantSnapshotState.radios.size, 1);
   const grantSnapshotGraph = visibility.selectVisibleGraph(grantSnapshotState, BASE_TIME + 2);
   assert(grantSnapshotGraph.nodes.some((node) => node.type === 'group' && node.pending && !node.active));
   assert.equal(grantSnapshotGraph.links.length, 0);
+  const repeatedGrantSnapshot = snapshot(2, 'active', 'grant-only-leg', { omit_tx_state: true, status: 'CALL' });
+  const repeatedGrant = model.ingestChannelActivitySnapshot(grantSnapshotState, repeatedGrantSnapshot, 1,
+    BASE_TIME + 6_000);
+  assert.equal(repeatedGrant.pendingChanged, 0);
+  assert.equal(repeatedGrant.visualChanged, false);
+  assert.equal(grantSnapshotState.semanticEvents.filter((event) => event.type === 'grant_pending').length, 1);
+  assert(visibility.selectVisibleGraph(grantSnapshotState, BASE_TIME + 6_001).nodes
+    .some((node) => node.type === 'group' && node.pending),
+  'pending presentation follows the authoritative row instead of an independent four-second timer');
+  const clearedGrant = model.ingestChannelActivitySnapshot(grantSnapshotState,
+    snapshot(3, 'ended', 'grant-only-leg', { omit_tx_state: true, status: 'IDLE' }), 1, BASE_TIME + 6_100);
+  assert.equal(clearedGrant.pendingChanged, 1);
+  assert.equal(grantSnapshotState.pendingGrants.size, 0);
 
   // Current snapshot legs are accepted once; idle/linger rows never populate a fresh state.
   const idleState = model.createNetworkState(config.BALANCED_CONFIG, BASE_TIME);
@@ -743,7 +767,8 @@ async function main() {
   assert.equal(coalescedBurst.activeCalls.size, 1);
   assert.equal(coalescedBurst.semanticEvents.filter((event) => event.type === 'transmission_start').length, 2);
   assert.equal(coalescedBurst.semanticEvents.filter((event) => event.type === 'transmission_end').length, 1);
-  assert.equal(coalescedBurst.pendingEffects.filter((effect) => effect.type === 'tx_pulse').length, 2);
+  assert.equal(coalescedBurst.pendingEffects.filter((effect) => effect.type === 'tx_pulse').length, 1,
+    'a same-source burst reacquired during release does not replay the key-up pulse');
 
   const oldGeneration = snapshotState.generation;
   const newGeneration = model.clearNetworkState(snapshotState, BASE_TIME + 6);
@@ -1148,6 +1173,19 @@ async function main() {
   layout.synchronizeLayout(secondLayout, comparisonGraph, BASE_TIME);
   assert.deepEqual(layoutGraph.nodes.map(({ x, y, z }) => ({ x, y, z })),
     comparisonGraph.nodes.map(({ x, y, z }) => ({ x, y, z })));
+  const systemVolumeGraph = { nodes: [
+    { key: 'volume-u', type: 'universe', universeKey: 'volume-u' },
+    ...['a', 'b', 'c', 'd'].map((suffix) => ({ key: `volume-g-${suffix}`, type: 'group',
+      universeKey: 'volume-u', groupKey: `volume-g-${suffix}` }))
+  ], links: [] };
+  const systemVolumeLayout = layout.createLayoutState(limitedConfig, { profileKey: 'system-volume' });
+  layout.synchronizeLayout(systemVolumeLayout, systemVolumeGraph, BASE_TIME);
+  const systemVolumeUniverse = systemVolumeGraph.nodes[0];
+  const systemVolumeRadii = systemVolumeGraph.nodes.slice(1).map((node) => Math.hypot(
+    node.x - systemVolumeUniverse.x, node.y - systemVolumeUniverse.y, node.z - systemVolumeUniverse.z));
+  assert(systemVolumeRadii.every((radius) => radius <= limitedConfig.layout.groupOrbitRadius + 0.001));
+  assert(new Set(systemVolumeRadii.map((radius) => radius.toFixed(3))).size > 1,
+    'talkgroups fill the deterministic system volume instead of sharing one orbital ring');
   layout.setLayoutPinned(firstLayout, 'r2', true);
   const beforeGroupMove = Object.fromEntries(layoutGraph.nodes.map((node) => [node.key, { x: node.x, y: node.y }]));
   layout.translateEntity(firstLayout, 'g', { x: 25, y: -10, z: 4 }, BASE_TIME + 1);

@@ -607,12 +607,12 @@ function createNetworkVisualizer(dependencies = {}) {
     });
     const complete = fullActivitySnapshot(Number(snapshot.revision) || 0);
     const generation = state.generation;
-    ingestChannelActivitySnapshot(state, complete, generation, Date.now());
+    const result = ingestChannelActivitySnapshot(state, complete, generation, Date.now());
     if (suppressNextSnapshotEffects || document.hidden) {
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
     suppressNextSnapshotEffects = false;
-    invalidateGraph();
+    if (result.visualChanged) invalidateGraph();
   }
 
   function receiveChannelTable(update) {
@@ -621,12 +621,12 @@ function createNetworkVisualizer(dependencies = {}) {
     if (!id) return;
     if (update.operation === 'remove') activityTables.delete(id);
     else if (update.table) activityTables.set(id, update.table);
-    ingestChannelActivitySnapshot(state, fullActivitySnapshot(Number(update.revision) || 0), state.generation,
-      Date.now());
+    const result = ingestChannelActivitySnapshot(state,
+      fullActivitySnapshot(Number(update.revision) || 0), state.generation, Date.now());
     if (document.hidden) {
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
-    invalidateGraph();
+    if (result.visualChanged) invalidateGraph();
   }
 
   function observeGap(detail = {}, optionsValue = {}) {
@@ -825,11 +825,15 @@ function createNetworkVisualizer(dependencies = {}) {
 
   function decorateGraphForScope(graph) {
     const resolved = normalizeScope(graph?.scope || navigationScope);
-    const radii = resolved.level === 'overview' ? { universe: 22, aggregate: 8, group: 9, radio: 4 } :
-      resolved.level === 'system' ? { universe: 14, group: 10, aggregate: 7, radio: 4 } :
-        { universe: 10, group: 12, aggregate: 6, radio: 4.5 };
+    const radii = resolved.level === 'overview' ? { universe: 32, aggregate: 10, group: 11, radio: 5 } :
+      resolved.level === 'system' ? { universe: 18, group: 13, aggregate: 9, radio: 5.25 } :
+        { universe: 14, group: 15, aggregate: 8, radio: 5.75 };
     const nodes = (graph?.nodes || []).map((value) => ({ ...value,
-      renderRadius: radii[value.type] || 4, scopeLevel: resolved.level }));
+      renderRadius: radii[value.type] || 5,
+      scopeLevel: resolved.level,
+      expandedField: value.type === 'universe' && resolved.level === 'system',
+      labelVisible: !(value.type === 'universe' && resolved.level === 'system')
+    }));
     return { ...graph, scope: resolved, nodes };
   }
 

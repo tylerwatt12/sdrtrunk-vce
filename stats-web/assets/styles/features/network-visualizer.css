@@ -132,18 +132,60 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   border-radius: var(--radius-card);
   background-color: var(--network-space);
   background-image:
+    radial-gradient(ellipse at 50% 42%, color-mix(in srgb, var(--network-system) 11%, transparent),
+      transparent 52%),
+    linear-gradient(color-mix(in srgb, var(--network-grid) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--network-grid) 55%, transparent) 1px, transparent 1px),
     linear-gradient(var(--network-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--network-grid) 1px, transparent 1px);
-  background-size: var(--network-grid-size) var(--network-grid-size);
+  background-size: auto, 16px 16px, 16px 16px,
+    var(--network-grid-size) var(--network-grid-size), var(--network-grid-size) var(--network-grid-size);
   box-shadow: var(--network-shadow);
   color: var(--network-space-ink);
   isolation: isolate;
+}
+
+.network-visualizer-stage::before,
+.network-visualizer-stage::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.network-visualizer-stage::before {
+  z-index: 0;
+  inset: 54% -18% -42%;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--network-system) 17%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--network-system) 17%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, transparent, var(--network-space));
+  opacity: .32;
+  transform: perspective(520px) rotateX(64deg) scale(1.12);
+  transform-origin: top center;
+}
+
+.network-visualizer-stage::after {
+  z-index: 2;
+  background-image:
+    linear-gradient(90deg, transparent 49.92%, color-mix(in srgb, var(--network-system) 13%, transparent) 50%,
+      transparent 50.08%),
+    linear-gradient(transparent 49.9%, color-mix(in srgb, var(--network-system) 10%, transparent) 50%,
+      transparent 50.1%),
+    repeating-linear-gradient(to bottom, transparent 0 3px,
+      color-mix(in srgb, var(--network-system) 3%, transparent) 4px);
+  opacity: .52;
 }
 
 .network-visualizer-canvas,
 .network-visualizer-label-layer {
   position: absolute;
   inset: 0;
+}
+
+.network-visualizer-canvas {
+  z-index: 1;
 }
 
 .network-visualizer-canvas canvas {
@@ -191,14 +233,15 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   border-radius: var(--radius-compact);
   box-shadow: var(--network-label-shadow);
   font-size: var(--network-label-radio-size);
+  font-weight: var(--font-weight-medium);
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
   transform: translate(-50%, calc(-100% - var(--space-3)));
   backdrop-filter: blur(var(--network-overlay-blur));
   opacity: 1;
-  transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease,
-    opacity 240ms ease;
+  transition: color 240ms ease, border-color 240ms ease, background-color 240ms ease,
+    opacity 420ms ease;
 }
 
 .network-visualizer-label[data-visible="false"] {
@@ -305,6 +348,7 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   overflow: hidden;
   color: var(--network-space-muted);
   font-size: var(--font-size-meta);
+  font-family: var(--font-mono);
   list-style: none;
   white-space: nowrap;
 }
@@ -337,6 +381,7 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   top: var(--space-3);
   left: var(--space-3);
   font-size: var(--font-size-meta);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 

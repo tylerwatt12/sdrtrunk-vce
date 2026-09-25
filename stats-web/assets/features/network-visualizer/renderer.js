@@ -8,7 +8,8 @@ const LABEL_CELL_WIDTH = 72;
 const LABEL_CELL_HEIGHT = 34;
 const LABEL_PADDING = 6;
 const LABEL_RENDER_INTERVAL_MS = 80;
-const LABEL_RESIDENCE_MS = 420;
+const LABEL_RESIDENCE_MS = 1_600;
+const LABEL_HIDDEN_RESIDENCE_MS = 420;
 const MINIMUM_CAMERA_DISTANCE = 68;
 const DEFAULT_CAMERA_DISTANCE = 112;
 const EFFECT_SEEN_MULTIPLIER = 2;
@@ -21,7 +22,9 @@ const DEFAULT_ANIMATION = Object.freeze({
   particleFlightMs: 1_500,
   pulseScale: 0.1,
   migrationMotionMs: 1_400,
-  effectCoalesceMs: 500,
+  effectCoalesceMs: 2_200,
+  labelMinimumResidenceMs: LABEL_RESIDENCE_MS,
+  labelHiddenResidenceMs: LABEL_HIDDEN_RESIDENCE_MS,
   softAnimatedEffects: 24,
   cameraTransitionMs: 720,
   cameraBackTransitionMs: 620,
@@ -243,7 +246,6 @@ function allocateParticles(links, budget) {
 
 function nodeVisualState(node, effect = null) {
   if (node?.active || effect?.type === 'tx_pulse') return 'active';
-  if (node?.pending) return 'pending';
   if (effect?.type === 'affiliation_arrival' || effect?.type === 'migration' ||
       effect?.type === 'destination_highlight') return 'arrival';
   if (effect?.type === 'afterglow' || node?.afterglow) return 'afterglow';
@@ -254,6 +256,7 @@ function nodeVisualState(node, effect = null) {
 function linkVisualState(link) {
   const type = normalizedLinkType(link);
   if (link?.active) return 'active';
+  if (link?.afterglow) return 'afterglow';
   if (link?.faded) return 'faded';
   if (type === 'migration') return 'migration';
   if (type === 'tx') return 'activity';
@@ -268,15 +271,16 @@ function linkIsDashed(link) {
 function nodeRadius(node) {
   const specified = finite(node?.radius ?? node?.renderRadius, NaN);
   if (Number.isFinite(specified) && specified > 0) return clamp(specified, 0.8, 32);
-  return ({ universe: 22, group: 9, aggregate: 6, radio: 3.8 })[nodeType(node)];
+  return ({ universe: 32, group: 13, aggregate: 8, radio: 5.25 })[nodeType(node)];
 }
 
 function linkWidth(link) {
   const state = linkVisualState(link);
-  if (state === 'active') return 4;
+  if (state === 'active') return 5.2;
+  if (state === 'afterglow') return 3.4;
   if (state === 'migration') return 3;
-  if (state === 'faded') return 1.25;
-  return 2.25;
+  if (state === 'faded') return 1.75;
+  return 2.8;
 }
 
 function labelPriority(node, explicitRank = 0) {
@@ -349,7 +353,7 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
   let disposed = false;
   const emptyDiagnostics = () => Object.freeze({
     available: false, disposed, layoutOwner: 'external', mode: '3d', frozen: false,
-    nodes: 0, links: 0, labels: 0, steadyParticles: 0, pendingParticles: 0,
+    nodes: 0, links: 0, labels: 0, expandedFields: 0, steadyParticles: 0, pendingParticles: 0,
     animatedEffects: 0, contextLost: false, paused: false, rendererMemory: null
   });
   const dispose = () => {
@@ -481,6 +485,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const nodeEffects = new Map();
   const effectCooldowns = new Map();
   const labelResidence = new Map();
+  const labelHiddenAt = new Map();
+  const labelMembership = new Set();
   const labelAnchorIndexes = new Map();
   const geometries = new Map();
   const materials = new Map();
@@ -526,14 +532,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function materialOpacity(state) {
     return ({ quiet: 0.22, faded: 0.12, activity: 0.38, affiliation: 0.34,
-      afterglow: 0.58, universe: 0.42, group: 0.68, radio: 0.6, aggregate: 0.58,
-      active: 0.9, migration: 0.74, arrival: 0.72 })[state] ?? 0.76;
+      afterglow: 0.52, universe: 0.34, group: 0.58, radio: 0.52, aggregate: 0.52,
+      active: 0.86, migration: 0.68, arrival: 0.62 })[state] ?? 0.68;
   }
 
   function meshMaterial(kind, state) {
     const key = `mesh:${kind}:${state}`;
     if (materials.has(key)) return materials.get(key).material;
-    const wireframe = kind === 'universe';
+    const wireframe = kind.startsWith('universe');
     const material = wireframe ? new library.MeshBasicMaterial({
       color: materialColor(state), transparent: true, opacity: materialOpacity(state), wireframe: true,
       depthWrite: false
@@ -548,9 +554,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function specialMaterial(name) {
     const key = `special:${name}`;
     if (materials.has(key)) return materials.get(key).material;
-    const state = name === 'outline' ? 'selected' : 'encrypted';
+    const field = name.startsWith('system-field');
+    const pending = name === 'pending';
+    const state = name === 'outline' ? 'selected' : field ? 'universe' : pending ? 'arrival' : 'encrypted';
     const settings = { color: materialColor(state), transparent: true,
-      opacity: name === 'outline' ? 0.98 : 0.82, wireframe: name === 'encrypted', depthWrite: false };
+      opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.035 :
+        name === 'system-field' ? 0.18 : pending ? 0.34 : 0.82,
+      wireframe: name === 'encrypted' || name === 'system-field', depthWrite: false };
     if (name === 'outline') settings.side = library.BackSide;
     const material = protectSharedResource(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'special' });
@@ -562,7 +572,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = `line:${state}:${pattern}`;
     if (materials.has(key)) return materials.get(key).material;
     const settings = { color: materialColor(state), transparent: true, opacity: materialOpacity(state),
-      depthWrite: false, linewidth: linkWidth({ type: state, active: state === 'active', faded: state === 'faded' }),
+      depthWrite: false, linewidth: linkWidth({ type: state, active: state === 'active',
+        afterglow: state === 'afterglow', faded: state === 'faded' }),
       worldUnits: false, dashed: pattern !== 'solid', dashScale: 1,
       dashSize: encrypted ? 2.4 : 8, gapSize: encrypted ? 2.4 : 5, alphaToCoverage: true };
     const material = protectSharedResource(new library.LineMaterial(settings));
@@ -576,7 +587,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function geometry(kind) {
     if (geometries.has(kind)) return geometries.get(kind);
     let value;
-    if (kind === 'universe') value = new library.IcosahedronGeometry(1, 2);
+    if (kind === 'universe' || kind === 'universe-field') value = new library.IcosahedronGeometry(1, 2);
+    else if (kind === 'pending-ring') value = new library.TorusGeometry(1.28, 0.055, 8, 36);
     else if (kind === 'conventional-universe') value = new library.TorusGeometry(1, 0.13, 8, 28);
     else if (kind === 'conventional-group') value = new library.BoxGeometry(1.55, 0.42, 1.55);
     else if (kind === 'group') value = new library.CylinderGeometry(1, 1, 0.34, 32, 1, false);
@@ -627,6 +639,17 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return metadata;
   }
 
+  function setMeshScale(object, x, y = x, z = x) {
+    if (!object?.scale) return;
+    if (typeof object.scale.set === 'function') object.scale.set(x, y, z);
+    else {
+      object.scale.x = x;
+      object.scale.y = y;
+      object.scale.z = z;
+      object.scale.value = Math.max(x, y, z);
+    }
+  }
+
   function applyNodeVisual(node, object = nodeObjects.get(nodeKey(node))) {
     if (!object) return;
     const kind = nodeGeometryKind(node);
@@ -635,18 +658,27 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const emphasisMesh = object.userData.visualizerEmphasis;
     const outline = object.userData.visualizerOutline;
     const encrypted = object.userData.visualizerEncrypted;
+    const pendingRing = object.userData.visualizerPending;
+    const fieldBase = object.userData.visualizerFieldBase;
+    const fieldFill = object.userData.visualizerFieldFill;
+    const fieldEmphasis = object.userData.visualizerFieldEmphasis;
+    const fieldOutline = object.userData.visualizerFieldOutline;
     const radius = nodeRadius(node);
     const encryptedVisible = Boolean(node.encrypted || node.entity?.encrypted);
-    const signature = `${kind}:${state}:${Boolean(node.selected)}:${encryptedVisible}:${node.visible !== false}:${radius}`;
+    const expandedField = kind === 'universe' && node.expandedField === true;
+    const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.pending)}:${encryptedVisible}:` +
+      `${expandedField}:${node.visible !== false}:${radius}`;
     if (object.userData.visualizerStyleSignature === signature) return;
     object.userData.visualizerStyleSignature = signature;
     if (base.geometry !== geometry(kind)) base.geometry = geometry(kind);
     base.material = meshMaterial(kind, underlyingNodeState(node, state));
     outline.geometry = geometry(kind);
     outline.material = specialMaterial('outline');
-    outline.visible = Boolean(node.selected);
+    outline.visible = Boolean(node.selected) && !expandedField;
     encrypted.material = specialMaterial('encrypted');
-    encrypted.visible = encryptedVisible;
+    encrypted.visible = encryptedVisible && !expandedField;
+    pendingRing.material = specialMaterial('pending');
+    pendingRing.visible = Boolean(node.pending) && !node.active && !expandedField;
     const emphasis = emphasisForState(state);
     const existingEmphasis = ownedNodeMaterials.get(nodeKey(node));
     const emphasisMetadata = ownedEmphasisMaterial(nodeKey(node),
@@ -654,9 +686,26 @@ async function createNetworkVisualizerRenderer(options = {}) {
     emphasisMetadata.target = emphasis.intensity;
     emphasisMetadata.updatedAt ||= clock();
     emphasisMesh.material = emphasisMetadata.material;
-    emphasisMesh.visible = emphasisMetadata.current > 0.005 || emphasisMetadata.target > 0.005;
+    emphasisMesh.visible = !expandedField && (emphasisMetadata.current > 0.005 || emphasisMetadata.target > 0.005);
+    base.visible = !expandedField;
+    if (kind === 'universe') {
+      const compactX = radius * 1.22;
+      const compactY = radius * 0.82;
+      const compactZ = radius * 0.82;
+      setMeshScale(base, compactX, compactY, compactZ);
+      setMeshScale(emphasisMesh, compactX * 1.08, compactY * 1.08, compactZ * 1.08);
+      setMeshScale(outline, compactX * 1.14, compactY * 1.14, compactZ * 1.14);
+      setMeshScale(pendingRing, radius, radius, radius);
+      object.scale.setScalar(1);
+      fieldBase.visible = expandedField;
+      fieldFill.visible = expandedField;
+      fieldEmphasis.material = emphasisMetadata.material;
+      fieldEmphasis.visible = expandedField &&
+        (emphasisMetadata.current > 0.005 || emphasisMetadata.target > 0.005);
+      fieldOutline.visible = expandedField && Boolean(node.selected);
+    }
     object.userData.visualizerBaseRadius = radius;
-    if (!object.userData.visualizerAnimating) object.scale.setScalar(radius);
+    if (kind !== 'universe' && !object.userData.visualizerAnimating) object.scale.setScalar(radius);
     object.visible = node.visible !== false;
   }
 
@@ -674,12 +723,31 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const encrypted = new library.Mesh(geometry('encrypted'), specialMaterial('encrypted'));
     encrypted.scale.setScalar(0.92);
     encrypted.visible = false;
-    object.add(base, emphasis, outline, encrypted);
+    const pending = new library.Mesh(geometry('pending-ring'), specialMaterial('pending'));
+    pending.visible = false;
+    object.add(base, emphasis, outline, encrypted, pending);
+    if (kind === 'universe') {
+      const fieldFill = new library.Mesh(geometry('universe-field'), specialMaterial('system-field-fill'));
+      const fieldBase = new library.Mesh(geometry('universe-field'), specialMaterial('system-field'));
+      const fieldEmphasis = new library.Mesh(geometry('universe-field'), ownedEmphasisMaterial(key).material);
+      const fieldOutline = new library.Mesh(geometry('universe-field'), specialMaterial('outline'));
+      [fieldFill, fieldBase, fieldEmphasis, fieldOutline].forEach((mesh) => {
+        mesh.visible = false;
+        mesh.raycast = () => {};
+      });
+      object.add(fieldFill, fieldBase, fieldEmphasis, fieldOutline);
+      object.userData.visualizerFieldFill = fieldFill;
+      object.userData.visualizerFieldBase = fieldBase;
+      object.userData.visualizerFieldEmphasis = fieldEmphasis;
+      object.userData.visualizerFieldOutline = fieldOutline;
+      object.userData.visualizerFieldScale = { x: 0, y: 0, z: 0, updatedAt: clock() };
+    }
     object.userData.visualizerKey = key;
     object.userData.visualizerBase = base;
     object.userData.visualizerEmphasis = emphasis;
     object.userData.visualizerOutline = outline;
     object.userData.visualizerEncrypted = encrypted;
+    object.userData.visualizerPending = pending;
     nodeObjects.set(key, object);
     applyNodeVisual(node, object);
     return object;
@@ -807,6 +875,49 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return { x: finite(node.x), y: finite(node.y), z: mode === 'flat' ? 0 : finite(node.z) };
   }
 
+  function updateUniverseFields(atMs = performance.now()) {
+    for (const universe of renderNodes.values()) {
+      if (nodeType(universe) !== 'universe') continue;
+      const object = nodeObjects.get(nodeKey(universe));
+      const state = object?.userData?.visualizerFieldScale;
+      if (!object || !state || universe.expandedField !== true) continue;
+      const origin = renderedPosition(universe);
+      const members = [...renderNodes.values()].filter((node) => node.visible !== false &&
+        node.universeKey === universe.key && ['group', 'aggregate'].includes(nodeType(node)));
+      let targetX = 138;
+      let targetY = 106;
+      let targetZ = mode === 'flat' ? 2.5 : 88;
+      members.forEach((node) => {
+        const position = renderedPosition(node);
+        const padding = nodeRadius(node) + 42;
+        targetX = Math.max(targetX, Math.abs(position.x - origin.x) + padding);
+        targetY = Math.max(targetY, Math.abs(position.y - origin.y) + padding);
+        if (mode !== 'flat') targetZ = Math.max(targetZ, Math.abs(position.z - origin.z) + padding);
+      });
+      targetX = clamp(targetX, 90, 620);
+      targetY = clamp(targetY, 78, 520);
+      targetZ = mode === 'flat' ? 2.5 : clamp(targetZ, 70, 460);
+      if (!state.x || prefersReducedMotion()) {
+        state.x = targetX;
+        state.y = targetY;
+        state.z = targetZ;
+      } else {
+        const elapsed = clamp(atMs - finite(state.updatedAt, atMs), 0, 80);
+        const expanding = targetX > state.x || targetY > state.y || targetZ > state.z;
+        const duration = expanding ? 360 : 1_600;
+        const response = 1 - Math.exp(-elapsed / duration);
+        state.x += (targetX - state.x) * response;
+        state.y += (targetY - state.y) * response;
+        state.z += (targetZ - state.z) * response;
+      }
+      state.updatedAt = atMs;
+      setMeshScale(object.userData.visualizerFieldFill, state.x * 0.985, state.y * 0.985, state.z * 0.985);
+      setMeshScale(object.userData.visualizerFieldBase, state.x, state.y, state.z);
+      setMeshScale(object.userData.visualizerFieldEmphasis, state.x * 1.018, state.y * 1.018, state.z * 1.018);
+      setMeshScale(object.userData.visualizerFieldOutline, state.x * 1.035, state.y * 1.035, state.z * 1.035);
+    }
+  }
+
   function synchronizeVisualPositions() {
     for (const node of renderNodes.values()) {
       if (dragging.has(nodeKey(node))) continue;
@@ -825,6 +936,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
         node.vz = finite(node.vz) * ratio;
       }
     }
+    updateUniverseFields();
     for (const link of renderLinks.values()) {
       const object = linkObjects.get(linkKey(link));
       const source = renderNodes.get(link.__sourceKey);
@@ -850,7 +962,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function synchronizeFromLiveSources() {
     const nodeFields = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'fx', 'fy', 'fz', 'pinned', 'selected', 'active',
-      'quiet', 'stale', 'afterglow', 'pending', 'encrypted', 'visible', 'renderRadius', 'labelPriority'];
+      'quiet', 'stale', 'afterglow', 'pending', 'encrypted', 'visible', 'renderRadius', 'labelPriority',
+      'expandedField', 'labelVisible', 'scopeLevel'];
     for (const node of renderNodes.values()) {
       if (dragging.has(nodeKey(node))) continue;
       const source = node.__source;
@@ -860,7 +973,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
         else if (field === 'fx' || field === 'fy' || field === 'fz') delete node[field];
       }
     }
-    const linkFields = ['active', 'faded', 'dashed', 'encrypted', 'visible', 'curvature', 'curveDirection',
+    const linkFields = ['active', 'afterglow', 'faded', 'dashed', 'encrypted', 'visible', 'curvature', 'curveDirection',
       'particleCount'];
     for (const link of renderLinks.values()) {
       const source = link.__source;
@@ -901,6 +1014,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       dragging.delete(key);
       nodeEffects.delete(key);
       labelResidence.delete(key);
+      labelHiddenAt.delete(key);
+      labelMembership.delete(key);
       labelAnchorIndexes.delete(key);
       const label = labelElements.get(key);
       label?.remove();
@@ -1013,7 +1128,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const object = nodeObjects.get(nodeKey(node));
       if (!object || !object.userData.visualizerAnimating) continue;
       object.userData.visualizerAnimating = false;
-      object.scale.setScalar(object.userData.visualizerBaseRadius || nodeRadius(node));
+      object.scale.setScalar(nodeType(node) === 'universe' ? 1 :
+        (object.userData.visualizerBaseRadius || nodeRadius(node)));
       applyNodeVisual(node, object);
     }
     updateNodeEmphasis(clock(), true);
@@ -1035,11 +1151,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const end = Math.max(start + 1, finite(effect.animationEndsAtMs,
         Math.min(finite(effect.expiresAtMs, start + animation.pulseDurationMs),
           start + animation.pulseDurationMs)));
-      if (!object || now >= end) {
+      if (!object || nodeType(node) === 'universe' || now >= end) {
         animatedEffects.delete(id);
         if (object) {
           object.userData.visualizerAnimating = false;
-          object.scale.setScalar(object.userData.visualizerBaseRadius || nodeRadius(node));
+          object.scale.setScalar(nodeType(node) === 'universe' ? 1 :
+            (object.userData.visualizerBaseRadius || nodeRadius(node)));
           applyNodeVisual(node, object);
         }
         continue;
@@ -1161,16 +1278,21 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function labelText(node) {
     const label = String(node?.label || node?.entity?.displayName || node?.entity?.name || nodeKey(node));
-    return node?.pending ? `${label} · grant pending` : label;
+    return label;
   }
 
   function labelCandidateNodes() {
-    if (requestedLabelKeys.length) return requestedLabelKeys.map((key, index) => ({
+    const requested = requestedLabelKeys.length ? requestedLabelKeys.map((key, index) => ({
       node: renderNodes.get(key), rank: requestedLabelKeys.length - index
-    })).filter((entry) => entry.node);
-    return [...renderNodes.values()].map((node) => ({ node, rank: 0 }))
+    })).filter((entry) => entry.node) : [...renderNodes.values()].map((node) => ({ node, rank: 0 }))
       .sort((left, right) => labelPriority(right.node) - labelPriority(left.node))
       .slice(0, labelBudget * 3);
+    if (!controls?.autoRotate || !labelMembership.size) return requested;
+    const existing = requested.filter(({ node }) => labelMembership.has(nodeKey(node)));
+    requested.filter(({ node }) => node.active || node.selected).forEach((entry) => {
+      if (!existing.some(({ node }) => nodeKey(node) === nodeKey(entry.node))) existing.push(entry);
+    });
+    return existing;
   }
 
   function currentLabelZoomTier() {
@@ -1232,8 +1354,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const tier = currentLabelZoomTier();
     updateOffscreenActivityCount(width, height);
     const candidates = [];
+    const previouslyVisible = new Set([...labelElements.entries()]
+      .filter(([, element]) => element.dataset.visible === 'true').map(([key]) => key));
     for (const { node, rank } of labelCandidateNodes()) {
       if (!node || node.labelVisible === false || !labelEligible(node, tier)) continue;
+      const hiddenAt = finite(labelHiddenAt.get(nodeKey(node)), -Infinity);
+      if (!node.active && !node.selected && !labelMembership.has(nodeKey(node)) &&
+          renderedAt - hiddenAt < animation.labelHiddenResidenceMs) continue;
       const position = renderedPosition(node);
       let screen;
       try {
@@ -1243,7 +1370,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       }
       const text = labelText(node);
       const recentlyVisible = renderedAt - finite(labelResidence.get(nodeKey(node)), -Infinity) <=
-        LABEL_RESIDENCE_MS;
+        animation.labelMinimumResidenceMs;
       const kind = nodeType(node);
       const radius = nodeRadius(node);
       const labelWidth = clamp(text.length * 8.2 + (node.encrypted ? 30 : 18), 64, 300);
@@ -1264,7 +1391,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       ] : rawOffsets;
       candidates.push({ key: nodeKey(node), node, text, x: screen.x, y: screen.y,
         offsets, width: labelWidth, height: labelHeight,
-        priority: labelPriority(node, rank) + (recentlyVisible ? 250 : 0) });
+        priority: labelPriority(node, rank) + (recentlyVisible ? 900 : 0) });
     }
     const placements = chooseLabelPlacements(candidates, { width, height }, labelBudget);
     const visible = new Set();
@@ -1291,7 +1418,20 @@ async function createNetworkVisualizerRenderer(options = {}) {
     }
     for (const [key, element] of labelElements) {
       if (visible.has(key)) continue;
+      if (previouslyVisible.has(key)) labelHiddenAt.set(key, renderedAt);
       element.dataset.visible = 'false';
+    }
+    if (!controls?.autoRotate || !labelMembership.size) {
+      labelMembership.clear();
+      visible.forEach((key) => labelMembership.add(key));
+    } else {
+      [...labelMembership].forEach((key) => {
+        if (!renderNodes.has(key)) labelMembership.delete(key);
+      });
+      visible.forEach((key) => {
+        const node = renderNodes.get(key);
+        if (node?.active || node?.selected) labelMembership.add(key);
+      });
     }
   }
 
@@ -1574,6 +1714,16 @@ async function createNetworkVisualizerRenderer(options = {}) {
       maximumX = Math.max(maximumX, position.x + radius);
       maximumY = Math.max(maximumY, position.y + radius);
       maximumZ = Math.max(maximumZ, position.z + radius);
+      const field = nodeType(node) === 'universe' && node.expandedField === true ?
+        nodeObjects.get(nodeKey(node))?.userData?.visualizerFieldScale : null;
+      if (field?.x) {
+        minimumX = Math.min(minimumX, position.x - field.x);
+        minimumY = Math.min(minimumY, position.y - field.y);
+        minimumZ = Math.min(minimumZ, position.z - field.z);
+        maximumX = Math.max(maximumX, position.x + field.x);
+        maximumY = Math.max(maximumY, position.y + field.y);
+        maximumZ = Math.max(maximumZ, position.z + field.z);
+      }
     });
     const center = { x: (minimumX + maximumX) / 2, y: (minimumY + maximumY) / 2,
       z: mode === 'flat' ? 0 : (minimumZ + maximumZ) / 2 };
@@ -1592,8 +1742,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const target = keys ? bounds.center : scopeCenter();
     const targetRadius = nodes.reduce((maximum, node) => {
       const position = renderedPosition(node);
+      const field = nodeType(node) === 'universe' && node.expandedField === true ?
+        nodeObjects.get(nodeKey(node))?.userData?.visualizerFieldScale : null;
+      const extent = field?.x ? Math.max(field.x, field.y, mode === 'flat' ? 0 : field.z) * 1.12 : nodeRadius(node);
       return Math.max(maximum, Math.hypot(position.x - target.x, position.y - target.y,
-        mode === 'flat' ? 0 : position.z - target.z) + nodeRadius(node));
+        mode === 'flat' ? 0 : position.z - target.z) + extent);
     }, 1);
     const camera = graph.camera();
     const aspect = Math.max(0.25, (surface.clientWidth || host.clientWidth || 1) /
@@ -1644,6 +1797,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
       next.groupKey !== navigationScope.groupKey;
     navigationScope = next;
     if (changed) focusedKey = '';
+    if (changed) {
+      labelMembership.clear();
+      labelHiddenAt.clear();
+    }
     lastScopeCenter = null;
     if (changed) {
       clearAutoRotateTimer();
@@ -1761,7 +1918,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       metadata.material.color?.set(materialColor(metadata.state));
       metadata.material.needsUpdate = true;
     }
-    graph?.backgroundColor(palette.background);
+    graph?.backgroundColor('transparent');
     refresh();
   }
 
@@ -1833,6 +1990,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     labelElements.forEach((element) => element.remove());
     labelElements.clear();
     labelResidence.clear();
+    labelHiddenAt.clear();
+    labelMembership.clear();
     labelAnchorIndexes.clear();
     ownedNodeMaterials.forEach(({ material }) => material.dispose?.());
     ownedNodeMaterials.clear();
@@ -1857,6 +2016,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return Object.freeze({
       available: Boolean(graph), disposed, layoutOwner: 'external', mode, frozen,
       nodes: renderNodes.size, links: renderLinks.size, labels: labelElements.size,
+      expandedFields: [...renderNodes.values()].filter((node) =>
+        nodeType(node) === 'universe' && node.expandedField === true).length,
       steadyParticles: [...steadyParticleCounts.values()].reduce((total, count) => total + count, 0),
       pendingParticles: pulseReservations.size, animatedEffects: animatedEffects.size,
       contextLost, paused, autoRotateRequested,
@@ -1934,7 +2095,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       alpha: true, antialias: true, powerPreference: 'high-performance'
     }})(surface)
       .showNavInfo(false)
-      .backgroundColor(palette.background)
+      .backgroundColor('transparent')
       .nodeId('id')
       .nodeVal(1)
       .nodeThreeObject(nodeObjectAccessor)
@@ -2099,6 +2260,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     nodeObjects.clear();
     linkObjects.clear();
     labelElements.clear();
+    labelResidence.clear();
+    labelHiddenAt.clear();
+    labelMembership.clear();
     dragging.clear();
     particleAllocation.clear();
     steadyParticleCounts.clear();

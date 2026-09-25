@@ -556,9 +556,21 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
       renderer.setAutoRotate(true);
       assert.equal(renderer.diagnostics().autoRotateEffective, true,
         'the default rotation request becomes effective in a framed system scope');
-      assert.equal(graphState.nodeObjects.get('system').scale.value, 22);
-      assert.equal(graphState.nodeObjects.get('group').scale.value, 9);
-      assert.equal(graphState.nodeObjects.get('radio').scale.value, 3.8);
+      assert.equal(graphState.nodeObjects.get('system').scale.value, 1);
+      assert.equal(graphState.nodeObjects.get('system').children[0].scale.value, 32 * 1.22);
+      assert.equal(graphState.nodeObjects.get('group').scale.value, 13);
+      assert.equal(graphState.nodeObjects.get('radio').scale.value, 5.25);
+      const liveSystem = initialGraph.nodes.find((node) => node.key === 'system');
+      Object.assign(liveSystem, { expandedField: true, labelVisible: false });
+      renderer.refresh();
+      const systemObject = graphState.nodeObjects.get('system');
+      assert.equal(systemObject.children[0].visible, false,
+        'focused systems replace their compact glyph with an enclosing field');
+      assert.equal(systemObject.children[5].visible, true);
+      assert.equal(systemObject.children[6].visible, true);
+      assert.equal(systemObject.children[5].raycast(), undefined,
+        'system field surfaces do not steal talkgroup clicks');
+      assert.equal(renderer.diagnostics().expandedFields, 1);
       const destinationEmphasis = graphState.nodeObjects.get('group').children[1];
       assert.equal(destinationEmphasis.visible, true);
       assert.equal(destinationEmphasis.material.color.value, '#e6a64c',
@@ -574,7 +586,7 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
         'dash distances are allocated once and updated in place');
       assert.equal(txLine.geometry.attributes.instanceStart.data.needsUpdate, true);
       assert.equal(txLine.geometry.attributes.instanceDistanceStart.data.needsUpdate, true);
-      assert.equal(txLine.material.linewidth, 4);
+      assert.equal(txLine.material.linewidth, 5.2);
       assert.deepEqual({ width: txLine.material.resolution.width, height: txLine.material.resolution.height },
         { width: 640, height: 360 });
 
@@ -827,6 +839,7 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
         nodes: 0,
         links: 0,
         labels: 0,
+        expandedFields: 0,
         steadyParticles: 0,
         pendingParticles: 0,
         animatedEffects: 0,
@@ -959,7 +972,8 @@ async function main() {
   assert.equal([...particles.values()].reduce((sum, count) => sum + count, 0), 4);
 
   assert.equal(nodeVisualState({ type: 'radio', active: true, quiet: true }), 'active');
-  assert.equal(nodeVisualState({ type: 'group', pending: true }), 'pending');
+  assert.equal(nodeVisualState({ type: 'group', pending: true }), 'group',
+    'pending grants use a quiet ring instead of recoloring the whole hub');
   assert.equal(nodeVisualState({ type: 'radio' }, { type: 'affiliation_arrival' }), 'arrival');
   assert.equal(nodeVisualState({ type: 'group' }, { type: 'destination_highlight' }), 'arrival');
   assert.equal(nodeVisualState({ type: 'radio', quiet: true }), 'quiet');
@@ -970,19 +984,21 @@ async function main() {
   assert.equal(linkVisualState({ type: 'tx', active: false }), 'activity');
   assert.equal(linkVisualState({ type: 'affiliation', faded: true }), 'faded');
   assert.equal(linkVisualState({ type: 'tx', active: true, faded: true }), 'active');
+  assert.equal(linkVisualState({ type: 'tx', afterglow: true }), 'afterglow');
   assert.equal(linkIsDashed({ type: 'affiliation' }), false);
   assert.equal(linkIsDashed({ type: 'activity' }), true);
   assert.equal(linkIsDashed({ type: 'tx' }), true);
   assert.equal(linkIsDashed({ type: 'tx', affiliation: true }), false);
   assert.equal(linkIsDashed({ type: 'migration' }), false);
-  assert.equal(nodeRadius({ type: 'universe' }), 22);
-  assert.equal(nodeRadius({ type: 'group' }), 9);
-  assert.equal(nodeRadius({ type: 'aggregate' }), 6);
-  assert.equal(nodeRadius({ type: 'radio' }), 3.8);
-  assert.equal(linkWidth({ type: 'affiliation' }), 2.25);
+  assert.equal(nodeRadius({ type: 'universe' }), 32);
+  assert.equal(nodeRadius({ type: 'group' }), 13);
+  assert.equal(nodeRadius({ type: 'aggregate' }), 8);
+  assert.equal(nodeRadius({ type: 'radio' }), 5.25);
+  assert.equal(linkWidth({ type: 'affiliation' }), 2.8);
   assert.equal(linkWidth({ type: 'migration' }), 3);
-  assert.equal(linkWidth({ type: 'tx', active: true }), 4);
-  assert.equal(linkWidth({ type: 'affiliation', faded: true }), 1.25);
+  assert.equal(linkWidth({ type: 'tx', active: true }), 5.2);
+  assert.equal(linkWidth({ type: 'tx', afterglow: true }), 3.4);
+  assert.equal(linkWidth({ type: 'affiliation', faded: true }), 1.75);
 
   await verifyRendererDisposal(createNetworkVisualizerRenderer);
 }

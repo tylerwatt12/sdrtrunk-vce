@@ -45,8 +45,9 @@ async function clickRenderedNode(page, labelText, expectedLevel) {
     const layer = element.parentElement.getBoundingClientRect();
     const scope = window.networkVisualizerTest.diagnostics().navigation.scope.level;
     const type = element.dataset.type;
-    const radius = type === 'universe' ? (scope === 'overview' ? 22 : 14) :
-      type === 'group' ? (scope === 'system' ? 10 : 12) : type === 'radio' ? 4.5 : 7;
+    const radius = type === 'universe' ? (scope === 'overview' ? 32 : 18) :
+      type === 'group' ? (scope === 'system' ? 13 : 15) :
+        type === 'radio' ? (scope === 'group' ? 5.75 : 5.25) : 9;
     const labelHeight = type === 'universe' ? 38 : type === 'group' ? 32 : 28;
     return {
       x: layer.left + Number(translated[1]) - radius - 7,

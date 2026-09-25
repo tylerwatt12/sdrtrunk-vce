@@ -101,10 +101,10 @@
   --network-panel: rgb(14 25 35 / 94%);
   --network-panel-line: rgb(145 179 194 / 32%);
   --network-shadow: 0 20px 55px rgb(0 0 0 / 36%);
-  --network-label-radio-size: 13px;
-  --network-label-group-size: 15px;
-  --network-label-system-size: 18px;
-  --network-label-max-width: 300px;
+  --network-label-radio-size: 14px;
+  --network-label-group-size: 17px;
+  --network-label-system-size: 21px;
+  --network-label-max-width: 340px;
   --network-label-shadow: 0 8px 24px rgb(0 0 0 / 24%);
   --network-overlay-blur: 14px;
   --network-panel-blur: 18px;

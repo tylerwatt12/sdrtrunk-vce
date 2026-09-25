@@ -44,7 +44,10 @@ const BALANCED_DEFAULTS = {
   },
   layout: {
     universeSpacing: 105,
-    groupOrbitRadius: 190,
+    // Talkgroups occupy a stable volume inside their system field.  The legacy
+    // name is retained for saved-profile compatibility, but this is now the
+    // maximum domain radius rather than a single orbital ring.
+    groupOrbitRadius: 150,
     radioOrbitRadius: 54,
     maximumVelocity: 180,
     damping: 0.84,
@@ -63,7 +66,9 @@ const BALANCED_DEFAULTS = {
     particleFlightMs: 1_500,
     pulseScale: 0.10,
     migrationMotionMs: 1_400,
-    effectCoalesceMs: 500,
+    effectCoalesceMs: 2_200,
+    labelMinimumResidenceMs: 1_600,
+    labelHiddenResidenceMs: 420,
     softAnimatedEffects: 24,
     cameraTransitionMs: 720,
     cameraBackTransitionMs: 560,
@@ -231,6 +236,10 @@ function validateConfig(candidate) {
     pulseScale: finite(candidate.animation.pulseScale, 0, 0.5, 'pulseScale'),
     migrationMotionMs: integer(candidate.animation.migrationMotionMs, 0, 30_000, 'migrationMotionMs'),
     effectCoalesceMs: integer(candidate.animation.effectCoalesceMs, 0, 10_000, 'effectCoalesceMs'),
+    labelMinimumResidenceMs: integer(candidate.animation.labelMinimumResidenceMs, 0, 10_000,
+      'labelMinimumResidenceMs'),
+    labelHiddenResidenceMs: integer(candidate.animation.labelHiddenResidenceMs, 0, 5_000,
+      'labelHiddenResidenceMs'),
     softAnimatedEffects: integer(candidate.animation.softAnimatedEffects, 0, 1_000, 'softAnimatedEffects'),
     cameraTransitionMs: integer(candidate.animation.cameraTransitionMs, 0, 10_000, 'cameraTransitionMs'),
     cameraBackTransitionMs: integer(candidate.animation.cameraBackTransitionMs, 0, 10_000,

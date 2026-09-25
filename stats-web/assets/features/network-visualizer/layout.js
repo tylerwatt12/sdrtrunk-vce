@@ -114,10 +114,18 @@ function initialRecord(layout, node, graphNodes, atMs) {
   } else if (type === 'universe') {
     position = universeAnchor(layout, key);
   } else {
-    const radius = type === 'group' ? layout.config.layout.groupOrbitRadius :
+    const maximumRadius = type === 'group' ? layout.config.layout.groupOrbitRadius :
       (type === 'aggregate' ? layout.config.layout.radioOrbitRadius * 1.45 : layout.config.layout.radioOrbitRadius);
+    const radialSample = unit(stableHash(`${key}:domain-radius`));
+    // Groups fill a deterministic system volume instead of sitting on one solar-system ring.  Cube-root
+    // sampling is uniform in 3D; square-root sampling keeps Flatten uniform on its plane.  A small central
+    // clearance preserves a calm label/selection target for the enclosing system field.
+    const domainFactor = type === 'group' ? 0.26 + 0.74 * (layout.mode === 'flat' ?
+      Math.sqrt(radialSample) : Math.cbrt(radialSample)) : 1;
+    const radius = maximumRadius * domainFactor;
     const azimuth = unit(hash) * Math.PI * 2;
-    const elevation = layout.mode === 'flat' ? 0 : (unit(hash, 16) - 0.5) * Math.PI * 0.75;
+    const elevationSample = unit(stableHash(`${key}:domain-elevation`));
+    const elevation = layout.mode === 'flat' ? 0 : Math.asin(elevationSample * 2 - 1) * 0.82;
     local = {
       x: Math.cos(azimuth) * Math.cos(elevation) * radius,
       y: Math.sin(azimuth) * Math.cos(elevation) * radius,

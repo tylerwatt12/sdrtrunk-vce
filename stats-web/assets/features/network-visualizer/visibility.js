@@ -5,7 +5,7 @@ const PRIORITY = Object.freeze({
   active: 10_000_000_000,
   matched: 500_000_000,
   migration: 100_000_000,
-  pending: 50_000_000,
+  pending: 5_000,
   pinned: 10_000_000,
   freshness: 100_000
 });
@@ -83,7 +83,7 @@ function radioRank(state, radio, atMs, query = '') {
 
 function groupRank(state, group, atMs, query = '') {
   const active = groupActive(group);
-  const pending = group.pendingGrantUntilMs > atMs;
+  const pending = group.pendingGrantKeys?.size > 0;
   const selected = selectedWithin(state, group);
   const dragged = state.visual.draggedKeys.has(group.key);
   const matched = queryMatch(group, query) || (Boolean(query) && [...group.radioKeys]
@@ -101,14 +101,14 @@ function groupRank(state, group, atMs, query = '') {
     (group.pinned || pinnedRadio ? PRIORITY.pinned : 0) + freshnessScore(group, atMs) +
     residenceBoost(state, group.key, atMs);
   return { key: group.key, entity: group, score, lastMeaningfulAtMs: group.lastMeaningfulAtMs,
-    forced: selected || dragged || selectedOrDraggedRadio || matched || active || activeRadio || pending ||
+    forced: selected || dragged || selectedOrDraggedRadio || matched || active || activeRadio ||
       group.pinned || pinnedRadio || migratedRadio,
     active, pending, matched };
 }
 
 function universeRank(state, universe, atMs, query = '', signal = {}) {
   const active = signal.active ?? universeActive(state, universe);
-  const pending = universe.pendingGrantUntilMs > atMs;
+  const pending = universe.pendingGrantKeys?.size > 0;
   const selected = selectedWithin(state, universe);
   const dragged = state.visual.draggedKeys.has(universe.key);
   const migration = Boolean(signal.migration);
@@ -121,7 +121,7 @@ function universeRank(state, universe, atMs, query = '', signal = {}) {
     (universe.pinned || pinnedDescendant ? PRIORITY.pinned : 0) + freshnessScore(universe, atMs) +
     residenceBoost(state, universe.key, atMs);
   return { key: universe.key, entity: universe, score, lastMeaningfulAtMs: universe.lastMeaningfulAtMs,
-    forced: selected || dragged || selectedOrDraggedDescendant || matched || active || pending || migration ||
+    forced: selected || dragged || selectedOrDraggedDescendant || matched || active || migration ||
       universe.pinned || pinnedDescendant,
     active, pending, matched };
 }
@@ -169,7 +169,7 @@ function commonNode(state, entity, type, atMs) {
     protocol: entity.protocol || '',
     active,
     afterglow: !active && Number(entity.afterglowUntilMs || 0) > atMs,
-    pending: Number(entity.pendingGrantUntilMs || 0) > atMs,
+    pending: Boolean(entity.pendingGrantKeys?.size),
     encrypted: type === 'radio' && [...entity.activeCallKeys]
       .some((key) => state.activeCalls.get(key)?.encrypted === true),
     pinned: entity.pinned,
@@ -558,6 +558,8 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
     universe.radioKeys.forEach((key) => {
       const radio = state.radios.get(key);
       if (!radio || radio.relatedGroupKeys.size) return;
+      if (radio.grantOnly && !radio.pinned && state.visual.selectedKey !== radio.key &&
+          !state.visual.draggedKeys.has(radio.key) && !queryMatch(radio, query)) return;
       if (!showQuiet && !radioActive(state, radio) && !radio.pinned &&
           state.visual.selectedKey !== radio.key && !state.visual.draggedKeys.has(radio.key) &&
           now - radio.lastMeaningfulAtMs >= limits.radioQuietAfterMs) return;
@@ -792,8 +794,9 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
           target: groupKey,
           type: call ? 'tx' : 'activity',
           active: Boolean(call),
-          faded: !call,
-          dashed: !call || !affiliationLink,
+          afterglow: !call && radio.afterglowUntilMs > now,
+          faded: !call && radio.afterglowUntilMs <= now,
+          dashed: (!call && radio.afterglowUntilMs <= now) || (Boolean(call) && !affiliationLink),
           affiliation: false,
           encrypted: calls.some((candidate) => candidate.encrypted === true),
           priority: call ? 5_000_000 : 1_000_000,
