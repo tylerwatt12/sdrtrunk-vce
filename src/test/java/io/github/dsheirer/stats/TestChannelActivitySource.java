@@ -13,18 +13,26 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Mutable authoritative activity source used to exercise the real web-adapter lifecycle in tests. */
 final class TestChannelActivitySource implements StatsLiveService.ActivitySource
 {
     private final Map<String,ChannelActivitySnapshot> mSnapshots = new LinkedHashMap<>();
     private final List<Listener<ChannelActivityEvent>> mListeners = new CopyOnWriteArrayList<>();
+    private final AtomicLong mDroppedIngressCount = new AtomicLong();
     private long mRevision;
 
     @Override
     public synchronized ChannelActivityModel.SnapshotSet snapshot()
     {
         return new ChannelActivityModel.SnapshotSet(mRevision, List.copyOf(mSnapshots.values()));
+    }
+
+    @Override
+    public long droppedIngressCount()
+    {
+        return mDroppedIngressCount.get();
     }
 
     @Override
@@ -50,6 +58,16 @@ final class TestChannelActivitySource implements StatsLiveService.ActivitySource
     List<Listener<ChannelActivityEvent>> listeners()
     {
         return List.copyOf(mListeners);
+    }
+
+    void recordIngressDrops(long count)
+    {
+        if(count < 0)
+        {
+            throw new IllegalArgumentException("Dropped ingress count cannot be negative");
+        }
+
+        mDroppedIngressCount.addAndGet(count);
     }
 
     void publish(ChannelActivityEvent event)

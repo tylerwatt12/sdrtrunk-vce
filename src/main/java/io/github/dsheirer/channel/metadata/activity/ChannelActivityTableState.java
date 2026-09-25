@@ -32,6 +32,7 @@ public final class ChannelActivityTableState
     private boolean mControlActive;
     private boolean mChannelRunning;
     private List<ChannelActivitySnapshot.IdentifierField> mIdentifiers = List.of();
+    private ChannelActivitySnapshot.Site mSiteContext;
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
     private final Listener<ChannelActivitySnapshot> mSnapshotListener;
@@ -116,6 +117,20 @@ public final class ChannelActivityTableState
         if(!mIdentifiers.equals(values))
         {
             mIdentifiers = values;
+            publish();
+        }
+    }
+
+    public ChannelActivitySnapshot.Site getSiteContext()
+    {
+        return mSiteContext;
+    }
+
+    public void setSiteContext(ChannelActivitySnapshot.Site siteContext)
+    {
+        if(!java.util.Objects.equals(mSiteContext, siteContext))
+        {
+            mSiteContext = siteContext;
             publish();
         }
     }

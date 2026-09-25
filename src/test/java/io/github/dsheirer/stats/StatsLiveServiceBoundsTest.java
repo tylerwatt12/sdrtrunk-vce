@@ -214,7 +214,8 @@ class StatsLiveServiceBoundsTest
                 "v1-p-bee00-49f-4400"));
         ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", configurationId, true, true, List.of(), List.of(row));
+            "Primary", configurationId, true, true, List.of(), List.of(row),
+            new ChannelActivitySnapshot.Site(0xBEE00, 0x49F, 3, 7, 0x293));
 
         try
         {
@@ -223,6 +224,9 @@ class StatsLiveServiceBoundsTest
             Map<String,Object> table = tables(service).getFirst();
             Map<String,Object> projected = rows(table).getFirst();
             assertEquals(Map.of("kind", "channel", "key", configurationId), table.get("entity_ref"));
+            assertEquals("p25:bee00:49f", table.get("radio_system_key"));
+            assertEquals(Map.of("wacn", 0xBEE00, "system_id", 0x49F, "rfss", 3, "site", 7,
+                "nac", 0x293), table.get("site"));
             assertEquals(Map.of("kind", "channel", "key", configurationId), projected.get("entity_ref"));
             assertEquals(Map.of("kind", "radio", "radio_system_key", "p25:bee00:49f",
                 "identity_key", "v1-r-bee00-49f-1201"),
@@ -230,6 +234,66 @@ class StatsLiveServiceBoundsTest
             assertEquals(Map.of("kind", "patch_group", "radio_system_key", "p25:bee00:49f",
                 "identity_key", "v1-p-bee00-49f-4400"),
                 projected.get("target_entity_ref"));
+            assertFalse(projected.containsKey("source_identity_key"));
+            assertFalse(projected.containsKey("target_identity_key"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void structuredP25SiteMismatchSuppressesStaleCatalogSystemScope()
+    {
+        String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
+        WebEntityNavigationCatalog catalog = new WebEntityNavigationCatalog(() ->
+            WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
+                configurationId, WebEntityRef.channel(configurationId),
+                WebEntityRef.radioSystem("p25:bee00:49f"), 1, 0, 0xBEE00, 0x49F))), 60_000L);
+        catalog.refreshNow();
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, catalog);
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, 41L, "County",
+            "p25", List.of(), new ChannelActivitySnapshot.MatcherReference("radio", "p25", null, 1201),
+            List.of(), new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", null, 4400));
+        ChannelActivitySnapshot.Row row = activityRow("row", configurationId, List.of("VOICE"), navigation);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "Other", "Downtown",
+            "Primary", configurationId, true, true, List.of(), List.of(row),
+            new ChannelActivitySnapshot.Site(0xABCDE, 0x123, 3, 7, 0x293));
+
+        try
+        {
+            source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            Map<String,Object> table = tables(service).getFirst();
+            Map<String,Object> projected = rows(table).getFirst();
+
+            assertFalse(table.containsKey("radio_system_key"));
+            assertEquals(Map.of("kind", "channel", "key", configurationId), table.get("entity_ref"));
+            assertEquals(Map.of("wacn", 0xABCDE, "system_id", 0x123, "rfss", 3, "site", 7,
+                "nac", 0x293), table.get("site"));
+            assertFalse(projected.containsKey("source_entity_ref"));
+            assertFalse(projected.containsKey("target_entity_ref"));
+            assertTrue(String.valueOf(projected.get("source_identity_key")).startsWith("v1-local-"));
+            assertTrue(String.valueOf(projected.get("target_identity_key")).startsWith("v1-local-"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void exposesBoundedSourceIngressDropsToTheTransportAdapter()
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+
+        try
+        {
+            assertEquals(0, service.droppedActivityIngressEvents());
+            source.recordIngressDrops(3);
+            assertEquals(3, service.droppedActivityIngressEvents());
         }
         finally
         {
@@ -263,6 +327,8 @@ class StatsLiveServiceBoundsTest
             Map<String,Object> retainedAfterRebind = rows(tables(service).getFirst()).getFirst();
             assertFalse(retainedAfterRebind.containsKey("source_entity_ref"));
             assertFalse(retainedAfterRebind.containsKey("target_entity_ref"));
+            assertTrue(String.valueOf(retainedAfterRebind.get("source_identity_key")).startsWith("v1-local-"));
+            assertTrue(String.valueOf(retainedAfterRebind.get("target_identity_key")).startsWith("v1-local-"));
             assertEquals(Map.of("kind", "channel", "key", configurationId),
                 retainedAfterRebind.get("entity_ref"));
 

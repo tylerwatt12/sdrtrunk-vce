@@ -5,10 +5,16 @@
     "node": ">=24"
   },
   "scripts": {
+    "build:web-network-visualizer-vendor": "node tools/build-network-visualizer-vendor.mjs",
+    "check:web-network-visualizer-vendor": "node tools/build-network-visualizer-vendor.mjs --check",
     "test:web-visual": "playwright test --config=playwright.config.cjs",
     "test:web-visual:update": "playwright test --config=playwright.config.cjs --update-snapshots"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0"
+    "@playwright/test": "1.63.0",
+    "3d-force-graph": "1.80.0",
+    "d3-force-3d": "3.0.6",
+    "esbuild": "0.28.2",
+    "three": "0.183.2"
   }
 }

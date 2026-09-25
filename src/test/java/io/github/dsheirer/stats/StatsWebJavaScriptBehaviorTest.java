@@ -29,6 +29,7 @@ class StatsWebJavaScriptBehaviorTest
     private static final Path CORE_MODULES = Path.of("stats-web", "assets", "core");
     private static final Path PAGE_LIFECYCLE = CORE_MODULES.resolve("page-lifecycle.js");
     private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
+    private static final Path NETWORK_VISUALIZER = Path.of("stats-web", "assets", "features", "network-visualizer");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final String NODE = System.getenv().getOrDefault("NODE_BINARY", "node");
     private static final int MAXIMUM_OUTPUT_LENGTH = 32_000;
@@ -41,6 +42,8 @@ class StatsWebJavaScriptBehaviorTest
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
+        contract("Network Visualizer model", "network-visualizer-model.test.js", NETWORK_VISUALIZER),
+        contract("Network Visualizer renderer", "network-visualizer-renderer.test.js", NETWORK_VISUALIZER),
         contract("channel patches", "channel-patches.test.js", APP_JAVASCRIPT),
         contract("CSS architecture", "css-architecture.test.js", APP_STYLESHEET),
         contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),

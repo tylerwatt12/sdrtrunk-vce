@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js?v=4';
+import * as routeFoundation from './core/routes.js?v=5';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -8401,7 +8401,8 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   3: 'decode_messages',
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
-  6: 'frequency_audio'
+  6: 'frequency_audio',
+  7: 'network_activity'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -9010,6 +9011,10 @@ function synchronizeLiveChannelActivitySource() {
         if (revision && revision <= liveChannelActivityRevision) return;
         if (revision && liveChannelActivityRevision && revision !== liveChannelActivityRevision + 1) {
           liveChannelActivityNeedsResync = true;
+          liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
+            reason: 'channel_activity_revision_gap', expected_revision: liveChannelActivityRevision + 1,
+            observed_revision: revision
+          }));
           return;
         }
         if (update.operation === 'remove') liveChannelActivityTables.delete(id);
@@ -9023,10 +9028,25 @@ function synchronizeLiveChannelActivitySource() {
     source.addEventListener('activity_resync', (event) => {
       try {
         const resync = JSON.parse(event.data);
+        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
+          reason: 'channel_activity_resync', dropped: Number(resync?.dropped) || 0
+        }));
         applyLiveChannelActivitySnapshot(resync?.snapshot || resync);
       } catch (error) {
         //A later drop-triggered authoritative snapshot remains a bounded fallback.
       }
+    });
+    source.addEventListener('live_gap', (event) => {
+      let detail = { reason: 'channel_activity_live_gap' };
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          detail = { ...parsed, reason: String(parsed.reason || detail.reason) };
+        }
+      } catch (error) {
+        //Still report the loss when an optional detail payload is malformed.
+      }
+      liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', detail));
     });
     source.onopen = () => {
       if (liveChannelActivitySource !== source) return;
@@ -9047,6 +9067,7 @@ function subscribeLiveChannelActivity(callbacks = {}) {
   const subscriber = {
     snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
     activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
+    gap: typeof callbacks.gap === 'function' ? callbacks.gap : null,
     open: typeof callbacks.open === 'function' ? callbacks.open : null,
     error: typeof callbacks.error === 'function' ? callbacks.error : null
   };
@@ -15701,6 +15722,33 @@ async function renderLive() {
   rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element);
   split.append(channels.picker, rightWorkspace);
   beginPage(renderContext, split);
+}
+
+let networkVisualizerModulePromise = null;
+
+async function renderNetworkVisualizer() {
+  const renderContext = captureRenderContext();
+  networkVisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=1');
+  const visualizerModule = await networkVisualizerModulePromise;
+  if (!renderIsCurrent(renderContext)) return;
+  const visualizer = await visualizerModule.createNetworkVisualizer({
+    node,
+    iconGlyph,
+    iconButton,
+    pageHeader,
+    liveConnection,
+    subscribeLiveChannelActivity,
+    navigateTo,
+    entityRefHref,
+    profileKey: accessSession.authenticated && accessSession.username ? accessSession.username : 'anonymous',
+    signal: renderContext.signal
+  });
+  if (!renderIsCurrent(renderContext)) {
+    visualizer.close();
+    return;
+  }
+  pageConnections.add(visualizer);
+  beginPage(renderContext, visualizer.element);
 }
 
 async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',
@@ -23359,6 +23407,9 @@ function renderCredits() {
     ['JTransforms', 'https://github.com/wendykierp/JTransforms'],
     ['usb4java', 'https://usb4java.org/'],
     ['ControlsFX', 'https://github.com/controlsfx/controlsfx'],
+    ['3d-force-graph', 'https://github.com/vasturiano/3d-force-graph'],
+    ['Three.js', 'https://threejs.org/'],
+    ['d3-force-3d', 'https://github.com/vasturiano/d3-force-3d'],
     ['OP25', 'https://github.com/boatbod/op25'],
     ['DSD-FME', 'https://github.com/lwvmobile/dsd-fme']
   ].forEach(([label, target]) => {
@@ -23450,7 +23501,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
+      !['live', 'network-visualizer', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
         'tuners', 'rf-planner', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
@@ -23460,6 +23511,7 @@ async function loadStatus(refreshCurrentView = false) {
 applicationRoutes = routeFoundation.createRegistry({
   dashboard: renderDashboard,
   live: renderLive,
+  'network-visualizer': renderNetworkVisualizer,
   scanner: renderScanner,
   'tuner-spectrum': renderTunerSpectrum,
   'radio-systems': renderRadioSystems,

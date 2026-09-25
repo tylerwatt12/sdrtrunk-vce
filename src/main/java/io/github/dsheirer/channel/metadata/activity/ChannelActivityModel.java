@@ -50,6 +50,7 @@ import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
@@ -566,13 +567,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         AudioCallSnapshot snapshot = event.snapshot();
         boolean created = event.eventType() == AudioCallEventType.CALL_CREATED;
         boolean completed = event.eventType() == AudioCallEventType.CALL_COMPLETED;
+        boolean lifecycle = created || completed || event.eventType() == AudioCallEventType.BURST_STARTED ||
+            event.eventType() == AudioCallEventType.BURST_ENDED;
         VoiceCallQuality quality = snapshot.voiceCallQuality();
         boolean hasMeasurements = quality != null && quality.hasMeasurements();
         long observedFrames = hasMeasurements ? quality.observedFrameCount() : 0;
         boolean sampledAudioFrame = hasMeasurements && event.eventType() == AudioCallEventType.AUDIO_FRAME &&
             (observedFrames == 1 || observedFrames % 50 == 0);
 
-        if(!created && !completed && !sampledAudioFrame)
+        if(!lifecycle && !sampledAudioFrame)
         {
             return;
         }
@@ -594,29 +597,42 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
-            /*
-             * A linked segment may not carry diagnostic observations. Transfer ownership at creation while retaining
-             * the prior segment's displayed quality, so any later terminal completion still belongs to this row.
-             */
+        boolean transmissionChanged = row.observeTransmission(event);
+
+        /*
+         * A linked segment may not carry diagnostic observations. Transfer ownership at creation while retaining
+         * the prior segment's displayed quality, so any later terminal completion still belongs to this row.
+         */
         if(created)
         {
+            boolean qualityTransferred = false;
+
             if(snapshot.linkedCallId() != null && snapshot.linkedCallId().equals(row.getVoiceCallId()) &&
                 row.getVoiceCallQuality() != null)
             {
                 row.setVoiceQuality(snapshot.callId(), row.getVoiceCallQuality());
+                qualityTransferred = true;
+            }
+
+            if(transmissionChanged || qualityTransferred)
+            {
                 refreshVoiceQualityRow(row);
             }
 
             return;
         }
 
-            /*
-             * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Require exact ownership
-             * so a delayed completion cannot overwrite a newer call, and retain the last observation when a terminal
-             * snapshot has no measurements of its own.
-             */
+        /*
+         * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Require exact ownership
+         * so a delayed completion cannot overwrite a newer call, and retain the last observation when a terminal
+         * snapshot has no measurements of its own.
+         */
         if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
         {
+            if(transmissionChanged)
+            {
+                refreshVoiceQualityRow(row);
+            }
             return;
         }
 
@@ -625,7 +641,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             row.setVoiceQuality(snapshot.callId(), quality);
         }
 
-        refreshVoiceQualityRow(row);
+        if(transmissionChanged || hasMeasurements)
+        {
+            refreshVoiceQualityRow(row);
+        }
     }
 
     private void refreshVoiceQualityRow(ChannelActivityRow row)
@@ -779,6 +798,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
+        table.setSiteContext(siteContext(mSiteIdentities.get(parentChannel)));
         table.setIdentifiers(identifierFields(snapshot));
         expireTrafficRows(session, table, parentChannel);
         Set<Long> promotedControlFrequencies = new HashSet<>();
@@ -1796,6 +1816,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         if(table == null)
         {
             table = new ChannelActivityTableState(getTrunkedTitle(channel), channel, this::tableSnapshotUpdated);
+            P25SiteIdentity p25SiteIdentity = channel.getP25SiteIdentity();
+            if(p25SiteIdentity != null)
+            {
+                table.setSiteContext(new ChannelActivitySnapshot.Site(p25SiteIdentity.wacn(),
+                    p25SiteIdentity.system(), p25SiteIdentity.rfss(), p25SiteIdentity.site(), null));
+            }
             mTrunkedTables.put(channel, table);
             updateTablesSnapshot();
         }
@@ -1957,6 +1983,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         return List.copyOf(fields);
+    }
+
+    private static ChannelActivitySnapshot.Site siteContext(SiteIdentity identity)
+    {
+        return identity != null && identity.hasAny() ? new ChannelActivitySnapshot.Site(identity.wacn(),
+            identity.system(), identity.rfss(), identity.site(), identity.nac()) : null;
     }
 
     private void addIdentifier(List<ChannelActivitySnapshot.IdentifierField> fields, String group, String label,
@@ -2302,7 +2334,10 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
     }
 
-    long getDroppedIngressCount()
+    /**
+     * Monotonic count of receiver observations rejected by the bounded activity ingress queue.
+     */
+    public long getDroppedIngressCount()
     {
         return mDroppedIngressCount.get();
     }

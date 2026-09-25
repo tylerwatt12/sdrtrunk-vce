@@ -41,6 +41,7 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
@@ -967,7 +968,9 @@ class ReceiverActivityMapper
     private static ReceiverActivityRecords.RadioPresenceUpdate radioPresenceUpdate(
         P25AffiliationEvent affiliationEvent)
     {
-        if(affiliationEvent == null || affiliationEvent.getRadioId() == null)
+        P25AffiliationSemantics.Observation observation = P25AffiliationSemantics.evaluate(affiliationEvent);
+
+        if(!observation.isObserved())
         {
             return null;
         }
@@ -978,25 +981,17 @@ class ReceiverActivityMapper
             p25TargetIdentity(affiliationEvent.getTalkgroupIdentifier(), true);
         int radioId = affiliationEvent.getRadioId();
         Integer talkgroupId = affiliationEvent.getTalkgroupId();
-        boolean validRadio = radioId > 0 || radioId == 0 && radioIdentity.isStableFullyQualified();
-        boolean validTalkgroup = talkgroupId == null || talkgroupId > 0 ||
-            talkgroupId == 0 && talkgroupIdentity.isStableFullyQualified();
-        if(!validRadio || !validTalkgroup)
-        {
-            return null;
-        }
-
         ReceiverActivityRecords.RadioPresenceEvidence evidence =
-            affiliationEvent.getEventType() == DecodeEventType.REGISTER ?
+            observation.evidence() == P25AffiliationSemantics.Evidence.REGISTRATION ?
                 ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION :
                 ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION;
 
-        return switch(affiliationEvent.getOutcome())
+        return switch(observation.kind())
         {
-            case ACCEPTED, CONFIRMED -> ReceiverActivityRecords.RadioPresenceUpdate.confirmed(
+            case AFFILIATION_OBSERVED, PRESENCE_OBSERVED -> ReceiverActivityRecords.RadioPresenceUpdate.confirmed(
                 radioId, talkgroupId, evidence, radioIdentity, talkgroupIdentity);
-            case CLEARED -> ReceiverActivityRecords.RadioPresenceUpdate.cleared(radioId, radioIdentity);
-            case REQUESTED, REJECTED, UNRESOLVED -> null;
+            case PRESENCE_CLEARED -> ReceiverActivityRecords.RadioPresenceUpdate.cleared(radioId, radioIdentity);
+            case IGNORED -> null;
         };
     }
 

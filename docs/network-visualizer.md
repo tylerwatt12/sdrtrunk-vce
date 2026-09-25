@@ -1,0 +1,62 @@
+# Network Visualizer
+
+Network Visualizer is a live, session-scoped view of observed radio activity. Open it from **Listen > Network
+Visualizer**. Every visit starts empty and builds one shared canvas only from activity observed at that visit's live
+edge. It does not load saved systems, historical calls, idle Live rows, or subscriber catalogs.
+
+The canvas groups canonical radio systems into regions, talkgroups into hubs, and observed source radios into smaller
+nodes. Conventional channels use channel-scoped regions instead of invented trunked systems. Positions show logical
+relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
+
+## Reading the view
+
+- A solid line is successful affiliation evidence currently retained for that observation scope.
+- A dashed line is transmission activity without an inferred affiliation.
+- Green identifies an observed active source and its target. An unknown source lights only the target hub.
+- Amber introduces a newly observed successful affiliation. A comparable, ordered change moves the same node and is
+  recorded as **Observed affiliation change**. Conflicting site evidence is shown as ambiguous instead of inventing a
+  sequence.
+- Fading and removal are presentation aging only. They do not mean over-the-air de-affiliation, power-off, or listener
+  departure. Only a supported explicit presence-clear event removes authoritative evidence.
+- The lock treatment is encryption metadata, not a receiver error and not a fabricated audio waveform.
+
+P25 accepted or confirmed structured affiliation evidence is supported. An accepted location registration with a
+real group is retained as distinct registration evidence; a group-less registration is presence only and does not
+create a radio node. Requests, denials, grants, generic decoder events, and alias matches do not create affiliations.
+DMR and NXDN calls retain the backend's canonical identity scope, but affiliation movement for those protocols is
+currently reported as unsupported rather than inferred. Analog AM/NBFM activity lights its configured channel
+without creating a synthetic radio or talkgroup.
+
+## Controls
+
+Use the toolbar to search retained entities, filter relationship detail, fit the canvas, focus the current selection,
+switch the same scene between 3D and Flatten, freeze only the layout physics, open the bounded event drawer, enter
+fullscreen, or change display density. Drag a system to translate its cluster, drag a talkgroup to move its unpinned
+radios, and use the inspector to pin an entity. **Unlock saved layout** releases all pins and saved coordinates.
+
+**Clear map** clears this browser session's nodes, counters, selection, transitions, active effects, and comparison
+state and establishes a new live edge. It does not stop receivers, delete receiver history, change Hold/Avoid, or alter
+scan lists. Display settings and bounded, profile-scoped coordinates remain separate; a saved position is restored
+only after that entity is observed again.
+
+Transport loss is shown as **Live gap**. Active indicators become uncertain and stop; the view never animates across a
+missing interval. Rendering pauses while the tab is hidden, while bounded live-state ingestion continues without an
+animation backlog.
+
+## Balanced safety limits
+
+The default profile renders at most 1,000 total nodes, 900 links, 80 labels, 150 effect particles, and 50 migration
+trails. It softly targets 100 radios per talkgroup, 1,000 radios overall, 80 expanded talkgroups, and 8 expanded
+systems. Suppressed entities are represented by explicit `+N` aggregates: known sources use retained-radio counts,
+while excess unknown or duplicate active legs are identified as call legs. Retained session state is separately bounded
+to 20,000 radios, 5,000 hubs, 64 regions, 5,000 semantic events, 40,000 deduplication entries, 100 pins, and 512 saved
+layout records. Inactive unpinned state is eligible for removal after 30 minutes and can be evicted sooner at capacity.
+
+These are guardrails, not a claim about the receiver's whole subscriber population and not a guaranteed frame rate.
+The current transport schema and loss semantics are documented in [Web API v1](api-v1.md#live-data).
+
+## Deterministic development fixture
+
+On a loopback host only, append `network_fixture=1` while opening the view to run the bounded deterministic fixture.
+The page labels fixture mode explicitly and does not connect it to receiver activity. Without that exact local opt-in,
+the view never substitutes demo events for a disconnected production feed.

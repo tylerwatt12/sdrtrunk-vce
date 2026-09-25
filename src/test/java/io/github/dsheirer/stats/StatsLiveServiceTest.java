@@ -161,6 +161,40 @@ class StatsLiveServiceTest
         }
     }
 
+    @Test
+    void unresolvedDigitalRowsExposeStableChannelScopedIdentityKeys() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
+        {
+            source.publish(unresolvedDigitalActivity());
+            StatsLiveEventHub.LiveEvent first = subscription.poll(1, TimeUnit.SECONDS);
+            Map<String,Object> firstRow = firstRow(first);
+            String sourceKey = String.valueOf(firstRow.get("source_identity_key"));
+            String targetKey = String.valueOf(firstRow.get("target_identity_key"));
+
+            assertTrue(sourceKey.startsWith("v1-local-"));
+            assertTrue(targetKey.startsWith("v1-local-"));
+            assertFalse(sourceKey.equals(targetKey));
+            assertFalse(firstRow.containsKey("source_entity_ref"));
+            assertFalse(firstRow.containsKey("target_entity_ref"));
+            assertEquals("1201", firstRow.get("source_id"));
+            assertEquals("101", firstRow.get("target_id"));
+
+            source.publish(unresolvedDigitalActivity());
+            Map<String,Object> repeated = firstRow(subscription.poll(1, TimeUnit.SECONDS));
+            assertEquals(sourceKey, repeated.get("source_identity_key"));
+            assertEquals(targetKey, repeated.get("target_identity_key"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
     private static Channel trunkedDmrChannel()
     {
         Channel channel = new Channel("Bus", Channel.ChannelType.STANDARD);
@@ -204,10 +238,39 @@ class StatsLiveServiceTest
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("channel-17:155730000:0",
             "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), 0L, null, 155_730_000L, null,
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
-            null, null, null, null, "NBFM", null, null, "CONVENTIONAL");
+            null, null, null, null, "NBFM", null, null, "CONVENTIONAL",
+            new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
+                3L, 1_025L));
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
             "", "", "Conventional", null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
+    private static ChannelActivityEvent unresolvedDigitalActivity()
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000017";
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(configurationId,
+            null, null, "p25", List.of(),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1_201), List.of(),
+            new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 101));
+        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("traffic:851012500:1", null,
+            configurationId, "CALL", List.of("VOICE"), 17L, null, 851_012_500L, null, null, null, 0L,
+            0L, 0L, 0L, 0L, 0L, 0L, null, 1, "1201", "RADIO", null, null, null, null, "101",
+            "TALKGROUP", null, null, "P25 Phase 1", null, navigation, "TRAFFIC",
+            new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
+                3L, 1_025L));
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("p25-unresolved", "P25", "Metro", "North",
+            "Control", configurationId, false, true, List.of(), List.of(row));
+        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> firstRow(StatsLiveEventHub.LiveEvent event)
+    {
+        assertNotNull(event);
+        Map<String,Object> update = (Map<String,Object>)event.data();
+        Map<String,Object> table = (Map<String,Object>)update.get("table");
+        return ((List<Map<String,Object>>)table.get("rows")).getFirst();
     }
 
     @SuppressWarnings("unchecked")
@@ -225,6 +288,14 @@ class StatsLiveServiceTest
         assertEquals(expectedStatus, rows.getFirst().get("status"));
         assertEquals(0L, rows.getFirst().get("activation_order"));
         assertEquals("CONVENTIONAL", rows.getFirst().get("role"));
+        assertEquals("leg-17", rows.getFirst().get("call_leg_id"));
+        assertEquals("active", rows.getFirst().get("tx_state"));
+        assertEquals(1_050L, rows.getFirst().get("tx_observed_at_ms"));
+        assertEquals(1_000L, rows.getFirst().get("tx_start_ms"));
+        assertEquals(1_075L, rows.getFirst().get("tx_last_observed_at_ms"));
+        assertEquals(false, rows.getFirst().get("tx_end_certain"));
+        assertEquals(3L, rows.getFirst().get("tx_burst_generation"));
+        assertEquals(1_025L, rows.getFirst().get("tx_burst_started_at_ms"));
     }
 
     @SuppressWarnings("unchecked")

@@ -9,9 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +34,94 @@ import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
 {
+    @Test
+    void networkIdentitiesAlwaysHaveAnOpaqueKeyButOnlyProvenIdentitiesNavigate()
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000071";
+        DecodeEventViewService.NetworkIdentityView identity =
+            new DecodeEventViewService.NetworkIdentityView(1_201, 1_201, null, null, null);
+        Map<String,Object> local = StatsWebServerService.networkIdentity(configurationId, Form.RADIO,
+            identity, null);
+        String localKey = String.valueOf(local.get("identity_key"));
+
+        assertTrue(localKey.startsWith("v1-local-"));
+        assertFalse(local.containsKey("entity_ref"));
+        assertEquals(localKey, StatsWebServerService.networkIdentity(configurationId, Form.RADIO,
+            identity, null).get("identity_key"));
+        assertFalse(localKey.equals(StatsWebServerService.networkIdentity(
+            "00000000-0000-0000-0000-000000000072", Form.RADIO, identity, null).get("identity_key")));
+        assertFalse(localKey.equals(StatsWebServerService.networkIdentity(configurationId, Form.TALKGROUP,
+            identity, null).get("identity_key")));
+
+        DecodeEventViewService.NetworkIdentityView fullyQualified =
+            new DecodeEventViewService.NetworkIdentityView(1_201, 777, 0xABCDE, 0x123, 1_201);
+        String eventKey = String.valueOf(StatsWebServerService.networkIdentity(configurationId, Form.RADIO,
+            fullyQualified, null).get("identity_key"));
+        assertEquals(eventKey, WebIdentityKey.channelScoped(configurationId, "p25", Form.RADIO, 777,
+            "v1-r-abcde-123-1201"),
+            "affiliation events and channel rows must key the same fully-qualified local identity identically");
+
+        WebEntityRef canonical = WebEntityRef.radio("p25:00001:047", "v1-r-00001-047-1201");
+        Map<String,Object> proven = StatsWebServerService.networkIdentity(configurationId, Form.RADIO,
+            identity, canonical);
+        assertEquals("v1-r-00001-047-1201", proven.get("identity_key"));
+        assertTrue(proven.containsKey("entity_ref"));
+    }
+
+    @Test
+    void networkSiteRecordUsesTheVersionOneSnakeCaseContract()
+    {
+        var json = ApiHttpResponse.normalizePayload(
+            new DecodeEventViewService.NetworkSiteView(0xABCDE, 0x123, 4, 9, 0x293));
+
+        assertEquals(0xABCDE, json.path("wacn").intValue());
+        assertEquals(0x123, json.path("system_id").intValue());
+        assertEquals(4, json.path("rfss").intValue());
+        assertEquals(9, json.path("site").intValue());
+        assertEquals(0x293, json.path("nac").intValue());
+        assertFalse(json.has("systemId"));
+    }
+
+    @Test
+    void staleOrNonP25CatalogMappingsFallBackToChannelScopedNetworkIdentity()
+    {
+        String configurationId = "00000000-0000-0000-0000-000000000073";
+        WebEntityNavigationCatalog.Channel p25 = new WebEntityNavigationCatalog.Channel(configurationId,
+            WebEntityRef.channel(configurationId), WebEntityRef.radioSystem("p25:abcde:123"),
+            1, 0, 0xABCDE, 0x123);
+        DecodeEventViewService.NetworkSiteView matching =
+            new DecodeEventViewService.NetworkSiteView(0xABCDE, 0x123, 4, 9, 0x293);
+
+        assertTrue(StatsWebServerService.canUseCanonicalP25NetworkScope(p25, matching));
+        assertTrue(StatsWebServerService.canUseCanonicalP25NetworkScope(p25, null),
+            "missing current evidence does not contradict a proven cached mapping");
+        assertFalse(StatsWebServerService.canUseCanonicalP25NetworkScope(p25,
+            new DecodeEventViewService.NetworkSiteView(0xBCDEF, 0x123, 4, 9, 0x293)));
+        assertFalse(StatsWebServerService.canUseCanonicalP25NetworkScope(p25,
+            new DecodeEventViewService.NetworkSiteView(0xABCDE, 0x124, 4, 9, 0x293)));
+
+        WebEntityNavigationCatalog.Channel dmr = new WebEntityNavigationCatalog.Channel(configurationId,
+            WebEntityRef.channel(configurationId), WebEntityRef.radioSystem("dmr:tier3:tiny:511"),
+            3, 0, null, null);
+        assertFalse(StatsWebServerService.canUseCanonicalP25NetworkScope(dmr, matching));
+        assertFalse(StatsWebServerService.canUseCanonicalP25NetworkScope(null, matching));
+    }
+
+    @Test
+    void validatesOptionalNetworkActivityClearBoundaryIdentifier()
+    {
+        String subscriptionId = "00000000-0000-0000-0000-000000000007";
+        assertEquals(subscriptionId, StatsWebServerService.networkActivitySubscriptionId(
+            URI.create("/network_activity?subscription_id=" + subscriptionId)));
+        assertEquals(null, StatsWebServerService.networkActivitySubscriptionId(URI.create("/network_activity")));
+        org.junit.jupiter.api.Assertions.assertThrows(StatsApiException.class,
+            () -> StatsWebServerService.networkActivitySubscriptionId(
+                URI.create("/network_activity?subscription_id=not-a-uuid")));
+        org.junit.jupiter.api.Assertions.assertThrows(StatsApiException.class,
+            () -> StatsWebServerService.networkActivitySubscriptionId(
+                URI.create("/network_activity?unexpected=true")));
+    }
+
     @Test
     void liveAnalogAudioRequiresTheExistingAudioListeningCapability() throws Exception
     {
@@ -77,6 +169,22 @@ class StatsWebMultiplexOutputTest
             assertEquals(0, output.eventDrops(3));
             assertTrue(output.isPersistentlySlow());
         }
+    }
+
+    @Test
+    void allocatesAnIndependentBoundedQueueForNetworkActivityTopicSeven() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(2);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        output.offerEvent(7, new byte[]{7});
+        output.offerEvent(2, new byte[]{2});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertEquals(Set.of((byte)2, (byte)7), recording.mEnvelopes.stream()
+            .map(envelope -> envelope[0]).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(0, output.eventDrops(7));
     }
 
     @Test
@@ -490,6 +598,10 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("case \"calls\""));
         assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
         assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
+        assertTrue(source.contains("TOPIC_NETWORK_ACTIVITY, \"live_gap\""));
+        assertTrue(source.contains("writeMultiplexRecoverySequenceJson(output, TOPIC_CHANNEL_ACTIVITY,"));
+        assertTrue(source.contains("\"live_gap\", Map.of(\"dropped\""));
+        assertTrue(source.contains("mLiveService.droppedActivityIngressEvents()"));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, \"source_change\""));
         assertEquals(2, countOccurrences(source,
@@ -497,6 +609,9 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("record DecodeMessageSourceState(long generation, boolean bound"));
         assertTrue(source.contains(
             "writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, \"source_change\""));
+        assertTrue(source.contains(
+            "writeMultiplexRecoveryJson(output, TOPIC_NETWORK_ACTIVITY, \"source_change\""));
+        assertTrue(source.contains("mNetworkActivityHub.publish(\"network_event\""));
         assertTrue(source.contains("new DecodeEventSourceState(scope.configurationId(), scope.frequencyHz(),"));
         assertFalse(source.contains("writeMultiplexJson(output, TOPIC_DECODE_EVENTS, \"filter_catalog\""));
         assertFalse(source.contains("TOPIC_DECODE_EVENTS, \"snapshot\""));
@@ -512,7 +627,7 @@ class StatsWebMultiplexOutputTest
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
         int subscription = source.indexOf("mDecodeEvents = mDecodeEventHub.subscribe(event ->");
-        int liveEdge = source.indexOf("liveEdge.set(mDecodeEventViewService.advanceLiveEdge())", subscription);
+        int liveEdge = source.indexOf("mDecodeEventViewService.advanceLiveEdge(liveEdge)", subscription);
         int activation = source.indexOf("mDecodeEventViewService.addListener(mDecodeEventViewListener)", liveEdge);
 
         assertTrue(subscription >= 0);
@@ -523,18 +638,60 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
+    void networkActivitySubscriptionEstablishesItsBoundaryWithoutAReplayWindow() throws Exception
+    {
+        String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
+            "StatsWebServerService.java"));
+        int subscription = source.indexOf("mNetworkActivity = mNetworkActivityHub.subscribe(event ->");
+        int activation = source.indexOf(
+            "mDecodeEventViewService.addNetworkListener(mNetworkActivityViewListener)", subscription);
+        int liveEdge = source.indexOf(
+            "liveEdgeEpoch = mDecodeEventViewService.advanceLiveEdge(liveEdge)", activation);
+
+        assertTrue(subscription >= 0);
+        assertTrue(source.contains("event.data() instanceof NetworkActivityEvent view"));
+        assertTrue(source.contains("view.observationEpoch() >= liveEdge.get()"));
+        assertTrue(activation > subscription);
+        assertTrue(liveEdge > activation,
+            "the shared tap activates before the boundary advances so queued pre-boundary events are rejected");
+        assertFalse(source.contains("liveEdge.set(liveEdgeEpoch)"),
+            "the downstream boundary must be installed atomically with the epoch advance");
+        assertTrue(source.contains("private static final int TOPIC_NETWORK_ACTIVITY = 7"));
+        assertTrue(source.contains("case \"network_activity\" -> networkActivityRequest(uri)"));
+        assertTrue(source.contains("request.subscriptionId() != null ? request.subscriptionId()"));
+    }
+
+    @Test
     void onlyStatefulTopicsConstructRecoverySnapshots() throws Exception
     {
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
         assertFalse(source.contains("captureRecovery("));
-        assertEquals(2, countOccurrences(source, "new RecoveryCapture<>(dropBaseline, snapshot)"),
+        assertEquals(2, countOccurrences(source, "new RecoveryCapture<>("),
             "Only channel activity should construct initial and gap-recovery snapshots");
         assertFalse(source.contains("Drops = mChannelActivity.droppedCount();"));
         assertFalse(source.contains("long callDrops = mCalls.droppedCount();"));
         assertFalse(source.contains("mWebCallService.snapshot("));
         assertTrue(source.contains("mDecodeEventDrops = 0;"));
         assertTrue(source.contains("mDecodeMessageDrops = 0;"));
+    }
+
+    @Test
+    void channelActivityGapPrecedesProtectedSnapshotAndPostRecoveryDelta() throws Exception
+    {
+        RecordingOutputStream recording = new RecordingOutputStream(3);
+        StatsWebServerService.MultiplexOutput output = new StatsWebServerService.MultiplexOutput(recording);
+        output.offerEvent(1, new byte[]{1});
+        output.offerRecoverySequence(1, new byte[]{3}, new byte[]{2});
+        output.offerEvent(1, new byte[]{4});
+        output.start();
+
+        assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
+        output.close();
+        assertEquals(List.of((byte)3), bytes(recording.mEnvelopes.get(0)));
+        assertEquals(List.of((byte)2), bytes(recording.mEnvelopes.get(1)));
+        assertEquals(List.of((byte)4), bytes(recording.mEnvelopes.get(2)));
+        assertFalse(recording.mEnvelopes.stream().anyMatch(envelope -> envelope[0] == 1));
     }
 
     @Test

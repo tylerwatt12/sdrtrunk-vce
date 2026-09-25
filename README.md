@@ -53,6 +53,8 @@ omit these newer features until they are deliberately included in that release l
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
   FFT and waterfall with zoom, smoothing, persistent country-aware FFT band indicators, optional frequency snapping,
   and channel flags.
+- **[Network Visualizer](docs/network-visualizer.md) builds a live shared canvas** from newly observed systems,
+  talkgroups, radios, successful P25 affiliations, and call-leg activity without preloading subscriber history.
 - **Status icon choices are personal to each administrator:** each receiver issue type can be shown or hidden for that
   account's status icon while shared monitoring, detailed measurements, and current and recently cleared issues remain
   available.
@@ -239,6 +241,7 @@ files from a running installation to Git or combine the web-only persistence com
 - [Release notes](https://github.com/tylerwatt12/sdrtrunk-vce/releases)
 - [Portable startup and storage](docs/portable-startup-and-storage.md)
 - [How browser listening and Scan Lists work](docs/browser-listening-and-scan-lists.md)
+- [How Network Visualizer represents live radio activity](docs/network-visualizer.md)
 - [How talker aliases work](docs/talker-alias-implementation.md)
 - [Listening-delay findings](docs/sdrtrunk-latency-findings.md)
 

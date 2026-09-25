@@ -9,6 +9,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -294,6 +295,11 @@ final class StatsLiveService implements AutoCloseable
         return mDroppedProjectionEvents.get();
     }
 
+    long droppedActivityIngressEvents()
+    {
+        return mActivitySource.droppedIngressCount();
+    }
+
     Map<String,Object> snapshot()
     {
         return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot(), mRowSystemScopeState);
@@ -451,6 +457,8 @@ final class StatsLiveService implements AutoCloseable
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
         WebEntityNavigationCatalog.Channel tableChannel = navigation.channel(snapshot.configurationId());
+        WebEntityNavigationCatalog.Channel tableSystemChannel =
+            matchesStructuredP25Site(tableChannel, snapshot.site()) ? tableChannel : null;
         table.put("table_id", boundedText(snapshot.tableId(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("title", boundedText(snapshot.title(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("system_name", boundedText(snapshot.systemName(), MAXIMUM_LIVE_TEXT_LENGTH));
@@ -458,6 +466,23 @@ final class StatsLiveService implements AutoCloseable
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         WebEntityRef.put(table, tableChannel != null ? tableChannel.entityRef() : null);
+        if(tableSystemChannel != null && tableSystemChannel.radioSystemRef() != null)
+        {
+            putText(table, "radio_system_key", tableSystemChannel.radioSystemRef().key(), MAXIMUM_LIVE_TEXT_LENGTH);
+        }
+        if(snapshot.site() != null)
+        {
+            LinkedHashMap<String,Object> site = new LinkedHashMap<>();
+            put(site, "wacn", snapshot.site().wacn());
+            put(site, "system_id", snapshot.site().systemId());
+            put(site, "rfss", snapshot.site().rfss());
+            put(site, "site", snapshot.site().siteId());
+            put(site, "nac", snapshot.site().nac());
+            if(!site.isEmpty())
+            {
+                table.put("site", Map.copyOf(site));
+            }
+        }
         table.put("control_active", snapshot.controlActive());
         table.put("channel_running", snapshot.channelRunning());
         table.put("identifiers", snapshot.identifiers().stream().limit(MAXIMUM_LIVE_IDENTIFIERS)
@@ -465,7 +490,8 @@ final class StatsLiveService implements AutoCloseable
         int rowCount = snapshot.rows().size();
         int included = Math.min(rowCount, Math.max(0, maximumRows));
         table.put("rows", snapshot.rows().stream().limit(included)
-            .map(row -> activityRow(snapshot.tableId(), row, tableChannel, navigation, rowSystemScopes)).toList());
+            .map(row -> activityRow(snapshot.tableId(), row, tableChannel, snapshot.site(), navigation,
+                rowSystemScopes)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -483,6 +509,7 @@ final class StatsLiveService implements AutoCloseable
 
     private Map<String,Object> activityRow(String tableId, ChannelActivitySnapshot.Row snapshot,
                                            WebEntityNavigationCatalog.Channel tableChannel,
+                                           ChannelActivitySnapshot.Site site,
                                            WebEntityNavigationCatalog.Snapshot catalog,
                                            RowSystemScopeState rowSystemScopes)
     {
@@ -502,8 +529,10 @@ final class StatsLiveService implements AutoCloseable
         {
             rowChannel = tableChannel;
         }
+        WebEntityNavigationCatalog.Channel rowSystemChannel =
+            matchesStructuredP25Site(rowChannel, site) ? rowChannel : null;
         boolean systemScopeMatches = rowSystemScopeMatches(rowSystemScopes, tableId, snapshot, configurationId,
-            rowChannel);
+            rowSystemChannel);
 
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
@@ -568,6 +597,18 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "decoder", snapshot.decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "encryption_details", snapshot.encryptionDetails(), MAXIMUM_LIVE_TEXT_LENGTH);
 
+        if(snapshot.transmission() != null)
+        {
+            putText(row, "call_leg_id", snapshot.transmission().callLegId(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putText(row, "tx_state", snapshot.transmission().state(), MAXIMUM_LIVE_TEXT_LENGTH);
+            row.put("tx_observed_at_ms", snapshot.transmission().observedAtMs());
+            row.put("tx_start_ms", snapshot.transmission().startMs());
+            row.put("tx_last_observed_at_ms", snapshot.transmission().lastObservedAtMs());
+            row.put("tx_end_certain", snapshot.transmission().endCertain());
+            row.put("tx_burst_generation", snapshot.transmission().burstGeneration());
+            row.put("tx_burst_started_at_ms", snapshot.transmission().burstStartMs());
+        }
+
         if(navigation != null)
         {
             put(row, "alias_list_id", navigation.aliasListId());
@@ -577,23 +618,68 @@ final class StatsLiveService implements AutoCloseable
                 .map(StatsLiveService::activityAliasReference).toList());
             row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
                 .map(StatsLiveService::activityAliasReference).toList());
-            if(rowChannel != null && systemScopeMatches)
-            {
-                WebEntityRef sourceReference = rowChannel.identity(navigation.sourceMatcher());
-                WebEntityRef targetReference = rowChannel.identity(navigation.targetMatcher());
+            WebEntityRef sourceReference = null;
+            WebEntityRef targetReference = null;
 
-                if(sourceReference != null)
-                {
-                    row.put("source_entity_ref", sourceReference.toMap());
-                }
-                if(targetReference != null)
-                {
-                    row.put("target_entity_ref", targetReference.toMap());
-                }
+            if(rowSystemChannel != null && systemScopeMatches)
+            {
+                sourceReference = rowSystemChannel.identity(navigation.sourceMatcher());
+                targetReference = rowSystemChannel.identity(navigation.targetMatcher());
+            }
+
+            if(sourceReference != null)
+            {
+                row.put("source_entity_ref", sourceReference.toMap());
+            }
+            else
+            {
+                putText(row, "source_identity_key", channelScopedIdentityKey(configurationId,
+                    navigation.sourceMatcher()), MAXIMUM_LIVE_TEXT_LENGTH);
+            }
+
+            if(targetReference != null)
+            {
+                row.put("target_entity_ref", targetReference.toMap());
+            }
+            else
+            {
+                putText(row, "target_identity_key", channelScopedIdentityKey(configurationId,
+                    navigation.targetMatcher()), MAXIMUM_LIVE_TEXT_LENGTH);
             }
         }
 
         return Map.copyOf(row);
+    }
+
+    static boolean matchesStructuredP25Site(WebEntityNavigationCatalog.Channel channel,
+                                            ChannelActivitySnapshot.Site site)
+    {
+        if(site == null || (site.wacn() == null && site.systemId() == null))
+        {
+            return true;
+        }
+
+        return channel != null && channel.hasCompatibleP25SystemScope(site.wacn(), site.systemId());
+    }
+
+    private static String channelScopedIdentityKey(String configurationId,
+                                                   ChannelActivitySnapshot.MatcherReference matcher)
+    {
+        if(matcher == null || matcher.type() == null)
+        {
+            return null;
+        }
+
+        Form form = switch(matcher.type())
+        {
+            case "radio" -> Form.RADIO;
+            case "talkgroup" -> Form.TALKGROUP;
+            case "patch_group" -> Form.PATCH_GROUP;
+            default -> null;
+        };
+
+        return WebIdentityKey.channelScoped(configurationId, matcher.protocol(), form, matcher.value(),
+            matcher.identityKey());
     }
 
     /**
@@ -760,6 +846,11 @@ final class StatsLiveService implements AutoCloseable
 
         ChannelActivityModel.SnapshotSet snapshot();
 
+        default long droppedIngressCount()
+        {
+            return 0;
+        }
+
         void addListener(Listener<ChannelActivityEvent> listener);
 
         void removeListener(Listener<ChannelActivityEvent> listener);
@@ -776,6 +867,12 @@ final class StatsLiveService implements AutoCloseable
         public ChannelActivityModel.SnapshotSet snapshot()
         {
             return model.getSnapshotSet();
+        }
+
+        @Override
+        public long droppedIngressCount()
+        {
+            return model.getDroppedIngressCount();
         }
 
         @Override

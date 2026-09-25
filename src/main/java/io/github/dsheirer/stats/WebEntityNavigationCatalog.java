@@ -328,6 +328,18 @@ final class WebEntityNavigationCatalog implements AutoCloseable
             };
         }
 
+        boolean hasCompatibleP25SystemScope(Integer observedWacn, Integer observedSystemId)
+        {
+            return protocolCode == 1 && radioSystemRef != null &&
+                !knownMismatch(p25Wacn, observedWacn) &&
+                !knownMismatch(p25SystemId, observedSystemId);
+        }
+
+        private static boolean knownMismatch(Integer cached, Integer observed)
+        {
+            return cached != null && observed != null && !cached.equals(observed);
+        }
+
         private Protocol protocol()
         {
             return switch(protocolCode)

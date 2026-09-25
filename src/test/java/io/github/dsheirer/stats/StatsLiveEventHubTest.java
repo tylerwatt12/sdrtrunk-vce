@@ -168,7 +168,7 @@ class StatsLiveEventHubTest
                     view.observationEpoch() >= liveEdge.get()))
             {
                 assertNotNull(late);
-                liveEdge.set(service.advanceLiveEdge());
+                service.advanceLiveEdge(liveEdge);
                 releaseProjection.countDown();
                 assertTrue(preOpenPublished.await(2, TimeUnit.SECONDS));
 

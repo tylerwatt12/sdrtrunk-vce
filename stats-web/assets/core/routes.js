@@ -3,6 +3,7 @@
   const definitions = Object.freeze([
     { id: 'dashboard', label: 'Main', title: 'Main', parent: 'dashboard', capability: 'dashboard', databaseNotice: true },
     { id: 'live', label: 'Live', title: 'Live', parent: 'live', capability: 'live', databaseNotice: false },
+    { id: 'network-visualizer', label: 'Network Visualizer', title: 'Network Visualizer', parent: 'network-visualizer', capability: 'live', databaseNotice: false },
     { id: 'scanner', label: 'Scanner', title: 'Scanner', parent: 'scanner', capability: 'call-audio', databaseNotice: false },
     { id: 'tuner-spectrum', label: 'Tuner Spectrum', title: 'Tuner Spectrum', parent: 'tuner-spectrum', access: 'admin-tuner', databaseNotice: false },
     { id: 'radio-systems', label: 'Radio Directory', title: 'Radio Directory', parent: 'dashboard', capability: 'radio', databaseNotice: false },

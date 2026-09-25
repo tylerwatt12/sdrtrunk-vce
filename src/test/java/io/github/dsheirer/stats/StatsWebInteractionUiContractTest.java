@@ -112,6 +112,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(synchronize.contains("if (update.operation === 'remove')"));
         assertTrue(synchronize.contains("source.addEventListener('activity_resync'"));
         assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(resync?.snapshot || resync)"));
+        assertTrue(synchronize.contains("source.addEventListener('live_gap'"));
+        assertTrue(synchronize.contains("invokeLiveSubscriber(target, 'gap', detail)"));
     }
 
     @Test
@@ -656,7 +658,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=147"));
+        assertTrue(html.contains("/assets/app.css?v=174"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

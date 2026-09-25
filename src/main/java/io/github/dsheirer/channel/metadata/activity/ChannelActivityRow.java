@@ -19,7 +19,11 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallLegId;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
@@ -59,6 +63,14 @@ public class ChannelActivityRow
         TRAFFIC_GRANT
     }
 
+    public enum TransmissionState
+    {
+        PENDING,
+        ACTIVE,
+        ENDED,
+        UNCERTAIN
+    }
+
     private final String mKey;
     private Channel mChannel;
     private Role mRole;
@@ -89,6 +101,14 @@ public class ChannelActivityRow
     private VoiceCallQuality mVoiceCallQuality;
     private long mQualityObservedAt;
     private long mTrafficGrantExpiresAt;
+    private CallLegId mCallLegId;
+    private AudioCallId mTransmissionChunkId;
+    private TransmissionState mTransmissionState;
+    private long mTransmissionObservedAt;
+    private long mTransmissionStart;
+    private long mTransmissionLastObservedAt;
+    private long mTransmissionBurstGeneration;
+    private long mTransmissionBurstStart;
 
     public ChannelActivityRow(String key, Channel channel, Role role, long frequency, Integer timeslot)
     {
@@ -223,6 +243,7 @@ public class ChannelActivityRow
         else
         {
             mActivationOrder = 0;
+            markTransmissionUncertain(System.currentTimeMillis());
         }
 
         mState = next;
@@ -474,6 +495,204 @@ public class ChannelActivityRow
         mVoiceCallQuality = null;
     }
 
+    public CallLegId getCallLegId()
+    {
+        return mCallLegId;
+    }
+
+    public TransmissionState getTransmissionState()
+    {
+        return mTransmissionState;
+    }
+
+    public long getTransmissionObservedAt()
+    {
+        return mTransmissionObservedAt;
+    }
+
+    public long getTransmissionStart()
+    {
+        return mTransmissionStart;
+    }
+
+    public long getTransmissionLastObservedAt()
+    {
+        return mTransmissionLastObservedAt;
+    }
+
+    public long getTransmissionBurstGeneration()
+    {
+        return mTransmissionBurstGeneration;
+    }
+
+    public long getTransmissionBurstStart()
+    {
+        return mTransmissionBurstStart;
+    }
+
+    public boolean isTransmissionEndCertain()
+    {
+        return mTransmissionState == TransmissionState.ENDED;
+    }
+
+    /** Applies one already-bounded audio handoff using the stable physical call-leg identity. */
+    public boolean observeTransmission(AudioCallEvent event)
+    {
+        if(event == null || event.snapshot() == null || event.snapshot().callLegId() == null)
+        {
+            return false;
+        }
+
+        AudioCallSnapshot snapshot = event.snapshot();
+        CallLegId callLegId = snapshot.callLegId();
+        AudioCallId chunkId = snapshot.callId();
+
+        if(chunkId == null)
+        {
+            return false;
+        }
+
+        boolean ownsLeg = callLegId.equals(mCallLegId);
+        boolean ownsChunk = chunkId.equals(mTransmissionChunkId);
+        boolean linkedSuccessor = ownsLeg && !ownsChunk && snapshot.linkedCallId() != null &&
+            snapshot.linkedCallId().equals(mTransmissionChunkId);
+        long observedAt = transmissionTimestamp(event);
+
+        switch(event.eventType())
+        {
+            case CALL_CREATED -> {
+                if(!ownsLeg)
+                {
+                    mTransmissionBurstGeneration = 0;
+                    mTransmissionBurstStart = 0;
+                    mCallLegId = callLegId;
+                    mTransmissionChunkId = chunkId;
+                    mTransmissionState = TransmissionState.PENDING;
+                    mTransmissionStart = positive(snapshot.startTimestamp(), observedAt);
+                    mTransmissionLastObservedAt = positive(snapshot.lastActivityTimestamp(), observedAt);
+                }
+                else if(ownsChunk || linkedSuccessor)
+                {
+                    mTransmissionChunkId = chunkId;
+                    mTransmissionLastObservedAt = Math.max(mTransmissionLastObservedAt,
+                        positive(snapshot.lastActivityTimestamp(), observedAt));
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            case BURST_STARTED, AUDIO_FRAME -> {
+                if(!ownsLeg)
+                {
+                    mTransmissionBurstGeneration = 0;
+                    mTransmissionBurstStart = 0;
+                    mCallLegId = callLegId;
+                    mTransmissionChunkId = chunkId;
+                    mTransmissionStart = positive(snapshot.startTimestamp(), observedAt);
+                }
+                else if(!ownsChunk)
+                {
+                    if(linkedSuccessor)
+                    {
+                        // Recover a linked storage-chunk rollover when its CALL_CREATED observation was dropped.
+                        // The state transition below decides whether this is continuous activity or a later burst.
+                        mTransmissionChunkId = chunkId;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+
+                if(!ownsLeg || mTransmissionState != TransmissionState.ACTIVE)
+                {
+                    mTransmissionBurstGeneration++;
+                    mTransmissionBurstStart = positive(snapshot.lastBurstStartTimestamp(), observedAt);
+                }
+
+                mTransmissionState = TransmissionState.ACTIVE;
+                mTransmissionLastObservedAt = Math.max(mTransmissionLastObservedAt,
+                    positive(snapshot.lastActivityTimestamp(), observedAt));
+            }
+            case BURST_ENDED -> {
+                if(!ownsLeg || (!ownsChunk && !linkedSuccessor))
+                {
+                    return false;
+                }
+
+                if(linkedSuccessor)
+                {
+                    mTransmissionChunkId = chunkId;
+                }
+
+                mTransmissionState = TransmissionState.ENDED;
+                mTransmissionLastObservedAt = Math.max(mTransmissionLastObservedAt,
+                    positive(snapshot.lastBurstEndTimestamp(), observedAt));
+            }
+            case CALL_COMPLETED -> {
+                if(!ownsLeg || (!ownsChunk && !linkedSuccessor))
+                {
+                    return false;
+                }
+
+                if(linkedSuccessor)
+                {
+                    mTransmissionChunkId = chunkId;
+                }
+
+                mTransmissionLastObservedAt = Math.max(mTransmissionLastObservedAt,
+                    positive(snapshot.lastActivityTimestamp(), observedAt));
+
+                // One physical call leg can roll through multiple linked audio chunks. The intermediate chunk end
+                // does not end RF activity and the next CALL_CREATED retains this leg's state and timestamps.
+                if(!event.continuationExpected())
+                {
+                    mTransmissionState = TransmissionState.ENDED;
+                }
+            }
+            case ACTIVITY, METADATA_UPDATED -> {
+                return false;
+            }
+        }
+
+        mTransmissionObservedAt = Math.max(mTransmissionObservedAt, observedAt);
+        return true;
+    }
+
+    public boolean markTransmissionUncertain(long observedAt)
+    {
+        if(mTransmissionState != TransmissionState.PENDING && mTransmissionState != TransmissionState.ACTIVE)
+        {
+            return false;
+        }
+
+        mTransmissionState = TransmissionState.UNCERTAIN;
+        long timestamp = observedAt > 0 ? observedAt : System.currentTimeMillis();
+        mTransmissionObservedAt = Math.max(mTransmissionObservedAt, timestamp);
+        mTransmissionLastObservedAt = Math.max(mTransmissionLastObservedAt, timestamp);
+        return true;
+    }
+
+    private static long transmissionTimestamp(AudioCallEvent event)
+    {
+        AudioCallSnapshot snapshot = event.snapshot();
+        long timestamp = switch(event.eventType())
+        {
+            case CALL_CREATED -> snapshot.startTimestamp();
+            case BURST_STARTED -> snapshot.lastBurstStartTimestamp();
+            case AUDIO_FRAME -> event.voiceFrameTimestamp();
+            case BURST_ENDED -> snapshot.lastBurstEndTimestamp();
+            case CALL_COMPLETED, ACTIVITY, METADATA_UPDATED -> snapshot.lastActivityTimestamp();
+        };
+        return timestamp > 0 ? timestamp : System.currentTimeMillis();
+    }
+
+    private static long positive(long preferred, long fallback)
+    {
+        return preferred > 0 ? preferred : fallback;
+    }
+
     public long getTrafficGrantExpiresAt()
     {
         return mTrafficGrantExpiresAt;
@@ -532,6 +751,14 @@ public class ChannelActivityRow
         copy.mVoiceCallQuality = mVoiceCallQuality;
         copy.mQualityObservedAt = mQualityObservedAt;
         copy.mTrafficGrantExpiresAt = mTrafficGrantExpiresAt;
+        copy.mCallLegId = mCallLegId;
+        copy.mTransmissionChunkId = mTransmissionChunkId;
+        copy.mTransmissionState = mTransmissionState;
+        copy.mTransmissionObservedAt = mTransmissionObservedAt;
+        copy.mTransmissionStart = mTransmissionStart;
+        copy.mTransmissionLastObservedAt = mTransmissionLastObservedAt;
+        copy.mTransmissionBurstGeneration = mTransmissionBurstGeneration;
+        copy.mTransmissionBurstStart = mTransmissionBurstStart;
         return copy;
     }
 }

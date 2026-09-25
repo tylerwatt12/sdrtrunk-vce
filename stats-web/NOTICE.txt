@@ -20,3 +20,7 @@ Source lineage:
 
 Third-party libraries and tools included with or used by this program remain copyright their respective authors and
 are distributed under their respective licenses.
+
+The Network Visualizer includes a locally bundled build of 3d-force-graph, Three.js, d3-force-3d, and their browser
+dependencies. Their copyright notices and license terms are provided in
+assets/vendor/network-visualizer-vendor.LICENSES.txt.

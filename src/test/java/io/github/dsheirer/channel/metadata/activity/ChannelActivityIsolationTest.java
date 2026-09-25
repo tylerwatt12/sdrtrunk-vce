@@ -11,9 +11,17 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
@@ -22,6 +30,7 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.lang.management.ManagementFactory;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,6 +40,61 @@ import org.junit.jupiter.api.Test;
 
 class ChannelActivityIsolationTest
 {
+    @Test
+    void saturatedAudioBurstIngressIncrementsTheObservableDropCounter() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}),
+            8, 2);
+        Channel channel = channel();
+        CountDownLatch projectionBlocked = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicBoolean blockOnce = new AtomicBoolean();
+        model.addActivityListener(event -> {
+            if(!event.snapshot().rows().isEmpty() && blockOnce.compareAndSet(false, true))
+            {
+                projectionBlocked.countDown();
+
+                try
+                {
+                    releaseProjection.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException interruptedException)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+
+        try
+        {
+            model.channelStarted(channel, List.of(new ChannelMetadata(aliasModel, 1)));
+            assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
+            AudioCallId callId = new AudioCallId(7, 1, 1);
+            AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, new IdentifierCollection(),
+                Set.of(), 1_000L, 1_100L, 1, 1, 1_100L, 0L, true, false,
+                CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY, CallLegId.from(callId), null, null);
+            AudioCallEvent burst = new AudioCallEvent(AudioCallEventType.BURST_STARTED, snapshot, null,
+                false, 0L, 0L);
+            long before = model.getDroppedIngressCount();
+
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+                for(int index = 0; index < model.getRegularIngressCapacity() * 2; index++)
+                {
+                    model.receiveAudioCallEvent(channel, burst);
+                }
+            });
+
+            assertTrue(model.getDroppedIngressCount() > before,
+                "dropped RF burst boundaries must be visible to transport gap detection");
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            model.close();
+        }
+    }
+
     @Test
     void saturatedIngressDropsWithoutRunningProjectionOnProducer() throws Exception
     {

@@ -14,6 +14,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.LinkedHashMap;
@@ -27,8 +28,18 @@ import java.util.stream.Collectors;
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
                                       String channelName, String configurationId, boolean controlActive,
-                                      boolean channelRunning, List<IdentifierField> identifiers, List<Row> rows)
+                                      boolean channelRunning, List<IdentifierField> identifiers, List<Row> rows,
+                                      Site site)
 {
+    /** Source-compatible constructor for snapshots that do not carry structured site context. */
+    public ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
+                                   String channelName, String configurationId, boolean controlActive,
+                                   boolean channelRunning, List<IdentifierField> identifiers, List<Row> rows)
+    {
+        this(tableId, title, systemName, siteName, channelName, configurationId, controlActive, channelRunning,
+            identifiers, rows, null);
+    }
+
     public ChannelActivitySnapshot
     {
         tableId = tableId != null ? tableId : "";
@@ -46,11 +57,17 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         Channel owner = table != null ? table.getOwnerChannel() : null;
         String tableId = tableId(owner);
         List<Row> rows = table != null ? table.getRows().stream().map(row -> Row.from(row, owner)).toList() : List.of();
+        Site site = table != null ? table.getSiteContext() : null;
+        if(site == null && owner != null && owner.getP25SiteIdentity() != null)
+        {
+            P25SiteIdentity identity = owner.getP25SiteIdentity();
+            site = new Site(identity.wacn(), identity.system(), identity.rfss(), identity.site(), null);
+        }
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
             owner != null ? owner.getName() : "Conventional", persistedConfigurationId(owner),
             table != null && table.isControlActive(), table != null && table.isChannelRunning(),
-            table != null ? table.getIdentifiers() : List.of(), rows);
+            table != null ? table.getIdentifiers() : List.of(), rows, site);
     }
 
     /** Stable browser-table identity for a saved channel; conventional rows share one aggregate table. */
@@ -85,6 +102,11 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         }
     }
 
+    /** Structured P25 observation context; every field remains optional until actually decoded. */
+    public record Site(Integer wacn, Integer systemId, Integer rfss, Integer siteId, Integer nac)
+    {
+    }
+
     public record Row(String key, String channelName, String configurationId, String status, List<String> tags,
                       long activationOrder, String lcn, long frequencyHz, String callsign,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
@@ -94,8 +116,27 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
                       String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
                       String targetForm, String targetAlias, String targetAliasDescription, String decoder,
-                      String encryptionDetails, Navigation navigation, String role)
+                      String encryptionDetails, Navigation navigation, String role, Transmission transmission)
     {
+        /** Source-compatible constructor for snapshots that do not carry live RF transmission evidence. */
+        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
+                   long activationOrder, String lcn, long frequencyHz, String callsign, Double signalDbfs,
+                   Double decodeHealthPercent, long qualityObservedAtMs, long controlValidFrames,
+                   long controlInvalidFrames, long controlCorrectedBits, long controlSyncLossBits,
+                   long controlDroppedBits, long controlLastValidDecodeMs, VoiceCallQuality voiceQuality,
+                   Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
+                   String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
+                   String targetForm, String targetAlias, String targetAliasDescription, String decoder,
+                   String encryptionDetails, Navigation navigation, String role)
+        {
+            this(key, channelName, configurationId, status, tags, activationOrder, lcn, frequencyHz, callsign,
+                signalDbfs, decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
+                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
+                timeslot, sourceId, sourceForm, sourceAlias, sourceAliasDescription, talkerAlias, sourceAliasDisplay,
+                targetId, targetForm, targetAlias, targetAliasDescription, decoder, encryptionDetails, navigation,
+                role, null);
+        }
+
         private static Row from(ChannelActivityRow row, Channel owner)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
@@ -121,7 +162,13 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 channel != null && channel.getAliasListId() > 0 ? channel.getAliasListId() : null,
                 channel != null ? channel.getAliasListName() : null, protocol(row.getSource(), row.getTarget()),
                 aliasReferences(row.getSourceAliases()), matcher(row.getSource()),
-                aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name());
+                aliasReferences(row.getTargetAliases()), matcher(row.getTarget())), row.getRole().name(),
+                row.getCallLegId() != null ? new Transmission(row.getCallLegId().toString(),
+                    row.getTransmissionState() != null ?
+                        row.getTransmissionState().name().toLowerCase(java.util.Locale.ROOT) : null,
+                    row.getTransmissionObservedAt(), row.getTransmissionStart(),
+                    row.getTransmissionLastObservedAt(), row.isTransmissionEndCertain(),
+                    row.getTransmissionBurstGeneration(), row.getTransmissionBurstStart()) : null);
         }
 
         private static String protocol(Identifier<?> first, Identifier<?> second)
@@ -246,6 +293,12 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 .collect(Collectors.joining(", "));
             return descriptions.isEmpty() ? null : descriptions;
         }
+    }
+
+    public record Transmission(String callLegId, String state, long observedAtMs, long startMs,
+                               long lastObservedAtMs, boolean endCertain, long burstGeneration,
+                               long burstStartMs)
+    {
     }
 
     /** Browser navigation metadata detached from mutable receiver and Alias objects. */

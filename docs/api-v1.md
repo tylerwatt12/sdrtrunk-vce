@@ -234,19 +234,78 @@ Pages share one multiplexed connection per browser document:
 - `POST /api/v1/live/multiplex/control` replaces that client's subscriptions using a monotonically increasing
   `revision` and a `subscriptions` object.
 
-Subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`, and
-`tuner_diagnostics`. Parameters use `snake_case`. Channel-owned subscriptions use `configuration_id`.
+Subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
+`tuner_diagnostics`, `frequency_audio`, and `network_activity`. Their numeric topic IDs are respectively 1 through
+7; topic 0 is transport control. Parameters use `snake_case`. Channel-owned subscriptions use `configuration_id`.
 `decode_messages` also requires positive `frequency_hz`; `timeslot` is supported by decoder events and channel
-diagnostics, not decoder messages.
+diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object. `network_activity` accepts
+an empty object or one optional canonical UUID `subscription_id`; changing that value closes and reopens the logical
+topic, advances its live edge, and echoes the value in the new `source_change` event. Clear-map clients use a fresh
+value so queued callbacks from the prior visualization generation cannot cross the boundary.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to
-receiver processing. Decoder events and messages are live-only and do not preload history. Known bounded loss emits
-`live_gap` and resumes at the live edge.
+receiver processing. Decoder events, messages, and network activity are live-only and do not preload history. Known
+bounded loss emits `live_gap` and resumes at the live edge.
+
+For stateful `channel_activity`, loss in the receiver-to-model ingress, subscriber queue, or transport queue emits
+`live_gap` followed by a fresh authoritative `snapshot`. Active rows in that first post-gap snapshot restore current
+presentation conservatively without proving uninterrupted continuity or replaying a key-up: a dropped burst boundary
+can make an apparently active transmission uncertain.
+
+`network_activity` emits exactly three event names:
+
+- `source_change` establishes a fresh boundary and contains `subscription_id`, `source_generation`, and
+  `live_edge_epoch`. The per-subscription filter is installed before that epoch becomes visible to producer callbacks,
+  so an older in-flight observation is rejected while the first observation at the new epoch remains eligible.
+- `network_event` contains one successful structured P25 presence observation received at or after that boundary.
+- `live_gap` contains `dropped`; clients must discard comparative transition state because no replay bridges the
+  missing interval.
+
+`network_event` fields are `event_id`, `sequence`, `source_generation`, `observation_epoch`, `observed_at_ms`, `kind`,
+`evidence_type`, `outcome`, `scope_kind`, `configuration_id`, display-only channel/system/site names, `protocol`,
+optional `frequency_hz`/`timeslot`, optional `site`, optional `radio_system_key` and navigation references, `radio`,
+and optional `group`. `site` can contain WACN, System ID, RFSS, Site ID, and NAC only when each fact is available.
+Radio/group objects carry `native_id`, `observed_local_id`, and, for fully-qualified identities, the home WACN,
+System ID, and home identity. Every supported radio/group object has a server-generated opaque `identity_key`.
+When the current navigation catalog proves the saved channel's system scope, that key is canonical and an
+`entity_ref` is also present. Otherwise the key is a stable, configuration-scoped `v1-local-*` presentation key,
+`scope_kind` is `channel`, and `configuration_id` remains the authority. Local keys are not navigation identifiers;
+clients must not parse them or synthesize a P25 system key. If later catalog evidence supplies a canonical identity,
+clients can reconcile it using `observed_local_id` rather than showing a subscriber migration. This live topic does
+not perform per-event database enrichment, so an alias label can be absent and clients must render the supplied
+native identity without blocking.
+
+`evidence_type` is `affiliation`, `registration`, or `clear`; it describes the structured decoder semantic and is not
+an inference from a call or a display string.
+
+The only supported `kind` values are:
+
+- `affiliation_observed`: an `ACCEPTED` or `CONFIRMED` structured P25 observation with a real group;
+- `presence_observed`: an accepted structured P25 registration without a group;
+- `presence_cleared`: an explicit structured P25 `CLEARED` observation, scoped to its source channel.
+
+Requests, rejected or unresolved responses, grants, calls, generic last-seen events, and decoder display strings do
+not produce network events. DMR and NXDN affiliation remain unsupported rather than inferred from generic signaling.
+Repeated successful observations are freshness evidence; the server does not label them as migrations. Consumers
+compare compatible scope and ordering after the live edge.
 
 Channel-activity snapshots include `configuration_id`, protocol-neutral system/site/channel display labels, explicit
-navigation references, and protocol facts. Target metadata remains available for Alias and routing consumers. The
-browser uses the saved channel as the primary identity for analog AM/NBFM presentation and actions.
+navigation references, protocol facts, a proven `radio_system_key` when available, and structured P25 WACN, System,
+RFSS, Site, and NAC observation context when decoded. Target metadata remains available for Alias and routing
+consumers. The browser uses the saved channel as the primary identity for analog AM/NBFM presentation and actions.
+
+When decoded-audio handoff has observed a physical call leg, its channel-activity row also contains `call_leg_id`,
+`tx_state`, `tx_observed_at_ms`, `tx_start_ms`, `tx_last_observed_at_ms`, `tx_end_certain`,
+`tx_burst_generation`, and `tx_burst_started_at_ms`. The row-owned burst fields identify a key-up within the stable
+physical call leg so snapshot consumers can reject replayed activity while still recognizing a later burst on that
+leg. `CALL_CREATED` is `pending`; a decoded `BURST_STARTED` or sampled `AUDIO_FRAME` is `active`; `BURST_ENDED` or a
+terminal `CALL_COMPLETED` is `ended` with a certain end. Linked audio-file chunk rollover retains the same physical leg
+and does not end it. A grant or active row alone never sets `tx_state=active`. If a pending/active row becomes idle or
+expires without an observed audio end, it becomes `uncertain`; row aging is not presented as an over-the-air end.
+When a digital row has a supported source or target identity but no catalog-proven `source_entity_ref` or
+`target_entity_ref`, it carries a stable `source_identity_key` or `target_identity_key` in the same channel-scoped
+`v1-local-*` form. The original `source_id`/`target_id` remains available for later canonical reconciliation.
 
 ## Browser calls and audio
 
