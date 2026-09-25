@@ -46,6 +46,7 @@
     transition: none;
   }
 
+  .network-visualizer-domain,
   .network-visualizer-label {
     transition: none;
   }

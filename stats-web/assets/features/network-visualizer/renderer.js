@@ -477,6 +477,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const nodeObjects = new Map();
   const linkObjects = new Map();
   const labelElements = new Map();
+  const domainElements = new Map();
   const dragging = new Map();
   const steadyParticleCounts = new Map();
   const pulseReservations = new Map();
@@ -1347,6 +1348,53 @@ async function createNetworkVisualizerRenderer(options = {}) {
     return distanceTier;
   }
 
+  function renderProjectedDomains(width, height) {
+    const visibleDomains = new Set();
+    for (const universe of renderNodes.values()) {
+      if (nodeType(universe) !== 'universe' || universe.expandedField !== true || universe.visible === false) continue;
+      const points = [universe, ...[...renderNodes.values()].filter((node) => node.visible !== false &&
+        node.universeKey === universe.key && ['group', 'aggregate'].includes(nodeType(node)))].map((node) => {
+        const position = renderedPosition(node);
+        try {
+          return graph.graph2ScreenCoords(position.x, position.y, position.z);
+        } catch (_) {
+          return null;
+        }
+      }).filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+      if (!points.length) continue;
+      const key = nodeKey(universe);
+      visibleDomains.add(key);
+      let element = domainElements.get(key);
+      if (!element) {
+        element = createElement(documentValue, 'div', 'network-visualizer-domain');
+        element.dataset.key = key;
+        domainElements.set(key, element);
+        labelLayer.prepend(element);
+      }
+      const paddingX = mode === 'flat' ? 54 : 72;
+      const paddingY = mode === 'flat' ? 46 : 62;
+      const minimumX = Math.min(...points.map((point) => point.x)) - paddingX;
+      const maximumX = Math.max(...points.map((point) => point.x)) + paddingX;
+      const minimumY = Math.min(...points.map((point) => point.y)) - paddingY;
+      const maximumY = Math.max(...points.map((point) => point.y)) + paddingY;
+      const left = clamp(minimumX, 10, Math.max(10, width - 130));
+      const top = clamp(minimumY, 10, Math.max(10, height - 110));
+      const right = clamp(maximumX, left + 120, Math.max(left + 120, width - 10));
+      const bottom = clamp(maximumY, top + 100, Math.max(top + 100, height - 10));
+      element.style.left = `${Math.round(left)}px`;
+      element.style.top = `${Math.round(top)}px`;
+      element.style.width = `${Math.round(right - left)}px`;
+      element.style.height = `${Math.round(bottom - top)}px`;
+      element.dataset.active = String(Boolean(universe.active || universe.afterglow));
+      element.hidden = false;
+    }
+    for (const [key, element] of domainElements) {
+      if (visibleDomains.has(key)) continue;
+      element.remove();
+      domainElements.delete(key);
+    }
+  }
+
   function updateOffscreenActivityCount(width, height) {
     if (typeof callbacks.onOffscreenActivity !== 'function') return;
     const camera = graph?.camera();
@@ -1377,6 +1425,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (!width || !height) return;
     const tier = currentLabelZoomTier();
     updateOffscreenActivityCount(width, height);
+    renderProjectedDomains(width, height);
     const candidates = [];
     const previouslyVisible = new Set([...labelElements.entries()]
       .filter(([, element]) => element.dataset.visible === 'true').map(([key]) => key));
@@ -2055,7 +2104,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     linkObjects.forEach((object) => object.geometry?.dispose());
     linkObjects.clear();
     labelElements.forEach((element) => element.remove());
+    domainElements.forEach((element) => element.remove());
     labelElements.clear();
+    domainElements.clear();
     labelResidence.clear();
     labelHiddenAt.clear();
     labelMembership.clear();
@@ -2322,11 +2373,13 @@ async function createNetworkVisualizerRenderer(options = {}) {
     ownedNodeMaterials.forEach(({ material }) => material.dispose?.());
     disposeSharedResources();
     labelElements.forEach((element) => element.remove());
+    domainElements.forEach((element) => element.remove());
     renderNodes.clear();
     renderLinks.clear();
     nodeObjects.clear();
     linkObjects.clear();
     labelElements.clear();
+    domainElements.clear();
     labelResidence.clear();
     labelHiddenAt.clear();
     labelMembership.clear();

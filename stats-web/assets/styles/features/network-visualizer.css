@@ -222,8 +222,32 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   pointer-events: none;
 }
 
+.network-visualizer-domain {
+  position: absolute;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--network-system) 10%, transparent),
+      transparent 70%);
+  border: 2px solid color-mix(in srgb, var(--network-system) 56%, transparent);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 54px color-mix(in srgb, var(--network-system) 8%, transparent),
+    0 0 28px color-mix(in srgb, var(--network-system) 10%, transparent);
+  opacity: .72;
+  transition: left 320ms ease, top 320ms ease, width 320ms ease, height 320ms ease,
+    border-color 280ms ease, box-shadow 280ms ease;
+}
+
+.network-visualizer-domain[data-active="true"] {
+  border-color: color-mix(in srgb, var(--network-tx) 72%, transparent);
+  box-shadow:
+    inset 0 0 64px color-mix(in srgb, var(--network-tx) 11%, transparent),
+    0 0 34px color-mix(in srgb, var(--network-tx) 14%, transparent);
+}
+
 .network-visualizer-label {
   position: absolute;
+  z-index: 1;
   max-width: var(--network-label-max-width);
   padding: var(--space-1) var(--space-2);
   overflow: hidden;
