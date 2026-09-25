@@ -20,7 +20,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
-import { WebCallPlayer } from './web-call-player.js?v=2';
+import { WebCallPlayer } from './web-call-player.js?v=3';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -15495,16 +15495,19 @@ function liveChannelsSection(onSelectionChange) {
     const signalStrength = qualityFresh && Number.isFinite(signalValue) ? signalValue : null;
     const decodeQuality = qualityFresh && Number.isFinite(decodeValue) ?
       Math.max(0, Math.min(100, decodeValue)) : null;
+    const stopped = value.table_id !== 'conventional' && value.channel_running === false;
+    const operatingState = value.table_id === 'conventional' ? 'Live' : (stopped ? 'Stopped' : 'Running');
     if (value.table_id === 'conventional') {
       quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
-      tab.title = label;
-      select.setAttribute('aria-label', `Show live channels for ${label}`);
-      stateLabel.textContent = 'Live';
+      tab.title = `${label} · ${operatingState}`;
+      select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}`);
+      stateLabel.textContent = operatingState;
     } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
-      tab.title = `${label} · Signal strength and decode quality unavailable`;
-      select.setAttribute('aria-label', `Show live channels for ${label}; signal strength and decode quality unavailable`);
-      stateLabel.textContent = value.channel_running === false ? 'Stopped' : 'Running';
+      tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable`;
+      select.setAttribute('aria-label',
+        `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable`);
+      stateLabel.textContent = operatingState;
     } else {
       const level = signalBarLevel(signalStrength);
       const state = decodeQuality === null ? 'unavailable' :
@@ -15515,13 +15518,12 @@ function liveChannelsSection(onSelectionChange) {
         `${signalStrength.toFixed(1)} dBFS signal strength`;
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
         `${decodeQuality.toFixed(1)}% decode quality`;
-      tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
-      select.setAttribute('aria-label', `Show live channels for ${label}, ${signalLabel}, ${qualityLabel}`);
-      stateLabel.textContent = decodeQuality === null ? 'Running' : `Running · ${Math.round(decodeQuality)}%`;
+      tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}`;
+      select.setAttribute('aria-label',
+        `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}`);
+      stateLabel.textContent = operatingState;
     }
-    const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     tab.classList.toggle('stopped', stopped);
-    if (stopped) stateLabel.textContent = 'Stopped';
     updatePickerSummary();
     const requestedMatch = liveRequestedChannelMatch(value, requestedChannel);
     if (requestedMatch) {

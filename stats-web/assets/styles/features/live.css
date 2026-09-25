@@ -61,6 +61,7 @@ body[data-view="live"] .content > .live-split.picker-collapsed {
 
 .live-split.details-collapsed .live-right-workspace {
   grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: var(--space-3);
 }
 
 .live-workspace-resizer {
@@ -1003,6 +1004,10 @@ body[data-view="live"] .channel-diagnostic-readouts {
     position: relative;
     grid-template-rows: minmax(0, 1fr) auto;
     gap: var(--space-2);
+  }
+
+  .live-split.details-collapsed .live-right-workspace {
+    row-gap: var(--space-2);
   }
 
   .live-workspace-resizer {

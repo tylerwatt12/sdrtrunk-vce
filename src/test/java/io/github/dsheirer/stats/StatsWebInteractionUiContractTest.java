@@ -686,12 +686,13 @@ class StatsWebInteractionUiContractTest
         String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");
+        String renderVolume = function(source, "  renderVolume()");
 
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=1';"));
+        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=3';"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertFalse(source.contains("VOLUME_KEY"));
         assertFalse(source.contains("localStorage"));
@@ -710,14 +711,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(ensureAudioContext.contains("this.audioContext.createGain()"));
         assertTrue(ensureAudioContext.contains("this.gainNode.gain.value = this.volume"));
         assertTrue(startCurrent.contains("source.connect(this.analyserNode)"));
-        String waveform = function(source, "  readAudioWaveform(levels)");
-        assertTrue(waveform.contains("this.analyserNode.getByteTimeDomainData(this.waveformSamples)"));
-        assertTrue(waveform.contains("Math.abs(this.waveformSamples[sample] - 128) / 128"));
+        String spectrum = function(source, "  readAudioSpectrum(levels, maximumFrequencyHz = 8_000)");
+        assertTrue(spectrum.contains("this.analyserNode.getByteFrequencyData(this.spectrumSamples)"));
+        assertTrue(spectrum.contains("Math.ceil(maximum / nyquist * sampleCount)"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
+        assertTrue(css.contains(".playback-volume:has(input:focus-visible)"));
         assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
-        assertTrue(css.contains("height: 20px"));
-        assertTrue(css.contains(".playback-volume {\n  position: relative;\n  width: 92px;\n  height: 32px;"));
-        assertTrue(css.contains("border: 1px solid var(--transport-control);"));
+        assertTrue(css.contains(".playback-volume {\n  --playback-volume-level: 100%;"));
+        assertTrue(css.contains("height: var(--icon-action-size);"));
+        assertTrue(css.contains("border: 1px solid var(--playback-control-border);"));
+        assertTrue(css.contains(".playback-volume input::-webkit-slider-thumb"));
+        assertTrue(renderVolume.contains("--playback-volume-level"));
     }
 
     @Test
@@ -781,8 +785,11 @@ class StatsWebInteractionUiContractTest
         assertFalse(html.contains("id=\"playback-capacity\""));
         assertFalse(source.contains("Matching calls are delivered once"));
         assertTrue(css.contains(".playback-panel-note:empty"));
-        assertTrue(css.contains("linear-gradient(180deg, var(--transport-control) 0%, " +
+        assertTrue(css.contains(".playback-subscription-panel,\n.playback-queue-list {"));
+        assertTrue(css.contains("background: var(--transport-surface);"));
+        assertFalse(css.contains("linear-gradient(180deg, var(--transport-control) 0%, " +
             "var(--transport-surface) 52%, var(--transport-surface) 100%)"));
+        assertTrue(source.contains("ui-selection-check ui-selection-check-inverse"));
         assertFalse(html.contains("id=\"playback-mute\""));
         assertFalse(html.contains(">Unmute<"));
         assertTrue(source.contains("this.stopped = true"));

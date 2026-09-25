@@ -27,6 +27,27 @@ async function main() {
   };
 
   try {
+    const volumeAttributes = new Map();
+    const volumeStyles = new Map();
+    const volumePlayer = Object.assign(Object.create(WebCallPlayer.prototype), {
+      volume: 0.65,
+      ui: { volume: {
+        setAttribute(name, value) { volumeAttributes.set(name, value); },
+        closest(selector) {
+          assert.equal(selector, '.playback-volume');
+          return { style: { setProperty(name, value) { volumeStyles.set(name, value); } } };
+        }
+      } }
+    });
+    volumePlayer.renderVolume();
+    assert.equal(volumeAttributes.get('aria-valuetext'), '65 percent');
+    assert.equal(volumeStyles.get('--playback-volume-level'), '65%',
+      'The handleless volume control must preserve a visible fill level');
+    volumePlayer.volume = 0;
+    volumePlayer.renderVolume();
+    assert.equal(volumeStyles.get('--playback-volume-level'), '0%',
+      'The handleless volume control must render its empty state');
+
     const presentation = Object.create(WebCallPlayer.prototype);
     Object.assign(presentation, {
       current: null,

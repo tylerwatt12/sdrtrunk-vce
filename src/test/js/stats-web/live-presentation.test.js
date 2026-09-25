@@ -237,6 +237,18 @@ assert.match(settingsActivation, /snapshot = await synchronizeUserPreferences\(\
   'Signed-in users can retry a failed preference load from the Live settings action');
 assert.doesNotMatch(channels, /activeRowOrders|activeOrders/,
   'Frontend ordering must come from the authoritative snapshot without duplicate state');
+assert.doesNotMatch(channels, /Running · \$\{Math\.round\(decodeQuality\)\}%/,
+  'The Live picker must reserve written state for Running or Stopped instead of repeating decode quality');
+assert.match(channels, /stateLabel\.textContent = operatingState/,
+  'The Live picker must keep a concise written operating state alongside its quality bars');
+assert.match(channels,
+  /channels-tab-quality ui-quality-bars ui-quality-\$\{state\} ui-quality-level-\$\{level\}/,
+  'The Live picker must keep decode-quality color and signal-strength bar count as separate cues');
+assert.match(channels, /tab\.title = `\$\{label\} · \$\{operatingState\} · \$\{signalLabel\} · \$\{qualityLabel\}`/,
+  'Exact signal strength and decode quality must remain available as a pointer hint');
+assert.match(channels,
+  /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}`/,
+  'Operational state, signal strength, and decode quality must remain in the accessible picker name');
 assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
   'Conventional tables stay sortable while active-only trunked tables retain activation order');
 assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)/,

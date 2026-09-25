@@ -345,6 +345,50 @@ test('app-chrome-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('app-chrome-dark-mobile.png');
 });
 
+test('app chrome transport controls and popovers share one compact surface language', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/design-system.html?theme=dark&view=app-chrome');
+  const example = page.locator('.visual-app-chrome-example');
+  const command = example.locator('.playback-command').first();
+  const volume = example.locator('.playback-volume');
+  const avoidGroup = example.locator('.playback-command-group');
+  await expect(volume).toHaveCSS('height', '40px');
+  await expect(volume).toHaveCSS('border-top-width', '1px');
+  await expect(avoidGroup).toHaveCSS('border-top-width', '1px');
+  const [commandBounds, volumeBounds] = await Promise.all([command.boundingBox(), volume.boundingBox()]);
+  expect(Math.abs((commandBounds.y + commandBounds.height / 2) -
+    (volumeBounds.y + volumeBounds.height / 2))).toBeLessThanOrEqual(2);
+  await volume.evaluate((element) => {
+    element.style.setProperty('--playback-volume-level', '0%');
+  });
+  await expect(volume.locator('.playback-volume-label')).toHaveCSS('background-clip', 'text');
+  await expect(volume).toHaveScreenshot('app-chrome-volume-empty-dark-desktop.png');
+  await volume.locator('input').focus();
+  await expect(volume).toHaveCSS('outline-style', 'solid');
+  await volume.evaluate((element) => {
+    element.style.setProperty('--playback-volume-level', '75%');
+  });
+
+  const subscriptions = example.locator('.playback-subscriptions');
+  await subscriptions.locator('summary').click();
+  const subscriptionPanel = subscriptions.locator('.playback-subscription-panel');
+  await expect(subscriptionPanel).toBeVisible();
+  await expect(subscriptionPanel).toHaveCSS('background-image', 'none');
+  await expect(subscriptionPanel).toHaveCSS('overflow-y', 'hidden');
+  await expect(subscriptionPanel.locator('.playback-scan-list-options')).toHaveCSS('overflow-y', 'auto');
+  await expect(subscriptionPanel.locator('.ui-selection-check-inverse')).toHaveCount(3);
+  await expect(page).toHaveScreenshot('app-chrome-scan-lists-dark-desktop.png');
+
+  await subscriptions.locator('summary').click();
+  const queue = example.locator('.playback-queue');
+  await queue.locator('summary').click();
+  const queuePanel = queue.locator('.playback-queue-list');
+  await expect(queuePanel).toBeVisible();
+  await expect(queuePanel).toHaveCSS('background-image', 'none');
+  await expect(queuePanel.locator('.playback-queue-item')).toHaveCount(3);
+  await expect(page).toHaveScreenshot('app-chrome-queue-dark-desktop.png');
+});
+
 test('app chrome keeps desktop navigation and mobile playback controls distinct', async ({ page }) => {
   const navigation = page.locator('.visual-app-chrome-example .navigation-toggle');
   const playbackMenu = page.locator('.visual-app-chrome-example .playback-control-menu');
@@ -771,6 +815,24 @@ test('Live selected-view actions use compact icons with shared hints', async ({ 
   await expect(page.locator('.ui-icon-hint')).toBeVisible();
   await expect(header.getByRole('button', { name: 'Live presentation settings' })).toBeVisible();
 
+  const picker = page.locator('.visual-live-example .live-channel-picker');
+  const pickerStates = picker.locator('.channels-tab-state-label');
+  expect((await pickerStates.allTextContents()).every((value) => !value.includes('%'))).toBe(true);
+  await expect(picker.locator('[data-table-id="county"] .channels-tab-quality'))
+    .toHaveClass(/ui-quality-healthy.*ui-quality-level-4/);
+  await expect(picker.locator('[data-table-id="city"] .channels-tab-quality'))
+    .toHaveClass(/ui-quality-degraded.*ui-quality-level-3/);
+  await expect(picker.locator('[data-table-id="regional"] .channels-tab-quality'))
+    .toHaveClass(/ui-quality-poor.*ui-quality-level-1/);
+  const decodeOnlyQuality = picker.locator('[data-table-id="regional"] .channels-tab-quality');
+  await decodeOnlyQuality.evaluate((element) => {
+    element.classList.remove('ui-quality-level-1');
+    element.classList.add('ui-quality-level-0');
+  });
+  await expect(decodeOnlyQuality).toHaveCSS('outline-style', 'solid');
+  await expect(picker.getByRole('tab', { name: /County Simulcast/ }))
+    .toHaveAccessibleName(/-58\.2 dBFS signal strength, 97\.4% decode quality/);
+
   const rows = page.locator('.channels-live-table tbody > tr');
   const control = rows.nth(0);
   const labeled = rows.nth(1);
@@ -852,6 +914,13 @@ test('Live desktop workspace persists its resizable details ratio and keeps one 
     await detailsCollapse.click();
     await expect(restoredDivider).toBeHidden();
     await expect(details.locator('.live-details-body')).toBeHidden();
+    await expect(workspace).toHaveCSS('row-gap', '12px');
+    const [primaryBox, detailsBox] = await Promise.all([
+      workspace.locator('.live-channels-section').boundingBox(), details.boundingBox()
+    ]);
+    expect(Math.abs(detailsBox.y - (primaryBox.y + primaryBox.height) - 12)).toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(page.locator('body')).toHaveScreenshot('live-details-collapsed-light-desktop.png');
     await details.getByRole('tab', { name: 'Messages' }).click();
     await expect(details).not.toHaveClass(/collapsed/);
     await expect(details.locator('.live-details-body')).toBeVisible();

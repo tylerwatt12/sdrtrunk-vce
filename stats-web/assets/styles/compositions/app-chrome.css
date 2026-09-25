@@ -160,21 +160,33 @@
 }
 
 .playback-command-group {
+  height: var(--icon-action-size);
   display: inline-flex;
   align-items: center;
+  overflow: hidden;
+  background: var(--transport-control);
+  border: 1px solid var(--playback-control-border);
+  border-radius: var(--icon-action-radius);
 }
 
 .playback-command-group .playback-command {
+  width: calc(var(--icon-action-size) - 1px);
+  min-width: calc(var(--icon-action-size) - 1px);
+  height: calc(var(--icon-action-size) - 2px);
+  min-height: calc(var(--icon-action-size) - 2px);
+  background: transparent;
+  border: 0;
   border-radius: 0;
 }
 
-.playback-command-group .playback-command:first-child {
-  border-radius: var(--icon-action-radius) 0 0 var(--icon-action-radius);
+.playback-command-group .playback-command + .playback-command {
+  border-left: 1px solid var(--playback-control-border);
 }
 
-.playback-command-group .playback-command:last-child {
-  margin-left: -1px;
-  border-radius: 0 var(--icon-action-radius) var(--icon-action-radius) 0;
+.playback-command-group .playback-command:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--transport-accent);
+  outline-offset: -3px;
 }
 
 .playback-menu-command {
@@ -226,18 +238,23 @@
 }
 
 .playback-volume {
+  --playback-volume-level: 100%;
   position: relative;
   width: 92px;
-  height: 32px;
+  height: var(--icon-action-size);
   display: block;
-  min-height: 32px;
-  padding: 0 2px;
+  min-height: var(--icon-action-size);
+  padding: 0;
   overflow: hidden;
   white-space: nowrap;
-  background: linear-gradient(180deg, var(--transport-control) 0%, var(--transport-surface) 100%);
-  border: 1px solid var(--transport-control);
-  border-radius: 4px;
-  box-shadow: inset 0 1px color-mix(in srgb, var(--transport-ink) 4%, transparent);
+  background: linear-gradient(90deg,
+      var(--transport-accent) 0,
+      var(--transport-accent) var(--playback-volume-level),
+      var(--transport-control) var(--playback-volume-level),
+      var(--transport-control) 100%);
+  border: 1px solid var(--playback-control-border);
+  border-radius: var(--icon-action-radius);
+  box-shadow: none;
 }
 
 .playback-volume input {
@@ -250,59 +267,78 @@
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
+  border-radius: inherit;
   cursor: pointer;
 }
 
-.playback-volume input:focus-visible {
+.playback-volume:has(input:focus-visible) {
   outline: 2px solid var(--transport-accent);
-  outline-offset: -2px;
+  outline-offset: 2px;
+}
+
+.playback-volume input:focus-visible {
+  outline: 0;
 }
 
 .playback-volume input::-webkit-slider-runnable-track {
-  height: 20px;
-  background: var(--transport-accent);
+  height: 100%;
+  background: transparent;
   border: 0;
-  border-radius: 2px;
-  box-shadow: inset 0 0 5px color-mix(in srgb, var(--transport-surface) 25%, transparent);
+  border-radius: inherit;
+  box-shadow: none;
 }
 
 .playback-volume input::-webkit-slider-thumb {
-  width: 8px;
-  height: 22px;
-  margin-top: -1px;
+  width: 20px;
+  height: 100%;
+  margin: 0;
   appearance: none;
   -webkit-appearance: none;
-  background: var(--transport-surface);
-  border: 1px solid var(--transport-surface);
-  border-radius: 1px;
+  opacity: 0;
+  background: transparent;
+  border: 0;
 }
 
 .playback-volume input::-moz-range-track {
-  height: 20px;
-  background: var(--transport-accent);
+  height: 100%;
+  background: transparent;
   border: 0;
-  border-radius: 2px;
-  box-shadow: inset 0 0 5px color-mix(in srgb, var(--transport-surface) 25%, transparent);
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.playback-volume input::-moz-range-progress {
+  height: 100%;
+  background: transparent;
 }
 
 .playback-volume input::-moz-range-thumb {
-  width: 8px;
-  height: 22px;
-  background: var(--transport-surface);
-  border: 1px solid var(--transport-surface);
-  border-radius: 1px;
+  width: 20px;
+  height: 100%;
+  opacity: 0;
+  background: transparent;
+  border: 0;
 }
 
 .playback-volume-label {
   position: absolute;
   z-index: 2;
-  top: 50%;
-  left: 10px;
-  color: var(--transport-surface);
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  color: var(--transport-ink);
+  background: linear-gradient(90deg,
+      var(--transport-surface) 0,
+      var(--transport-surface) var(--playback-volume-level),
+      var(--transport-ink) var(--playback-volume-level),
+      var(--transport-ink) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
   font: 950 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: .04em;
   pointer-events: none;
-  transform: translateY(-50%);
 }
 
 .playback-subscriptions,
@@ -340,49 +376,50 @@
 .playback-subscription-panel,
 .playback-queue-list {
   position: absolute;
-  top: calc(100% + 5px);
+  top: calc(100% + var(--space-2));
   right: 0;
   width: min(460px, 82vw);
   max-height: 320px;
   overflow: auto;
-  padding: 5px;
+  padding: var(--space-3);
   color: var(--transport-ink);
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--transport-ink) 5%, transparent), transparent 16%),
-    linear-gradient(180deg, var(--transport-control) 0%, var(--transport-surface) 52%, var(--transport-surface) 100%);
-  border: 1px solid var(--transport-control);
-  border-bottom-color: var(--transport-surface);
+  background: var(--transport-surface);
+  border: 1px solid var(--playback-control-border);
   border-radius: var(--radius-card);
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--transport-surface) 45%, transparent), inset 0 1px color-mix(in srgb, var(--transport-ink) 5%, transparent);
+  box-shadow: var(--shadow-modal);
   z-index: 24;
 }
 
 .playback-subscription-panel {
   width: min(430px, 88vw);
-  padding: 10px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .playback-panel-heading {
-  margin-bottom: 7px;
+  margin-bottom: var(--space-2);
+  padding-inline: var(--space-1);
   color: var(--transport-ink);
   font-weight: 700;
 }
 
 .playback-scan-list-options {
+  min-height: 0;
   max-height: 300px;
   overflow: auto;
-  background: color-mix(in srgb, var(--transport-surface) 18%, transparent);
-  border: 1px solid var(--transport-control);
+  background: transparent;
+  border: 1px solid var(--playback-control-border-subtle);
   border-radius: var(--radius-control);
 }
 
 .playback-scan-list-option {
-  min-height: 44px;
+  min-height: 46px;
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   color: var(--transport-ink);
   border-bottom: 1px solid var(--transport-control);
   cursor: pointer;
@@ -418,7 +455,8 @@
 }
 
 .playback-panel-note {
-  margin-top: 8px;
+  margin-top: var(--space-2);
+  padding-inline: var(--space-1);
 }
 
 .playback-panel-note:empty {
@@ -426,10 +464,12 @@
 }
 
 .playback-queue-item {
+  min-height: 44px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
-  gap: 4px;
-  padding: 6px 7px;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   overflow: hidden;
   border-bottom: 1px solid var(--transport-control);
   text-overflow: ellipsis;
@@ -441,9 +481,21 @@
   text-overflow: ellipsis;
 }
 
+.playback-queue-item:last-child {
+  border-bottom: 0;
+}
+
 .playback-queue-order {
   color: var(--transport-muted);
   text-align: right;
+}
+
+.playback-panel-empty {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  color: var(--transport-muted);
 }
 
 .playback-status {
@@ -791,20 +843,17 @@
 
   .desktop-playback-slot .playback-control-menu[open] > .playback-control-menu-panel {
     position: absolute;
-    top: calc(100% + 6px);
+    top: calc(100% + var(--space-2));
     left: 0;
     z-index: 40;
     width: min(280px, calc(100vw - 16px));
     display: grid;
-    gap: 8px;
-    padding: 8px;
-    background:
-      linear-gradient(145deg, color-mix(in srgb, var(--transport-ink) 5%, transparent), transparent 16%),
-      linear-gradient(180deg, var(--transport-control) 0%, var(--transport-surface) 52%, var(--transport-surface) 100%);
-    border: 1px solid var(--transport-control);
-    border-bottom-color: var(--transport-surface);
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--transport-surface);
+    border: 1px solid var(--playback-control-border);
     border-radius: var(--radius-card);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--transport-surface) 45%, transparent), inset 0 1px color-mix(in srgb, var(--transport-ink) 5%, transparent);
+    box-shadow: var(--shadow-modal);
   }
 
   .desktop-playback-slot .playback-control-menu-panel .playback-controls {
@@ -911,13 +960,15 @@
 }
 
 .playback-bar {
+  --playback-control-border: color-mix(in srgb, var(--transport-muted) 42%, var(--transport-control));
+  --playback-control-border-subtle: color-mix(in srgb, var(--transport-muted) 34%, var(--transport-control));
   position: relative;
   min-height: 53px;
   display: grid;
   grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content;
   align-items: center;
   gap: 5px;
-  padding: 3px 10px;
+  padding: 5px 10px 1px;
   color: var(--transport-accent);
   background: var(--transport-surface);
   border-bottom: 1px solid var(--transport-control);
@@ -931,10 +982,11 @@
 .playback-subscriptions summary,
 .playback-queue summary,
 .desktop-playback-slot .playback-control-menu > summary {
+  height: var(--icon-action-size);
   min-height: var(--icon-action-size);
   color: var(--transport-ink);
   background: var(--transport-control);
-  border: 1px solid var(--transport-surface);
+  border: 1px solid var(--playback-control-border);
   border-radius: var(--icon-action-radius);
   box-shadow: none;
 }
@@ -971,6 +1023,11 @@
   cursor: default;
 }
 
+.playback-command-group .playback-command:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
 @media (min-width: 1181px) and (max-width: 1250px) {
   .playback-bar {
     grid-template-columns: max-content max-content minmax(160px, 1fr) max-content max-content max-content max-content;
@@ -991,7 +1048,7 @@
     min-height: 50px;
     grid-template-columns: max-content minmax(0, 1fr) max-content;
     gap: 7px;
-    padding: 3px 7px;
+    padding: 5px 7px 1px;
   }
 }
 

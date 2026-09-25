@@ -445,8 +445,12 @@ if(view === 'live-notice') {
 }
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
-if(view === 'app-chrome' && window.matchMedia('(max-width: 1180px)').matches) {
-  document.querySelector('.visual-app-chrome-example .playback-control-menu').open = false;
+if(view === 'app-chrome') {
+  document.querySelector('.visual-app-chrome-example .playback-volume')?.style
+    .setProperty('--playback-volume-level', '75%');
+  if(window.matchMedia('(max-width: 1180px)').matches) {
+    document.querySelector('.visual-app-chrome-example .playback-control-menu').open = false;
+  }
 }
 const label = document.getElementById('visual-theme-label');
 if(label) label.textContent = `${theme[0].toUpperCase()}${theme.slice(1)} theme`;

@@ -410,6 +410,7 @@ export class WebCallPlayer {
       const label = document.createElement('label');
       label.className = 'playback-scan-list-option';
       const checkbox = document.createElement('input');
+      checkbox.className = 'ui-selection-check ui-selection-check-inverse';
       checkbox.type = 'checkbox';
       checkbox.value = item.id;
       checkbox.checked = this.selectedScanListIds.has(item.id);
@@ -441,7 +442,7 @@ export class WebCallPlayer {
 
   scanListMessage(message) {
     const value = document.createElement('div');
-    value.className = 'muted';
+    value.className = 'playback-panel-empty muted';
     value.textContent = message;
     return value;
   }
@@ -1046,7 +1047,10 @@ export class WebCallPlayer {
   }
 
   renderVolume() {
-    this.ui.volume.setAttribute('aria-valuetext', `${Math.round(this.volume * 100)} percent`);
+    const percent = Math.round(this.volume * 100);
+    this.ui.volume.setAttribute('aria-valuetext', `${percent} percent`);
+    const container = this.ui.volume.closest('.playback-volume');
+    container?.style.setProperty('--playback-volume-level', `${percent}%`);
   }
 
   isAllowed(call) {
@@ -1191,7 +1195,7 @@ export class WebCallPlayer {
     });
     if (!this.queuedCount) {
       const empty = document.createElement('div');
-      empty.className = 'muted';
+      empty.className = 'playback-panel-empty muted';
       empty.textContent = 'No queued calls';
       this.ui.queueList.append(empty);
     }

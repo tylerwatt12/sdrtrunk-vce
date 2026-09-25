@@ -355,6 +355,12 @@
   background: var(--quality-color);
 }
 
+.ui-quality-bars.ui-quality-level-0:not(.ui-quality-unavailable) {
+  outline: 1px solid var(--quality-color);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 .ui-quality-bars.ui-quality-neutral {
   display: none;
 }
@@ -729,6 +735,22 @@
 .ui-selection-check:disabled {
   cursor: not-allowed;
   opacity: .48;
+}
+
+.ui-selection-check-inverse {
+  color: var(--transport-surface);
+  background: var(--transport-surface);
+  border-color: var(--transport-muted);
+}
+
+.ui-selection-check-inverse:checked,
+.ui-selection-check-inverse:indeterminate {
+  background: var(--transport-accent);
+  border-color: var(--transport-accent);
+}
+
+.ui-selection-check-inverse:focus-visible {
+  outline-color: var(--transport-accent);
 }
 
 .ui-choice-radio {
