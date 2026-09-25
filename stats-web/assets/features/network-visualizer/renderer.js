@@ -560,7 +560,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const settings = { color: materialColor(state), transparent: true,
       opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.12 :
         name === 'system-field' ? 0.55 : name === 'system-field-ring' ? 0.82 : pending ? 0.34 : 0.82,
-      wireframe: name === 'encrypted' || name === 'system-field', depthWrite: false };
+      wireframe: name === 'encrypted' || name === 'system-field', depthTest: !field, depthWrite: false };
     if (name === 'outline') settings.side = library.BackSide;
     const material = protectSharedResource(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'special' });
@@ -741,6 +741,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       fieldRings[2].rotation.y = Math.PI / 2;
       [fieldFill, fieldBase, fieldEmphasis, fieldOutline, ...fieldRings].forEach((mesh) => {
         mesh.visible = false;
+        mesh.frustumCulled = false;
+        mesh.renderOrder = -10;
         mesh.raycast = () => {};
       });
       object.add(fieldFill, fieldBase, fieldEmphasis, fieldOutline, ...fieldRings);
