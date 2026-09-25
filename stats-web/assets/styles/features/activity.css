@@ -1,0 +1,120 @@
+.activity-filter-toolbar {
+  min-width: 0;
+  display: grid;
+  align-items: stretch;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-filter-primary,
+.activity-filter-grid,
+.activity-filter-custom-dates {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.activity-filter-primary {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.activity-filter-custom-dates[hidden] {
+  display: none;
+}
+
+.activity-filter-field {
+  min-width: 0;
+  align-content: end;
+  gap: var(--space-1);
+}
+
+.activity-filter-field > :nth-child(2),
+.activity-identity-control > input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.activity-filter-grants {
+  min-height: var(--ui-control-height);
+  align-self: end;
+}
+
+.activity-filter-advanced {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+}
+
+.activity-filter-advanced-summary {
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  color: var(--link);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-control);
+  cursor: pointer;
+}
+
+.activity-filter-advanced[open] .activity-filter-advanced-summary {
+  margin-bottom: var(--space-3);
+}
+
+.activity-identity-control {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.activity-identity-status:empty,
+.activity-channel-filter-status:empty {
+  display: none;
+}
+
+.activity-filter-counterpart {
+  min-width: 0;
+  display: contents;
+}
+
+.activity-filter-role-help {
+  align-self: center;
+  margin: 0;
+  padding: var(--space-2) 0;
+}
+
+.activity-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.activity-filter-error {
+  margin: 0;
+}
+
+.activity-filter-error[hidden] {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .activity-filter-toolbar {
+    padding: var(--space-3);
+  }
+
+  .activity-filter-primary,
+  .activity-filter-grid,
+  .activity-filter-custom-dates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .activity-filter-actions > button {
+    flex: 1 1 140px;
+  }
+}

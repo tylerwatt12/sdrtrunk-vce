@@ -34,6 +34,7 @@ class StatsWebJavaScriptBehaviorTest
     private static final int MAXIMUM_OUTPUT_LENGTH = 32_000;
     private static final List<Contract> CONTRACTS = List.of(
         contract("admin system status", "admin-system-status.test.js", APP_JAVASCRIPT),
+        contract("Activity filters", "activity-filters.test.js", APP_JAVASCRIPT),
         contract("Alias editor", "alias-editor.test.js", APP_JAVASCRIPT),
         contract("channel editor composition", "channel-editor.test.js", APP_JAVASCRIPT),
         contract("frontend foundation", "frontend-foundation.test.js", CORE_MODULES),

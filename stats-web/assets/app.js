@@ -64,6 +64,42 @@ const LIVE_DETAIL_MINIMUM_CAPTURE = 2000;
 const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
 const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
 const ACTIVITY_REFRESH_INTERVAL_MILLISECONDS = 10_000;
+const ACTIVITY_IDENTITY_SEARCH_DELAY_MILLISECONDS = 250;
+const ACTIVITY_ROUTE_KEYS = Object.freeze([
+  'activity_range', 'activity_from_ms', 'activity_to_ms', 'activity_action',
+  'activity_event_type', 'activity_encryption', 'activity_include_grants',
+  'activity_configuration_id', 'activity_radio_role', 'activity_group_match',
+  'activity_source_identity_key', 'activity_target_identity_key', 'activity_source_id',
+  'activity_target_id', 'activity_target_kind', 'activity_frequency_hz', 'activity_lcn',
+  'activity_timeslot'
+]);
+const ACTIVITY_LOG_RANGES = Object.freeze([
+  { value: 'all', label: 'All retained activity', milliseconds: 0 },
+  { value: '1h', label: 'Last hour', milliseconds: 60 * 60 * 1000 },
+  { value: '6h', label: 'Last 6 hours', milliseconds: 6 * 60 * 60 * 1000 },
+  { value: '24h', label: 'Last 24 hours', milliseconds: 24 * 60 * 60 * 1000 },
+  { value: '7d', label: 'Last 7 days', milliseconds: 7 * 24 * 60 * 60 * 1000 },
+  { value: '30d', label: 'Last 30 days', milliseconds: 30 * 24 * 60 * 60 * 1000 },
+  { value: 'custom', label: 'Custom dates', milliseconds: 0 }
+]);
+const ACTIVITY_ACTION_VALUES = Object.freeze([
+  'ACKNOWLEDGE', 'ACTIVE', 'BUSY', 'CALL', 'CHECK', 'CHECK_ACK', 'CONTINUE', 'DATA',
+  'DENIAL', 'EMERGENCY', 'GPS', 'GRANT', 'JOIN', 'LOGOUT', 'PAGE', 'PATCH',
+  'PATCH_CANCEL', 'PATCH_CREATE', 'QUEUED', 'REGISTER', 'REQUEST', 'STATUS', 'UNKNOWN'
+]);
+const ACTIVITY_EVENT_TYPE_VALUES = Object.freeze([
+  'AFFILIATE', 'ANNOUNCEMENT', 'ACKNOWLEDGE', 'AUTOMATIC_REGISTRATION_SERVICE', 'CALL',
+  'CALL_ENCRYPTED', 'CALL_GROUP', 'CALL_GROUP_ENCRYPTED', 'CALL_PATCH_GROUP',
+  'CALL_PATCH_GROUP_ENCRYPTED', 'CALL_ALERT', 'CALL_DETECT', 'CALL_IN_PROGRESS',
+  'CALL_DO_NOT_MONITOR', 'CALL_END', 'CALL_INTERCONNECT', 'CALL_INTERCONNECT_ENCRYPTED',
+  'CALL_UNIQUE_ID', 'CALL_UNIT_TO_UNIT', 'CALL_UNIT_TO_UNIT_ENCRYPTED', 'CALL_NO_TUNER',
+  'CALL_TIMEOUT', 'CELLOCATOR', 'COMMAND', 'DATA_CALL', 'DATA_CALL_ENCRYPTED', 'DATA_PACKET',
+  'DEREGISTER', 'DYNAMIC_REGROUP', 'EMERGENCY', 'FUNCTION', 'GPS', 'ICMP_PACKET', 'ID_ANI',
+  'ID_UNIQUE', 'IP_PACKET', 'LRRP', 'NOTIFICATION', 'PAGE', 'QUERY', 'RADIO_CHECK',
+  'RADIO_REGISTRATION_SERVICE', 'REGISTER', 'REGISTER_ESN', 'REQUEST', 'RESPONSE',
+  'RESPONSE_PACKET', 'SDM', 'SMS', 'STATION_ID', 'STATUS', 'TEXT_MESSAGE', 'UDP_PACKET',
+  'UNKNOWN_PACKET', 'XCMP', 'UNKNOWN', 'DENIAL'
+]);
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
 const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
@@ -265,6 +301,7 @@ let notifyConfirmedAccessRefresh = () => {};
 let playbackScanListRequest = 0;
 let playbackScanListLoading = false;
 let webCallPlayer = null;
+let activityFilterControlSequence = 0;
 
 function node(tag, className, textValue) {
   const element = document.createElement(tag);
@@ -15776,7 +15813,10 @@ async function renderRadioSystem() {
       }),
       renderContext);
   } else if (tab === 'activity') {
-    await renderActivity(radioSystem,
+    await renderActivity({ ...radioSystem, _activity_context: {
+      kind: isSavedChannelRadioSystem(system) ? 'saved-system' : 'system',
+      protocol: protocolFamily(system), radio_system_key: radioSystem.radio_system_key
+    } },
       isSavedChannelRadioSystem(system) ? 'Saved Channel Activity' : 'System Activity');
   } else {
     const infoColumn = node('div', 'entity-info-column system-info-column');
@@ -15868,7 +15908,10 @@ async function renderGroupIdentity() {
     content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
       columns, null, radioTableType('group-identity-radios', columns), action));
   } else if (tab === 'activity') {
-    await renderActivity({ ...radioSystem, group_identity_key: identityKey }, 'Activity Log');
+    await renderActivity({ ...radioSystem, group_identity_key: identityKey, _activity_context: {
+      kind: kind === 'patch_group' ? 'patch-group' : 'talkgroup',
+      protocol: protocolFamily(groupIdentity), radio_system_key: radioSystem.radio_system_key
+    } }, 'Activity Log');
   } else {
     const infoColumn = node('div', 'entity-info-column');
     const blocks = [section('Identity', keyValues([
@@ -15950,7 +15993,9 @@ async function renderRadio() {
     ];
     content.append(pagedSection('Groups', relationships, columns, null, 'radio-groups'));
   } else if (tab === 'activity') {
-    await renderActivity({ ...radioSystem, radio_identity_key: identityKey });
+    await renderActivity({ ...radioSystem, radio_identity_key: identityKey, _activity_context: {
+      kind: 'radio', protocol: protocolFamily(radio), radio_system_key: radioSystem.radio_system_key
+    } });
   } else {
     const infoColumn = node('div', 'entity-info-column entity-info-standalone');
     const identityValues = [
@@ -16484,7 +16529,14 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
       { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
         'channel-patches' }, trailing));
   } else if (tab === 'activity') {
-    await renderActivity({ configuration_id: configurationId });
+    await renderActivity({
+      configuration_id: configurationId,
+      radio_system_key: channel.radio_system_key,
+      _activity_context: {
+        kind: 'trunked-channel', protocol: protocolFamily(channel),
+        radio_system_key: channel.radio_system_key, configuration_id: configurationId
+      }
+    });
   } else {
     await renderTrunkedChannelInfo(channel, renderContext);
   }
@@ -16636,11 +16688,777 @@ function activityChannel(row) {
   return details ? fragment(channel, node('small', 'identity-summary-context', details)) : channel;
 }
 
+function activityOptionLabel(value) {
+  const labels = {
+    ACKNOWLEDGE: 'Acknowledge', CHECK_ACK: 'Check Ack', PATCH_CANCEL: 'Patch Cancel',
+    PATCH_CREATE: 'Patch Create', AUTOMATIC_REGISTRATION_SERVICE: 'Motorola ARS',
+    CALL_DO_NOT_MONITOR: 'Call - Do Not Monitor', CALL_GROUP: 'Group Call',
+    CALL_GROUP_ENCRYPTED: 'Encrypted Group Call', CALL_PATCH_GROUP: 'Patch Call',
+    CALL_PATCH_GROUP_ENCRYPTED: 'Encrypted Patch Call', CALL_UNIT_TO_UNIT: 'Unit-to-Unit Call',
+    CALL_UNIT_TO_UNIT_ENCRYPTED: 'Encrypted Unit-to-Unit Call', CALL_INTERCONNECT: 'Telephone Call',
+    CALL_INTERCONNECT_ENCRYPTED: 'Encrypted Telephone Call', CALL_NO_TUNER: 'Call - No Tuner',
+    DATA_CALL: 'Data Call', DATA_CALL_ENCRYPTED: 'Encrypted Data Call', ICMP_PACKET: 'ICMP Packet',
+    ID_ANI: 'ANI', ID_UNIQUE: 'Unique ID', IP_PACKET: 'IP Packet', LRRP: 'Motorola LRRP',
+    RADIO_REGISTRATION_SERVICE: 'Hytera RRS', REGISTER_ESN: 'ESN Registration',
+    RESPONSE_PACKET: 'Response Packet', SDM: 'Short Data Message', SMS: 'SMS',
+    UDP_PACKET: 'UDP/IP Packet', XCMP: 'Motorola XCMP'
+  };
+  return labels[value] || semanticLabel(value);
+}
+
+function activityFilterContext(scopeParameters) {
+  const supplied = scopeParameters?._activity_context;
+  const input = supplied && typeof supplied === 'object' && !Array.isArray(supplied) ? supplied : {};
+  const kinds = new Set(['system', 'saved-system', 'talkgroup', 'patch-group', 'radio',
+    'trunked-channel', 'conventional-digital', 'conventional-analog']);
+  const kind = kinds.has(input.kind) ? input.kind : 'system';
+  return Object.freeze({
+    kind,
+    protocol: String(input.protocol || '').trim().toUpperCase(),
+    radioSystemKey: String(input.radio_system_key || scopeParameters?.radio_system_key || '').trim(),
+    configurationId: String(input.configuration_id || scopeParameters?.configuration_id || '').trim()
+  });
+}
+
+function activityScopeParameters(scopeParameters) {
+  const result = {};
+  for (const key of ['radio_system_key', 'group_identity_key', 'radio_identity_key', 'configuration_id']) {
+    const value = scopeParameters?.[key];
+    if (value !== null && value !== undefined && value !== '') result[key] = value;
+  }
+  return result;
+}
+
+function activityContextCapabilities(context) {
+  const kind = context?.kind || 'system';
+  const analog = kind === 'conventional-analog';
+  const digitalConventional = kind === 'conventional-digital';
+  const systemIdentity = Boolean(context?.radioSystemKey) && !analog && !digitalConventional;
+  const trunked = ['system', 'saved-system', 'talkgroup', 'patch-group', 'radio',
+    'trunked-channel'].includes(kind);
+  return Object.freeze({
+    analog,
+    digitalConventional,
+    trunked,
+    channel: ['system', 'talkgroup', 'patch-group', 'radio'].includes(kind),
+    sourceIdentity: systemIdentity && ['system', 'saved-system', 'talkgroup', 'patch-group',
+      'trunked-channel'].includes(kind),
+    targetIdentity: systemIdentity && ['system', 'saved-system', 'trunked-channel'].includes(kind),
+    radioRole: kind === 'radio',
+    groupMatch: kind === 'talkgroup',
+    rawIdentities: digitalConventional,
+    encryption: !analog,
+    grants: trunked,
+    frequency: true,
+    lcn: trunked,
+    timeslot: !analog && (context?.protocol === 'DMR' || trunked && context?.protocol === 'P25')
+  });
+}
+
+function activityInteger(value, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
+}
+
+function activityIdentityKey(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return /^v1-[grp]-(?:x|[0-9a-f]{5})-(?:x|[0-9a-f]{3})-[0-9]+$/.test(key) ? key : '';
+}
+
+function activityRouteFilters(parameters, context, now = Date.now()) {
+  const value = (key) => String(parameters?.get?.(key) || '').trim();
+  const capabilities = activityContextCapabilities(context);
+  const requestedRange = value('activity_range').toLowerCase();
+  const range = ACTIVITY_LOG_RANGES.some((entry) => entry.value === requestedRange) ? requestedRange : 'all';
+  let fromMs = activityInteger(value('activity_from_ms'));
+  let toMs = activityInteger(value('activity_to_ms'));
+  if (range === 'custom' && (!fromMs || !toMs || fromMs >= toMs)) {
+    toMs = Math.max(1, Math.trunc(now));
+    fromMs = Math.max(1, toMs - 24 * 60 * 60 * 1000);
+  }
+  const actionValue = value('activity_action').toUpperCase();
+  const action = ACTIVITY_ACTION_VALUES.includes(actionValue) ? actionValue : '';
+  const eventValue = value('activity_event_type').toUpperCase();
+  const eventType = ACTIVITY_EVENT_TYPE_VALUES.includes(eventValue) ? eventValue : '';
+  const encryptionValue = value('activity_encryption').toLowerCase();
+  const encryption = capabilities.encryption && ['clear', 'encrypted'].includes(encryptionValue) ?
+    encryptionValue : 'all';
+  const roleValue = value('activity_radio_role').toLowerCase();
+  let radioRole = capabilities.radioRole && ['source', 'target'].includes(roleValue) ? roleValue : 'any';
+  const matchValue = value('activity_group_match').toLowerCase();
+  const groupMatch = capabilities.groupMatch && ['direct', 'via_patch'].includes(matchValue) ?
+    matchValue : 'all';
+  let targetIdentityKey = activityIdentityKey(value('activity_target_identity_key'));
+  const targetKindValue = value('activity_target_kind').toLowerCase();
+  const targetKinds = capabilities.rawIdentities ? ['talkgroup', 'radio'] :
+    ['talkgroup', 'patch_group', 'radio'];
+  let targetKind = targetKinds.includes(targetKindValue) ? targetKindValue : '';
+  if (targetIdentityKey) {
+    targetKind = targetIdentityKey.startsWith('v1-r-') ? 'radio' :
+      targetIdentityKey.startsWith('v1-p-') ? 'patch_group' : 'talkgroup';
+  }
+  const configurationId = capabilities.channel ? value('activity_configuration_id') : '';
+  const frequencyHz = activityInteger(value('activity_frequency_hz'));
+  const lcnValue = value('activity_lcn');
+  const lcn = capabilities.lcn && /^\d+-\d+$/.test(lcnValue) ? lcnValue : '';
+  const timeslotValue = activityInteger(value('activity_timeslot'), 1, 2);
+  let sourceIdentityKey = activityIdentityKey(value('activity_source_identity_key'));
+  const sourceId = capabilities.rawIdentities ?
+    activityInteger(value('activity_source_id'), 0, 16_777_215) : null;
+  const targetId = capabilities.rawIdentities ?
+    activityInteger(value('activity_target_id'), 0, 16_777_215) : null;
+  const allowSourceIdentity = capabilities.sourceIdentity ||
+    (capabilities.radioRole && radioRole === 'target');
+  const allowTargetIdentity = capabilities.targetIdentity ||
+    (capabilities.radioRole && radioRole === 'source');
+  if (!allowSourceIdentity) sourceIdentityKey = '';
+  if (!allowTargetIdentity) targetIdentityKey = '';
+  if (!allowTargetIdentity && !capabilities.rawIdentities) targetKind = '';
+  return Object.freeze({
+    range, fromMs, toMs, action, eventType, encryption,
+    includeGrants: action === 'GRANT' || capabilities.grants &&
+      value('activity_include_grants').toLowerCase() === 'true',
+    configurationId,
+    radioRole,
+    groupMatch,
+    sourceIdentityKey,
+    targetIdentityKey,
+    sourceId,
+    targetId,
+    targetKind,
+    frequencyHz: capabilities.frequency ? frequencyHz : null,
+    lcn,
+    timeslot: capabilities.timeslot ? timeslotValue : null,
+    context: context?.kind || 'system'
+  });
+}
+
+function activityApiFilterParameters(filters, now = Date.now()) {
+  const result = { hide_grants: !filters.includeGrants };
+  const range = ACTIVITY_LOG_RANGES.find((entry) => entry.value === filters.range);
+  if (range?.milliseconds) result.from_ms = Math.max(1, Math.trunc(now - range.milliseconds));
+  else if (filters.range === 'custom') {
+    result.from_ms = filters.fromMs;
+    result.to_ms = filters.toMs;
+  }
+  if (filters.action) result.action = filters.action;
+  if (filters.eventType) result.event_type = filters.eventType;
+  if (filters.encryption !== 'all') result.encryption = filters.encryption;
+  if (filters.configurationId) result.configuration_id = filters.configurationId;
+  if (filters.radioRole !== 'any') result.radio_role = filters.radioRole;
+  if (filters.groupMatch !== 'all') result.group_match = filters.groupMatch;
+  if (filters.sourceIdentityKey) result.source_identity_key = filters.sourceIdentityKey;
+  if (filters.targetIdentityKey) result.target_identity_key = filters.targetIdentityKey;
+  if (filters.sourceId !== null) result.source_id = filters.sourceId;
+  if (filters.targetId !== null) result.target_id = filters.targetId;
+  if (filters.targetKind) result.target_kind = filters.targetKind;
+  if (filters.frequencyHz !== null) result.frequency_hz = filters.frequencyHz;
+  if (filters.lcn) result.lcn = filters.lcn;
+  if (filters.timeslot !== null) result.timeslot = filters.timeslot;
+  return result;
+}
+
+function activityFilterRouteOverrides(filters) {
+  return {
+    activity_range: filters.range === 'all' ? null : filters.range,
+    activity_from_ms: filters.range === 'custom' ? filters.fromMs : null,
+    activity_to_ms: filters.range === 'custom' ? filters.toMs : null,
+    activity_action: filters.action || null,
+    activity_event_type: filters.eventType || null,
+    activity_encryption: filters.encryption === 'all' ? null : filters.encryption,
+    activity_include_grants: filters.includeGrants && filters.action !== 'GRANT' ? true : null,
+    activity_configuration_id: filters.configurationId || null,
+    activity_radio_role: filters.radioRole === 'any' ? null : filters.radioRole,
+    activity_group_match: filters.groupMatch === 'all' ? null : filters.groupMatch,
+    activity_source_identity_key: filters.sourceIdentityKey || null,
+    activity_target_identity_key: filters.targetIdentityKey || null,
+    activity_source_id: filters.sourceId,
+    activity_target_id: filters.targetId,
+    activity_target_kind: filters.targetKind || null,
+    activity_frequency_hz: filters.frequencyHz,
+    activity_lcn: filters.lcn || null,
+    activity_timeslot: filters.timeslot,
+    before_id: null
+  };
+}
+
+function activityLocalDateTimeValue(milliseconds) {
+  const timestamp = Number(milliseconds);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+  const date = new Date(timestamp);
+  const local = new Date(timestamp - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function activityLocalDateTimeMilliseconds(value) {
+  const timestamp = new Date(String(value || '')).getTime();
+  return Number.isFinite(timestamp) && timestamp > 0 ? Math.trunc(timestamp) : null;
+}
+
+function activityFilterField(labelText, control, detail = '', className = '') {
+  const field = node('label', `ui-field activity-filter-field${className ? ` ${className}` : ''}`);
+  field.append(node('span', 'ui-field-label', labelText), control);
+  if (detail) field.append(node('small', 'ui-field-detail', detail));
+  return field;
+}
+
+function activityFilterSelect(labelText, values, selectedValue, detail = '', className = '') {
+  const select = uiSelect(values, selectedValue);
+  return { select, field: activityFilterField(labelText, uiSelectFrame(select), detail, className) };
+}
+
+function activityIdentityDirectoryPath(context, kind) {
+  if (!context?.radioSystemKey) return '';
+  return radioSystemApiPath(context.radioSystemKey, kind === 'radio' ? 'radios' : 'group-identities');
+}
+
+function activityIdentitySuggestion(row, kind) {
+  const nativeId = row?.native_id ?? row?.radio_native_id ?? row?.group_native_id;
+  const identityKey = activityIdentityKey(row?.identity_key || row?.radio_identity_key ||
+    row?.group_identity_key);
+  if (nativeId === null || nativeId === undefined || !identityKey) return null;
+  const label = aliasLabel(row) || row?.last_talker_alias || '';
+  const kindLabel = kind === 'radio' ? 'Radio' : kind === 'patch_group' ? 'Patch' : 'Talkgroup';
+  const [, , homeWacn, homeSystemId] = identityKey.split('-');
+  const home = homeWacn === 'x' ? '' : ` · ${homeWacn}-${homeSystemId}`;
+  return Object.freeze({ key: identityKey, id: Number(nativeId),
+    label: `${kindLabel} ${identityNumber(row, nativeId)}${label ? ` — ${label}` : ''}${home}` });
+}
+
+function activityIdentityChooser(context, options = {}) {
+  const sequenceId = ++activityFilterControlSequence;
+  const listId = `activity-identity-options-${sequenceId}`;
+  const statusId = `activity-identity-status-${sequenceId}`;
+  const input = node('input', 'ui-input');
+  input.type = 'search';
+  input.autocomplete = 'off';
+  input.setAttribute('list', listId);
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-controls', listId);
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-describedby', statusId);
+  input.setAttribute('aria-autocomplete', 'list');
+  const choices = node('datalist');
+  choices.id = listId;
+  const status = node('small', 'ui-field-detail activity-identity-status', 'Type an ID to search.');
+  status.id = statusId;
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  const host = node('span', 'activity-identity-control');
+  host.append(input, choices, status);
+  let kind = options.kind || 'radio';
+  let selectedKey = activityIdentityKey(options.identityKey);
+  let selectedLabel = '';
+  let searchGeneration = 0;
+  let searchController = null;
+  const suggestions = new Map();
+  if (selectedKey) {
+    const kindLabel = kind === 'radio' ? 'Radio' : kind === 'patch_group' ? 'Patch' : 'Talkgroup';
+    const parts = selectedKey.split('-');
+    const home = parts[2] === 'x' ? '' : ` · ${parts[2]}-${parts[3]}`;
+    selectedLabel = `${kindLabel} ${parts.at(-1)}${home}`;
+    input.value = selectedLabel;
+  }
+
+  const setAvailability = () => {
+    const available = Boolean(activityIdentityDirectoryPath(context, kind));
+    input.placeholder = kind === 'radio' ? 'Search radio ID' : kind ? 'Search group ID' :
+      'Choose a destination type';
+    input.disabled = !available;
+    if (!available) {
+      input.value = '';
+      selectedKey = '';
+      selectedLabel = '';
+      choices.replaceChildren();
+      status.textContent = kind ? 'Identity search is unavailable for this activity scope.' :
+        'Choose a destination type before searching.';
+    } else if (!input.value) status.textContent = 'Type an ID to search.';
+  };
+
+  const load = async (query) => {
+    const path = activityIdentityDirectoryPath(context, kind);
+    if (!path) return;
+    searchController?.abort();
+    const controller = new AbortController();
+    searchController = controller;
+    const renderSignal = activeRenderController?.signal;
+    const abortForRender = () => controller.abort();
+    if (renderSignal?.aborted) controller.abort();
+    else renderSignal?.addEventListener('abort', abortForRender, { once: true });
+    const generation = ++searchGeneration;
+    input.setAttribute('aria-busy', 'true');
+    status.textContent = 'Searching identities…';
+    try {
+      const page = await apiPage(path, { q: query || null, limit: 25 },
+        { signal: controller.signal });
+      if (generation !== searchGeneration || !input.isConnected) return;
+      const rows = (page.rows || []).filter((row) => kind === 'radio' || rowGroupIdentityKind(row) === kind);
+      const values = rows.map((row) => activityIdentitySuggestion(row, kind)).filter(Boolean);
+      suggestions.clear();
+      choices.replaceChildren(...values.map((entry) => {
+        suggestions.set(entry.label, entry);
+        const option = node('option');
+        option.value = entry.label;
+        return option;
+      }));
+      input.setAttribute('aria-expanded', String(document.activeElement === input && values.length > 0));
+      status.textContent = values.length ?
+        `${number(values.length)} matching identit${values.length === 1 ? 'y' : 'ies'} available.` :
+        'No matching identities. Try another ID.';
+    } catch (error) {
+      if (generation !== searchGeneration || error?.name === 'AbortError') return;
+      choices.replaceChildren();
+      suggestions.clear();
+      input.setAttribute('aria-expanded', 'false');
+      status.textContent = 'Identity suggestions are unavailable. Try again.';
+    } finally {
+      renderSignal?.removeEventListener('abort', abortForRender);
+      if (searchController === controller) searchController = null;
+      if (generation === searchGeneration) input.removeAttribute('aria-busy');
+    }
+  };
+
+  input.addEventListener('focus', () => {
+    input.setAttribute('aria-expanded', String(choices.childNodes.length > 0));
+    if (!choices.childNodes.length) {
+      const query = selectedKey && input.value === selectedLabel ? selectedKey.split('-').at(-1) :
+        input.value.trim();
+      void load(query);
+    }
+  });
+  input.addEventListener('blur', () => input.setAttribute('aria-expanded', 'false'));
+  input.addEventListener('input', () => {
+    input.setCustomValidity('');
+    const suggestion = suggestions.get(input.value);
+    selectedKey = suggestion?.key || '';
+    selectedLabel = suggestion?.label || '';
+    const generation = ++searchGeneration;
+    pageTimeout(() => {
+      if (generation === searchGeneration && input.isConnected) void load(input.value.trim());
+    }, ACTIVITY_IDENTITY_SEARCH_DELAY_MILLISECONDS);
+  });
+  input.addEventListener('change', () => {
+    const suggestion = suggestions.get(input.value);
+    if (suggestion) {
+      selectedKey = suggestion.key;
+      selectedLabel = suggestion.label;
+    }
+  });
+  setAvailability();
+
+  return Object.freeze({
+    element: activityFilterField(options.label || 'Identity', host, options.detail || ''),
+    input,
+    setKind(nextKind) {
+      kind = nextKind || '';
+      searchController?.abort();
+      searchGeneration += 1;
+      suggestions.clear();
+      choices.replaceChildren();
+      input.setAttribute('aria-expanded', 'false');
+      selectedKey = '';
+      selectedLabel = '';
+      input.value = '';
+      setAvailability();
+    },
+    read() {
+      const text = input.value.trim();
+      if (!text) return { key: '', id: null };
+      const suggestion = suggestions.get(text);
+      if (suggestion) return { key: suggestion.key, id: null };
+      if (selectedKey && text === selectedLabel) return { key: selectedKey, id: null };
+      const message = 'Choose an identity from the suggestions.';
+      input.setCustomValidity(message);
+      return { key: '', id: null, error: message };
+    },
+    close() {
+      searchGeneration += 1;
+      searchController?.abort();
+      searchController = null;
+      input.removeAttribute('aria-busy');
+      input.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
+function activityChannelFilter(context, selectedConfigurationId = '') {
+  const values = [{ value: '', label: 'All channels / sites' }];
+  if (selectedConfigurationId) values.push({ value: selectedConfigurationId, label: 'Selected channel' });
+  const control = activityFilterSelect('Channel / site', values, selectedConfigurationId,
+    'Limit this system or identity to one configured channel.');
+  const status = node('small', 'ui-field-detail activity-channel-filter-status', 'Loading channels…');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  control.field.append(status);
+  const load = async () => {
+    try {
+      const page = await apiPage(radioSystemApiPath(context.radioSystemKey, 'channels'), { limit: 500 });
+      if (!control.select.isConnected) return;
+      const options = [{ value: '', label: 'All channels / sites' }, ...(page.rows || []).map((row) => ({
+        value: row.configuration_id,
+        label: [row.site_name, row.name, row.configuration_id].filter(Boolean).join(' · ')
+      }))];
+      if (selectedConfigurationId && !options.some((entry) => entry.value === selectedConfigurationId)) {
+        options.push({ value: selectedConfigurationId, label: `Selected · ${selectedConfigurationId}` });
+      }
+      control.select.replaceChildren(...options.map((entry) => {
+        const option = node('option', '', entry.label);
+        option.value = entry.value;
+        option.selected = entry.value === selectedConfigurationId;
+        return option;
+      }));
+      status.textContent = page.has_more ? 'Showing the first 500 configured channels.' : '';
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      status.textContent = 'Channel choices could not be loaded; the current selection is still usable.';
+    }
+  };
+  void load();
+  return Object.freeze({ element: control.field, read: () => control.select.value });
+}
+
+function activityDestinationFilter(context, initialFilters, label = 'Destination') {
+  const initialKind = initialFilters.targetKind || '';
+  const kindControl = activityFilterSelect(`${label} type`, [
+    { value: '', label: 'All destination types' },
+    { value: 'talkgroup', label: 'Talkgroup' },
+    { value: 'patch_group', label: 'Patch group' },
+    { value: 'radio', label: 'Private radio' }
+  ], initialKind);
+  const chooser = activityIdentityChooser(context, {
+    label,
+    kind: initialKind,
+    identityKey: initialFilters.targetIdentityKey,
+    detail: 'Choose a suggestion so the activity query uses its stable identity key.'
+  });
+  kindControl.select.addEventListener('change', () => chooser.setKind(kindControl.select.value));
+  const element = fragment(kindControl.field, chooser.element);
+  return Object.freeze({
+    element,
+    input: chooser.input,
+    read() {
+      const selection = chooser.read();
+      return { ...selection, kind: kindControl.select.value };
+    },
+    close: chooser.close
+  });
+}
+
+function activityFilterToolbar(context, initialFilters) {
+  const capabilities = activityContextCapabilities(context);
+  const form = node('form', 'activity-filter-toolbar ui-toolbar data-workspace');
+  form.setAttribute('aria-label', 'Filter retained activity');
+  const primary = node('div', 'activity-filter-primary');
+  const rangeControl = activityFilterSelect('Time', ACTIVITY_LOG_RANGES, initialFilters.range);
+  const fromInput = node('input', 'ui-input');
+  fromInput.type = 'datetime-local';
+  fromInput.value = activityLocalDateTimeValue(initialFilters.fromMs);
+  const toInput = node('input', 'ui-input');
+  toInput.type = 'datetime-local';
+  toInput.value = activityLocalDateTimeValue(initialFilters.toMs);
+  const customDates = node('div', 'activity-filter-custom-dates');
+  customDates.append(activityFilterField('From', fromInput, 'Inclusive'),
+    activityFilterField('To', toInput, 'Exclusive'));
+  customDates.hidden = initialFilters.range !== 'custom';
+  rangeControl.select.addEventListener('change', () => {
+    customDates.hidden = rangeControl.select.value !== 'custom';
+    if (!customDates.hidden && (!fromInput.value || !toInput.value)) {
+      const current = Date.now();
+      fromInput.value = activityLocalDateTimeValue(current - 24 * 60 * 60 * 1000);
+      toInput.value = activityLocalDateTimeValue(current);
+    }
+  });
+
+  const actionControl = activityFilterSelect('Action', [
+    { value: '', label: 'All actions' },
+    ...ACTIVITY_ACTION_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
+  ], initialFilters.action);
+  let encryptionControl = null;
+  if (capabilities.encryption) {
+    encryptionControl = activityFilterSelect('Encryption', [
+      { value: 'all', label: 'All' }, { value: 'clear', label: 'Clear' },
+      { value: 'encrypted', label: 'Encrypted' }
+    ], initialFilters.encryption);
+  }
+  let grantsInput = null;
+  let grantsField = null;
+  if (capabilities.grants) {
+    grantsField = uiToggleField('Include grants', initialFilters.includeGrants, 'Include grant activity',
+      'Grants are hidden by default because they can be noisy.');
+    grantsField.classList.add('ui-toggle-field-compact', 'activity-filter-grants');
+    grantsInput = grantsField.querySelector('input');
+    grantsInput.disabled = initialFilters.action === 'GRANT';
+  }
+  actionControl.select.addEventListener('change', () => {
+    if (!grantsInput) return;
+    if (actionControl.select.value === 'GRANT') setUiToggle(grantsInput, true);
+    grantsInput.disabled = actionControl.select.value === 'GRANT';
+  });
+  primary.append(rangeControl.field, actionControl.field);
+  if (encryptionControl) primary.append(encryptionControl.field);
+  if (grantsField) primary.append(grantsField);
+
+  const advanced = node('details', 'activity-filter-advanced');
+  const normalizedRouteState = activityFilterRouteOverrides(initialFilters);
+  const activeAdvancedKeys = ACTIVITY_ROUTE_KEYS.filter((key) => ![
+    'activity_range', 'activity_from_ms', 'activity_to_ms', 'activity_action',
+    'activity_encryption', 'activity_include_grants'
+  ].includes(key) && normalizedRouteState[key] !== null && normalizedRouteState[key] !== undefined);
+  advanced.open = activeAdvancedKeys.length > 0;
+  const advancedSummary = node('summary', 'activity-filter-advanced-summary');
+  advancedSummary.append(node('span', '', 'Advanced filters'));
+  if (activeAdvancedKeys.length) advancedSummary.append(uiPill(number(activeAdvancedKeys.length), 'neutral'));
+  const advancedGrid = node('div', 'activity-filter-grid');
+  const eventControl = activityFilterSelect('Event type', [
+    { value: '', label: 'All event types' },
+    ...ACTIVITY_EVENT_TYPE_VALUES.map((value) => ({ value, label: activityOptionLabel(value) }))
+  ], initialFilters.eventType, 'Decoder-specific event category.');
+  advancedGrid.append(eventControl.field);
+
+  let channelControl = null;
+  if (capabilities.channel && context.radioSystemKey) {
+    channelControl = activityChannelFilter(context, initialFilters.configurationId);
+    advancedGrid.append(channelControl.element);
+  }
+
+  let sourceChooser = null;
+  let destinationChooser = null;
+  if (capabilities.sourceIdentity) {
+    sourceChooser = activityIdentityChooser(context, {
+      label: 'Source radio', kind: 'radio', identityKey: initialFilters.sourceIdentityKey,
+      detail: 'Search by radio ID; matching configured aliases are shown in the choices.'
+    });
+    advancedGrid.append(sourceChooser.element);
+  }
+  if (capabilities.targetIdentity) {
+    destinationChooser = activityDestinationFilter(context, initialFilters);
+    advancedGrid.append(destinationChooser.element);
+  }
+
+  let groupMatchControl = null;
+  if (capabilities.groupMatch) {
+    groupMatchControl = activityFilterSelect('Group match', [
+      { value: 'all', label: 'Direct or through a patch' },
+      { value: 'direct', label: 'Direct only' },
+      { value: 'via_patch', label: 'Through a patch only' }
+    ], initialFilters.groupMatch);
+    advancedGrid.append(groupMatchControl.field);
+  }
+
+  let radioRoleControl = null;
+  let radioCounterpartHost = null;
+  let radioSourceChooser = null;
+  let radioDestinationChooser = null;
+  const renderRadioCounterpart = () => {
+    if (!radioCounterpartHost || !radioRoleControl) return;
+    radioSourceChooser?.close();
+    radioDestinationChooser?.close();
+    radioCounterpartHost.replaceChildren();
+    radioSourceChooser = null;
+    radioDestinationChooser = null;
+    if (radioRoleControl.select.value === 'target') {
+      radioSourceChooser = activityIdentityChooser(context, {
+        label: 'Source radio', kind: 'radio', identityKey: initialFilters.sourceIdentityKey,
+        detail: 'The selected radio was the destination.'
+      });
+      radioCounterpartHost.append(radioSourceChooser.element);
+    } else if (radioRoleControl.select.value === 'source') {
+      radioDestinationChooser = activityDestinationFilter(context, initialFilters, 'Destination');
+      radioCounterpartHost.append(radioDestinationChooser.element);
+    } else {
+      radioCounterpartHost.append(node('p', 'ui-field-detail activity-filter-role-help',
+        'Choose Source or Target to filter by the other participant.'));
+    }
+  };
+  if (capabilities.radioRole) {
+    radioRoleControl = activityFilterSelect('Radio role', [
+      { value: 'any', label: 'Source or target' }, { value: 'source', label: 'Source' },
+      { value: 'target', label: 'Target' }
+    ], initialFilters.radioRole);
+    radioCounterpartHost = node('div', 'activity-filter-counterpart');
+    advancedGrid.append(radioRoleControl.field, radioCounterpartHost);
+    radioRoleControl.select.addEventListener('change', renderRadioCounterpart);
+    renderRadioCounterpart();
+  }
+
+  let rawSourceInput = null;
+  let rawTargetInput = null;
+  let rawTargetKindControl = null;
+  if (capabilities.rawIdentities) {
+    rawSourceInput = node('input', 'ui-input');
+    rawSourceInput.type = 'number';
+    rawSourceInput.min = '0';
+    rawSourceInput.max = '16777215';
+    rawSourceInput.step = '1';
+    rawSourceInput.value = initialFilters.sourceId === null ? '' : String(initialFilters.sourceId);
+    rawTargetInput = node('input', 'ui-input');
+    rawTargetInput.type = 'number';
+    rawTargetInput.min = '0';
+    rawTargetInput.max = '16777215';
+    rawTargetInput.step = '1';
+    rawTargetInput.value = initialFilters.targetId === null ? '' : String(initialFilters.targetId);
+    rawTargetKindControl = activityFilterSelect('Target type', [
+      { value: '', label: 'All target types' }, { value: 'talkgroup', label: 'Talkgroup' },
+      { value: 'radio', label: 'Radio' }
+    ], initialFilters.targetKind);
+    advancedGrid.append(activityFilterField('Source ID', rawSourceInput, 'Exact observed numeric ID.'),
+      activityFilterField('Target ID', rawTargetInput, 'Exact observed numeric ID.'),
+      rawTargetKindControl.field);
+  }
+
+  let frequencyInput = null;
+  let lcnInput = null;
+  let timeslotControl = null;
+  if (capabilities.frequency) {
+    frequencyInput = node('input', 'ui-input');
+    frequencyInput.type = 'number';
+    frequencyInput.min = '0.000001';
+    frequencyInput.step = '0.000001';
+    frequencyInput.inputMode = 'decimal';
+    frequencyInput.value = initialFilters.frequencyHz === null ? '' :
+      String(initialFilters.frequencyHz / 1_000_000);
+    advancedGrid.append(activityFilterField('Frequency (MHz)', frequencyInput, 'Exact frequency.'));
+  }
+  if (capabilities.lcn) {
+    lcnInput = node('input', 'ui-input');
+    lcnInput.type = 'text';
+    lcnInput.inputMode = 'numeric';
+    lcnInput.placeholder = 'Band-channel';
+    lcnInput.pattern = '\\d+-\\d+';
+    lcnInput.value = initialFilters.lcn;
+    advancedGrid.append(activityFilterField('LCN', lcnInput, 'For example, 1-125.'));
+  }
+  if (capabilities.timeslot) {
+    timeslotControl = activityFilterSelect('Timeslot', [
+      { value: '', label: 'All timeslots' }, { value: '1', label: 'Timeslot 1' },
+      { value: '2', label: 'Timeslot 2' }
+    ], initialFilters.timeslot === null ? '' : String(initialFilters.timeslot));
+    advancedGrid.append(timeslotControl.field);
+  }
+  advanced.append(advancedSummary, advancedGrid);
+
+  const actions = node('div', 'activity-filter-actions ui-action-row');
+  const apply = node('button', 'ui-button ui-button-primary', 'Apply filters');
+  apply.type = 'submit';
+  const clear = node('button', 'ui-button ui-button-secondary', 'Clear filters');
+  clear.type = 'button';
+  clear.addEventListener('click', () => {
+    const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
+    overrides.before_id = null;
+    navigateTo(currentHref(overrides));
+  });
+  actions.append(apply, clear);
+  const status = node('p', 'activity-filter-error ui-notice ui-notice-danger');
+  status.setAttribute('role', 'alert');
+  status.hidden = true;
+
+  const invalidInteger = (input, label) => {
+    if (!input || !input.value.trim()) return null;
+    const value = activityInteger(input.value, 0, 16_777_215);
+    if (value !== null) return value;
+    input.setCustomValidity(`${label} must be a whole number from 0 through 16777215.`);
+    return undefined;
+  };
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    status.hidden = true;
+    status.textContent = '';
+    form.querySelectorAll('input').forEach((input) => input.setCustomValidity(''));
+    const range = rangeControl.select.value;
+    const fromMs = range === 'custom' ? activityLocalDateTimeMilliseconds(fromInput.value) : null;
+    const toMs = range === 'custom' ? activityLocalDateTimeMilliseconds(toInput.value) : null;
+    if (range === 'custom' && (!fromMs || !toMs || fromMs >= toMs)) {
+      const message = 'Choose a valid custom range whose From time is earlier than its To time.';
+      fromInput.setCustomValidity(message);
+      status.textContent = message;
+      status.hidden = false;
+      fromInput.reportValidity();
+      return;
+    }
+
+    let source = { key: '', id: null };
+    let destination = { key: '', id: null, kind: '' };
+    if (sourceChooser) source = sourceChooser.read();
+    if (destinationChooser) destination = destinationChooser.read();
+    if (radioRoleControl?.select.value === 'target' && radioSourceChooser) source = radioSourceChooser.read();
+    if (radioRoleControl?.select.value === 'source' && radioDestinationChooser) {
+      destination = radioDestinationChooser.read();
+    }
+    if (source.error || destination.error) {
+      status.textContent = source.error || destination.error;
+      status.hidden = false;
+      (source.error ? sourceChooser?.input || radioSourceChooser?.input :
+        destinationChooser?.input || radioDestinationChooser?.input)?.reportValidity();
+      return;
+    }
+    if (capabilities.rawIdentities) {
+      const sourceId = invalidInteger(rawSourceInput, 'Source ID');
+      const targetId = invalidInteger(rawTargetInput, 'Target ID');
+      if (sourceId === undefined || targetId === undefined) {
+        status.textContent = rawSourceInput.validationMessage || rawTargetInput.validationMessage;
+        status.hidden = false;
+        (sourceId === undefined ? rawSourceInput : rawTargetInput).reportValidity();
+        return;
+      }
+      source = { key: '', id: sourceId };
+      destination = { key: '', id: targetId, kind: rawTargetKindControl.select.value };
+    }
+    let frequencyHz = null;
+    if (frequencyInput?.value.trim()) {
+      const megahertz = Number(frequencyInput.value);
+      frequencyHz = Number.isFinite(megahertz) && megahertz > 0 ? Math.round(megahertz * 1_000_000) : null;
+      if (!frequencyHz) {
+        const message = 'Frequency must be a positive value in MHz.';
+        frequencyInput.setCustomValidity(message);
+        status.textContent = message;
+        status.hidden = false;
+        frequencyInput.reportValidity();
+        return;
+      }
+    }
+    const lcn = lcnInput?.value.trim() || '';
+    if (lcn && !/^\d+-\d+$/.test(lcn)) {
+      const message = 'LCN must use band-channel form, such as 1-125.';
+      lcnInput.setCustomValidity(message);
+      status.textContent = message;
+      status.hidden = false;
+      lcnInput.reportValidity();
+      return;
+    }
+    const action = actionControl.select.value;
+    const next = {
+      range, fromMs, toMs, action, eventType: eventControl.select.value,
+      encryption: encryptionControl?.select.value || 'all',
+      includeGrants: action === 'GRANT' || Boolean(grantsInput?.checked),
+      configurationId: channelControl?.read() || '',
+      radioRole: radioRoleControl?.select.value || 'any',
+      groupMatch: groupMatchControl?.select.value || 'all',
+      sourceIdentityKey: source.key || '', targetIdentityKey: destination.key || '',
+      sourceId: source.id, targetId: destination.id,
+      targetKind: destination.kind || '', frequencyHz, lcn,
+      timeslot: timeslotControl?.select.value ? Number(timeslotControl.select.value) : null
+    };
+    if (next.radioRole === 'any' && capabilities.radioRole) {
+      next.sourceIdentityKey = '';
+      next.targetIdentityKey = '';
+      next.sourceId = null;
+      next.targetId = null;
+      next.targetKind = '';
+    }
+    navigateTo(currentHref(activityFilterRouteOverrides(next)));
+  });
+
+  form.append(primary, customDates, advanced, actions, status);
+  return form;
+}
+
 function activityColumns() {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
     { id: 'action', label: 'Action', key: 'action' },
-    { id: 'event', label: 'Event', key: 'event_type' },
+    { id: 'event', label: 'Event Type', key: 'event_type' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',
       render: (row) => activityIdentifier(row, row.source_radio_id, 'radio', row.source_entity_ref),
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.source_radio_id || 0) },
@@ -16661,8 +17479,24 @@ function activityColumns() {
   ];
 }
 
+function activityColumnsForContext(context) {
+  const columns = activityColumns();
+  if (context?.kind === 'conventional-analog') {
+    const visible = new Set(['time', 'action', 'event', 'channel']);
+    return columns.filter((column) => visible.has(column.id));
+  }
+  return columns;
+}
+
+function activityTableType(context) {
+  return context?.kind === 'conventional-analog' ? 'activity-conventional-analog-v1' : 'activity';
+}
+
 async function renderActivity(scopeParameters, title = 'Activity') {
   const renderContext = captureRenderContext();
+  const activityContext = activityFilterContext(scopeParameters);
+  scopeParameters = activityScopeParameters(scopeParameters);
+  const filters = activityRouteFilters(route, activityContext);
   const historyNotice = detailedHistoryNotice();
   if (!detailedHistoryAvailable()) {
     if (renderIsCurrent(renderContext)) {
@@ -16672,21 +17506,23 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   }
   const data = await api('/api/v1/activity', {
     ...scopeParameters,
+    ...activityApiFilterParameters(filters, Date.now()),
     before_id: route.get('before_id'),
-    hide_grants: true,
     limit: 200
   });
   if (!renderIsCurrent(renderContext)) return;
-  const columns = activityColumns();
-  const initialRows = withoutGrantActions(data.rows);
+  const columns = activityColumnsForContext(activityContext);
+  const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
   const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
     'Detailed event history is enabled, but no matching activity has been recorded yet.';
   const titleActions = node('div', 'section-title-actions ui-section-actions');
   const activityTable = table(initialRows, columns, emptyMessage,
-    { type: 'activity', rowKey: (row) => row.id, layoutMenuHost: titleActions });
+    { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions });
   activityTable.setAttribute('aria-live', 'off');
   const block = section(title, activityTable, titleActions);
-  if (historyNotice) block.insertBefore(historyNotice, activityTable);
+  const filterToolbar = activityFilterToolbar(activityContext, filters);
+  block.insertBefore(filterToolbar, activityTable);
+  if (historyNotice) block.insertBefore(historyNotice, filterToolbar);
   const controls = node('div', 'pager ui-pager');
   let newestControl = null;
   let olderControl = null;
@@ -16721,7 +17557,8 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   block.append(controls);
   content.append(block);
 
-  if (!route.get('before_id') && (!statsLoggingState().available || statsLoggingState().historyActive)) {
+  if (!route.get('before_id') && filters.range !== 'custom' &&
+      (!statsLoggingState().available || statsLoggingState().historyActive)) {
     const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
     const countdown = node('span', 'activity-refresh-countdown');
     countdown.setAttribute('role', 'timer');
@@ -16768,12 +17605,12 @@ async function renderActivity(scopeParameters, title = 'Activity') {
       try {
         const refreshed = await api('/api/v1/activity', {
           ...scopeParameters,
-          hide_grants: true,
+          ...activityApiFilterParameters(filters, Date.now()),
           limit: 200
         });
         if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
             !block.isConnected) return;
-        const rows = withoutGrantActions(refreshed.rows);
+        const rows = filters.includeGrants ? refreshed.rows : withoutGrantActions(refreshed.rows);
         const currentRows = activityTable.tableController.rows();
         const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
         const newIds = new Set(rows.map(activityRowKey)
@@ -19296,7 +20133,14 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
     tabs(tabItems, tab))) return;
 
   if (tab === 'activity') {
-    await renderActivity({ configuration_id: configurationId });
+    const analog = isAnalogChannel(channel);
+    await renderActivity({
+      configuration_id: configurationId,
+      _activity_context: {
+        kind: analog ? 'conventional-analog' : 'conventional-digital',
+        protocol: protocolFamily(channel), configuration_id: configurationId
+      }
+    });
   } else if (tab === 'groups') {
     await renderChannelGroupIdentities(configurationId);
   } else if (tab === 'radios') {
