@@ -391,7 +391,7 @@ function activeUserPreferences() {
 }
 
 function applyUserPreferenceSnapshot(snapshot) {
-  if (snapshot.loaded) clearUserPreferenceError();
+  if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
   applyTheme();
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
@@ -418,6 +418,13 @@ async function synchronizeUserPreferences() {
 
 async function updateUserPreferences(mutator, allowRetry = true) {
   try {
+    if (!accessSession.authenticated) {
+      const draft = JSON.parse(JSON.stringify(anonymousUserPreferences));
+      const returned = mutator(draft);
+      anonymousUserPreferences = preferenceSchema.validate(returned === undefined ? draft : returned);
+      clearUserPreferenceError();
+      return anonymousUserPreferences;
+    }
     const result = await userPreferenceController.update(mutator);
     if (result?.state === 'stale') {
       const error = new Error('The signed-in user changed before these settings were saved.');
@@ -443,15 +450,20 @@ function saveAnonymousTableLayout(tableType, layout = null) {
   const tables = { ...anonymousUserPreferences.tables };
   if (layout) tables[tableType] = tableLayouts.persisted(layout);
   else delete tables[tableType];
+  let preferences;
   try {
-    const preferences = preferenceSchema.validate({ ...anonymousUserPreferences, tables });
-    localStorage.setItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY, JSON.stringify(preferences.tables));
-    anonymousUserPreferences = preferences;
-    return preferences;
+    preferences = preferenceSchema.validate({ ...anonymousUserPreferences, tables });
   } catch (error) {
     showUserPreferenceError(error, null, true);
     return null;
   }
+  anonymousUserPreferences = preferences;
+  try {
+    localStorage.setItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY, JSON.stringify(preferences.tables));
+  } catch (_) {
+    // Browser storage may be unavailable in private or locked-down sessions. Keep the layout for this page session.
+  }
+  return preferences;
 }
 
 async function saveTableLayoutPreference(tableType, layout) {
@@ -616,11 +628,7 @@ function applyTheme() {
 
 function setTheme(theme) {
   const selected = theme === 'dark' ? 'dark' : 'light';
-  if (userPreferenceController.snapshot().loaded) {
-    void settleUserPreferenceMutation((preferences) => { preferences.appearance.theme = selected; });
-  } else anonymousUserPreferences = preferenceSchema.validate({
-    ...anonymousUserPreferences, appearance: { theme: selected }
-  });
+  void settleUserPreferenceMutation((preferences) => { preferences.appearance.theme = selected; });
   applyTheme();
 }
 
@@ -9354,7 +9362,6 @@ function synchronizePlaybackAccess(accessChanged = false) {
       scanListStatus: 'playback-scan-list-status'
     });
     webCallPlayer.setPreferenceWriter((playback) => {
-      if (!userPreferenceController.snapshot().loaded) return;
       return updateUserPreferences((preferences) => { preferences.playback = playback; });
     });
     webCallPlayer.applyPreferences(activeUserPreferences().playback);
@@ -9904,7 +9911,7 @@ function renderScanner() {
   const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
     'ui-button ui-button-secondary ui-icon-button scanner-settings');
   scannerSettings.id = 'scanner-settings';
-  scannerSettings.addEventListener('click', () => openScannerSettings('#scanner-settings'));
+  scannerSettings.addEventListener('click', () => void activateScannerSettings(scannerSettings));
   headingActions.append(modeBar, scannerSettings);
   heading.append(headingActions);
   const host = node('div', 'scanner-page-host');
@@ -15074,6 +15081,7 @@ async function activateLivePresentationSettings(button) {
     button.setAttribute('aria-label', 'Loading Live presentation settings');
     button.removeAttribute('title');
     snapshot = await synchronizeUserPreferences();
+    if (!button.isConnected) return;
     button.disabled = false;
     button.classList.remove('is-loading');
     setIconButton(button, 'icon-live-presentation', snapshot.loaded ?
@@ -22533,6 +22541,29 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       controls.forEach((control) => { control.disabled = false; });
     }
   });
+}
+
+async function activateScannerSettings(button) {
+  const returnFocusSelector = `#${button.id}`;
+  let snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded && !accessSession.authenticated) {
+    showLoginModal(returnFocusSelector);
+    return;
+  }
+  if (!snapshot.loaded) {
+    button.disabled = true;
+    button.classList.add('is-loading');
+    button.replaceChildren();
+    button.setAttribute('aria-label', 'Loading Scanner settings');
+    button.removeAttribute('title');
+    snapshot = await synchronizeUserPreferences();
+    if (!button.isConnected) return;
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    setIconButton(button, 'icon-live-presentation', snapshot.loaded ?
+      'Scanner settings' : 'Retry Scanner settings');
+  }
+  if (snapshot.loaded) openScannerSettings(returnFocusSelector);
 }
 
 function openScannerSettings(returnFocusSelector = null) {
