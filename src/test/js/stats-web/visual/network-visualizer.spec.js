@@ -39,24 +39,7 @@ async function clickRenderedNode(page, labelText, expectedLevel) {
   const label = page.locator('.network-visualizer-label[data-visible="true"]')
     .filter({ hasText: labelText }).first();
   await expect(label).toBeVisible();
-  const point = await label.evaluate((element) => {
-    const translated = element.style.transform.match(/translate3d\(([-.\d]+)px,\s*([-.\d]+)px/);
-    if (!translated) throw new Error(`Unable to resolve rendered node position for ${element.textContent}`);
-    const layer = element.parentElement.getBoundingClientRect();
-    const scope = window.networkVisualizerTest.diagnostics().navigation.scope.level;
-    const type = element.dataset.type;
-    const radius = type === 'universe' ? (scope === 'overview' ? 32 : 18) :
-      type === 'group' ? (scope === 'system' ? 13 : 15) :
-        type === 'radio' ? (scope === 'group' ? 5.75 : 5.25) : 9;
-    const labelHeight = type === 'universe' ? 38 : type === 'group' ? 32 : 28;
-    return {
-      x: layer.left + Number(translated[1]) - radius - 7,
-      y: layer.top + Number(translated[2]) + labelHeight / 2
-    };
-  });
-  await page.mouse.move(point.x, point.y, { steps: 6 });
-  await page.waitForTimeout(80);
-  await page.mouse.click(point.x, point.y);
+  await label.click();
   await expect.poll(async () => (await diagnostics(page)).navigation.scope.level,
     { timeout: 5_000 }).toBe(expectedLevel);
 }

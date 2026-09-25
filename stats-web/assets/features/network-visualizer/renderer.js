@@ -558,8 +558,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const pending = name === 'pending';
     const state = name === 'outline' ? 'selected' : field ? 'universe' : pending ? 'arrival' : 'encrypted';
     const settings = { color: materialColor(state), transparent: true,
-      opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.035 :
-        name === 'system-field' ? 0.18 : pending ? 0.34 : 0.82,
+      opacity: name === 'outline' ? 0.98 : name === 'system-field-fill' ? 0.075 :
+        name === 'system-field' ? 0.34 : pending ? 0.34 : 0.82,
       wireframe: name === 'encrypted' || name === 'system-field', depthWrite: false };
     if (name === 'outline') settings.side = library.BackSide;
     const material = protectSharedResource(new library.MeshBasicMaterial(settings));
@@ -587,7 +587,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function geometry(kind) {
     if (geometries.has(kind)) return geometries.get(kind);
     let value;
-    if (kind === 'universe' || kind === 'universe-field') value = new library.IcosahedronGeometry(1, 2);
+    if (kind === 'universe') value = new library.IcosahedronGeometry(1, 2);
+    else if (kind === 'universe-field') value = new library.IcosahedronGeometry(1, 3);
     else if (kind === 'pending-ring') value = new library.TorusGeometry(1.28, 0.055, 8, 36);
     else if (kind === 'conventional-universe') value = new library.TorusGeometry(1, 0.13, 8, 28);
     else if (kind === 'conventional-group') value = new library.BoxGeometry(1.55, 0.42, 1.55);
@@ -1287,9 +1288,18 @@ async function createNetworkVisualizerRenderer(options = {}) {
     })).filter((entry) => entry.node) : [...renderNodes.values()].map((node) => ({ node, rank: 0 }))
       .sort((left, right) => labelPriority(right.node) - labelPriority(left.node))
       .slice(0, labelBudget * 3);
-    if (!controls?.autoRotate || !labelMembership.size) return requested;
-    const existing = requested.filter(({ node }) => labelMembership.has(nodeKey(node)));
+    if (!labelMembership.size) return requested;
+    const requestedByKey = new Map(requested.map((entry) => [nodeKey(entry.node), entry]));
+    const existing = [...labelMembership].map((key) => {
+      const requestedEntry = requestedByKey.get(key);
+      if (requestedEntry) return requestedEntry;
+      const node = renderNodes.get(key);
+      return node ? { node, rank: 0 } : null;
+    }).filter((entry) => entry?.node?.labelVisible !== false);
     requested.filter(({ node }) => node.active || node.selected).forEach((entry) => {
+      if (!existing.some(({ node }) => nodeKey(node) === nodeKey(entry.node))) existing.push(entry);
+    });
+    requested.forEach((entry) => {
       if (!existing.some(({ node }) => nodeKey(node) === nodeKey(entry.node))) existing.push(entry);
     });
     return existing;
@@ -1391,7 +1401,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       ] : rawOffsets;
       candidates.push({ key: nodeKey(node), node, text, x: screen.x, y: screen.y,
         offsets, width: labelWidth, height: labelHeight,
-        priority: labelPriority(node, rank) + (recentlyVisible ? 900 : 0) });
+        priority: labelPriority(node, rank) + (labelMembership.has(nodeKey(node)) ? 10_000 : 0) +
+          (recentlyVisible ? 900 : 0) });
     }
     const placements = chooseLabelPlacements(candidates, { width, height }, labelBudget);
     const visible = new Set();
@@ -1400,6 +1411,31 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (!element) {
         element = createElement(documentValue, 'span', 'network-visualizer-label');
         element.dataset.key = placement.key;
+        element.addEventListener('pointerdown', (event) => event.stopPropagation());
+        element.addEventListener('wheel', (event) => {
+          if (!rendererCanvas || !documentValue.defaultView?.WheelEvent) return;
+          event.preventDefault();
+          event.stopPropagation();
+          rendererCanvas.dispatchEvent(new documentValue.defaultView.WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            deltaZ: event.deltaZ,
+            deltaMode: event.deltaMode,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            shiftKey: event.shiftKey,
+            altKey: event.altKey
+          }));
+        }, { passive: false });
+        element.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const rendered = renderNodes.get(element.dataset.key);
+          if (rendered) callbacks.onNodeClick?.(rendered.__source || rendered, event);
+        });
         labelElements.set(placement.key, element);
         labelLayer.append(element);
       }
@@ -1412,6 +1448,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       element.dataset.pending = String(Boolean(placement.node.pending));
       element.dataset.selected = String(Boolean(placement.node.selected));
       element.dataset.quiet = String(Boolean(placement.node.quiet));
+      element.dataset.nodeScreenX = String(placement.x);
+      element.dataset.nodeScreenY = String(placement.y);
       element.style.transform = `translate3d(${placement.left}px, ${placement.top}px, 0)`;
       element.hidden = false;
       element.dataset.visible = 'true';
@@ -1421,18 +1459,33 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (previouslyVisible.has(key)) labelHiddenAt.set(key, renderedAt);
       element.dataset.visible = 'false';
     }
-    if (!controls?.autoRotate || !labelMembership.size) {
-      labelMembership.clear();
-      visible.forEach((key) => labelMembership.add(key));
-    } else {
-      [...labelMembership].forEach((key) => {
-        if (!renderNodes.has(key)) labelMembership.delete(key);
-      });
-      visible.forEach((key) => {
-        const node = renderNodes.get(key);
-        if (node?.active || node?.selected) labelMembership.add(key);
-      });
-    }
+    [...labelMembership].forEach((key) => {
+      const node = renderNodes.get(key);
+      if (!node || node.labelVisible === false) {
+        labelMembership.delete(key);
+        return;
+      }
+      if (visible.has(key)) return;
+      const hiddenAt = finite(labelHiddenAt.get(key), renderedAt);
+      if (renderedAt - hiddenAt >= animation.labelMinimumResidenceMs) labelMembership.delete(key);
+    });
+    const admit = (key) => {
+      if (labelMembership.has(key)) return;
+      if (labelMembership.size >= labelBudget) {
+        const removable = [...labelMembership].map((candidateKey) => renderNodes.get(candidateKey))
+          .filter((candidate) => candidate && !candidate.active && !candidate.selected)
+          .sort((left, right) => labelPriority(left) - labelPriority(right) ||
+            nodeKey(left).localeCompare(nodeKey(right)))[0];
+        if (!removable) return;
+        labelMembership.delete(nodeKey(removable));
+      }
+      labelMembership.add(key);
+    };
+    [...visible].filter((key) => {
+      const node = renderNodes.get(key);
+      return node?.active || node?.selected;
+    }).forEach(admit);
+    [...visible].forEach(admit);
   }
 
   function scheduleLabels() {

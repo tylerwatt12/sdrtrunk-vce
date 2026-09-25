@@ -239,6 +239,8 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
   white-space: nowrap;
   transform: translate(-50%, calc(-100% - var(--space-3)));
   backdrop-filter: blur(var(--network-overlay-blur));
+  cursor: pointer;
+  pointer-events: auto;
   opacity: 1;
   transition: color 240ms ease, border-color 240ms ease, background-color 240ms ease,
     opacity 420ms ease;
