@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -286,6 +286,14 @@ column order, visibility, and widths. Each usable preference revision is increme
 revision-exhausted user's preference document is replaced with version-7 defaults. This semantic-only format shares
 the format-22 DDL fingerprint, so the authoritative global marker is required when row invariants cannot distinguish
 an otherwise markerless database.
+
+The format 23-to-24 step preserves every row and adds six reproducible indexes for retained Activity filtering. The
+radio-system and saved-channel indexes lead with their owner and then the selected action or event type, followed by
+descending observation time and event ID so a bounded newest-first page does not scan unrelated retained history or
+sort into a temporary B-tree. Two additional saved-channel indexes serve exact conventional-digital source and target
+IDs in the same newest-first order. Radio-system indexes exclude channel-only events, event-type indexes exclude rows
+whose decoder event type is unknown, and raw-ID indexes exclude rows without that role. Existing retention, pruning,
+identity, encryption, and administrator-owned configuration are unchanged.
 
 ## Schema-Change Rule
 

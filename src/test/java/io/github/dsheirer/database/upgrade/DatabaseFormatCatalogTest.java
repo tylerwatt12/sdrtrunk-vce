@@ -79,8 +79,10 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("NXDN Type-C by location category and System ID")));
         assertTrue(DatabaseFormatCatalog.requireVersion(19).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("exact saved channel")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(23).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("collapsed row-group")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("action/time indexes")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)

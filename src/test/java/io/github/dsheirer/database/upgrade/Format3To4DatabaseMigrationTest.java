@@ -125,7 +125,7 @@ class Format3To4DatabaseMigrationTest
 
             assertEquals(3, report.source().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-22-to-23", report.steps().getLast().id());
+            assertEquals("format-23-to-24", report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, current.version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),

@@ -87,7 +87,7 @@ class Format21To22DatabaseMigrationTest
                 """.formatted(channelId));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(22).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
     }

@@ -339,6 +339,46 @@ class StatsApiV1HttpContractTest
             "?radio_system_key=p25%3A00001%3A047&group_identity_key=patch");
         assertStructuredError(invalidIdentityKey, 400, "invalid_parameter", "group_identity_key");
 
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?action=not-real"),
+            400, "invalid_parameter", "action");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?action=call"),
+            400, "invalid_parameter", "radio_system_key");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?event_type=not-real"),
+            400, "invalid_parameter", "event_type");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?encryption=secret"),
+            400, "invalid_parameter", "encryption");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?radio_role=source"),
+            400, "invalid_parameter", "radio_role");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?radio_role=any"),
+            400, "invalid_parameter", "radio_role");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?group_match=via_patch"),
+            400, "invalid_parameter", "group_match");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?group_match=all"),
+            400, "invalid_parameter", "group_match");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?from_ms=2000&to_ms=2000"),
+            400, "invalid_parameter", "from_ms");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?source_id=16777216"),
+            400, "invalid_parameter", "source_id");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?source_id=17"),
+            400, "invalid_parameter", "configuration_id");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?target_id=17"),
+            400, "invalid_parameter", "configuration_id");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?target_kind=group"),
+            400, "invalid_parameter", "target_kind");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?frequency_hz=0"),
+            400, "invalid_parameter", "frequency_hz");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?lcn=3"),
+            400, "invalid_parameter", "lcn");
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?timeslot=3"),
+            400, "invalid_parameter", "timeslot");
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?radio_system_key=p25%3Abee00%3A49f&action=grant&hide_grants=true"),
+            400, "invalid_parameter", "hide_grants");
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?radio_system_key=p25%3A00001%3A047" +
+                "&configuration_id=4b75217f-2555-4c38-aafc-5d17bc0faf71"),
+            400, "invalid_parameter", "configuration_id");
+
         HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
         assertStructuredError(missingRadioAction, 400, "invalid_parameter", "action");
 
@@ -372,6 +412,19 @@ class StatsApiV1HttpContractTest
         JsonNode emptyPage = OBJECT_MAPPER.readTree(missingCursor.body());
         assertEquals(0, emptyPage.get("data").size(), missingCursor.body());
         assertEquals(1, emptyPage.at("/meta/limit").intValue(), missingCursor.body());
+
+        HttpResponse<String> filteredActivity = get(StatsApiV1.ACTIVITY +
+            "?radio_system_key=p25%3Abee00%3A49f" +
+            "&configuration_id=4b75217f-2555-4c38-aafc-5d17bc0faf71" +
+            "&group_identity_key=v1-g-bee00-49f-56735&group_match=direct" +
+            "&radio_identity_key=v1-r-bee00-49f-2&radio_role=source" +
+            "&source_identity_key=v1-r-bee00-49f-2" +
+            "&target_identity_key=v1-g-bee00-49f-56735" +
+            "&from_ms=2000&to_ms=2001&action=grant&encryption=clear" +
+            "&source_id=2&target_id=56735&target_kind=talkgroup&limit=20");
+        assertEquals(200, filteredActivity.statusCode(), filteredActivity.body());
+        assertEquals(1, OBJECT_MAPPER.readTree(filteredActivity.body()).path("data").size(),
+            filteredActivity.body());
 
         assertEquals(401, get(StatsApiV1.ALIASES + "?family=P25").statusCode());
         assertEquals(401, get(StatsApiV1.ALIASES + "?matcher=TALKGROUP").statusCode());

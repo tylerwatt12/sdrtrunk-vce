@@ -125,17 +125,17 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE, true);
+        create(connection, MAXIMUM_OBSERVED_SITE, true, true);
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
     public static void createFormat17(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false);
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false);
     }
 
-    private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup)
-        throws SQLException
+    private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
+                               boolean includeActivityFilterIndexes) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
@@ -155,7 +155,7 @@ public class ReceiverActivitySchema
                     updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
-            createIndexesAndViews(statement);
+            createIndexesAndViews(statement, includeActivityFilterIndexes);
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
@@ -222,6 +222,18 @@ public class ReceiverActivitySchema
             List.of("observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_receiver_activity_event_system_time",
             List.of("radio_system_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_system_action_time",
+            List.of("radio_system_id", "action_code", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_action_time",
+            List.of("channel_id", "action_code", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_system_event_type_time",
+            List.of("radio_system_id", "event_type_code", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_event_type_time",
+            List.of("channel_id", "event_type_code", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_source_id_time",
+            List.of("channel_id", "source_observed_local_id", "observed_at_ms", "id"));
+        validateIndexColumns(connection, "idx_receiver_activity_event_channel_target_id_time",
+            List.of("channel_id", "target_observed_local_id", "observed_at_ms", "id"));
         validateIndexColumns(connection, "idx_trunked_signaling_activity_system",
             List.of("radio_system_id", "channel_id", "bucket_start_ms"));
         validateIndexColumns(connection, "idx_p25_site_snapshot_retention", List.of("last_seen_ms", "channel_id"));
@@ -498,12 +510,12 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Restores current activity indexes and the resolved view after a staged event-table rebuild. */
+    /** Restores the frozen pre-format-24 indexes and resolved view after a historical event-table rebuild. */
     public static void createCurrentIndexesAndViews(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
-            createIndexesAndViews(statement);
+            createIndexesAndViews(statement, false);
         }
     }
 
@@ -2553,7 +2565,8 @@ public class ReceiverActivitySchema
             """);
     }
 
-    private static void createIndexesAndViews(Statement statement) throws SQLException
+    private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes)
+        throws SQLException
     {
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_channel_radio_system ON receiver_channel(radio_system_id, id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_retention ON receiver_activity_event(observed_at_ms, id)");
@@ -2563,6 +2576,10 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_source_time ON receiver_activity_event(source_identity_summary_id, observed_at_ms) WHERE source_identity_summary_id IS NOT NULL");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_frequency_time ON receiver_activity_event(frequency_hz, observed_at_ms) WHERE frequency_hz IS NOT NULL");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_encryption ON receiver_activity_event(encryption_algorithm_id, encryption_key_id, observed_at_ms) WHERE encrypted = 1");
+        if(includeActivityFilterIndexes)
+        {
+            createActivityFilterIndexes(statement);
+        }
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_activity_event_member_identity_event
             ON activity_event_identity_member(identity_summary_id, event_id)
@@ -2642,6 +2659,50 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_control_quality_channel_time ON trunked_control_channel_quality(channel_id, observed_at_ms DESC)");
         createControlChannelQualityRetentionIndex(statement);
         statement.executeUpdate(createResolvedViewSql());
+    }
+
+    /**
+     * Creates the Activity page owner/filter/time indexes for fresh databases and the adjacent staged migrator.
+     */
+    public static void createActivityFilterIndexes(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            createActivityFilterIndexes(statement);
+        }
+    }
+
+    private static void createActivityFilterIndexes(Statement statement) throws SQLException
+    {
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_action_time
+            ON receiver_activity_event(radio_system_id, action_code, observed_at_ms DESC, id DESC)
+            WHERE radio_system_id IS NOT NULL
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_action_time
+            ON receiver_activity_event(channel_id, action_code, observed_at_ms DESC, id DESC)
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_system_event_type_time
+            ON receiver_activity_event(radio_system_id, event_type_code, observed_at_ms DESC, id DESC)
+            WHERE radio_system_id IS NOT NULL AND event_type_code IS NOT NULL
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_event_type_time
+            ON receiver_activity_event(channel_id, event_type_code, observed_at_ms DESC, id DESC)
+            WHERE event_type_code IS NOT NULL
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_source_id_time
+            ON receiver_activity_event(channel_id, source_observed_local_id, observed_at_ms DESC, id DESC)
+            WHERE source_observed_local_id IS NOT NULL
+            """);
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_receiver_activity_event_channel_target_id_time
+            ON receiver_activity_event(channel_id, target_observed_local_id, observed_at_ms DESC, id DESC)
+            WHERE target_observed_local_id IS NOT NULL
+            """);
     }
 
     private static final List<SqliteSchemaValidator.Table> TABLES = java.util.stream.Stream.concat(List.of(
@@ -2727,6 +2788,12 @@ public class ReceiverActivitySchema
         "idx_receiver_activity_event_source_time",
         "idx_receiver_activity_event_frequency_time",
         "idx_receiver_activity_event_encryption",
+        "idx_receiver_activity_event_system_action_time",
+        "idx_receiver_activity_event_channel_action_time",
+        "idx_receiver_activity_event_system_event_type_time",
+        "idx_receiver_activity_event_channel_event_type_time",
+        "idx_receiver_activity_event_channel_source_id_time",
+        "idx_receiver_activity_event_channel_target_id_time",
         "idx_activity_event_member_identity_event",
         "idx_trunked_signaling_activity_time",
         "idx_trunked_signaling_activity_system",
