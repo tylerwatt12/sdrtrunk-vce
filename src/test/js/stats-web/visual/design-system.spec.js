@@ -542,15 +542,41 @@ test('rf-planner-light-mobile', async ({ page }) => {
 test('scanner-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=scanner');
-  await expect(page.locator('.scanner-audio-wave > i')).toHaveCount(64);
-  expect(await page.locator('.scanner-workspace > *').evaluateAll((elements) => elements.map((element) => element.className)))
-    .toEqual(['scanner-status-bar', 'scanner-controls', 'scanner-utility-row', 'scanner-display-shell']);
+  const scanner = page.locator('.visual-scanner-example');
+  await expect(scanner.locator('.scanner-audio-wave > i')).toHaveCount(64);
+  expect(await scanner.locator('.scanner-console > *').evaluateAll((elements) =>
+    elements.map((element) => element.className))).toEqual([
+    'scanner-status-bar', 'scanner-player-host', 'scanner-console-main'
+  ]);
+  await expect(scanner.locator('.scanner-player-host > .playback-bar.scanner-expanded')).toHaveCount(1);
+  await expect(scanner.locator('.scanner-controls, .scanner-utility-row')).toHaveCount(0);
+  await expect(scanner.locator('.scanner-view-modes [data-mode]')).toHaveCount(4);
+  await expect(scanner.locator('.scanner-view-modes [data-mode="normal"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(scanner.locator('.scanner-scan-summary')).toHaveText('2 of 6 listening');
+  await expect(scanner.locator('.scanner-scan-button[aria-pressed="true"]')).toHaveCount(2);
+  await expect(scanner.locator('.scanner-coverage-action')).toHaveAttribute('aria-label', 'View scan-list coverage');
+  const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
+  const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
+  expect(nowPlaying).not.toBeNull();
+  expect(scanRail).not.toBeNull();
+  expect(scanRail.x).toBeGreaterThan(nowPlaying.x + nowPlaying.width - 1);
   await expect(page.locator('body')).toHaveScreenshot('scanner-light-desktop.png', { fullPage: true });
 });
 
 test('scanner-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=scanner');
+  const scanner = page.locator('.visual-scanner-example');
+  const nowPlaying = await scanner.locator('.scanner-now-playing').boundingBox();
+  const scanRail = await scanner.locator('.scanner-scan-rail').boundingBox();
+  expect(nowPlaying).not.toBeNull();
+  expect(scanRail).not.toBeNull();
+  expect(scanRail.y).toBeGreaterThanOrEqual(nowPlaying.y + nowPlaying.height - 1);
+  await expect(scanner.locator('.scanner-scan-button')).toHaveCount(6);
+  await expect(scanner.locator('.playback-command')).toHaveCount(8);
+  const unnamedPlaybackControls = await scanner.locator('.playback-command').evaluateAll((buttons) =>
+    buttons.filter((button) => !button.getAttribute('aria-label')).length);
+  expect(unnamedPlaybackControls).toBe(0);
   await expect(page.locator('body')).toHaveScreenshot('scanner-dark-mobile.png', { fullPage: true });
 });
 

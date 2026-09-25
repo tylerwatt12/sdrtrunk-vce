@@ -23,6 +23,8 @@ export class WebCallPlayer {
     this.heldDisplayCall = null;
     this.current = null;
     this.currentBuffer = null;
+    this.currentSourceSampleRate = null;
+    this.lastHeardSourceSampleRate = null;
     this.idleDisplayCall = null;
     this.idleDisplayTimer = null;
     this.idleDisplayDeadline = 0;
@@ -292,6 +294,7 @@ export class WebCallPlayer {
     this.avoids.clear();
     this.lastHeard = null;
     this.lastHeardBuffer = null;
+    this.lastHeardSourceSampleRate = null;
     this.replayingLast = false;
     this.stopAfterReplay = false;
     this.holdTarget = null;
@@ -767,6 +770,7 @@ export class WebCallPlayer {
     this.clearIdleDisplay();
     this.current = this.lastHeard;
     this.currentBuffer = this.lastHeardBuffer;
+    this.currentSourceSampleRate = this.lastHeardSourceSampleRate;
     this.stopped = false;
     this.replayingLast = true;
     this.stopAfterReplay = wasStopped;
@@ -796,6 +800,7 @@ export class WebCallPlayer {
     this.current = next;
     if (this.holdTarget === next._playbackTargetKey) this.heldDisplayCall = next;
     this.currentBuffer = null;
+    this.currentSourceSampleRate = null;
     await this.loadCurrent();
   }
 
@@ -808,6 +813,7 @@ export class WebCallPlayer {
     this.loadController = loadController;
     let loadTimedOut = false;
     let loadTimeout;
+    let sourceSampleRate = null;
     const timeoutFailure = new Promise((_, reject) => {
       loadTimeout = window.setTimeout(() => {
         loadTimedOut = true;
@@ -826,10 +832,12 @@ export class WebCallPlayer {
         if (!response.ok) throw new Error(`Audio returned ${response.status}`);
         this.ensureAudioContext();
         const data = await response.arrayBuffer();
+        sourceSampleRate = WebCallPlayer.waveSampleRate(data);
         return this.audioContext.decodeAudioData(data);
       })(), timeoutFailure]);
       if (token !== this.loadToken || this.current !== requested) return;
       this.currentBuffer = buffer;
+      this.currentSourceSampleRate = sourceSampleRate || Number(buffer?.sampleRate) || null;
       if (!this.stopped && !this.paused) this.startCurrent();
       else this.render();
     } catch (error) {
@@ -866,6 +874,7 @@ export class WebCallPlayer {
         this.source = null;
         this.current = null;
         this.currentBuffer = null;
+        this.currentSourceSampleRate = null;
         this.replayingLast = false;
         this.stopAfterReplay = false;
         if (stopAfterReplay) {
@@ -881,13 +890,16 @@ export class WebCallPlayer {
       }
       const completed = this.current;
       const completedBuffer = this.currentBuffer;
+      const completedSourceSampleRate = this.currentSourceSampleRate;
       source.disconnect();
       this.stopProgress();
       this.source = null;
       this.current = null;
       this.currentBuffer = null;
+      this.currentSourceSampleRate = null;
       this.lastHeard = completed;
       this.lastHeardBuffer = completedBuffer;
+      this.lastHeardSourceSampleRate = completedSourceSampleRate;
       this.playNext(completed);
     };
     this.source = source;
@@ -916,6 +928,7 @@ export class WebCallPlayer {
     this.stopSource();
     this.current = null;
     this.currentBuffer = null;
+    this.currentSourceSampleRate = null;
     this.clearIdleDisplay();
     this.render();
   }
@@ -1016,6 +1029,27 @@ export class WebCallPlayer {
     }
   }
 
+  static waveSampleRate(data) {
+    if (!(data instanceof ArrayBuffer) || data.byteLength < 20) return null;
+    const view = new DataView(data);
+    const chunkName = (offset) => String.fromCharCode(
+      view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
+    if (chunkName(0) !== 'RIFF' || chunkName(8) !== 'WAVE') return null;
+    let offset = 12;
+    while (offset + 8 <= data.byteLength) {
+      const size = view.getUint32(offset + 4, true);
+      const dataOffset = offset + 8;
+      if (chunkName(offset) === 'fmt ' && size >= 16 && dataOffset + 8 <= data.byteLength) {
+        const sampleRate = view.getUint32(dataOffset + 4, true);
+        return sampleRate > 0 ? sampleRate : null;
+      }
+      const next = dataOffset + size + (size & 1);
+      if (next <= offset || next > data.byteLength) break;
+      offset = next;
+    }
+    return null;
+  }
+
   readAudioSpectrum(levels, maximumFrequencyHz = 8_000) {
     if (!levels?.length) return false;
     levels.fill(0);
@@ -1026,9 +1060,12 @@ export class WebCallPlayer {
     }
     this.analyserNode.getByteFrequencyData(this.spectrumSamples);
     const nyquist = Number(this.audioContext.sampleRate) / 2;
+    const sourceSampleRate = Number(this.currentSourceSampleRate || this.currentBuffer?.sampleRate);
+    const sourceNyquist = Number.isFinite(sourceSampleRate) && sourceSampleRate > 0 ? sourceSampleRate / 2 : nyquist;
     const maximum = Number(maximumFrequencyHz);
     const visibleBins = Number.isFinite(nyquist) && nyquist > 0 && Number.isFinite(maximum) && maximum > 0 ?
-      Math.max(2, Math.min(sampleCount, Math.ceil(maximum / nyquist * sampleCount))) : sampleCount;
+      Math.min(sampleCount, Math.max(2,
+        Math.ceil(Math.min(maximum, sourceNyquist, nyquist) / nyquist * sampleCount))) : sampleCount;
     for (let bar = 0; bar < levels.length; bar++) {
       const start = Math.max(1, Math.floor(bar * visibleBins / levels.length));
       const end = Math.max(start + 1, Math.floor((bar + 1) * visibleBins / levels.length));

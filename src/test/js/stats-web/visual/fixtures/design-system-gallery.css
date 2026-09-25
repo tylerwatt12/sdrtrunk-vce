@@ -472,14 +472,14 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   display: flex;
 }
 
-.visual-scanner-wave i:nth-child(1) { height: 8px; }
-.visual-scanner-wave i:nth-child(2) { height: 18px; }
-.visual-scanner-wave i:nth-child(3) { height: 28px; }
-.visual-scanner-wave i:nth-child(4) { height: 15px; }
-.visual-scanner-wave i:nth-child(5) { height: 33px; }
-.visual-scanner-wave i:nth-child(6) { height: 22px; }
-.visual-scanner-wave i:nth-child(7) { height: 10px; }
-.visual-scanner-wave i:nth-child(8) { height: 25px; }
+.visual-scanner-wave i:nth-child(8n + 1) { height: 8px; }
+.visual-scanner-wave i:nth-child(8n + 2) { height: 18px; }
+.visual-scanner-wave i:nth-child(8n + 3) { height: 28px; }
+.visual-scanner-wave i:nth-child(8n + 4) { height: 15px; }
+.visual-scanner-wave i:nth-child(8n + 5) { height: 33px; }
+.visual-scanner-wave i:nth-child(8n + 6) { height: 22px; }
+.visual-scanner-wave i:nth-child(8n + 7) { height: 10px; }
+.visual-scanner-wave i:nth-child(8n) { height: 25px; }
 
 .visual-tuner-spectrum-example .tuner-spectrum-layout {
   min-height: 730px;

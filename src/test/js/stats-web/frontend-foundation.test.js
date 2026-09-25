@@ -857,6 +857,62 @@ async function main() {
   assert.ok(scannerRenderer.indexOf('currentChannel = null;') <
     scannerRenderer.indexOf('renderScannerCall(display, state, currentChannel);'),
   'A call transition must clear old channel metadata before rendering its navigation handlers');
+  assert.match(appSource,
+    /const SCANNER_DETAIL_LEVELS = Object\.freeze\(\{ simple: 0, normal: 1, advanced: 2, engineer: 3 \}\)/,
+    'Scanner detail modes must retain four ordered disclosure levels');
+  assert.match(scannerRenderer, /scanner-workspace scanner-console ui-surface/);
+  assert.match(scannerRenderer, /scanner-console-main/);
+  assert.match(scannerRenderer, /scanner-now-playing/);
+  assert.match(scannerRenderer, /scanner-scan-lists scanner-scan-rail/);
+  assert.match(scannerRenderer, /scanner-coverage-action/);
+  assert.match(scannerRenderer, /page\.dataset\.scannerMode = scannerDetailMode/);
+  assert.match(scannerRenderer, /chassis\.dataset\.scannerMode = scannerDetailMode/);
+  assert.match(scannerRenderer, /display\.dataset\.scannerMode = scannerDetailMode/);
+  assert.match(scannerRenderer, /button\.setAttribute\('aria-pressed', String\(scannerDetailMode === id\)\)/,
+    'Scanner detail mode buttons must expose their selected state');
+  assert.match(scannerRenderer, /scanner-scan-check/);
+  assert.match(scannerRenderer, /scanner-scan-copy/);
+  assert.doesNotMatch(scannerRenderer, /scannerControl\(|scanner-controls|scanner-utility-row/,
+    'Scanner must reuse the shared playback transport instead of duplicating oversized controls');
+  const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
+  assert.match(scannerCallRenderer,
+    /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*scanner-audio-wave/,
+    'Simple Scanner mode must omit the audio spectrum');
+  assert.match(scannerCallRenderer,
+    /!analog && detailLevel >= SCANNER_DETAIL_LEVELS\.normal/,
+    'Simple Scanner mode must omit the secondary target card');
+  assert.match(functionBinding(appSource, 'scannerParticipant'), /scannerField\('Group', group, 1\)/,
+    'Normal Scanner mode must add participant grouping');
+  assert.match(functionBinding(appSource, 'scannerParticipant'),
+    /scannerField\('ID', alias \? identifier : null, 2/,
+    'Advanced Scanner mode must add raw identifiers without duplicating fallback identities');
+  assert.match(scannerCallRenderer, /scannerField\('Decoder', call\.decoder, 2/,
+    'Advanced Scanner mode must add decoder diagnostics');
+  assert.match(scannerCallRenderer, /scannerDetailMode === 'engineer'[\s\S]*scannerCallQuality\(call\)/,
+    'Engineer Scanner mode must retain raw call-quality diagnostics');
+  assert.match(functionBinding(appSource, 'scannerField'),
+    /value === null \|\| value === undefined \|\| String\(value\)\.trim\(\) === ''/,
+    'Compact Scanner modes must omit unavailable fields instead of rendering placeholders');
+  assert.match(functionBinding(appSource, 'placePlaybackBar'),
+    /details:not\(\.playback-control-menu\)[\s\S]*panel\.open = false/,
+    'Scanner must keep secondary shared playback panels closed in the compact console');
+  assert.doesNotMatch(functionBinding(appSource, 'initializePlaybackHeader'),
+    /scanner-expanded/,
+    'Responsive Scanner playback popovers must coordinate and dismiss like the shared header controls');
+  assert.match(functionBinding(appSource, 'applyUserPreferenceSnapshot'),
+    /setScannerDetailMode\(pendingScannerDetailMode \|\| preferences\.scanner\.detail_mode\)/,
+    'Preference rollbacks must restore the visible Scanner detail mode');
+  assert.match(functionBinding(appSource, 'setScannerDetailMode'),
+    /scannerDetailModeRenderer\(normalized\)/,
+    'Scanner detail mode changes must synchronize the rendered mode controls and content');
+  assert.doesNotMatch(scannerRenderer, /scanButtons\.replaceChildren\(/,
+    'Scanner state refreshes must not replace focused scan-list controls');
+  assert.match(scannerRenderer, /scanner-scan-button\[data-scan-list-id\]/);
+  assert.match(scannerRenderer, /scanButtons\.insertBefore\(button, current \|\| null\)/,
+    'Scanner scan-list controls must reconcile stable keyed buttons in place');
+  assert.match(scannerRenderer,
+    /const mutation = \+\+scannerDetailModeMutation[\s\S]*mutation !== scannerDetailModeMutation/,
+    'Queued Scanner mode saves must not repaint over a newer local choice');
 
   const decoderLabel = vm.runInNewContext(
     `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);

@@ -20,7 +20,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
-import { WebCallPlayer } from './web-call-player.js?v=3';
+import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -397,7 +397,9 @@ function applyUserPreferenceSnapshot(snapshot) {
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
   const player = webCallPlayer;
   if (player && typeof player.applyPreferences === 'function') player.applyPreferences(preferences.playback);
-  if (typeof scannerDetailMode !== 'undefined') scannerDetailMode = preferences.scanner.detail_mode;
+  if (typeof scannerDetailMode !== 'undefined') {
+    setScannerDetailMode(pendingScannerDetailMode || preferences.scanner.detail_mode);
+  }
   receiverHealthController.updateIndicator();
   receiverHealthController.updatePage();
 }
@@ -9252,7 +9254,7 @@ function placePlaybackBar() {
   (scannerHost || slot).append(bar);
   bar.setAttribute('aria-label', scannerHost ? 'Browser scanner and call playback' : 'Web call playback');
   bar.querySelectorAll('details:not(.playback-control-menu)')
-    .forEach((panel) => { panel.open = Boolean(scannerHost); });
+    .forEach((panel) => { panel.open = false; });
   const controlMenu = bar.querySelector('.playback-control-menu');
   if (controlMenu) controlMenu.open = !navigationUsesDrawer();
 }
@@ -9267,7 +9269,7 @@ function initializePlaybackHeader() {
   const controlMenu = bar?.querySelector('.playback-control-menu');
   const panels = [...(bar?.querySelectorAll('details:not(.playback-control-menu)') || [])];
   panels.forEach((panel) => panel.addEventListener('toggle', () => {
-    if (!panel.open || bar.classList.contains('scanner-expanded')) return;
+    if (!panel.open) return;
     if (navigationUsesDrawer() && controlMenu) controlMenu.open = false;
     panels.forEach((other) => { if (other !== panel) other.open = false; });
   }));
@@ -9280,7 +9282,6 @@ function initializePlaybackHeader() {
   });
   if (controlMenu) controlMenu.open = !navigationUsesDrawer();
   document.addEventListener('click', (event) => {
-    if (bar?.classList.contains('scanner-expanded')) return;
     panels.forEach((panel) => {
       if (panel.open && !panel.contains(event.target)) panel.open = false;
     });
@@ -9377,6 +9378,16 @@ const SCANNER_DETAIL_LEVELS = Object.freeze({ simple: 0, normal: 1, advanced: 2,
 const SCANNER_CHANNEL_CACHE_LIMIT = 64;
 const scannerChannelCache = new Map();
 let scannerDetailMode = 'normal';
+let scannerDetailModeRenderer = null;
+let pendingScannerDetailMode = null;
+let scannerDetailModeMutation = 0;
+
+function setScannerDetailMode(mode) {
+  const normalized = Object.prototype.hasOwnProperty.call(SCANNER_DETAIL_LEVELS, mode) ? mode : 'normal';
+  scannerDetailMode = normalized;
+  if (typeof scannerDetailModeRenderer === 'function') scannerDetailModeRenderer(normalized);
+  return normalized;
+}
 
 function scannerRelativeAge(timestamp) {
   const value = Number(timestamp);
@@ -9487,12 +9498,18 @@ function scannerDuration(milliseconds) {
   return Number.isFinite(value) && value > 0 ? `${(value / 1000).toFixed(1)} sec` : '';
 }
 
+function scannerDetailLevel() {
+  return SCANNER_DETAIL_LEVELS[scannerDetailMode] ?? SCANNER_DETAIL_LEVELS.normal;
+}
+
 function scannerField(label, value, level, action, wide = false) {
-  if (level > SCANNER_DETAIL_LEVELS[scannerDetailMode]) return null;
+  if (level > scannerDetailLevel() || value === null || value === undefined || String(value).trim() === '') {
+    return null;
+  }
   const field = node('div', `scanner-field${wide ? ' wide' : ''}`);
   field.append(node('span', 'scanner-field-label', label));
-  const text = value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
-  if (action && text !== '—') {
+  const text = String(value);
+  if (action) {
     const link = node('button', 'link-button scanner-field-link', text);
     link.type = 'button';
     link.addEventListener('click', action);
@@ -9507,12 +9524,16 @@ function scannerParticipant(title, alias, identifier, description, group, aliasA
   const participant = node('section', 'scanner-participant');
   participant.append(node('strong', 'scanner-participant-heading', title));
   const fields = node('div', 'scanner-participant-fields');
-  [
-    scannerField(title === 'Source' ? 'Alias / Talker Alias' : 'Alias', alias, 0, aliasAction, true),
-    scannerField('ID', identifier, 1, identifierAction),
+  const primaryIdentity = alias || identifier;
+  const visibleFields = [
+    scannerField(alias ? (title === 'Source' ? 'Alias / Talker Alias' : 'Alias') : 'ID', primaryIdentity, 0,
+      alias ? aliasAction : identifierAction, true),
     scannerField('Group', group, 1),
-    scannerField('Description', description, 1, null, true)
-  ].filter(Boolean).forEach((field) => fields.append(field));
+    scannerField('ID', alias ? identifier : null, 2, identifierAction),
+    scannerField('Description', description, 2, null, true)
+  ].filter(Boolean);
+  if (!visibleFields.length) return null;
+  visibleFields.forEach((field) => fields.append(field));
   participant.append(fields);
   return participant;
 }
@@ -9606,12 +9627,13 @@ function scannerCallRenderKey(call, state, site) {
 function renderScannerCall(host, state, channelMetadata) {
   const call = state.displayCall || state.current;
   const renderKey = scannerCallRenderKey(call, state, channelMetadata);
+  const detailLevel = scannerDetailLevel();
   host.dataset.scannerMode = scannerDetailMode;
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
     const wave = host.querySelector('.scanner-audio-wave');
     if (wave) {
       wave.classList.toggle('paused', !state.playing);
-      wave.setAttribute('aria-label', state.playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
+      wave.setAttribute('aria-label', state.playing ? 'Voice frequency spectrum' : 'Voice spectrum idle');
     }
     return;
   }
@@ -9634,36 +9656,41 @@ function renderScannerCall(host, state, channelMetadata) {
   copy.append(node('span', 'scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
     ' · Encrypted' : ' · Voice'}`), node('strong', 'scanner-call-title', scannerTargetLabel(call, channelMetadata)),
     node('span', 'scanner-call-subtitle', [call.system, call.site].filter(Boolean).join(' · ')));
-  const wave = node('div', `scanner-audio-wave${state.playing ? '' : ' paused'}`);
-  wave.setAttribute('role', 'img');
-  for (let index = 0; index < 64; index++) wave.append(node('i'));
-  wave.setAttribute('aria-label', state.playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
   const instruments = node('div', 'scanner-call-instruments');
   instruments.append(scannerVoiceMeter(call));
-  intro.append(copy, instruments, wave);
+  intro.append(copy, instruments);
+  if (detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
+    const wave = node('div', `scanner-audio-wave${state.playing ? '' : ' paused'}`);
+    wave.setAttribute('role', 'img');
+    for (let index = 0; index < 64; index++) wave.append(node('i'));
+    wave.setAttribute('aria-label', state.playing ? 'Voice frequency spectrum' : 'Voice spectrum idle');
+    intro.append(wave);
+  }
 
   const fields = node('div', 'scanner-field-grid');
   const open = (destination) => () => scannerNavigate(call, channelMetadata, destination);
   const participants = node('div', 'scanner-participant-grid');
-  if (!analog) {
-    participants.append(scannerParticipant('Target', call.target_alias, call.target_id, call.target_description,
+  const visibleParticipants = [];
+  if (!analog && detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
+    visibleParticipants.push(scannerParticipant('Target', call.target_alias, call.target_id, call.target_description,
       call.target_group, open('target-alias'), open('target')));
   }
-  participants.append(scannerParticipant('Source', scannerSourceAlias(call), call.source_id,
+  visibleParticipants.push(scannerParticipant('Source', scannerSourceAlias(call), call.source_id,
     call.source_description, call.source_group, open('source-alias'), open('source')));
+  visibleParticipants.filter(Boolean).forEach((participant) => participants.append(participant));
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
   const nac = scannerIsP25(call) ? scannerHex(call.nac, 3) : '';
   const modulation = channelMetadata?.p25_decoder_mode || call.modulation || '';
   [
-    scannerField('System', call.system, 0, open('system')),
-    scannerField('Site', call.site, 0, open('site')),
-    scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1, null, true),
-    scannerField('Channel', call.channel, 1, open('channel'), true),
-    scannerField('Network / Site', networkSiteIdentity, 1, open('site'), true),
-    scannerField('NAC', nac, 2, open('identifier')),
+    scannerField('Matched Scan Lists', scannerMatchedScanLists(call, state), 1),
+    scannerField('Channel', call.channel, 1, open('channel')),
     scannerField('Frequency', scannerFrequency(call), 1, open('frequency')),
+    scannerField('System', call.system, 2, open('system')),
+    scannerField('Site', call.site, 2, open('site')),
+    scannerField('Network / Site', networkSiteIdentity, 2, open('site'), true),
+    scannerField('NAC', nac, 2, open('identifier')),
     scannerField('LCN', call.lcn, 2, open('lcn')),
-    scannerField('Decoder', call.decoder, 1, open('decoder')),
+    scannerField('Decoder', call.decoder, 2, open('decoder')),
     scannerField('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
   ].filter(Boolean).forEach((field) => fields.append(field));
 
@@ -9683,17 +9710,10 @@ function renderScannerCall(host, state, channelMetadata) {
       engineer.append(item);
     });
   }
-  host.append(intro, participants, fields);
+  host.append(intro);
+  if (participants.childNodes.length) host.append(participants);
+  if (fields.childNodes.length) host.append(fields);
   if (engineer.childNodes.length) host.append(engineer);
-}
-
-function scannerControl(label, action, className = '') {
-  const styleClass = className === 'primary' ? 'ui-button-primary' :
-    className === 'danger' ? 'ui-button-danger' : 'ui-button-secondary';
-  const button = node('button', `ui-button ${styleClass} scanner-key`, label);
-  button.type = 'button';
-  button.addEventListener('click', action);
-  return button;
 }
 
 function openPlaybackAvoidList(player = webCallPlayer) {
@@ -9827,7 +9847,9 @@ function openPlaybackScanListCoverage(player = webCallPlayer, preferredId = null
 function renderScanner() {
   const renderContext = captureRenderContext();
   const player = webCallPlayer;
+  setScannerDetailMode(scannerDetailMode);
   const page = node('div', 'scanner-page');
+  page.dataset.scannerMode = scannerDetailMode;
   if (!player) {
     page.append(node('div', 'error', 'Browser call playback is unavailable.'));
     beginPage(renderContext, pageHeader('Scanner', 'Listen to completed calls from this receiver'), page);
@@ -9835,65 +9857,48 @@ function renderScanner() {
   }
 
   const modeBar = node('div', 'ui-segmented scanner-view-modes');
+  modeBar.setAttribute('role', 'group');
+  modeBar.setAttribute('aria-label', 'Scanner detail level');
   Object.entries({ simple: 'Simple', normal: 'Normal', advanced: 'Advanced', engineer: 'Engineer' })
     .forEach(([id, label]) => {
       const button = node('button', `ui-segmented-option${scannerDetailMode === id ? ' active' : ''}`, label);
       button.type = 'button';
       button.dataset.mode = id;
+      button.setAttribute('aria-pressed', String(scannerDetailMode === id));
       modeBar.append(button);
     });
-  const chassis = node('section', 'scanner-workspace ui-surface');
+  const chassis = node('section', 'scanner-workspace scanner-console ui-surface');
+  chassis.dataset.scannerMode = scannerDetailMode;
   const statusBar = node('div', 'scanner-status-bar');
+  const statusCopy = node('div', 'scanner-status-copy');
   const playbackStatus = node('strong', 'ui-pill scanner-live-status', 'Ready');
   const age = node('output', 'scanner-relative-age', 'Time unavailable');
-  statusBar.append(playbackStatus, age);
+  statusCopy.append(node('span', 'scanner-section-label', 'Now Playing'), playbackStatus);
+  statusBar.append(statusCopy, age);
+  const playerHost = node('div', 'scanner-player-host');
+  const consoleMain = node('div', 'scanner-console-main');
+  const nowPlaying = node('section', 'scanner-now-playing');
+  nowPlaying.setAttribute('aria-label', 'Now playing');
   const displayShell = node('div', 'scanner-display-shell');
   const display = node('div', 'scanner-display');
+  display.dataset.scannerMode = scannerDetailMode;
   displayShell.append(display);
-  const controls = node('div', 'scanner-controls');
-  const play = scannerControl('Play', () => void player.togglePlayback(), 'primary');
-  const pause = scannerControl('Pause', () => void player.togglePause());
-  pause.title = 'Pause audio and keep collecting calls. The queue is limited and older calls may expire.';
-  const replay = scannerControl('Replay Last Call', () => void player.replayLastCall());
-  const skip = scannerControl('Skip', () => player.skip());
-  const hold = scannerControl('Hold', () => player.toggleHold());
-  const avoid = scannerControl('Avoid', () => player.avoidCurrent(), 'danger');
-  const avoidList = scannerControl('Avoid List', () => openPlaybackAvoidList(player));
-  avoidList.dataset.scannerAction = 'avoid-list';
-  const clearQueue = scannerControl('Clear Queue', () => player.clearQueue());
-  controls.append(play, pause, replay, skip, hold, avoid, avoidList, clearQueue);
+  nowPlaying.append(displayShell);
 
-  const utility = node('div', 'scanner-utility-row');
-  const volume = node('input');
-  volume.type = 'range';
-  volume.min = '0';
-  volume.max = '1';
-  volume.step = '0.05';
-  volume.value = String(player.volume);
-  volume.className = 'ui-range';
-  volume.setAttribute('aria-label', 'Browser playback volume');
-  const volumeValue = node('output', '', `${Math.round(player.volume * 100)}%`);
-  volume.addEventListener('input', () => {
-    player.ui.volume.value = volume.value;
-    volumeValue.textContent = `${Math.round(Number(volume.value) * 100)}%`;
-    player.changeVolume(false);
-  });
-  volume.addEventListener('change', () => player.writePreferences());
-  utility.append(node('span', '', 'Browser volume'), volume, volumeValue);
-
-  const scanPanel = node('section', 'scanner-scan-lists ui-surface');
+  const scanPanel = node('section', 'scanner-scan-lists scanner-scan-rail');
   const scanHeading = node('div', 'scanner-scan-heading ui-surface-header');
   const scanCopy = node('div');
   scanCopy.append(node('strong', '', 'Scan Lists'), node('span', 'scanner-scan-summary', 'Loading'));
-  const coverage = node('button', 'ui-button ui-button-secondary', 'View coverage tree');
-  coverage.type = 'button';
+  const coverage = iconButton('icon-scan-lists', 'View scan-list coverage',
+    'ui-button ui-button-secondary ui-icon-button scanner-coverage-action');
   coverage.addEventListener('click', () => openPlaybackScanListCoverage(player));
   scanHeading.append(scanCopy, coverage);
   const scanButtons = node('div', 'scanner-scan-buttons');
   scanPanel.append(scanHeading, scanButtons);
 
-  chassis.append(statusBar, controls, utility, displayShell);
-  page.append(chassis, scanPanel);
+  consoleMain.append(nowPlaying, scanPanel);
+  chassis.append(statusBar, playerHost, consoleMain);
+  page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
   const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
@@ -9902,7 +9907,7 @@ function renderScanner() {
   scannerSettings.addEventListener('click', () => openScannerSettings('#scanner-settings'));
   headingActions.append(modeBar, scannerSettings);
   heading.append(headingActions);
-  const host = node('div', 'scanner-player-host');
+  const host = node('div', 'scanner-page-host');
   host.append(page);
   if (!beginPage(renderContext, heading, host)) return;
   placePlaybackBar();
@@ -9910,10 +9915,65 @@ function renderScanner() {
   let latestState = player.viewState();
   let currentConfigurationId = '';
   let currentChannel = null;
+  const renderDetailMode = (mode) => {
+    page.dataset.scannerMode = mode;
+    chassis.dataset.scannerMode = mode;
+    display.dataset.scannerMode = mode;
+    modeBar.querySelectorAll('button').forEach((item) => {
+      const active = item.dataset.mode === mode;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    renderScannerCall(display, latestState, currentChannel);
+  };
+  scannerDetailModeRenderer = renderDetailMode;
+  renderContext.signal?.addEventListener('abort', () => {
+    if (scannerDetailModeRenderer === renderDetailMode) scannerDetailModeRenderer = null;
+  }, { once: true });
   const updateAge = () => {
     const displayedCall = latestState.displayCall || latestState.current;
     age.textContent = displayedCall ? scannerRelativeAge(displayedCall.completed_at_ms) :
       'Waiting for a call';
+  };
+  const renderScanButtons = (state) => {
+    const selectedCount = state.scanLists.filter((item) => item.selected && item.enabled).length;
+    scanCopy.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
+      `${selectedCount} of ${state.scanLists.length} listening` : 'Loading available lists';
+    const existing = new Map([...scanButtons.querySelectorAll('.scanner-scan-button[data-scan-list-id]')]
+      .map((button) => [button.dataset.scanListId, button]));
+    const desired = state.scanLists.map((item) => {
+      const id = String(item.id);
+      let button = existing.get(id);
+      if (!button) {
+        button = node('button', 'ui-choice-card scanner-scan-button');
+        button.type = 'button';
+        button.dataset.scanListId = id;
+        const marker = node('span', 'scanner-scan-check');
+        marker.setAttribute('aria-hidden', 'true');
+        const copy = node('span', 'scanner-scan-copy');
+        copy.append(node('strong'), node('small'));
+        button.append(marker, copy);
+        button.addEventListener('click', () => player.setScanListSelected(button.dataset.scanListId,
+          button.getAttribute('aria-pressed') !== 'true'));
+      }
+      existing.delete(id);
+      button.disabled = !item.enabled;
+      button.setAttribute('aria-pressed', String(item.selected));
+      button.querySelector('.scanner-scan-check').textContent = item.selected ? '✓' : '';
+      button.querySelector('.scanner-scan-copy strong').textContent = item.name;
+      button.querySelector('.scanner-scan-copy small').textContent =
+        item.description || (item.default ? 'Default list' : 'Available');
+      return button;
+    });
+    existing.forEach((button) => button.remove());
+    scanButtons.querySelector('.scanner-scan-empty')?.remove();
+    desired.forEach((button, index) => {
+      const current = scanButtons.children[index];
+      if (current !== button) scanButtons.insertBefore(button, current || null);
+    });
+    if (state.scanListCatalogReady && !desired.length) {
+      scanButtons.append(node('div', 'empty scanner-scan-empty', 'No scan lists are available.'));
+    }
   };
   const draw = (state) => {
     latestState = state;
@@ -9926,39 +9986,11 @@ function renderScanner() {
     playbackStatus.textContent = state.status ||
       (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
     playbackStatus.classList.toggle('active', !state.stopped && !state.paused);
-    play.textContent = state.stopped ? 'Play' : 'Stop';
-    play.classList.toggle('active', !state.stopped);
-    pause.textContent = state.paused ? 'Resume' : 'Pause';
-    pause.disabled = state.stopped;
-    pause.classList.toggle('active', state.paused);
-    pause.setAttribute('aria-pressed', String(state.paused));
-    replay.disabled = !state.lastCallReady || state.paused;
-    skip.disabled = !state.current && !state.queuedCount;
-    hold.disabled = state.replayingLast || (!state.holdTarget && !state.currentReady);
-    hold.classList.toggle('active', Boolean(state.holdTarget));
-    avoid.disabled = !state.currentReady || state.replayingLast;
-    avoidList.textContent = `Avoid List${state.avoids.length ? ` (${state.avoids.length})` : ''}`;
-    clearQueue.textContent = `Clear Queue${state.queuedCount ? ` (${state.queuedCount})` : ''}`;
-    clearQueue.disabled = !state.queuedCount;
-    volume.value = String(state.volume);
-    volumeValue.textContent = `${Math.round(Number(state.volume) * 100)}%`;
+    statusBar.dataset.state = state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening';
     updateAge();
     renderScannerCall(display, state, currentChannel);
 
-    scanButtons.replaceChildren();
-    const selectedCount = state.scanLists.filter((item) => item.selected).length;
-    scanCopy.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
-      `${selectedCount} of ${state.scanLists.length} listening` : 'Loading available lists';
-    state.scanLists.forEach((item, index) => {
-      const button = node('button', 'ui-choice-card scanner-scan-button');
-      button.type = 'button';
-      button.disabled = !item.enabled;
-      button.setAttribute('aria-pressed', String(item.selected));
-      button.append(node('span', 'scanner-scan-number', String(index + 1)), node('strong', '', item.name),
-        node('small', '', item.description || (item.default ? 'Default list' : 'Available')));
-      button.addEventListener('click', () => player.setScanListSelected(item.id, !item.selected));
-      scanButtons.append(button);
-    });
+    renderScanButtons(state);
 
     if (channelChanged) {
       if (nextConfigurationId) void scannerChannelMetadata(nextConfigurationId).then((channel) => {
@@ -9979,7 +10011,7 @@ function renderScanner() {
     if (wave) {
       const playing = player.readAudioSpectrum(spectrumLevels, 8_000);
       wave.classList.toggle('paused', !playing);
-      wave.setAttribute('aria-label', playing ? 'Voice spectrum through 8 kilohertz' : 'Voice spectrum idle');
+      wave.setAttribute('aria-label', playing ? 'Voice frequency spectrum' : 'Voice spectrum idle');
       [...wave.children].forEach((bar, index) => {
         bar.style.height = `${playing ? Math.round(3 + spectrumLevels[index] * 31) : 3}px`;
       });
@@ -9992,11 +10024,16 @@ function renderScanner() {
   }, { once: true });
   pageInterval(updateAge, 1_000);
   modeBar.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
-    const selectedMode = button.dataset.mode;
-    scannerDetailMode = selectedMode;
-    void settleUserPreferenceMutation((preferences) => { preferences.scanner.detail_mode = selectedMode; });
-    modeBar.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === button));
-    renderScannerCall(display, latestState, currentChannel);
+    const selectedMode = setScannerDetailMode(button.dataset.mode);
+    const mutation = ++scannerDetailModeMutation;
+    pendingScannerDetailMode = selectedMode;
+    void settleUserPreferenceMutation((preferences) => {
+      preferences.scanner.detail_mode = selectedMode;
+    }).then((savedPreferences) => {
+      if (mutation !== scannerDetailModeMutation) return;
+      pendingScannerDetailMode = null;
+      setScannerDetailMode(savedPreferences?.scanner?.detail_mode || activeUserPreferences().scanner.detail_mode);
+    });
   }));
 }
 

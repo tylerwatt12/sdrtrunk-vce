@@ -4,6 +4,29 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+function wave(sampleRate = 8_000) {
+  const data = new ArrayBuffer(44);
+  const bytes = new Uint8Array(data);
+  const view = new DataView(data);
+  const write = (offset, value) => [...value].forEach((character, index) => {
+    bytes[offset + index] = character.charCodeAt(0);
+  });
+  write(0, 'RIFF');
+  view.setUint32(4, 36, true);
+  write(8, 'WAVE');
+  write(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, 0, true);
+  return data;
+}
+
 async function main() {
   const playerPath = path.resolve(process.argv[2] ||
     path.resolve(__dirname, '../../../../stats-web/assets/web-call-player.js'));
@@ -82,24 +105,36 @@ async function main() {
     assert.equal(presentation.displayCall(), null,
       'Releasing Hold must remove the retained call details');
 
+    assert.equal(WebCallPlayer.waveSampleRate(wave()), 8_000);
+    assert.equal(WebCallPlayer.waveSampleRate(new ArrayBuffer(44)), null);
+    let maximumSpectrumBinRead = -1;
+    const spectrumSamples = new Proxy(new Array(256).fill(0), {
+      get(target, property, receiver) {
+        if (/^\d+$/.test(String(property))) maximumSpectrumBinRead = Math.max(maximumSpectrumBinRead, Number(property));
+        return Reflect.get(target, property, receiver);
+      }
+    });
     const spectrum = Object.assign(Object.create(WebCallPlayer.prototype), {
       paused: false,
       source: {},
-      spectrumSamples: null,
+      currentSourceSampleRate: 8_000,
+      spectrumSamples,
       audioContext: { state: 'running', sampleRate: 48_000 },
       analyserNode: {
         frequencyBinCount: 256,
         getByteFrequencyData(samples) {
           samples.fill(0);
-          samples.fill(128, 1, 86);
+          samples.fill(128, 1, 43);
           samples[200] = 255;
         }
       }
     });
-    const spectrumLevels = new Float32Array(40);
+    const spectrumLevels = new Float32Array(64);
     assert.equal(spectrum.readAudioSpectrum(spectrumLevels, 8_000), true);
     assert.ok(spectrumLevels.every((level) => level > 0 && level < 1),
-      'The Scanner visualizer must spread the voice band across its full width and ignore higher bins');
+      'An 8 kHz source must spread its 4 kHz Nyquist band across all 64 Scanner bars');
+    assert.equal(maximumSpectrumBinRead, 42,
+      'The Scanner visualizer must not sample beyond the source audio bandwidth');
 
     const queuePlayer = Object.create(WebCallPlayer.prototype);
     Object.assign(queuePlayer, {
@@ -605,13 +640,15 @@ async function main() {
       global.fetch = () => new Promise((resolve) => { finishDownload = resolve; });
       const loading = pauseFixture();
       loading.current = loading.normalizeCall(overlap);
-      loading.audioContext.decodeAudioData = async () => ({ duration: 10 });
+      loading.audioContext.decodeAudioData = async () => ({ duration: 10, sampleRate: 48_000 });
       const download = loading.loadCurrent();
       await loading.togglePause();
-      finishDownload({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+      finishDownload({ ok: true, arrayBuffer: async () => wave(8_000) });
       await download;
       assert.equal(loading.source, null, 'Download completion while paused must remain silent');
       assert.equal(loading.currentBuffer.duration, 10);
+      assert.equal(loading.currentSourceSampleRate, 8_000,
+        'Browser resampling must not replace the source WAV rate used by the Scanner spectrum');
       await loading.togglePause();
       assert.ok(loading.source, 'Resume starts audio that finished downloading while paused');
       await loading.togglePlayback();

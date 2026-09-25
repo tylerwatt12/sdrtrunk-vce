@@ -63,6 +63,7 @@
     <symbol id="visual-icon-tuner" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="15" cy="12" r="3"></circle><path d="M6 10h4M6 14h3"></path></symbol>
     <symbol id="visual-icon-spectrum" viewBox="0 0 24 24"><path d="M2 18h20M3 15l3-2 2 3 3-10 3 8 3-5 4 6"></path></symbol>
     <symbol id="visual-icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"></path></symbol>
+    <symbol id="visual-icon-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"></rect></symbol>
     <symbol id="visual-icon-pause" viewBox="0 0 24 24"><path d="M7 5h3v14H7zM14 5h3v14h-3z"></path></symbol>
     <symbol id="visual-icon-skip" viewBox="0 0 24 24"><path d="M5 5v14l10-7ZM19 5v14"></path></symbol>
     <symbol id="visual-icon-replay" viewBox="0 0 24 24"><path d="M7 7H3v-4M3.5 7A9 9 0 1 1 3 16"></path></symbol>
@@ -787,32 +788,52 @@
 
 
   <main class="visual-feature-example visual-scanner-example">
-    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Listen</p><h1>Scanner</h1><p>Listen to completed calls from this receiver.</p></div><div class="scanner-header-actions"><div class="ui-segmented scanner-view-modes"><button class="ui-segmented-option">Simple</button><button class="ui-segmented-option active">Normal</button><button class="ui-segmented-option">Advanced</button><button class="ui-segmented-option">Engineer</button></div><button class="ui-button ui-button-secondary ui-icon-button" aria-label="Scanner settings">⚙</button></div></header>
-    <div class="scanner-page">
-      <section class="scanner-workspace ui-surface">
-        <div class="scanner-status-bar"><strong class="ui-pill scanner-live-status active">Listening</strong><output class="scanner-relative-age">Just now</output></div>
-        <div class="scanner-controls"><button class="ui-button ui-button-primary scanner-key active">Stop</button><button class="ui-button ui-button-secondary scanner-key">Pause</button><button class="ui-button ui-button-secondary scanner-key">Replay Last Call</button><button class="ui-button ui-button-secondary scanner-key">Skip</button><button class="ui-button ui-button-secondary scanner-key">Hold</button><button class="ui-button ui-button-danger scanner-key">Avoid</button><button class="ui-button ui-button-secondary scanner-key">Avoid List</button><button class="ui-button ui-button-secondary scanner-key">Clear Queue (2)</button></div>
-        <div class="scanner-utility-row"><span>Browser volume</span><input class="ui-range" type="range" value="72"><output>72%</output></div>
-        <div class="scanner-display-shell"><div class="scanner-display">
-          <div class="scanner-call-intro">
-            <div><span class="scanner-call-kind">P25 Phase 1 · Voice</span><strong class="scanner-call-title">County Fire Dispatch</strong><span class="scanner-call-subtitle">Regional Public Safety · Simulcast</span></div>
-            <div class="scanner-call-instruments"><span class="scanner-quality-bars"><i class="active"></i><i class="active"></i><i class="active"></i><i class="active"></i><i></i></span></div>
-            <div class="scanner-audio-wave visual-scanner-wave" role="img" aria-label="Voice spectrum through 8 kilohertz">
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-            </div>
+    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Listen</p><h1>Scanner</h1><p>Listen to completed calls from this receiver.</p></div><div class="scanner-header-actions"><div class="ui-segmented scanner-view-modes" role="group" aria-label="Scanner detail level"><button class="ui-segmented-option" type="button" data-mode="simple" aria-pressed="false">Simple</button><button class="ui-segmented-option active" type="button" data-mode="normal" aria-pressed="true">Normal</button><button class="ui-segmented-option" type="button" data-mode="advanced" aria-pressed="false">Advanced</button><button class="ui-segmented-option" type="button" data-mode="engineer" aria-pressed="false">Engineer</button></div><button class="ui-button ui-button-secondary ui-icon-button scanner-settings" type="button" aria-label="Scanner settings" title="Scanner settings"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></button></div></header>
+    <div class="scanner-page-host">
+      <div class="scanner-page" data-scanner-mode="normal">
+        <section class="scanner-workspace scanner-console ui-surface" data-scanner-mode="normal">
+          <div class="scanner-status-bar"><div class="scanner-status-copy"><span class="scanner-section-label">Now Playing</span><strong class="ui-pill scanner-live-status active">Listening</strong></div><output class="scanner-relative-age">Just now</output></div>
+          <div class="scanner-player-host">
+            <section class="playback-bar scanner-expanded" aria-label="Browser scanner and call playback">
+              <details class="playback-control-menu"><summary aria-label="Playback controls" title="Playback controls"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></summary><div class="playback-control-menu-panel"><div class="playback-controls" role="group" aria-label="Playback controls"><button class="playback-command playback-icon-command playback-play-command active" type="button" aria-label="Stop playback" title="Stop playback" aria-pressed="true"><svg aria-hidden="true"><use href="#visual-icon-stop"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Pause" title="Pause"><svg aria-hidden="true"><use href="#visual-icon-pause"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Replay last call" title="Replay last call"><svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button><button class="playback-command playback-icon-command" type="button" aria-label="Skip current call" title="Skip current call"><svg aria-hidden="true"><use href="#visual-icon-skip"></use></svg></button><button class="playback-command playback-letter-command" type="button" aria-label="Hold current target" title="Hold current target">H</button><div class="playback-command-group" role="group" aria-label="Avoid controls"><button class="playback-command playback-letter-command" type="button" aria-label="Avoid current target" title="Avoid current target">A</button><button class="playback-command playback-menu-command" type="button" aria-label="Open avoid list" title="Open avoid list"><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></button></div><button class="playback-command playback-icon-command" type="button" aria-label="Clear queued calls" title="Clear queued calls"><svg aria-hidden="true"><use href="#visual-icon-clear-queue"></use></svg></button></div><label class="playback-volume visual-scanner-volume" title="Browser playback volume"><span class="playback-volume-label">VOL</span><input type="range" min="0" max="1" step="0.05" value="0.72" aria-label="Browser playback volume"></label></div></details>
+              <div class="playback-now"><div class="playback-current"><strong class="playback-current-primary">County Fire Dispatch</strong><span class="playback-current-secondary">Engine 42 → Fire Dispatch</span></div></div>
+              <details class="playback-subscriptions"><summary><span class="playback-scan-list-label">Scan Lists:</span> <strong>2</strong></summary></details>
+              <details class="playback-queue"><summary><span class="playback-field">Queued</span> <strong>2</strong></summary></details>
+              <div class="playback-status">Playing</div>
+            </section>
           </div>
-          <div class="scanner-participant-grid"><section class="scanner-participant"><strong class="scanner-participant-heading">Target</strong><div class="scanner-participant-fields"><div class="scanner-field wide"><span class="scanner-field-label">Alias</span><button class="scanner-field-link">County Fire Dispatch</button></div><div class="scanner-field"><span class="scanner-field-label">ID</span><strong class="scanner-field-value">52749</strong></div><div class="scanner-field"><span class="scanner-field-label">Group</span><strong class="scanner-field-value">Fire</strong></div></div></section><section class="scanner-participant"><strong class="scanner-participant-heading">Source</strong><div class="scanner-participant-fields"><div class="scanner-field wide"><span class="scanner-field-label">Alias / Talker Alias</span><button class="scanner-field-link">Engine 42</button></div><div class="scanner-field"><span class="scanner-field-label">ID</span><strong class="scanner-field-value">9201746</strong></div><div class="scanner-field"><span class="scanner-field-label">Group</span><strong class="scanner-field-value">Operations</strong></div></div></section></div>
-          <div class="scanner-field-grid"><div class="scanner-field"><span class="scanner-field-label">System</span><strong class="scanner-field-value">Regional P25</strong></div><div class="scanner-field"><span class="scanner-field-label">Site</span><strong class="scanner-field-value">Simulcast</strong></div><div class="scanner-field wide"><span class="scanner-field-label">Matched Scan Lists</span><strong class="scanner-field-value">Fire &amp; EMS</strong></div><div class="scanner-field wide"><span class="scanner-field-label">Channel</span><strong class="scanner-field-value">County Simulcast</strong></div></div>
-        </div></div>
-      </section>
-      <section class="scanner-scan-lists ui-surface"><div class="scanner-scan-heading ui-surface-header"><div><strong>Scan Lists</strong><span>2 of 3 listening</span></div><button class="ui-button ui-button-secondary">View coverage tree</button></div><div class="scanner-scan-buttons"><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">1</span><strong>Fire &amp; EMS</strong><small>Primary dispatch</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-number">2</span><strong>Law Dispatch</strong><small>County operations</small></button><button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-number">3</span><strong>Utilities</strong><small>Public works</small></button></div></section>
+          <div class="scanner-console-main">
+            <div class="scanner-now-playing">
+              <div class="scanner-display-shell"><div class="scanner-display" data-scanner-mode="normal">
+                <div class="scanner-call-intro">
+                  <div><span class="scanner-call-kind">P25 Phase 1 · Voice</span><strong class="scanner-call-title">County Fire Dispatch</strong><span class="scanner-call-subtitle">Regional Public Safety · Simulcast</span></div>
+                  <div class="scanner-call-instruments"><span class="scanner-quality-bars" role="img" aria-label="Voice quality 84 percent"><i class="active"></i><i class="active"></i><i class="active"></i><i class="active"></i><i></i></span></div>
+                  <div class="scanner-audio-wave visual-scanner-wave" role="img" aria-label="Voice frequency spectrum">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                </div>
+                <div class="scanner-participant-grid"><section class="scanner-participant"><strong class="scanner-participant-heading">Target</strong><div class="scanner-participant-fields"><div class="scanner-field wide"><span class="scanner-field-label">Alias</span><button class="scanner-field-link">County Fire Dispatch</button></div><div class="scanner-field"><span class="scanner-field-label">Group</span><strong class="scanner-field-value">Fire</strong></div></div></section><section class="scanner-participant"><strong class="scanner-participant-heading">Source</strong><div class="scanner-participant-fields"><div class="scanner-field wide"><span class="scanner-field-label">Alias / Talker Alias</span><button class="scanner-field-link">Engine 42</button></div><div class="scanner-field"><span class="scanner-field-label">Group</span><strong class="scanner-field-value">Operations</strong></div></div></section></div>
+                <div class="scanner-field-grid"><div class="scanner-field"><span class="scanner-field-label">Matched Scan Lists</span><strong class="scanner-field-value">Fire &amp; EMS</strong></div><div class="scanner-field"><span class="scanner-field-label">Channel</span><strong class="scanner-field-value">County Simulcast</strong></div><div class="scanner-field"><span class="scanner-field-label">Frequency</span><strong class="scanner-field-value">772.68125 MHz</strong></div></div>
+              </div></div>
+            </div>
+            <section class="scanner-scan-lists scanner-scan-rail"><div class="scanner-scan-heading ui-surface-header"><div><strong>Scan Lists</strong><span class="scanner-scan-summary">2 of 6 listening</span></div><button class="ui-button ui-button-secondary ui-icon-button scanner-coverage-action" type="button" aria-label="View scan-list coverage" title="View scan-list coverage"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg></button></div><div class="scanner-scan-buttons">
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-check" aria-hidden="true">✓</span><span class="scanner-scan-copy"><strong>Fire &amp; EMS</strong><small>Primary dispatch</small></span></button>
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="true"><span class="scanner-scan-check" aria-hidden="true">✓</span><span class="scanner-scan-copy"><strong>Law Dispatch</strong><small>County operations</small></span></button>
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-check" aria-hidden="true"></span><span class="scanner-scan-copy"><strong>Utilities</strong><small>Public works</small></span></button>
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-check" aria-hidden="true"></span><span class="scanner-scan-copy"><strong>Regional Interop</strong><small>Mutual aid</small></span></button>
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-check" aria-hidden="true"></span><span class="scanner-scan-copy"><strong>Airport</strong><small>Operations</small></span></button>
+              <button class="ui-choice-card scanner-scan-button" aria-pressed="false"><span class="scanner-scan-check" aria-hidden="true"></span><span class="scanner-scan-copy"><strong>Public Service</strong><small>Municipal services</small></span></button>
+            </div></section>
+          </div>
+        </section>
+      </div>
     </div>
   </main>
 
@@ -1168,6 +1189,13 @@
     </div></div>
   </main>
 
+  <script>
+    const scannerPlaybackMenu = document.querySelector('.visual-scanner-example .playback-control-menu');
+    const scannerDesktopPlayback = window.matchMedia('(min-width: 1181px)');
+    const updateScannerPlaybackMenu = () => { scannerPlaybackMenu.open = scannerDesktopPlayback.matches; };
+    updateScannerPlaybackMenu();
+    scannerDesktopPlayback.addEventListener('change', updateScannerPlaybackMenu);
+  </script>
   <script type="module" src="/visual/design-system-gallery.js"></script>
   <script type="module">import { installIconHints } from '/assets/core/icon-hints.js'; installIconHints();</script>
 </body>

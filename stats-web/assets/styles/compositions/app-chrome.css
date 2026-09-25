@@ -808,12 +808,12 @@
     overflow: visible;
   }
 
-  .desktop-playback-slot .playback-control-menu {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu {
     position: relative;
     display: block;
   }
 
-  .desktop-playback-slot .playback-control-menu > summary {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary {
     width: var(--icon-action-size);
     height: var(--icon-action-size);
     display: grid;
@@ -823,11 +823,11 @@
     list-style: none;
   }
 
-  .desktop-playback-slot .playback-control-menu > summary::-webkit-details-marker {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary::-webkit-details-marker {
     display: none;
   }
 
-  .desktop-playback-slot .playback-control-menu > summary svg {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary svg {
     width: var(--icon-glyph-size);
     height: var(--icon-glyph-size);
     fill: none;
@@ -837,11 +837,11 @@
     stroke-linejoin: round;
   }
 
-  .desktop-playback-slot .playback-control-menu:not([open]) > .playback-control-menu-panel {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu:not([open]) > .playback-control-menu-panel {
     display: none;
   }
 
-  .desktop-playback-slot .playback-control-menu[open] > .playback-control-menu-panel {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu[open] > .playback-control-menu-panel {
     position: absolute;
     top: calc(100% + var(--space-2));
     left: 0;
@@ -856,12 +856,12 @@
     box-shadow: var(--shadow-modal);
   }
 
-  .desktop-playback-slot .playback-control-menu-panel .playback-controls {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu-panel .playback-controls {
     display: flex;
     flex-wrap: wrap;
   }
 
-  .desktop-playback-slot .playback-control-menu-panel .playback-volume {
+  :is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu-panel .playback-volume {
     width: 100%;
     display: block;
   }
@@ -981,7 +981,7 @@
 .playback-command,
 .playback-subscriptions summary,
 .playback-queue summary,
-.desktop-playback-slot .playback-control-menu > summary {
+:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary {
   height: var(--icon-action-size);
   min-height: var(--icon-action-size);
   color: var(--transport-ink);
@@ -1002,7 +1002,7 @@
 .playback-command.active,
 .playback-subscriptions[open] summary,
 .playback-queue[open] summary,
-.desktop-playback-slot .playback-control-menu[open] > summary {
+:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu[open] > summary {
   color: var(--transport-accent);
   background: var(--transport-control-active);
   border-color: color-mix(in srgb, var(--transport-accent) 45%, var(--transport-control-active));
@@ -1011,7 +1011,7 @@
 .playback-command:focus-visible,
 .playback-subscriptions summary:focus-visible,
 .playback-queue summary:focus-visible,
-.desktop-playback-slot .playback-control-menu > summary:focus-visible {
+:is(.desktop-playback-slot, .scanner-player-host) .playback-control-menu > summary:focus-visible {
   outline: 2px solid var(--transport-accent);
   outline-offset: 2px;
 }

@@ -16,7 +16,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/components/controls.css?v=17") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=11") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=8") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=10") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=11") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=4") layer(compositions);',
@@ -26,7 +26,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/live.css?v=13") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
-  '@import url("./styles/features/scanner.css?v=4") layer(features);',
+  '@import url("./styles/features/scanner.css?v=5") layer(features);',
   '@import url("./styles/features/rf-planner.css?v=3") layer(features);',
   '@import url("./styles/features/aliases.css?v=8") layer(features);',
   '@import url("./styles/features/scan-lists.css?v=1") layer(features);',
@@ -688,15 +688,28 @@ function validateTunerSpectrumFeature(stylesheets, entry) {
 
 function validateScannerFeature(stylesheets, entry) {
   const scanner = stylesheetModule(stylesheets, entry, 'features/scanner.css').source;
-  for(const selector of ['.scanner-page', '.scanner-workspace', '.scanner-display',
-    '.scanner-controls', '.scanner-scan-lists']) {
+  const chrome = stylesheetModule(stylesheets, entry, 'compositions/app-chrome.css').source;
+  for(const selector of ['.scanner-page', '.scanner-workspace', '.scanner-console-main',
+    '.scanner-now-playing', '.scanner-display', '.scanner-scan-lists']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(scanner, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
       `Missing Scanner rule ${selector}`);
   }
   assert.match(scanner,
-    /@media \(max-width: 680px\)[\s\S]*\.scanner-controls\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/,
-    'Scanner controls must collapse on small screens');
+    /\.scanner-console-main\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 340px\)/,
+    'Scanner console must reserve a bounded desktop rail for scan lists');
+  assert.match(scanner,
+    /@media \(max-width: 1000px\)[\s\S]*\.scanner-console-main\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Scanner console must stack the scan-list rail on narrower screens');
+  assert.match(scanner,
+    /@media \(max-width: 680px\)[\s\S]*\.scanner-scan-buttons,[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Scanner scan lists must collapse to one column on small screens');
+  assert.match(chrome,
+    /:is\(\.desktop-playback-slot, \.scanner-player-host\) \.playback-control-menu > summary\s*\{/,
+    'Responsive Scanner playback controls must retain the shared trigger button shell');
+  assert.match(chrome,
+    /:is\(\.desktop-playback-slot, \.scanner-player-host\) \.playback-control-menu > summary:focus-visible\s*\{/,
+    'Responsive Scanner playback controls must retain the shared focus treatment');
   assert.doesNotMatch(scanner, /:root\[data-theme="dark"\]/,
     'Scanner presentation must adapt through semantic tokens instead of feature theme overrides');
   assert.doesNotMatch(scanner, /#[0-9a-f]{3,8}\b|\brgba?\(/i,
