@@ -56,7 +56,7 @@ class Format22To23DatabaseMigrationTest
                        json_extract(preferences_json, '$.tables.channels.collapsed_groups')
                 FROM web_user WHERE id=3
                 """));
-            assertEquals(23, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(23, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
         }
@@ -83,7 +83,7 @@ class Format22To23DatabaseMigrationTest
             assertEquals(22, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, scalar(connection, "SELECT preferences_json FROM web_user WHERE id=3"));
             migrate(connection);
-            assertEquals(23, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(23, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 

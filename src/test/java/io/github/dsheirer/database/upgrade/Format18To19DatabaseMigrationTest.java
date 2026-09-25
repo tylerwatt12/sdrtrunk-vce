@@ -34,7 +34,7 @@ class Format18To19DatabaseMigrationTest
             long activity = number(statement, "SELECT COUNT(*) FROM receiver_activity_event");
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspectForMigration(connection));
-            assertEquals(5, preflight.steps().size());
+            assertEquals(6, preflight.steps().size());
             assertEquals("format-18-to-19", preflight.steps().getFirst().id());
             assertEquals(0, preflight.steps().getFirst().effects().getFirst().affectedRows());
 
@@ -56,7 +56,7 @@ class Format18To19DatabaseMigrationTest
             }
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals("format-22-to-23", report.steps().getLast().id());
+            assertEquals("format-23-to-24", report.steps().getLast().id());
             assertEquals(aliases, number(statement, "SELECT COUNT(*) FROM alias"));
             assertEquals(channels, number(statement, "SELECT COUNT(*) FROM configuration_channel"));
             assertEquals(activity, number(statement, "SELECT COUNT(*) FROM receiver_activity_event"));

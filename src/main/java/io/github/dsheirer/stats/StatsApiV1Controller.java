@@ -103,7 +103,10 @@ final class StatsApiV1Controller
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("before_id", "group_identity_key", "radio_identity_key",
-                    "radio_system_key", "configuration_id", "hide_grants", "limit");
+                    "radio_system_key", "configuration_id", "hide_grants", "limit", "from_ms", "to_ms",
+                    "action", "event_type", "encryption", "radio_role", "group_match", "source_identity_key",
+                    "target_identity_key", "source_id", "target_id", "target_kind", "frequency_hz", "lcn",
+                    "timeslot");
                 return page(mDatabase.activity(request));
             })));
         create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,

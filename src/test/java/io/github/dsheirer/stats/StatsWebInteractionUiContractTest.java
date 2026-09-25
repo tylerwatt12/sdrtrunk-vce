@@ -45,7 +45,7 @@ class StatsWebInteractionUiContractTest
     void pausesEveryNewestActivityRefreshWithoutQueueingLiveEvents() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
-        assertTrue(activity.contains("if (!route.get('before_id') && (!statsLoggingState().available || statsLoggingState().historyActive))"));
+        assertTrue(activity.contains("if (!route.get('before_id') && filters.range !== 'custom' &&"));
         assertTrue(activity.contains("'Pause refresh'"));
         assertTrue(activity.contains("'Resume refresh'"));
         assertTrue(activity.contains("refreshGeneration += 1"));
@@ -433,7 +433,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(groupIdentity.contains(
             "pageParameters({ group_identity_key: identityKey,"));
         assertTrue(groupIdentity.contains(
-            "renderActivity({ ...radioSystem, group_identity_key: identityKey }"));
+            "renderActivity({ ...radioSystem, group_identity_key: identityKey, _activity_context:"));
         assertTrue(groupIdentity.contains(
             "groupIdentityActivityHistorySection({ ...radioSystem,\n      identity_key: identityKey })"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");

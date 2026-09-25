@@ -1645,6 +1645,164 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityFiltersComposeAcrossScopeRolePatchTimeAndRadioFrequencyFields() throws Exception
+    {
+        seedActivityFilterRows();
+        String talkgroup = p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101);
+        String radio202 = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202);
+        String radio303 = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303);
+        String patch900 = p25IdentityKey(RadioSystemIdentityKey.KIND_PATCH_GROUP, 900);
+
+        Map<String,Object> direct = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + talkgroup + "&group_match=direct&limit=20"));
+        assertEquals(List.of(10_000L), activityTimes(direct));
+
+        Map<String,Object> viaPatch = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + talkgroup + "&group_match=via_patch&limit=20"));
+        assertEquals(List.of(11_000L, 10_000L), activityTimes(viaPatch));
+
+        Map<String,Object> all = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + talkgroup + "&group_match=all&limit=20"));
+        assertEquals(List.of(11_000L, 10_000L), activityTimes(all),
+            "A direct event that is also a member candidate must be returned once");
+
+        Map<String,Object> combined = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + talkgroup + "&radio_identity_key=" + radio303 +
+            "&radio_role=source&limit=20"));
+        assertEquals(List.of(11_000L), activityTimes(combined));
+
+        Map<String,Object> source = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + radio202 + "&radio_role=source&limit=20"));
+        assertEquals(List.of(13_000L, 10_000L), activityTimes(source));
+        Map<String,Object> target = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + radio202 + "&radio_role=target&limit=20"));
+        assertEquals(List.of(12_000L), activityTimes(target));
+        Map<String,Object> any = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + radio202 + "&radio_role=any&limit=20"));
+        assertEquals(List.of(13_000L, 12_000L, 10_000L), activityTimes(any));
+
+        Map<String,Object> bounded = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&from_ms=11000&to_ms=13000&limit=20"));
+        assertEquals(List.of(12_000L, 11_000L), activityTimes(bounded),
+            "from_ms is inclusive and to_ms is exclusive");
+
+        Map<String,Object> exact = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&configuration_id=" + P25_CHANNEL_A + "&from_ms=11000&to_ms=11001" +
+            "&action=grant&event_type=call_group&encryption=encrypted" +
+            "&source_identity_key=" + radio303 + "&target_identity_key=" + patch900 +
+            "&source_id=303&target_id=900&target_kind=patch_group" +
+            "&frequency_hz=852012500&lcn=3-4&timeslot=2&limit=20"));
+        assertEquals(List.of(11_000L), activityTimes(exact));
+
+        StatsApiException ownership = assertThrows(StatsApiException.class, () -> mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&configuration_id=" + DMR_CHANNEL)));
+        assertEquals("configuration_id", ownership.field());
+        StatsApiException grants = assertThrows(StatsApiException.class, () -> mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&action=GRANT&hide_grants=true")));
+        assertEquals("hide_grants", grants.field());
+        StatsApiException patchMatch = assertThrows(StatsApiException.class, () -> mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" + patch900 +
+                "&group_match=direct")));
+        assertEquals("group_match", patchMatch.field());
+        StatsApiException targetKindMismatch = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&target_identity_key=" + patch900 +
+                "&target_kind=talkgroup")));
+        assertEquals("target_kind", targetKindMismatch.field());
+    }
+
+    @Test
+    void activityUnionCursorIsStableAndScopedActionEventQueriesUseFormat24Indexes() throws Exception
+    {
+        seedActivityFilterRows();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH digits(value) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+                events(value) AS (
+                    SELECT a.value + 10*b.value + 100*c.value + 1000*d.value
+                    FROM digits a CROSS JOIN digits b CROSS JOIN digits c CROSS JOIN digits d
+                )
+                INSERT INTO receiver_activity_event (
+                    channel_id, observed_at_ms, action_code, event_type_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code)
+                SELECT 74, 20000 + value, 4, 7, value % 500, (value + 17) % 500, 1
+                FROM events
+                """);
+            statement.executeUpdate("ANALYZE");
+        }
+        String radio202 = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202);
+        Map<String,Object> first = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + radio202 + "&radio_role=any&limit=1"));
+        assertEquals(List.of(13_000L), activityTimes(first));
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> second = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + radio202 + "&radio_role=any&limit=1&before_id=" +
+            first.get("next_before_id")));
+        assertEquals(List.of(12_000L), activityTimes(second));
+
+        StatsWebDatabase.ActivityQuery[] systemAction = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&action=DENIAL&limit=20"),
+            query -> systemAction[0] = query);
+        StatsWebDatabase.ActivityQuery[] channelEvent = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A + "&event_type=DENIAL&limit=20"),
+            query -> channelEvent[0] = query);
+        StatsWebDatabase.ActivityQuery[] radioAny = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" + radio202 +
+            "&radio_role=any&limit=20"), query -> radioAny[0] = query);
+        StatsWebDatabase.ActivityQuery[] groupAll = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
+            p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) + "&group_match=all&limit=20"),
+            query -> groupAll[0] = query);
+        StatsWebDatabase.ActivityQuery[] channelSource = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&source_id=17&limit=20"),
+            query -> channelSource[0] = query);
+        StatsWebDatabase.ActivityQuery[] channelTarget = new StatsWebDatabase.ActivityQuery[1];
+        mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&target_id=17&limit=20"),
+            query -> channelTarget[0] = query);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> actionPlan = explain(connection, systemAction[0].sql(),
+                systemAction[0].parameters().toArray());
+            assertTrue(actionPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_system_action_time")),
+                () -> "Expected the system/action/time index, plan was: " + actionPlan);
+            List<String> eventPlan = explain(connection, channelEvent[0].sql(),
+                channelEvent[0].parameters().toArray());
+            assertTrue(eventPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_channel_event_type_time")),
+                () -> "Expected the channel/event-type/time index, plan was: " + eventPlan);
+            List<String> radioPlan = explain(connection, radioAny[0].sql(),
+                radioAny[0].parameters().toArray());
+            assertTrue(radioPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_source_time")),
+                () -> "Expected an indexed source branch, plan was: " + radioPlan);
+            assertTrue(radioPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_target_time")),
+                () -> "Expected an indexed target branch, plan was: " + radioPlan);
+            List<String> groupPlan = explain(connection, groupAll[0].sql(),
+                groupAll[0].parameters().toArray());
+            assertTrue(groupPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_target_time")),
+                () -> "Expected an indexed direct-target branch, plan was: " + groupPlan);
+            assertTrue(groupPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_activity_event_member_identity_event")),
+                () -> "Expected an indexed patch-member branch, plan was: " + groupPlan);
+            List<String> sourceIdPlan = explain(connection, channelSource[0].sql(),
+                channelSource[0].parameters().toArray());
+            assertTrue(sourceIdPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_channel_source_id_time")),
+                () -> "Expected the channel/source-ID/time index, plan was: " + sourceIdPlan);
+            List<String> targetIdPlan = explain(connection, channelTarget[0].sql(),
+                channelTarget[0].parameters().toArray());
+            assertTrue(targetIdPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_channel_target_id_time")),
+                () -> "Expected the channel/target-ID/time index, plan was: " + targetIdPlan);
+        }
+    }
+
+    @Test
     void activityAliasDiscoveryAndRadioDirectoryUseCurrentBoundedIndexes() throws Exception
     {
         StatsWebDatabase.ObservedGroupIdentityQuery[] observedQuery = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
@@ -1960,6 +2118,49 @@ class StatsWebDatabaseTest
         }
     }
 
+    private void seedActivityFilterRows() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id, radio_system_id, identity_kind_code, home_wacn, home_system_id, identity_id,
+                    first_seen_ms, last_seen_ms, logical_call_count
+                ) VALUES (7103, 71, 1, 0xBEE00, 0x49F, 102, 1000, 14000, 1),
+                         (7104, 71, 3, 0xBEE00, 0x49F, 900, 1000, 14000, 1),
+                         (7105, 71, 2, 0xBEE00, 0x49F, 303, 1000, 14000, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
+                    frequency_hz, lcn_band, lcn_number, timeslot, encrypted)
+                VALUES
+                    (71, 71, 10000, 4, 7, 202, 101, 1, 7102, 2, 7101,
+                        851012500, 1, 2, 1, 0),
+                    (71, 71, 11000, 12, 7, 303, 900, 3, 7105, 2, 7104,
+                        852012500, 3, 4, 2, 1),
+                    (71, 71, 12000, 9, 57, 303, 202, 2, 7105, 2, 7102,
+                        853012500, NULL, NULL, 1, 0),
+                    (71, 71, 13000, 4, 19, 202, 303, 2, 7102, 2, 7105,
+                        851012500, NULL, NULL, 2, 1),
+                    (72, 71, 14000, 4, 7, 303, 102, 1, 7105, 2, 7103,
+                        854012500, 5, 6, 1, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO activity_event_identity_member (
+                    event_id, radio_system_id, identity_summary_id, identity_kind_code, observed_local_id)
+                SELECT id, 71, 7101, 1, 101
+                FROM receiver_activity_event
+                WHERE observed_at_ms IN (10000, 11000)
+                """);
+            statement.executeUpdate("ANALYZE");
+        }
+    }
+
     private static StatsRequest request(String uri)
     {
         return StatsRequest.from(URI.create(uri));
@@ -2048,6 +2249,11 @@ class StatsWebDatabaseTest
     private static long number(Object value)
     {
         return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private static List<Long> activityTimes(Map<String,Object> page)
+    {
+        return rows(page).stream().map(row -> number(row.get("observed_at_ms"))).toList();
     }
 
     private static List<String> explain(Connection connection, String sql, Object... parameters) throws Exception

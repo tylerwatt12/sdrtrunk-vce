@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 23;
+    public static final int CURRENT_VERSION = 24;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -79,6 +79,8 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_22_FINGERPRINT =
         "918d6a5d9530af078d94ef4827397e4d6c6d52f36f1e3306f0a43987424f0e7b";
     private static final String FORMAT_23_FINGERPRINT = FORMAT_22_FINGERPRINT;
+    private static final String FORMAT_24_FINGERPRINT =
+        "9c45651252ddabe25930b701487c30840132f9a9be4dc33b7b7bd305b0c7a03d";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -301,10 +303,20 @@ public final class DatabaseFormatCatalog
             "Keep all table row groups expanded until each user explicitly collapses one",
             "Default only a malformed, oversized, or revision-exhausted per-user preference document"));
 
+    private static final FormatDescriptor FORMAT_24 = new FormatDescriptor(24, "activity-filter-indexes-v1",
+        "Owner-first Activity action, event-type, and conventional-ID index format", FORMAT_24_FINGERPRINT, Map.of(),
+        List.of("main format 24"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format24TestDatabase.java", List.of(
+            "Preserve every administrator-owned setting and every retained receiver activity row",
+            "Add radio-system and saved-channel action/time indexes for bounded Activity filtering",
+            "Add radio-system and saved-channel event-type/time indexes for bounded Activity filtering",
+            "Add saved-channel source-ID and target-ID time indexes for conventional digital Activity filtering",
+            "Keep existing Activity retention, pruning, identity, and encryption behavior unchanged"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23);
+            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -473,7 +485,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_23;
+        return FORMAT_24;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -756,7 +768,7 @@ public final class DatabaseFormatCatalog
             case 9, 10, 11 -> 4;
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
-            case 23 -> 7;
+            case 23, 24 -> 7;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

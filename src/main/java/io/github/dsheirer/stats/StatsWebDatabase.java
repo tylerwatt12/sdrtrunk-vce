@@ -27,6 +27,7 @@ import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
@@ -4235,20 +4236,63 @@ class StatsWebDatabase
 
     Map<String,Object> activity(StatsRequest request)
     {
+        return activity(request, ignored -> { });
+    }
+
+    Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver)
+    {
         long beforeId = request.beforeId();
         String groupIdentityKey = request.text("group_identity_key");
         String radioIdentityKey = request.text("radio_identity_key");
+        String sourceIdentityKey = request.text("source_identity_key");
+        String targetIdentityKey = request.text("target_identity_key");
         String systemKey = request.text("radio_system_key");
         String configurationId = request.text("configuration_id");
         boolean hideGrants = request.booleanValue("hide_grants", false);
+        Long fromMilliseconds = positiveActivityLong(request, "from_ms");
+        Long toMilliseconds = positiveActivityLong(request, "to_ms");
+        Integer actionCode = activityCode(request.text("action"), "action", true);
+        Integer eventTypeCode = activityCode(request.text("event_type"), "event_type", false);
+        String encryptionValue = request.text("encryption");
+        Integer encryption = activityEncryption(encryptionValue);
+        String radioRoleValue = request.text("radio_role");
+        String groupMatchValue = request.text("group_match");
+        ActivityRadioRole radioRole = activityRadioRole(radioRoleValue);
+        ActivityGroupMatch groupMatch = activityGroupMatch(groupMatchValue);
+        Integer sourceId = observedLocalId(request.optionalInt("source_id"), "source_id");
+        Integer targetId = observedLocalId(request.optionalInt("target_id"), "target_id");
+        Integer targetKind = activityTargetKind(request.text("target_kind"));
+        Long frequencyHertz = positiveActivityLong(request, "frequency_hz");
+        ActivityLcn lcn = activityLcn(request.text("lcn"));
+        Integer timeslot = activityTimeslot(request.optionalInt("timeslot"));
 
-        if(configurationId != null && systemKey != null)
+        if(fromMilliseconds != null && toMilliseconds != null && fromMilliseconds >= toMilliseconds)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "from_ms must be less than to_ms", "from_ms");
+        }
+        if(radioRoleValue != null && radioIdentityKey == null)
         {
             throw new StatsApiException(400, "invalid_parameter",
-                "configuration_id cannot be combined with radio_system_key", "configuration_id");
+                "radio_role requires radio_identity_key", "radio_role");
+        }
+        if(groupMatchValue != null && groupIdentityKey == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "group_match requires group_identity_key", "group_match");
+        }
+        if((sourceId != null || targetId != null) && configurationId == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "configuration_id is required with an observed source or target ID", "configuration_id");
+        }
+        if(hideGrants && Integer.valueOf(12).equals(actionCode))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "action GRANT cannot be combined with hide_grants=true", "hide_grants");
         }
 
-        if((groupIdentityKey != null || radioIdentityKey != null) && systemKey == null)
+        if((groupIdentityKey != null || radioIdentityKey != null || sourceIdentityKey != null ||
+            targetIdentityKey != null) && systemKey == null)
         {
             throw new StatsApiException(400, "invalid_parameter",
                 "radio_system_key is required with an identity key", "radio_system_key");
@@ -4259,6 +4303,34 @@ class StatsWebDatabase
             "group_identity_key") : null;
         RadioSystemIdentityKey.Identity radioIdentity = radioIdentityKey != null ? parseQueryIdentityKey(
             radioIdentityKey, Set.of(IDENTITY_KIND_RADIO), "radio_identity_key") : null;
+        RadioSystemIdentityKey.Identity sourceIdentity = sourceIdentityKey != null ? parseQueryIdentityKey(
+            sourceIdentityKey, Set.of(IDENTITY_KIND_RADIO), "source_identity_key") : null;
+        RadioSystemIdentityKey.Identity targetIdentity = targetIdentityKey != null ? parseQueryIdentityKey(
+            targetIdentityKey, Set.of(IDENTITY_KIND_TALKGROUP, IDENTITY_KIND_PATCH_GROUP, IDENTITY_KIND_RADIO),
+            "target_identity_key") : null;
+
+        if(groupMatchValue != null && groupIdentity != null &&
+            groupIdentity.kindCode() == IDENTITY_KIND_PATCH_GROUP)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "group_match applies only to talkgroup identities", "group_match");
+        }
+        if(targetKind != null && targetIdentity != null && targetKind != targetIdentity.kindCode())
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "target_kind must match target_identity_key", "target_kind");
+        }
+        boolean hasNewFilter = fromMilliseconds != null || toMilliseconds != null || actionCode != null ||
+            eventTypeCode != null || encryptionValue != null || radioRoleValue != null || groupMatchValue != null ||
+            sourceIdentityKey != null || targetIdentityKey != null || sourceId != null || targetId != null ||
+            targetKind != null || frequencyHertz != null || lcn.band() != null || timeslot != null;
+
+        if(hasNewFilter && systemKey == null && configurationId == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "radio_system_key or configuration_id is required with Activity filters", "radio_system_key");
+        }
+
         int limit = request.limit();
 
         return read(connection -> {
@@ -4267,6 +4339,8 @@ class StatsWebDatabase
             Long radioSystemId = null;
             Long groupIdentitySummaryId = null;
             Long radioIdentitySummaryId = null;
+            Long sourceIdentitySummaryId = null;
+            Long targetIdentitySummaryId = null;
 
             if(systemKey != null)
             {
@@ -4284,6 +4358,25 @@ class StatsWebDatabase
                     radioIdentitySummaryId = requireIdentitySummaryId(connection, radioSystemId, radioIdentity,
                         "Radio not found");
                 }
+                if(sourceIdentity != null)
+                {
+                    requireCompatibleIdentity(radioSystem, sourceIdentity, "Source radio not found");
+                    sourceIdentitySummaryId = requireIdentitySummaryId(connection, radioSystemId, sourceIdentity,
+                        "Source radio not found");
+                }
+                if(targetIdentity != null)
+                {
+                    requireCompatibleIdentity(radioSystem, targetIdentity, "Target identity not found");
+                    targetIdentitySummaryId = requireIdentitySummaryId(connection, radioSystemId, targetIdentity,
+                        "Target identity not found");
+                }
+            }
+
+            if(configured != null && radioSystemId != null &&
+                (configured.channelId() == null || !radioSystemId.equals(configured.radioSystemId())))
+            {
+                throw new StatsApiException(400, "invalid_parameter",
+                    "configuration_id does not belong to radio_system_key", "configuration_id");
             }
 
             if(configured != null && configured.channelId() == null)
@@ -4291,8 +4384,6 @@ class StatsWebDatabase
                 return cursorPage(List.of(), limit);
             }
 
-            StringBuilder sql = new StringBuilder(ACTIVITY_SELECT_SQL);
-            List<Object> parameters = new ArrayList<>();
             Long beforeTimestamp = null;
 
             if(beforeId != Long.MAX_VALUE)
@@ -4308,59 +4399,328 @@ class StatsWebDatabase
                 beforeTimestamp = number(cursor.getFirst().get("observed_at_ms"));
             }
 
-            if(hideGrants)
-            {
-                sql.append(" AND action <> 'GRANT'");
-            }
-
-            if(systemKey != null)
-            {
-                sql.append(" AND activity.radio_system_id = ?");
-                parameters.add(radioSystemId);
-            }
-            if(configured != null)
-            {
-                sql.append(" AND activity.channel_id = ?");
-                parameters.add(configured.channelId());
-            }
-            if(groupIdentitySummaryId != null)
-            {
-                sql.append("""
-                     AND (activity.target_identity_summary_id = ? OR EXISTS (
-                         SELECT 1
-                         FROM activity_event_identity_member member
-                         WHERE member.event_id = activity.id
-                           AND member.identity_summary_id = ?
-                     ))
-                    """);
-                parameters.add(groupIdentitySummaryId);
-                parameters.add(groupIdentitySummaryId);
-            }
-            if(radioIdentitySummaryId != null)
-            {
-                sql.append(" AND (activity.source_identity_summary_id = ? OR " +
-                    "activity.target_identity_summary_id = ?)");
-                parameters.add(radioIdentitySummaryId);
-                parameters.add(radioIdentitySummaryId);
-            }
-
-            if(beforeTimestamp != null)
-            {
-                sql.append(" AND (activity.observed_at_ms < ? OR " +
-                    "(activity.observed_at_ms = ? AND activity.id < ?))");
-                parameters.add(beforeTimestamp);
-                parameters.add(beforeTimestamp);
-                parameters.add(beforeId);
-            }
-
-            sql.append(ACTIVITY_ORDER_SQL);
-            parameters.add(limit + 1);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            ActivityFilters filters = new ActivityFilters(radioSystemId,
+                configured != null ? configured.channelId() : null, groupIdentitySummaryId, groupMatch,
+                radioIdentitySummaryId, radioRole, sourceIdentitySummaryId, targetIdentitySummaryId,
+                fromMilliseconds, toMilliseconds, actionCode, eventTypeCode, encryption, sourceId, targetId,
+                targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
+                beforeId, limit);
+            ActivityQuery query = buildActivityQuery(filters);
+            queryObserver.accept(query);
+            List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
             enrichActivityEncryption(rows);
             enrichActivityEntityReferences(rows);
             return cursorPage(rows, limit);
         });
+    }
+
+    private static ActivityQuery buildActivityQuery(ActivityFilters filters)
+    {
+        List<ActivityCandidateBranch> branches = new ArrayList<>();
+
+        if(filters.groupIdentitySummaryId() != null)
+        {
+            if(filters.groupMatch() != ActivityGroupMatch.VIA_PATCH)
+            {
+                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                    "candidate.target_identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
+            }
+            if(filters.groupMatch() != ActivityGroupMatch.DIRECT)
+            {
+                branches.add(activityCandidateBranch(filters, """
+                    activity_event_identity_member member
+                    JOIN receiver_activity_event candidate ON candidate.id = member.event_id
+                    """, "member.identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
+            }
+        }
+        else if(filters.radioIdentitySummaryId() != null)
+        {
+            if(filters.radioRole() != ActivityRadioRole.TARGET)
+            {
+                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                    "candidate.source_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
+            }
+            if(filters.radioRole() != ActivityRadioRole.SOURCE)
+            {
+                branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate",
+                    "candidate.target_identity_summary_id = ?", List.of(filters.radioIdentitySummaryId()), false));
+            }
+        }
+        else
+        {
+            branches.add(activityCandidateBranch(filters, "receiver_activity_event candidate", null, List.of(),
+                false));
+        }
+
+        StringBuilder sql = new StringBuilder("WITH activity_candidates(id, observed_at_ms) AS (\n");
+        List<Object> parameters = new ArrayList<>();
+
+        if(branches.size() == 1)
+        {
+            sql.append(branches.getFirst().sql());
+            parameters.addAll(branches.getFirst().parameters());
+        }
+        else
+        {
+            for(int index = 0; index < branches.size(); index++)
+            {
+                if(index > 0)
+                {
+                    sql.append("\nUNION\n");
+                }
+
+                ActivityCandidateBranch branch = branches.get(index);
+                sql.append("SELECT id, observed_at_ms FROM (\n")
+                    .append(branch.sql())
+                    .append("\n) AS activity_branch_").append(index);
+                parameters.addAll(branch.parameters());
+            }
+        }
+
+        sql.append("\n)\n")
+            .append(ACTIVITY_PROJECTION_SQL)
+            .append("FROM activity_candidates candidate_match\n")
+            .append("JOIN receiver_activity_event_resolved activity ON activity.id = candidate_match.id\n")
+            .append(ACTIVITY_RELATED_JOINS_SQL)
+            .append(ACTIVITY_ORDER_SQL);
+        parameters.add(filters.limit() + 1);
+        return new ActivityQuery(sql.toString(), List.copyOf(parameters));
+    }
+
+    private static ActivityCandidateBranch activityCandidateBranch(ActivityFilters filters, String fromClause,
+                                                                    String primaryPredicate,
+                                                                    List<Object> primaryParameters,
+                                                                    boolean applyRadioScope)
+    {
+        StringBuilder sql = new StringBuilder("SELECT candidate.id, candidate.observed_at_ms\nFROM ")
+            .append(fromClause).append("\nWHERE 1 = 1");
+        List<Object> parameters = new ArrayList<>();
+
+        appendActivityPredicate(sql, parameters, "candidate.radio_system_id = ?", filters.radioSystemId());
+        appendActivityPredicate(sql, parameters, "candidate.channel_id = ?", filters.channelId());
+        appendActivityPredicate(sql, parameters, "candidate.action_code = ?", filters.actionCode());
+        appendActivityPredicate(sql, parameters, "candidate.event_type_code = ?", filters.eventTypeCode());
+        appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
+        appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());
+
+        if(filters.encryption() != null)
+        {
+            appendActivityPredicate(sql, parameters, "candidate.encrypted = ?", filters.encryption());
+        }
+        if(filters.hideGrants() && filters.actionCode() == null)
+        {
+            sql.append("\n  AND candidate.action_code <> 12");
+        }
+        if(primaryPredicate != null)
+        {
+            sql.append("\n  AND ").append(primaryPredicate);
+            parameters.addAll(primaryParameters);
+        }
+        if(applyRadioScope && filters.radioIdentitySummaryId() != null)
+        {
+            switch(filters.radioRole())
+            {
+                case SOURCE -> appendActivityPredicate(sql, parameters,
+                    "candidate.source_identity_summary_id = ?", filters.radioIdentitySummaryId());
+                case TARGET -> appendActivityPredicate(sql, parameters,
+                    "candidate.target_identity_summary_id = ?", filters.radioIdentitySummaryId());
+                case ANY ->
+                {
+                    sql.append("\n  AND (candidate.source_identity_summary_id = ? OR ")
+                        .append("candidate.target_identity_summary_id = ?)");
+                    parameters.add(filters.radioIdentitySummaryId());
+                    parameters.add(filters.radioIdentitySummaryId());
+                }
+            }
+        }
+
+        appendActivityPredicate(sql, parameters, "candidate.source_identity_summary_id = ?",
+            filters.sourceIdentitySummaryId());
+        appendActivityPredicate(sql, parameters, "candidate.target_identity_summary_id = ?",
+            filters.targetIdentitySummaryId());
+        appendActivityPredicate(sql, parameters, "candidate.source_observed_local_id = ?", filters.sourceId());
+        appendActivityPredicate(sql, parameters, "candidate.target_observed_local_id = ?", filters.targetId());
+        appendActivityPredicate(sql, parameters, "candidate.target_kind_code = ?", filters.targetKind());
+        appendActivityPredicate(sql, parameters, "candidate.frequency_hz = ?", filters.frequencyHertz());
+        appendActivityPredicate(sql, parameters, "candidate.lcn_band = ?", filters.lcnBand());
+        appendActivityPredicate(sql, parameters, "candidate.lcn_number = ?", filters.lcnNumber());
+        appendActivityPredicate(sql, parameters, "candidate.timeslot = ?", filters.timeslot());
+
+        if(filters.beforeTimestamp() != null)
+        {
+            sql.append("\n  AND (candidate.observed_at_ms < ? OR ")
+                .append("(candidate.observed_at_ms = ? AND candidate.id < ?))");
+            parameters.add(filters.beforeTimestamp());
+            parameters.add(filters.beforeTimestamp());
+            parameters.add(filters.beforeId());
+        }
+
+        sql.append("\nORDER BY candidate.observed_at_ms DESC, candidate.id DESC\nLIMIT ?");
+        parameters.add(filters.limit() + 1);
+        return new ActivityCandidateBranch(sql.toString(), List.copyOf(parameters));
+    }
+
+    private static void appendActivityPredicate(StringBuilder sql, List<Object> parameters, String predicate,
+                                                Object value)
+    {
+        if(value != null)
+        {
+            sql.append("\n  AND ").append(predicate);
+            parameters.add(value);
+        }
+    }
+
+    private static Long positiveActivityLong(StatsRequest request, String field)
+    {
+        Long value = request.optionalLong(field);
+
+        if(value != null && value <= 0)
+        {
+            throw new StatsApiException(400, "invalid_parameter", field + " must be a positive integer", field);
+        }
+
+        return value;
+    }
+
+    private static Integer activityCode(String name, String field, boolean action)
+    {
+        if(name == null)
+        {
+            return null;
+        }
+
+        Integer code = action ? ReceiverActivityFilterCatalog.actionCode(name) :
+            ReceiverActivityFilterCatalog.eventTypeCode(name);
+
+        if(code == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                field + " must be a recognized " + (action ? "Activity action" : "event type"), field);
+        }
+
+        return code;
+    }
+
+    private static Integer activityEncryption(String value)
+    {
+        if(value == null || "all".equalsIgnoreCase(value))
+        {
+            return null;
+        }
+        if("clear".equalsIgnoreCase(value))
+        {
+            return 0;
+        }
+        if("encrypted".equalsIgnoreCase(value))
+        {
+            return 1;
+        }
+
+        throw new StatsApiException(400, "invalid_parameter",
+            "encryption must be all, clear, or encrypted", "encryption");
+    }
+
+    private static ActivityRadioRole activityRadioRole(String value)
+    {
+        if(value == null || "any".equalsIgnoreCase(value))
+        {
+            return ActivityRadioRole.ANY;
+        }
+        if("source".equalsIgnoreCase(value))
+        {
+            return ActivityRadioRole.SOURCE;
+        }
+        if("target".equalsIgnoreCase(value))
+        {
+            return ActivityRadioRole.TARGET;
+        }
+
+        throw new StatsApiException(400, "invalid_parameter",
+            "radio_role must be any, source, or target", "radio_role");
+    }
+
+    private static ActivityGroupMatch activityGroupMatch(String value)
+    {
+        if(value == null || "all".equalsIgnoreCase(value))
+        {
+            return ActivityGroupMatch.ALL;
+        }
+        if("direct".equalsIgnoreCase(value))
+        {
+            return ActivityGroupMatch.DIRECT;
+        }
+        if("via_patch".equalsIgnoreCase(value))
+        {
+            return ActivityGroupMatch.VIA_PATCH;
+        }
+
+        throw new StatsApiException(400, "invalid_parameter",
+            "group_match must be all, direct, or via_patch", "group_match");
+    }
+
+    private static Integer observedLocalId(Integer value, String field)
+    {
+        if(value != null && (value < 0 || value > 0xFFFFFF))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                field + " must be between 0 and 16777215", field);
+        }
+
+        return value;
+    }
+
+    private static Integer activityTargetKind(String value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+
+        return switch(value.toLowerCase(Locale.ROOT))
+        {
+            case "talkgroup" -> IDENTITY_KIND_TALKGROUP;
+            case "radio" -> IDENTITY_KIND_RADIO;
+            case "patch_group" -> IDENTITY_KIND_PATCH_GROUP;
+            default -> throw new StatsApiException(400, "invalid_parameter",
+                "target_kind must be talkgroup, patch_group, or radio", "target_kind");
+        };
+    }
+
+    private static ActivityLcn activityLcn(String value)
+    {
+        if(value == null)
+        {
+            return ActivityLcn.NONE;
+        }
+
+        if(!value.matches("[0-9]+-[0-9]+"))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "lcn must use the non-negative band-number form", "lcn");
+        }
+
+        String[] parts = value.split("-", 2);
+
+        try
+        {
+            return new ActivityLcn(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "lcn band and number must be integers", "lcn");
+        }
+    }
+
+    private static Integer activityTimeslot(Integer value)
+    {
+        if(value != null && value != 1 && value != 2)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "timeslot must be 1 or 2", "timeslot");
+        }
+
+        return value;
     }
 
     /** Adds only exact saved-channel and learned-radio-system navigation; retained activity never creates an entity. */
@@ -6782,6 +7142,51 @@ class StatsWebDatabase
 
     private record ActivityAction(String name, int code, String column)
     {
+    }
+
+    record ActivityQuery(String sql, List<Object> parameters)
+    {
+        ActivityQuery
+        {
+            if(sql == null || sql.isBlank() || parameters == null)
+            {
+                throw new IllegalArgumentException("Activity query requires SQL and parameters");
+            }
+        }
+    }
+
+    private record ActivityCandidateBranch(String sql, List<Object> parameters)
+    {
+    }
+
+    private record ActivityFilters(Long radioSystemId, Long channelId, Long groupIdentitySummaryId,
+                                   ActivityGroupMatch groupMatch, Long radioIdentitySummaryId,
+                                   ActivityRadioRole radioRole, Long sourceIdentitySummaryId,
+                                   Long targetIdentitySummaryId, Long fromMilliseconds, Long toMilliseconds,
+                                   Integer actionCode, Integer eventTypeCode, Integer encryption, Integer sourceId,
+                                   Integer targetId, Integer targetKind, Long frequencyHertz, Integer lcnBand,
+                                   Integer lcnNumber, Integer timeslot, boolean hideGrants, Long beforeTimestamp,
+                                   long beforeId, int limit)
+    {
+    }
+
+    private record ActivityLcn(Integer band, Integer number)
+    {
+        private static final ActivityLcn NONE = new ActivityLcn(null, null);
+    }
+
+    private enum ActivityRadioRole
+    {
+        ANY,
+        SOURCE,
+        TARGET
+    }
+
+    private enum ActivityGroupMatch
+    {
+        ALL,
+        DIRECT,
+        VIA_PATCH
     }
 
     private record DashboardActivityWindow(String range, long fromMilliseconds, long untilMilliseconds,
