@@ -387,68 +387,9 @@ function updateSaved(layout, record, atMs = Date.now()) {
   }
 }
 
-function translateEntity(layout, key, delta = {}, atMs = Date.now()) {
-  const root = layout.positions.get(String(key || ''));
-  if (!root || layout.disposed) return false;
-  let offset = copyPosition(delta);
-  if (root.type === 'group') {
-    const next = containedGroupPosition(layout, root, {
-      x: root.x + offset.x, y: root.y + offset.y, z: root.z + offset.z
-    });
-    offset = { x: next.x - root.x, y: next.y - root.y, z: next.z - root.z };
-  }
-  layout.positions.forEach((record) => {
-    const included = record.key === root.key ||
-      (root.type === 'universe' && record.universeKey === root.key && !record.pinned) ||
-      (root.type === 'group' && record.groupKey === root.key && !record.pinned);
-    if (!included) return;
-    record.x = boundedCoordinate(record.x + offset.x);
-    record.y = boundedCoordinate(record.y + offset.y);
-    record.z = boundedCoordinate(record.z + offset.z);
-    record.targetX = boundedCoordinate(record.targetX + offset.x);
-    record.targetY = boundedCoordinate(record.targetY + offset.y);
-    record.targetZ = boundedCoordinate(record.targetZ + offset.z);
-    record.updatedAtMs = atMs;
-  });
-  if (root.type === 'universe') {
-    root.anchorX += offset.x;
-    root.anchorY += offset.y;
-    root.anchorZ += offset.z;
-  } else {
-    root.localX += offset.x;
-    root.localY += offset.y;
-    root.localZ += offset.z;
-  }
-  updateSaved(layout, root, atMs);
-  layout.sleeping = true;
-  return true;
-}
-
-function dragEntity(layout, key, position, atMs = Date.now()) {
+function setLayoutPinned(layout, key, pinned = true, atMs = Date.now()) {
   const record = layout.positions.get(String(key || ''));
   if (!record) return false;
-  const next = containedGroupPosition(layout, record, position);
-  const translated = translateEntity(layout, record.key, {
-    x: next.x - record.x,
-    y: next.y - record.y,
-    z: next.z - record.z
-  }, atMs);
-  if (!translated) return false;
-  const correction = { x: next.x - record.x, y: next.y - record.y, z: next.z - record.z };
-  record.x = next.x;
-  record.y = next.y;
-  record.z = next.z;
-  record.targetX = boundedCoordinate(record.targetX + correction.x);
-  record.targetY = boundedCoordinate(record.targetY + correction.y);
-  record.targetZ = boundedCoordinate(record.targetZ + correction.z);
-  updateSaved(layout, record, atMs);
-  return true;
-}
-
-function setLayoutPinned(layout, key, pinned = true, position = null, atMs = Date.now()) {
-  const record = layout.positions.get(String(key || ''));
-  if (!record) return false;
-  if (position) dragEntity(layout, record.key, position, atMs);
   if (pinned && !record.pinned && layout.pinned.size >= layout.config.state.hardPinnedEntities) return false;
   record.pinned = Boolean(pinned);
   if (record.pinned) {
@@ -545,7 +486,6 @@ function disposeLayout(layout) {
 export {
   createLayoutState,
   disposeLayout,
-  dragEntity,
   resetLayoutSession,
   restoreLayoutRecords,
   savedLayoutRecords,
@@ -554,6 +494,5 @@ export {
   setReducedMotion,
   stepLayout,
   synchronizeLayout,
-  translateEntity,
   unlockLayout
 };

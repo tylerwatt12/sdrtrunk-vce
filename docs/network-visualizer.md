@@ -10,6 +10,10 @@ activity. The overview keeps those system spheres compact. Entering a system mov
 wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
 relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
 
+Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities
+and actively transmitting talkgroups remain sharp even at a distance, and label stacking follows camera depth so that
+nearer labels stay in front of farther ones.
+
 ## Reading the view
 
 - A solid line is successful affiliation evidence currently retained for that observation scope.
@@ -22,6 +26,11 @@ relationships—not geography, subscriber location, RF coverage, or proof that a
   departure. Only a supported explicit presence-clear event removes authoritative evidence.
 - The lock treatment is encryption metadata, not a receiver error and not a fabricated audio waveform.
 
+A large six-second affiliation alert appears only for an unambiguous, ordered change between comparable successful
+observations for the same radio and observation scope. First sightings, repeated or older observations, requests,
+denials, grants, transmissions, conflicting multi-site evidence, identity reconciliation, and post-gap recovery do not
+trigger it. The alert is cleared rather than replayed across a live gap, map clear, or hidden-tab backlog.
+
 P25 accepted or confirmed structured affiliation evidence is supported. An accepted location registration with a
 real group is retained as distinct registration evidence; a group-less registration is presence only and does not
 create a radio node. Requests, denials, grants, generic decoder events, and alias matches do not create affiliations.
@@ -33,24 +42,32 @@ without creating a synthetic radio or talkgroup.
 
 The 3D overview begins with observed systems only. Select a system to enter its live network, then select a talkgroup
 to focus its retained radios. The breadcrumb back button returns through those levels without replacing the canvas.
-Camera moves are animated unless reduced motion is enabled. Left-dragging the 3D canvas orbits the current level,
-right-dragging pans it, and the mouse wheel zooms toward the pointer. Selecting a system or talkgroup also opens its
-inspector while the shared canvas drills into that level. **Auto rotate** is enabled by default, pauses during manual
-camera interaction or node arrangement, and resumes around the current level after a short idle period.
+The view remains three-dimensional at every level. Camera moves are animated unless reduced motion is enabled.
+Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
+Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
+is enabled by default, pauses during manual camera interaction, and resumes around the current level after a short idle
+period.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
-selection, freeze only layout motion, open the bounded event drawer, enter fullscreen, or change display density.
-Enable **Arrange** before dragging nodes: drag a system to translate its cluster or a talkgroup to move its unpinned
-radios. Use the inspector to pin an entity. **Unlock saved layout** releases all pins and saved coordinates.
+selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change
+display density.
+Graph objects are not draggable, so pointer gestures remain dedicated to predictable orbit, pan, and zoom controls.
+Use the inspector to pin an entity in its current position. **Unlock saved layout** releases all pins and saved
+coordinates.
 
-**Clear map** clears this browser session's nodes, counters, selection, transitions, active effects, and comparison
-state and establishes a new live edge. It does not stop receivers, delete receiver history, change Hold/Avoid, or alter
-scan lists. Display settings and bounded, profile-scoped coordinates remain separate; a saved position is restored
-only after that entity is observed again.
+Observed activity follows the newest event by default. Short bursts of routine grant and transmission observations are
+grouped while affiliation changes remain individual. Scrolling away from the newest event pauses following and keeps
+the reading position stable; the new-event control returns the drawer to the latest activity.
 
-Transport loss is shown as **Live gap**. Active indicators become uncertain and stop; the view never animates across a
-missing interval. Rendering pauses while the tab is hidden, while bounded live-state ingestion continues without an
-animation backlog.
+**Clear map** clears this browser session's retained entities, activity history, selection, transitions, active effects,
+and comparison state and establishes a new live edge. It does not stop receivers, delete receiver history, change
+Hold/Avoid, or alter scan lists. Display settings and bounded, profile-scoped coordinates remain separate; a saved
+position is restored only after that entity is observed again.
+
+The canvas omits retained-count, offscreen-entity, and persistent gap banners so they do not cover the network. Use
+**Fit all** when activity may be outside the current camera frame. Transport loss changes the toolbar status badge to
+**Live gap**; active indicators become uncertain and stop, and the view never animates across the missing interval.
+Rendering pauses while the tab is hidden, while bounded live-state ingestion continues without an animation backlog.
 
 ## Balanced safety limits
 

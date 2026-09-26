@@ -129,6 +129,7 @@ function fakeRendererLibrary(documentValue, lifecycle) {
     }
 
     project() {
+      this.z /= 300;
       return this;
     }
   }
@@ -205,6 +206,13 @@ function fakeRendererLibrary(documentValue, lifecycle) {
 
     dispose() {
       this.disposeCalls += 1;
+    }
+  }
+
+  class FogExp2 {
+    constructor(color, density) {
+      this.color = { value: color, set: (value) => { this.color.value = value; } };
+      this.density = density;
     }
   }
 
@@ -332,7 +340,8 @@ function fakeRendererLibrary(documentValue, lifecycle) {
         emittedParticles: [],
         enableNodeDragCalls: [],
         nodeDragEnabled: false,
-        camera
+        camera,
+        scene: {}
       };
       lifecycle.graphStates.push(state);
       const graph = {};
@@ -341,7 +350,7 @@ function fakeRendererLibrary(documentValue, lifecycle) {
         'linkTarget', 'linkThreeObjectExtend', 'linkCurvature', 'linkDirectionalParticles',
         'linkDirectionalParticleWidth', 'linkDirectionalParticleSpeed', 'linkDirectionalParticleColor',
         'linkDirectionalParticleThreeObject',
-        'onNodeClick', 'onBackgroundClick', 'onNodeDrag', 'onNodeDragEnd', 'onEngineTick', 'cooldownTicks',
+        'onNodeClick', 'onBackgroundClick', 'onEngineTick', 'cooldownTicks',
         'cooldownTime', 'width', 'height'
       ];
       chain.forEach((name) => {
@@ -390,7 +399,7 @@ function fakeRendererLibrary(documentValue, lifecycle) {
       };
       graph.d3Force = () => graph;
       graph.numDimensions = () => graph;
-      graph.scene = () => ({});
+      graph.scene = () => state.scene;
       graph.controls = () => controls;
       graph.renderer = () => webglRenderer;
       graph.camera = () => camera;
@@ -447,6 +456,7 @@ function fakeRendererLibrary(documentValue, lifecycle) {
     TOUCH: { ROTATE: 0, PAN: 1, DOLLY_PAN: 2, DOLLY_ROTATE: 3 },
     DynamicDrawUsage: 1,
     BackSide: 1,
+    FogExp2,
     ...geometryTypes
   };
 }
@@ -457,10 +467,12 @@ async function main() {
     boundedGraphData,
     chooseLabelPlacements,
     createNetworkVisualizerRenderer,
+    depthPresentation,
     linkIsDashed,
     linkVisualState,
     nodeGeometryKind,
-    nodeVisualState
+    nodeVisualState,
+    scopeFogDensity
   } = await loadModule();
 
   const bounded = boundedGraphData({
@@ -488,6 +500,16 @@ async function main() {
   assert.equal(nodeVisualState({ type: 'radio', active: true }), 'active');
   assert.equal(linkVisualState({ type: 'tx', active: true }), 'active');
   assert.equal(linkIsDashed({ type: 'tx' }), true);
+  const nearDepth = depthPresentation({ distance: 10, projectedZ: -0.5, density: 0.005 });
+  const farDepth = depthPresentation({ distance: 250, projectedZ: 0.7, density: 0.005 });
+  const liveDepth = depthPresentation({ distance: 250, projectedZ: 0.7, density: 0.005, active: true });
+  assert(nearDepth.opacity > farDepth.opacity);
+  assert(nearDepth.blurPx < farDepth.blurPx);
+  assert(nearDepth.zIndex > farDepth.zIndex);
+  assert.deepEqual({ haze: liveDepth.haze, opacity: liveDepth.opacity, blurPx: liveDepth.blurPx },
+    { haze: 0, opacity: 1, blurPx: 0 });
+  assert(scopeFogDensity({ level: 'group' }) > scopeFogDensity({ level: 'system' }));
+  assert(scopeFogDensity({ level: 'system' }) > scopeFogDensity({ level: 'overview' }));
 
   const originals = new Map();
   const install = (name, value) => {
@@ -556,7 +578,7 @@ async function main() {
     const document = { generation: 1, nodes: [
       { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0,
         renderRadius: 300, scopeLevel: 'system', labelVisible: false },
-      { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8 },
+      { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8, active: true },
       { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15 },
       { key: 'aggregate', type: 'aggregate', label: '+20', x: 50, y: -8, z: -12 }
     ], links: [
@@ -580,10 +602,18 @@ async function main() {
     assert([system, group, radio, aggregate].every((mesh) => mesh.material.wireframe === true));
     assert.equal(graphState.linkObjects.get('tx') instanceof library.Line2, true);
     assert.equal(graphState.linkObjects.get('tx').material.dashed, true);
+    assert.equal(graphState.scene.fog instanceof library.FogExp2, true);
+    assert.equal(group.material.fog, false, 'active talkgroups should remain clear through fog');
+    assert.equal(radio.material.fog, true);
+    assert.equal(graphState.linkObjects.get('tx').material.fog, false);
+    assert.deepEqual(graphState.enableNodeDragCalls, [false]);
+    assert.equal(graphState.callbacks.onNodeDrag, undefined);
+    assert.equal(graphState.callbacks.onNodeDragEnd, undefined);
     assert.equal(renderer.diagnostics().labels, 3);
     assert.equal(renderer.diagnostics().autoRotateEffective, true);
 
     renderer.setNavigationScope({ level: 'system', universeKey: 'system' });
+    assert.equal(graphState.scene.fog.density, scopeFogDensity({ level: 'system' }));
     assert.equal(renderer.frameScope({ duration: 0 }), true);
     const systemObject = graphState.nodeObjects.get('system');
     assert.equal(systemObject.scale.value, 300);

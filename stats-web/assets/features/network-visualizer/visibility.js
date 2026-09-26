@@ -1,7 +1,7 @@
 'use strict';
 
 const PRIORITY = Object.freeze({
-  selectedOrDragged: 1_000_000_000_000,
+  selected: 1_000_000_000_000,
   active: 10_000_000_000,
   matched: 500_000_000,
   migration: 100_000_000,
@@ -68,40 +68,37 @@ function freshnessScore(entity, atMs) {
 
 function radioRank(state, radio, atMs, query = '') {
   const selected = state.visual.selectedKey === radio.key;
-  const dragged = state.visual.draggedKeys.has(radio.key);
   const active = radioActive(state, radio);
   const migrated = atMs - radio.lastMigrationAtMs <= state.config.render.migrationTrailTtlMs;
   const matched = queryMatch(radio, query);
-  const score = (selected || dragged ? PRIORITY.selectedOrDragged : 0) +
+  const score = (selected ? PRIORITY.selected : 0) +
     (active ? PRIORITY.active : 0) + (matched ? PRIORITY.matched : 0) +
     (migrated ? PRIORITY.migration : 0) + (radio.pinned ? PRIORITY.pinned : 0) +
     freshnessScore(radio, atMs) +
     residenceBoost(state, radio.key, atMs);
   return { key: radio.key, entity: radio, score, lastMeaningfulAtMs: radio.lastMeaningfulAtMs,
-    forced: selected || dragged || matched || active || migrated || radio.pinned, active, matched };
+    forced: selected || matched || active || migrated || radio.pinned, active, matched };
 }
 
 function groupRank(state, group, atMs, query = '') {
   const active = groupActive(group);
   const pending = group.pendingGrantKeys?.size > 0;
   const selected = selectedWithin(state, group);
-  const dragged = state.visual.draggedKeys.has(group.key);
   const matched = queryMatch(group, query) || (Boolean(query) && [...group.radioKeys]
     .some((key) => queryMatch(state.radios.get(key) || {}, query)));
   const radios = [...group.radioKeys].map((key) => state.radios.get(key)).filter(Boolean);
-  const selectedOrDraggedRadio = radios.some((radio) => state.visual.selectedKey === radio.key ||
-    state.visual.draggedKeys.has(radio.key));
+  const selectedRadio = radios.some((radio) => state.visual.selectedKey === radio.key);
   const activeRadio = radios.some((radio) => radioActive(state, radio));
   const migratedRadio = radios.some((radio) =>
     atMs - radio.lastMigrationAtMs <= state.config.render.migrationTrailTtlMs);
   const pinnedRadio = radios.some((radio) => radio.pinned);
-  const score = (selected || dragged || selectedOrDraggedRadio ? PRIORITY.selectedOrDragged : 0) +
+  const score = (selected || selectedRadio ? PRIORITY.selected : 0) +
     (active || activeRadio ? PRIORITY.active : 0) + (matched ? PRIORITY.matched : 0) +
     (migratedRadio ? PRIORITY.migration : 0) + (pending ? PRIORITY.pending : 0) +
     (group.pinned || pinnedRadio ? PRIORITY.pinned : 0) + freshnessScore(group, atMs) +
     residenceBoost(state, group.key, atMs);
   return { key: group.key, entity: group, score, lastMeaningfulAtMs: group.lastMeaningfulAtMs,
-    forced: selected || dragged || selectedOrDraggedRadio || matched || active || activeRadio ||
+    forced: selected || selectedRadio || matched || active || activeRadio ||
       group.pinned || pinnedRadio || migratedRadio,
     active, pending, matched };
 }
@@ -110,18 +107,17 @@ function universeRank(state, universe, atMs, query = '', signal = {}) {
   const active = signal.active ?? universeActive(state, universe);
   const pending = universe.pendingGrantKeys?.size > 0;
   const selected = selectedWithin(state, universe);
-  const dragged = state.visual.draggedKeys.has(universe.key);
   const migration = Boolean(signal.migration);
   const matched = queryMatch(universe, query) || Boolean(signal.matched);
-  const selectedOrDraggedDescendant = Boolean(signal.selectedOrDragged);
+  const selectedDescendant = Boolean(signal.selected);
   const pinnedDescendant = Boolean(signal.pinned);
-  const score = (selected || dragged || selectedOrDraggedDescendant ? PRIORITY.selectedOrDragged : 0) +
+  const score = (selected || selectedDescendant ? PRIORITY.selected : 0) +
     (active ? PRIORITY.active : 0) + (matched ? PRIORITY.matched : 0) +
     (migration ? PRIORITY.migration : 0) + (pending ? PRIORITY.pending : 0) +
     (universe.pinned || pinnedDescendant ? PRIORITY.pinned : 0) + freshnessScore(universe, atMs) +
     residenceBoost(state, universe.key, atMs);
   return { key: universe.key, entity: universe, score, lastMeaningfulAtMs: universe.lastMeaningfulAtMs,
-    forced: selected || dragged || selectedOrDraggedDescendant || matched || active || migration ||
+    forced: selected || selectedDescendant || matched || active || migration ||
       universe.pinned || pinnedDescendant,
     active, pending, matched };
 }
@@ -130,13 +126,13 @@ function universeSignals(state, atMs, query) {
   const signals = new Map();
   const signalFor = (key) => {
     if (!signals.has(key)) signals.set(key, { active: false, migration: false, matched: false,
-      selectedOrDragged: false, pinned: false });
+      selected: false, pinned: false });
     return signals.get(key);
   };
   state.groups.forEach((group) => {
     const signal = signalFor(group.universeKey);
     signal.active ||= groupActive(group);
-    signal.selectedOrDragged ||= state.visual.draggedKeys.has(group.key);
+    signal.selected ||= state.visual.selectedKey === group.key;
     signal.pinned ||= group.pinned;
     if (query) signal.matched ||= queryMatch(group, query);
   });
@@ -144,7 +140,7 @@ function universeSignals(state, atMs, query) {
     const signal = signalFor(radio.universeKey);
     signal.active ||= radioActive(state, radio);
     signal.migration ||= atMs - radio.lastMigrationAtMs <= state.config.render.migrationTrailTtlMs;
-    signal.selectedOrDragged ||= state.visual.draggedKeys.has(radio.key);
+    signal.selected ||= state.visual.selectedKey === radio.key;
     signal.pinned ||= radio.pinned;
     if (query) signal.matched ||= queryMatch(radio, query);
   });
@@ -299,11 +295,6 @@ function prioritizedVisibilityPaths(state, allowedUniverseKeys, maximumNodes, at
     addCandidate({ tier: 500, observedAtMs: entity?.lastMeaningfulAtMs || 0,
       key: `selected:${state.visual.selectedKey}`, path: entityPath(entity) });
   }
-  state.visual.draggedKeys.forEach((key) => {
-    const entity = entityFor(key);
-    addCandidate({ tier: 490, observedAtMs: entity?.lastMeaningfulAtMs || 0,
-      key: `dragged:${key}`, path: entityPath(entity) });
-  });
   state.activeCalls.forEach((call) => {
     const group = state.groups.get(call.groupKey);
     const radio = state.radios.get(call.radioKey);
@@ -542,7 +533,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
     if (groupNode?.collapsed) return;
     const ranked = [...group.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
       .filter((radio) => showQuiet || radioActive(state, radio) || radio.pinned ||
-        state.visual.selectedKey === radio.key || state.visual.draggedKeys.has(radio.key) ||
+        state.visual.selectedKey === radio.key ||
         now - radio.lastMeaningfulAtMs < limits.radioQuietAfterMs)
       .map((radio) => radioRank(state, radio, now, query)).sort(compareRank);
     const forced = ranked.filter((rank) => rank.forced);
@@ -559,9 +550,9 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
       const radio = state.radios.get(key);
       if (!radio || radio.relatedGroupKeys.size) return;
       if (radio.grantOnly && !radio.pinned && state.visual.selectedKey !== radio.key &&
-          !state.visual.draggedKeys.has(radio.key) && !queryMatch(radio, query)) return;
+          !queryMatch(radio, query)) return;
       if (!showQuiet && !radioActive(state, radio) && !radio.pinned &&
-          state.visual.selectedKey !== radio.key && !state.visual.draggedKeys.has(radio.key) &&
+          state.visual.selectedKey !== radio.key &&
           now - radio.lastMeaningfulAtMs >= limits.radioQuietAfterMs) return;
       radioRanks.push({ ...radioRank(state, radio, now, query), groupKey: '' });
     });
@@ -711,8 +702,7 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
       .find((key) => state.groups.has(key) || state.universes.has(key)) || '';
   if (unaccountedActivity > 0) {
     if (nodes.length >= limits.hardNodes) {
-      const removableIndex = nodes.findLastIndex((node) => node.type === 'radio' && !node.active && !node.selected &&
-        !state.visual.draggedKeys.has(node.key));
+      const removableIndex = nodes.findLastIndex((node) => node.type === 'radio' && !node.active && !node.selected);
       if (removableIndex >= 0) {
         visibleKeys.delete(nodes[removableIndex].key);
         shownRadioKeys.delete(nodes[removableIndex].key);
@@ -908,7 +898,6 @@ function selectVisibleGraph(state, atMs = Date.now(), options = {}) {
       retainedGroups: state.groups.size,
       visibleUniverses,
       retainedUniverses: state.universes.size,
-      showingText: `Showing ${visibleRadios} of ${state.radios.size} retained radios`,
       suppressedActive: hiddenActiveRadios + overflowActive,
       suppressedActiveRadios: hiddenActiveRadios,
       suppressedActiveCallLegs: overflowActive,

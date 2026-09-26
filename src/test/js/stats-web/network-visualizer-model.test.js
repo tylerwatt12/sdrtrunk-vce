@@ -237,7 +237,9 @@ async function main() {
     generation: 1, universes: 0, groups: 0, radios: 0, activeCalls: 0, pendingGrants: 0, semanticEvents: 0,
     dedupeEntries: 0, queuedObservations: 0, pendingEffects: 0, pinnedEntities: 0, overflowActive: 0
   });
-  assert.equal(model.applyObservation(affiliationState, affiliation({ sequence: 1 }), 1, BASE_TIME + 1).first, true);
+  const firstAffiliation = model.applyObservation(affiliationState, affiliation({ sequence: 1 }), 1, BASE_TIME + 1);
+  assert.equal(firstAffiliation.first, true);
+  assert.equal(firstAffiliation.transitionEvent, null);
   const originalRadioKey = [...affiliationState.radios.keys()][0];
   assert.match(originalRadioKey, /^system:opaque-system-a\|radio:/);
   assert.equal([...affiliationState.universes.values()][0].radioSystemKey, SYSTEM_A);
@@ -248,12 +250,25 @@ async function main() {
     config.BALANCED_CONFIG.animation.pulseDurationMs);
   assert.equal(arrivalEffect.expiresAtMs, arrivalEffect.animationEndsAtMs);
   assert.match(arrivalEffect.coalesceKey, /^radio-arrival:/);
-  assert.equal(model.applyObservation(affiliationState, affiliation({ sequence: 2, observed_at_ms: BASE_TIME + 2 }),
-    1, BASE_TIME + 2).changed, false);
+  const refreshedAffiliation = model.applyObservation(affiliationState,
+    affiliation({ sequence: 2, observed_at_ms: BASE_TIME + 2 }), 1, BASE_TIME + 2);
+  assert.equal(refreshedAffiliation.changed, false);
+  assert.equal(refreshedAffiliation.transitionEvent, null);
   assert.equal(affiliationState.semanticEvents.filter((event) => event.type === 'observed_affiliation_change').length, 0);
   const changed = model.applyObservation(affiliationState, affiliation({ sequence: 3, group_id: 202,
     observed_at_ms: BASE_TIME + 3 }), 1, BASE_TIME + 3);
   assert.equal(changed.changed, true);
+  assert.equal(changed.transitionEvent?.type, 'observed_affiliation_change');
+  assert.equal(changed.transitionEvent?.ambiguous, false);
+  assert.notEqual(changed.transitionEvent?.oldGroupKey, changed.transitionEvent?.newGroupKey);
+  assert.deepEqual(entrypoint.affiliationAlertView(affiliationState, changed.transitionEvent), {
+    id: changed.transitionEvent.id,
+    observedAtMs: BASE_TIME + 3,
+    radioLabel: 'Unit 7001',
+    fromLabel: 'Group 101',
+    toLabel: 'Group 202',
+    systemLabel: 'System A · ABCDE:123'
+  });
   assert.equal(affiliationState.radios.size, 1);
   assert(affiliationState.radios.has(originalRadioKey));
   const originalGroup = [...affiliationState.groups.values()].find((group) => group.identityKey === 'tg:101');
@@ -283,11 +298,16 @@ async function main() {
   assert.equal(affiliationState.semanticEvents.filter((event) => event.type === 'observed_affiliation_change').length, 1);
   const otherScopeSame = affiliation({ sequence: 20, group_id: 202, configuration_id: CONFIG_B,
     comparison_scope_key: `${CONFIG_B}:1:2:x`, site_id: 2, observed_at_ms: BASE_TIME + 20 });
-  assert.equal(model.applyObservation(affiliationState, otherScopeSame, 1, BASE_TIME + 20).changed, false);
+  const sameGroupOtherScope = model.applyObservation(affiliationState, otherScopeSame, 1, BASE_TIME + 20);
+  assert.equal(sameGroupOtherScope.changed, false);
+  assert.equal(sameGroupOtherScope.transitionEvent, null);
   assert.equal(affiliationState.radios.get(originalRadioKey).affiliationAmbiguous, false);
   const conflict = affiliation({ sequence: 21, group_id: 404, configuration_id: CONFIG_B,
     comparison_scope_key: `${CONFIG_B}:1:2:x`, site_id: 2, observed_at_ms: BASE_TIME + 21 });
-  assert.equal(model.applyObservation(affiliationState, conflict, 1, BASE_TIME + 21).changed, true);
+  const ambiguousChange = model.applyObservation(affiliationState, conflict, 1, BASE_TIME + 21);
+  assert.equal(ambiguousChange.changed, true);
+  assert.equal(ambiguousChange.transitionEvent?.ambiguous, true);
+  assert.equal(entrypoint.affiliationAlertView(affiliationState, ambiguousChange.transitionEvent), null);
   assert.equal(affiliationState.radios.get(originalRadioKey).affiliationAmbiguous, true);
   assert.equal(affiliationState.semanticEvents.filter((event) => event.type === 'observed_affiliation_change').length, 2);
   assert.equal(model.applyObservation(affiliationState, conflict, 1, BASE_TIME + 21).reason, 'duplicate');
@@ -342,7 +362,7 @@ async function main() {
   assert(orphanedGraph.nodes.some((node) => node.key === orphanedRadio.key && node.groupKey === ''));
   assert(orphanedGraph.nodes.some((node) => node.key === orphanedUniverse.key));
 
-  // Tight hard budgets reserve a complete ancestor path for pinned, selected, and dragged radios.
+  // Tight hard budgets reserve a complete ancestor path for pinned and selected radios.
   const tightConfig = config.createConfig({
     render: { hardNodes: 8, hardLabels: 8, softExpandedUniverses: 8, softExpandedGroups: 8,
       softRadiosTotal: 8, softRadiosPerGroup: 8 },
@@ -374,9 +394,6 @@ async function main() {
   model.setSelectedEntity(tight, protectedRadio.key);
   assertProtectedPath(visibility.selectVisibleGraph(tight, BASE_TIME + 21));
   model.setSelectedEntity(tight, null);
-  tight.visual.draggedKeys.add(protectedRadio.key);
-  assertProtectedPath(visibility.selectVisibleGraph(tight, BASE_TIME + 22));
-  tight.visual.draggedKeys.clear();
 
   // Active sources and their target hubs outrank migration and pin detail when the hard ceiling is exhausted.
   const priorityState = model.createNetworkState(tightConfig, BASE_TIME);
@@ -959,13 +976,17 @@ async function main() {
   });
   model.applyObservation(implicit, provisionalAffiliation, 1, BASE_TIME + 1);
   const implicitLayout = layout.createLayoutState(config.BALANCED_CONFIG, { profileKey: 'implicit-profile' });
-  const provisionalGraph = visibility.selectVisibleGraph(implicit, BASE_TIME + 1);
-  layout.synchronizeLayout(implicitLayout, provisionalGraph, BASE_TIME + 1);
   const provisionalRadioKey = [...implicit.radios.keys()][0];
   const provisionalGroupKey = [...implicit.groups.keys()][0];
-  layout.dragEntity(implicitLayout, provisionalGroupKey, { x: 80, y: 60, z: 12 }, BASE_TIME + 1);
-  layout.dragEntity(implicitLayout, provisionalRadioKey, { x: 123, y: -45, z: 18 }, BASE_TIME + 1);
-  layout.setLayoutPinned(implicitLayout, provisionalRadioKey, true, null, BASE_TIME + 1);
+  assert.equal(model.setEntityPinned(implicit, provisionalRadioKey, true), true);
+  layout.restoreLayoutRecords(implicitLayout, [
+    { profileKey: 'implicit-profile', key: provisionalGroupKey, type: 'group', x: 80, y: 60, z: 12,
+      pinned: false, updatedAtMs: BASE_TIME },
+    { profileKey: 'implicit-profile', key: provisionalRadioKey, type: 'radio', x: 123, y: -45, z: 18,
+      pinned: true, updatedAtMs: BASE_TIME + 1 }
+  ]);
+  const provisionalGraph = visibility.selectVisibleGraph(implicit, BASE_TIME + 1);
+  layout.synchronizeLayout(implicitLayout, provisionalGraph, BASE_TIME + 1);
   const canonicalAffiliation = affiliation({
     radio_system_key: SYSTEM_A, configuration_id: CONFIG_A, comparison_scope_key: `${CONFIG_A}:x:x:x`,
     event_id: 'implicit-canonical', sequence: 2, observed_at_ms: BASE_TIME + 2,
@@ -1152,7 +1173,7 @@ async function main() {
   assert.equal(model.networkStateCounts(universeOverflow).overflowActive, 0);
 
   // One deterministic 3D layout model supports stable hierarchy slots, monotonic reparenting,
-  // hierarchy translation, pinning, and bounded persistence without a continuously running force simulation.
+  // pinning, and bounded persistence without a continuously running force simulation.
   const layoutGraph = {
     nodes: [
       { key: 'u', id: 'u', type: 'universe', universeKey: 'u' },
@@ -1175,6 +1196,8 @@ async function main() {
       universeKey: 'volume-u', groupKey: `volume-g-${suffix}` }))
   ], links: [] };
   const systemVolumeLayout = layout.createLayoutState(limitedConfig, { profileKey: 'system-volume' });
+  layout.restoreLayoutRecords(systemVolumeLayout, [{ profileKey: 'system-volume', key: 'volume-g-a', type: 'group',
+    x: 10_000, y: 10_000, z: 10_000, pinned: false, updatedAtMs: BASE_TIME + 1 }]);
   layout.synchronizeLayout(systemVolumeLayout, systemVolumeGraph, BASE_TIME);
   const systemVolumeUniverse = systemVolumeGraph.nodes[0];
   const systemVolumeRadii = systemVolumeGraph.nodes.slice(1).map((node) => Math.hypot(
@@ -1184,26 +1207,21 @@ async function main() {
     limitedConfig.layout.systemRadius), 'the system shell must contain talkgroup and radio layout volumes');
   assert(new Set(systemVolumeRadii.map((radius) => radius.toFixed(3))).size > 1,
     'talkgroups fill the deterministic system volume instead of sharing one orbital ring');
-  layout.dragEntity(systemVolumeLayout, 'volume-g-a', { x: 10_000, y: 10_000, z: 10_000 }, BASE_TIME + 1);
-  layout.synchronizeLayout(systemVolumeLayout, systemVolumeGraph, BASE_TIME + 1);
   const containedGroup = systemVolumeGraph.nodes.find((node) => node.key === 'volume-g-a');
   assert(Math.hypot(containedGroup.x - systemVolumeUniverse.x, containedGroup.y - systemVolumeUniverse.y,
     containedGroup.z - systemVolumeUniverse.z) <= limitedConfig.layout.groupOrbitRadius + 0.001,
-    'saved and dragged talkgroups remain inside their parent system volume');
-  layout.setLayoutPinned(firstLayout, 'r2', true);
-  const beforeGroupMove = Object.fromEntries(layoutGraph.nodes.map((node) => [node.key, { x: node.x, y: node.y }]));
-  layout.translateEntity(firstLayout, 'g', { x: 25, y: -10, z: 4 }, BASE_TIME + 1);
-  layout.synchronizeLayout(firstLayout, layoutGraph, BASE_TIME + 1);
-  assert.equal(layoutGraph.nodes.find((node) => node.key === 'r1').x, beforeGroupMove.r1.x + 25);
-  assert.equal(layoutGraph.nodes.find((node) => node.key === 'r2').x, beforeGroupMove.r2.x);
-  assert(layout.savedLayoutRecords(firstLayout).some((record) => record.key === 'g' && !record.pinned));
-  const beforeUniverseMove = Object.fromEntries(layoutGraph.nodes.map((node) =>
-    [node.key, { x: node.x, y: node.y }]));
-  layout.translateEntity(firstLayout, 'u', { x: 14, y: 6, z: 2 }, BASE_TIME + 2);
+    'saved talkgroup coordinates remain inside their parent system volume');
+  layout.setLayoutPinned(firstLayout, 'r2', true, BASE_TIME + 1);
+  const pinnedRecord = firstLayout.positions.get('r2');
+  const pinnedPosition = { x: pinnedRecord.x, y: pinnedRecord.y, z: pinnedRecord.z };
+  layoutGraph.nodes.find((node) => node.key === 'r2').groupKey = '';
   layout.synchronizeLayout(firstLayout, layoutGraph, BASE_TIME + 2);
-  assert.equal(layoutGraph.nodes.find((node) => node.key === 'r1').x, beforeUniverseMove.r1.x + 14);
-  assert.equal(layoutGraph.nodes.find((node) => node.key === 'r2').x, beforeUniverseMove.r2.x,
-    'a pinned descendant must remain fixed when its universe moves');
+  for (let frame = 0; frame < 30; frame += 1) {
+    layout.stepLayout(firstLayout, layoutGraph, 16, BASE_TIME + 3 + frame * 16);
+  }
+  assert.deepEqual({ x: pinnedRecord.x, y: pinnedRecord.y, z: pinnedRecord.z }, pinnedPosition,
+    'pinning fixes layout position while logical parentage continues to update');
+  assert(layout.savedLayoutRecords(firstLayout).some((record) => record.key === 'r2' && record.pinned));
   const migrationNodes = () => [
     { key: 'migration-u', type: 'universe', universeKey: 'migration-u' },
     { key: 'migration-old', type: 'group', universeKey: 'migration-u', groupKey: 'migration-old' },
@@ -1275,11 +1293,15 @@ async function main() {
   assert.equal(restoredLayout.positions.size, 0);
   const restoredGraph = { nodes: [
     { key: 'u', type: 'universe', universeKey: 'u' },
-    { key: 'g', type: 'group', universeKey: 'u', groupKey: 'g' }
+    { key: 'g', type: 'group', universeKey: 'u', groupKey: 'g' },
+    { key: 'r2', type: 'radio', universeKey: 'u', groupKey: '', pinned: true }
   ], links: [], effects: [] };
   layout.synchronizeLayout(restoredLayout, restoredGraph, BASE_TIME + 3);
   const restoredUniverse = restoredLayout.positions.get('u');
   const restoredGroup = restoredLayout.positions.get('g');
+  const restoredRadio = restoredLayout.positions.get('r2');
+  assert.equal(restoredRadio.pinned, true);
+  assert.deepEqual({ x: restoredRadio.x, y: restoredRadio.y, z: restoredRadio.z }, pinnedPosition);
   assert.equal(restoredGroup.pinned, false);
   assert.equal(restoredGraph.nodes.find((node) => node.key === 'g').fx, undefined);
   assert.equal(restoredGroup.localX, restoredGroup.x - restoredUniverse.x);

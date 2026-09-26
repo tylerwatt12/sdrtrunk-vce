@@ -51,7 +51,6 @@ function createNetworkState(config = BALANCED_CONFIG, atMs = Date.now()) {
     },
     visual: {
       selectedKey: null,
-      draggedKeys: new Set(),
       pinnedKeys: new Set(),
       membership: new Map()
     },
@@ -97,7 +96,6 @@ function clearNetworkState(state, atMs = Date.now()) {
   state.maintenance.nextDedupePruneAtMs = state.sessionStartedAtMs;
   state.maintenance.nextRetentionSweepAtMs = state.sessionStartedAtMs;
   state.visual.selectedKey = null;
-  state.visual.draggedKeys.clear();
   state.visual.pinnedKeys.clear();
   state.visual.membership.clear();
   state.metadata.pending.clear();
@@ -162,7 +160,7 @@ function acceptFingerprint(state, fingerprint, atMs) {
 }
 
 function entityProtected(state, entity) {
-  return entity.pinned || state.visual.selectedKey === entity.key || state.visual.draggedKeys.has(entity.key);
+  return entity.pinned || state.visual.selectedKey === entity.key;
 }
 
 function deleteRadio(state, radio) {
@@ -502,10 +500,11 @@ function applyAffiliation(state, event) {
   addSiteEvidence(group, event, state.config.state.hardSiteEvidencePerEntity);
   addSiteEvidence(universe, event, state.config.state.hardSiteEvidencePerEntity);
 
+  let transitionEvent = null;
   if (changed) {
     radio.visualParentGroupKey = group.key;
     radio.lastMigrationAtMs = event.observedAtMs;
-    const history = appendHistory(state, {
+    transitionEvent = appendHistory(state, {
       type: 'observed_affiliation_change',
       label: 'Observed affiliation change',
       observedAtMs: event.observedAtMs,
@@ -519,7 +518,7 @@ function applyAffiliation(state, event) {
       evidenceType: event.evidenceType,
       ambiguous: affiliatedGroups.size > 1
     });
-    radio.transitionEventIds.push(history.id);
+    radio.transitionEventIds.push(transitionEvent.id);
     if (radio.transitionEventIds.length > state.config.state.hardTransitionsPerRadio) {
       radio.transitionEventIds.splice(0,
         radio.transitionEventIds.length - state.config.state.hardTransitionsPerRadio);
@@ -585,7 +584,7 @@ function applyAffiliation(state, event) {
     radio.visualParentGroupKey = [...affiliatedGroups][0];
   }
   refreshRadioGroupMembership(state, radio);
-  return { applied: true, changed, first: firstAffiliation, ambiguous: radio.affiliationAmbiguous };
+  return { applied: true, changed, first: firstAffiliation, ambiguous: radio.affiliationAmbiguous, transitionEvent };
 }
 
 function applyPresenceRemoval(state, event) {
@@ -729,7 +728,6 @@ function applyIdentityReconciliation(state, event) {
       state.visual.pinnedKeys.add(target.key);
     }
     if (state.visual.selectedKey === source.key) state.visual.selectedKey = target.key;
-    state.visual.draggedKeys.delete(source.key);
     const membership = state.visual.membership.get(source.key);
     if (membership) state.visual.membership.set(target.key, membership);
     state.visual.membership.delete(source.key);

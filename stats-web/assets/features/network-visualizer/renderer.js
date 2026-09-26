@@ -2,7 +2,7 @@
 
 import { BALANCED_CONFIG } from './config.js';
 
-const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=2';
+const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
 const LINK_SEGMENTS = 10;
 const DEFAULT_ANIMATION = Object.freeze({
   particleFlightMs: 1_500,
@@ -27,6 +27,26 @@ function finite(value, fallback = 0) {
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function depthPresentation(value = {}) {
+  const distance = Math.max(0, finite(value.distance));
+  const density = Math.max(0, finite(value.density));
+  const projectedZ = clamp(finite(value.projectedZ), -1, 1);
+  const clear = value.active === true || value.selected === true;
+  const haze = clear ? 0 : clamp(1 - Math.exp(-Math.pow(density * distance, 2)), 0, 1);
+  return Object.freeze({
+    haze,
+    opacity: clear ? 1 : clamp(0.94 - haze * 0.68, 0.26, 0.94),
+    blurPx: clear ? 0 : clamp(haze * 2.8, 0, 2.8),
+    zIndex: Math.round((1 - projectedZ) * 5_000)
+  });
+}
+
+function scopeFogDensity(scope = {}, config = BALANCED_CONFIG) {
+  if (scope.level === 'group') return 0.9 / Math.max(1, config.layout.radioOrbitRadius * 3);
+  if (scope.level === 'system') return 0.9 / Math.max(1, config.layout.systemRadius);
+  return 0.9 / Math.max(1, config.layout.universeSpacing * 5);
 }
 
 function easeInOutCubic(value) {
@@ -222,7 +242,7 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     available: false, disposed, layoutOwner: 'external', mode: '3d', frozen: false,
     nodes: 0, links: 0, labels: 0, steadyParticles: 0, pendingParticles: 0,
     animatedEffects: 0, contextLost: false, paused: false, autoRotateRequested: false,
-    autoRotateEffective: false, arrangeMode: false,
+    autoRotateEffective: false,
     scope: { level: 'overview', universeKey: '', groupKey: '' }, camera: null, rendererMemory: null, limits: {}
   });
   const dispose = () => {
@@ -239,7 +259,7 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     setFrozen: Boolean, fitAll: () => false, focus: () => false,
     setPinned: () => false, pulse: () => false, frameScope: () => false, getCameraPose: () => null,
     restoreCameraPose: () => false, setNavigationScope: (value = {}) => value, setAutoRotate: Boolean,
-    setArrange: Boolean, setPalette: () => {}, setReducedMotion: Boolean, setLabelBudget: () => 0,
+    setPalette: () => {}, setReducedMotion: Boolean, setLabelBudget: () => 0,
     setParticleBudget: () => 0, clearEffects: () => {}, clear: () => {}, enterFullscreen: async () => false,
     exitFullscreen: async () => false, diagnostics, dispose
   });
@@ -289,7 +309,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let frozen = Boolean(options.frozen);
   let paused = false;
   let contextLost = false;
-  let arrangeMode = Boolean(options.arrange);
   let autoRotateRequested = options.autoRotate ?? animation.autoRotateDefault ?? true;
   let autoRotatePaused = false;
   let programmaticCamera = false;
@@ -305,7 +324,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let autoRotateTimer = null;
   let effectTimer = null;
   let initialFrameScheduled = false;
-  let lastOffscreenActivityCount = -1;
   let nextPulseId = 1;
   let resizeObserver = null;
   let resizeFallback = null;
@@ -317,7 +335,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const nodeObjects = new Map();
   const linkObjects = new Map();
   const labelElements = new Map();
-  const dragging = new Map();
   const geometries = new Map();
   const materials = new Map();
   const sharedResources = new Map();
@@ -355,12 +372,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
     activity: 0.42, migration: 0.78, faded: 0.18, selected: 1, encrypted: 0.86 })[state] ?? 0.68;
   const materialColor = (state) => palette[state] || palette.radio;
 
-  function meshMaterial(state, interior = false) {
-    const key = `mesh:${state}:${interior ? 'interior' : 'exterior'}`;
+  function meshMaterial(state, interior = false, depthClear = false) {
+    const key = `mesh:${state}:${interior ? 'interior' : 'exterior'}:${depthClear ? 'clear' : 'fog'}`;
     if (materials.has(key)) return materials.get(key).material;
     const settings = { color: materialColor(state), transparent: true,
       opacity: interior ? (state === 'selected' ? 0.42 : state === 'active' ? 0.32 : 0.2) : materialOpacity(state),
-      wireframe: true, depthTest: true, depthWrite: false };
+      wireframe: true, depthTest: true, depthWrite: false, fog: !depthClear };
     if (interior) settings.side = library.BackSide;
     const material = protectShared(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'mesh' });
@@ -375,7 +392,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       opacity: materialOpacity(state), depthWrite: false, linewidth: linkWidth({ type: state,
         active: state === 'active', afterglow: state === 'afterglow', faded: state === 'faded' }),
       worldUnits: false, dashed: pattern !== 'solid', dashScale: 1, dashSize: encrypted ? 2.4 : 8,
-      gapSize: encrypted ? 2.4 : 5, alphaToCoverage: true }));
+      gapSize: encrypted ? 2.4 : 5, alphaToCoverage: true, fog: state !== 'active' }));
     material.dashed = pattern !== 'solid';
     material.resolution?.set(Math.max(1, surface.clientWidth || host.clientWidth || 1),
       Math.max(1, surface.clientHeight || host.clientHeight || 1));
@@ -397,7 +414,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   const particleGeometry = protectShared(new library.SphereGeometry(0.9, 6, 4));
   const particleMaterial = protectShared(new library.MeshBasicMaterial({ color: palette.active,
-    transparent: true, opacity: 0.9, depthWrite: false }));
+    transparent: true, opacity: 0.9, depthWrite: false, fog: false }));
   geometries.set('particle', particleGeometry);
   materials.set('particle', { material: particleMaterial, state: 'active', category: 'particle' });
 
@@ -416,21 +433,22 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const kind = nodeGeometryKind(node);
     const interior = kind === 'universe' && node.scopeLevel === 'system';
     const state = nodeVisualState(node, activeNodeEffect(nodeKey(node)));
+    const depthClear = Boolean(node.selected || (kind === 'group' && node.active));
     const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.encrypted)}:` +
-      `${node.visible !== false}:${nodeRadius(node)}:${interior}`;
+      `${node.visible !== false}:${nodeRadius(node)}:${interior}:${depthClear}`;
     if (object.userData.visualizerStyleSignature === signature) return;
     object.userData.visualizerStyleSignature = signature;
     const base = object.userData.visualizerBase;
     const selected = object.userData.visualizerSelected;
     const encrypted = object.userData.visualizerEncrypted;
     base.geometry = geometry(kind);
-    base.material = meshMaterial(state, interior);
+    base.material = meshMaterial(state, interior, depthClear);
     selected.geometry = base.geometry;
-    selected.material = meshMaterial('selected', interior);
+    selected.material = meshMaterial('selected', interior, true);
     selected.visible = Boolean(node.selected);
     selected.scale.setScalar(interior ? 1.01 : 1.18);
     encrypted.geometry = base.geometry;
-    encrypted.material = meshMaterial('encrypted', interior);
+    encrypted.material = meshMaterial('encrypted', interior, depthClear);
     encrypted.visible = Boolean(node.encrypted || node.entity?.encrypted);
     encrypted.scale.setScalar(interior ? 0.99 : 0.78);
     base.raycast = interior ? object.userData.visualizerNoRaycast : object.userData.visualizerBaseRaycast;
@@ -535,7 +553,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const nodeFields = ['x', 'y', 'z', 'fx', 'fy', 'fz', 'pinned', 'selected', 'active', 'quiet', 'stale',
       'afterglow', 'pending', 'encrypted', 'visible', 'renderRadius', 'labelPriority', 'labelVisible'];
     for (const node of renderNodes.values()) {
-      if (dragging.has(nodeKey(node))) continue;
       const source = node.__source;
       if (!source || source === node) continue;
       for (const field of nodeFields) {
@@ -554,7 +571,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function synchronizeVisualPositions() {
     for (const node of renderNodes.values()) {
-      if (dragging.has(nodeKey(node))) continue;
       const object = nodeObjects.get(nodeKey(node));
       if (!object) continue;
       const position = renderedPosition(node);
@@ -596,7 +612,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
       renderNodes.delete(key);
       nodeObjects.delete(key);
       nodeEffects.delete(key);
-      dragging.delete(key);
       labelElements.get(key)?.remove();
       labelElements.delete(key);
     }
@@ -745,33 +760,16 @@ async function createNetworkVisualizerRenderer(options = {}) {
     for (const node of renderNodes.values()) applyNodeVisual(node);
   }
 
-  function updateOffscreenActivityCount(width, height) {
-    if (typeof callbacks.onOffscreenActivity !== 'function') return;
-    const camera = graph?.camera();
-    let count = 0;
-    if (camera && width && height) {
-      const projected = new library.Vector3();
-      for (const node of renderNodes.values()) {
-        if (!node.active || node.visible === false) continue;
-        const position = renderedPosition(node);
-        projected.set(position.x, position.y, position.z).project(camera);
-        if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z) ||
-            projected.z < -1 || projected.z > 1 || projected.x < -1 || projected.x > 1 ||
-            projected.y < -1 || projected.y > 1) count += 1;
-      }
-    }
-    if (count === lastOffscreenActivityCount) return;
-    lastOffscreenActivityCount = count;
-    callbacks.onOffscreenActivity({ count });
-  }
-
   function renderLabels() {
     labelFrame = null;
     if (!graph || disposed || documentValue.hidden || contextLost) return;
     const width = Math.max(0, surface.clientWidth || host.clientWidth);
     const height = Math.max(0, surface.clientHeight || host.clientHeight);
     if (!width || !height) return;
-    updateOffscreenActivityCount(width, height);
+    const camera = graph.camera();
+    const density = scopeFogDensity(navigationScope, config);
+    const world = new library.Vector3();
+    const projected = new library.Vector3();
     const requested = [...new Set(requestedLabelKeys)].map((key, index) => ({
       node: renderNodes.get(key), rank: requestedLabelKeys.length - index
     })).filter(({ node }) => node && node.labelVisible !== false)
@@ -785,6 +783,16 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const position = renderedPosition(node);
       try { screen = graph.graph2ScreenCoords(position.x, position.y, position.z); } catch (_) { continue; }
       if (!Number.isFinite(screen?.x) || !Number.isFinite(screen?.y)) continue;
+      world.set(position.x, position.y, position.z);
+      projected.copy(world).project(camera);
+      if (!Number.isFinite(projected.z) || projected.z < -1 || projected.z > 1) continue;
+      const presentation = depthPresentation({
+        distance: camera.position.distanceTo(world),
+        projectedZ: projected.z,
+        density,
+        active: nodeType(node) === 'group' && node.active,
+        selected: node.selected
+      });
       let element = labelElements.get(key);
       if (!element) {
         element = createElement(documentValue, 'span', 'network-visualizer-label');
@@ -806,7 +814,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
       element.dataset.pending = String(Boolean(node.pending));
       element.dataset.selected = String(Boolean(node.selected));
       element.dataset.quiet = String(Boolean(node.quiet));
+      element.dataset.depthClear = String(Boolean(node.selected || (nodeType(node) === 'group' && node.active)));
       element.dataset.visible = 'true';
+      element.style.opacity = String(presentation.opacity);
+      element.style.filter = presentation.blurPx ? `blur(${presentation.blurPx.toFixed(2)}px)` : 'none';
+      element.style.zIndex = String(presentation.zIndex);
       element.style.transform = `translate3d(${Math.round(screen.x + nodeRadius(node) + 7)}px, ` +
         `${Math.round(screen.y - 14)}px, 0)`;
       element.hidden = false;
@@ -884,8 +896,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function updateAutoRotate() {
     if (!controls) return false;
-    const effective = Boolean(autoRotateRequested && !autoRotatePaused && !programmaticCamera && !arrangeMode &&
-      dragging.size === 0 && !prefersReducedMotion() && !documentValue.hidden && renderNodes.size);
+    const effective = Boolean(autoRotateRequested && !autoRotatePaused && !programmaticCamera &&
+      !prefersReducedMotion() && !documentValue.hidden && renderNodes.size);
     controls.autoRotate = effective;
     controls.autoRotateSpeed = animation.autoRotateSpeed;
     callbacks.onAutoRotateState?.({ requested: autoRotateRequested, effective,
@@ -895,7 +907,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function scheduleAutoRotateResume() {
     clearAutoRotateTimer();
-    if (!autoRotateRequested || prefersReducedMotion() || documentValue.hidden || arrangeMode || dragging.size) {
+    if (!autoRotateRequested || prefersReducedMotion() || documentValue.hidden) {
       updateAutoRotate();
       return;
     }
@@ -1056,6 +1068,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     navigationScope = { level, universeKey: level === 'overview' ? '' : String(value.universeKey || ''),
       groupKey: level === 'group' ? String(value.groupKey || '') : '' };
     if (controls) controls.maxDistance = Infinity;
+    if (scene?.fog) scene.fog.density = scopeFogDensity(navigationScope, config);
+    scheduleLabels();
     return { ...navigationScope };
   }
   function setAutoRotate(value) {
@@ -1064,17 +1078,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
     clearAutoRotateTimer();
     updateAutoRotate();
     return autoRotateRequested;
-  }
-  function setArrange(value) {
-    arrangeMode = Boolean(value);
-    graph?.enableNodeDrag?.(arrangeMode);
-    dragging.clear();
-    if (arrangeMode) {
-      autoRotatePaused = true;
-      clearAutoRotateTimer();
-      updateAutoRotate();
-    } else scheduleAutoRotateResume();
-    return arrangeMode;
   }
   function setFrozen(value) {
     frozen = Boolean(value);
@@ -1099,6 +1102,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       metadata.material.color?.set(materialColor(metadata.state));
       metadata.material.needsUpdate = true;
     }
+    scene?.fog?.color?.set?.(palette.background);
     graph?.backgroundColor('rgba(0, 0, 0, 0)');
     refresh();
   }
@@ -1139,14 +1143,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
     renderLinks.clear();
     nodeObjects.clear();
     linkObjects.clear();
-    dragging.clear();
     particleAllocation.clear();
     labelElements.forEach((element) => element.remove());
     labelElements.clear();
     graph?.graphData({ nodes: [], links: [] });
     setNavigationScope({ level: 'overview' });
-    if (lastOffscreenActivityCount !== 0) callbacks.onOffscreenActivity?.({ count: 0 });
-    lastOffscreenActivityCount = 0;
     updateAutoRotate();
   }
 
@@ -1160,7 +1161,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       nodes: renderNodes.size, links: renderLinks.size, labels: labelElements.size,
       steadyParticles: [...particleAllocation.values()].reduce((sum, count) => sum + count, 0),
       pendingParticles: pulseReservations.size, animatedEffects: nodeEffects.size, contextLost, paused,
-      autoRotateRequested, autoRotateEffective: Boolean(controls?.autoRotate), arrangeMode,
+      autoRotateRequested, autoRotateEffective: Boolean(controls?.autoRotate),
       scope: { ...navigationScope }, camera: cameraPose(), rendererMemory,
       limits: currentDocument.rendererLimits || {} });
   }
@@ -1231,31 +1232,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
       .linkDirectionalParticleThreeObject(() => new library.Mesh(particleGeometry, particleMaterial))
       .onNodeClick((node, event) => callbacks.onNodeClick?.(node.__source || node, event))
       .onBackgroundClick((event) => callbacks.onBackgroundClick?.(event))
-      .onNodeDrag((node, translate = {}) => {
-        const key = nodeKey(node);
-        if (!dragging.has(key)) {
-          autoRotatePaused = true;
-          clearAutoRotateTimer();
-          updateAutoRotate();
-          dragging.set(key, { x: finite(node.x) - finite(translate.x), y: finite(node.y) - finite(translate.y),
-            z: finite(node.z) - finite(translate.z) });
-        }
-        callbacks.onNodeDrag?.({ key, position: renderedPosition(node),
-          delta: { x: finite(translate.x), y: finite(translate.y), z: finite(translate.z) },
-          node: node.__source || node });
-        synchronizeVisualPositions();
-        scheduleLabels();
-      })
-      .onNodeDragEnd((node) => {
-        const key = nodeKey(node);
-        const start = dragging.get(key) || renderedPosition(node);
-        const position = renderedPosition(node);
-        dragging.delete(key);
-        callbacks.onNodeDragEnd?.({ key, position,
-          delta: { x: position.x - start.x, y: position.y - start.y, z: position.z - start.z },
-          node: node.__source || node });
-        if (!arrangeMode) scheduleAutoRotateResume();
-      })
       .onEngineTick(() => { synchronizeVisualPositions(); scheduleLabels(); })
       .cooldownTicks(0).cooldownTime(0);
     graph.d3Force('link', null);
@@ -1263,6 +1239,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     graph.d3Force('center', null);
     graph.numDimensions(3);
     scene = graph.scene();
+    scene.fog = new library.FogExp2(palette.background, scopeFogDensity(navigationScope, config));
     controls = graph.controls();
     if (controls) {
       Object.assign(controls, { autoRotate: false, autoRotateSpeed: animation.autoRotateSpeed,
@@ -1279,7 +1256,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       controls.addEventListener('end', onControlsEnd);
       controls.addEventListener('change', onControlsChange);
     }
-    graph.enableNodeDrag?.(arrangeMode);
+    graph.enableNodeDrag?.(false);
     rendererCanvas = graph.renderer()?.domElement || null;
     rendererCanvas?.addEventListener('webglcontextlost', onContextLost, false);
     rendererCanvas?.addEventListener('webglcontextrestored', onContextRestored, false);
@@ -1342,7 +1319,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     disposeShared();
     labelElements.forEach((element) => element.remove());
     renderNodes.clear(); renderLinks.clear(); nodeObjects.clear(); linkObjects.clear(); labelElements.clear();
-    dragging.clear(); geometries.clear(); materials.clear(); nodeEffects.clear(); seenEffects.clear();
+    geometries.clear(); materials.clear(); nodeEffects.clear(); seenEffects.clear();
     effectCooldowns.clear(); particleAllocation.clear();
     currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
     requestedLabelKeys = [];
@@ -1371,7 +1348,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       return particleBudget;
     },
     fitAll, frameScope, focus, getCameraPose: cameraPose, restoreCameraPose, setNavigationScope,
-    setAutoRotate, setArrange, pulse, clearEffects, clear, enterFullscreen, exitFullscreen, diagnostics, dispose
+    setAutoRotate, pulse, clearEffects, clear, enterFullscreen, exitFullscreen, diagnostics, dispose
   });
 }
 
@@ -1380,6 +1357,7 @@ export {
   boundedGraphData,
   chooseLabelPlacements,
   createNetworkVisualizerRenderer,
+  depthPresentation,
   easeInOutCubic,
   labelEligible,
   labelZoomTier,
@@ -1388,5 +1366,6 @@ export {
   linkWidth,
   nodeGeometryKind,
   nodeRadius,
-  nodeVisualState
+  nodeVisualState,
+  scopeFogDensity
 };

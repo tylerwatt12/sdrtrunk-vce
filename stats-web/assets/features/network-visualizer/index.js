@@ -18,7 +18,6 @@ import { selectVisibleGraph } from './visibility.js';
 import {
   createLayoutState,
   disposeLayout,
-  dragEntity,
   resetLayoutSession,
   restoreLayoutRecords,
   savedLayoutRecords,
@@ -27,7 +26,6 @@ import {
   setReducedMotion,
   stepLayout,
   synchronizeLayout,
-  translateEntity,
   unlockLayout
 } from './layout.js';
 import { createNetworkVisualizerRenderer } from './renderer.js';
@@ -226,6 +224,23 @@ function eventViews(state) {
   }));
 }
 
+function affiliationAlertView(state, event) {
+  if (event?.type !== 'observed_affiliation_change' || event.ambiguous !== false ||
+      !event.oldGroupKey || !event.newGroupKey || event.oldGroupKey === event.newGroupKey) return null;
+  const radio = state.radios.get(event.radioKey);
+  const from = state.groups.get(event.oldGroupKey);
+  const to = state.groups.get(event.newGroupKey);
+  const universe = state.universes.get(event.universeKey);
+  return Object.freeze({
+    id: event.id,
+    observedAtMs: event.observedAtMs,
+    radioLabel: radio?.label || radio?.displayId || 'Radio',
+    fromLabel: from?.label || from?.displayId || 'Unknown talkgroup',
+    toLabel: to?.label || to?.displayId || 'Unknown talkgroup',
+    systemLabel: universe?.label || universe?.displayId || 'Radio system'
+  });
+}
+
 function createNetworkVisualizer(dependencies = {}) {
   const required = ['node', 'iconGlyph', 'iconButton', 'liveConnection', 'subscribeLiveChannelActivity'];
   required.forEach((name) => {
@@ -271,7 +286,6 @@ function createNetworkVisualizer(dependencies = {}) {
   let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
   const navigationHistory = [];
   let pendingCameraAction = null;
-  let arrangeMode = false;
   const suppressedEffectIds = new Set();
   const fixtureMode = new URLSearchParams(window.location.search).get('network_fixture') === '1' &&
     FIXTURE_HOSTS.has(window.location.hostname);
@@ -286,7 +300,6 @@ function createNetworkVisualizer(dependencies = {}) {
     config,
     initialFilters: preferences.filters,
     initialAutoRotate: preferences.autoRotate,
-    initialArrange: arrangeMode,
     reducedMotion: Boolean(reducedMotionMedia?.matches),
     callbacks: {
       onFilters: (filters) => {
@@ -309,11 +322,6 @@ function createNetworkVisualizer(dependencies = {}) {
         renderer?.setAutoRotate?.(preferences.autoRotate);
         ui.setAutoRotate(preferences.autoRotate);
         schedulePersist();
-      },
-      onArrange: (value) => {
-        arrangeMode = Boolean(value);
-        renderer?.setArrange?.(arrangeMode);
-        ui.setArrange(arrangeMode);
       },
       onFreeze: (value) => {
         frozen = Boolean(value);
@@ -346,7 +354,6 @@ function createNetworkVisualizer(dependencies = {}) {
   });
   ui.setAutoRotate(preferences.autoRotate);
   ui.setReducedMotion(Boolean(reducedMotionMedia?.matches));
-  ui.setArrange(arrangeMode);
   ui.setScope({ level: 'overview', title: 'Observed radio systems', canGoBack: false });
 
   function schedulePersist(immediate = false) {
@@ -515,27 +522,6 @@ function createNetworkVisualizer(dependencies = {}) {
     schedulePersist();
   }
 
-  function onRendererDrag(payload, finished = false) {
-    const key = payload?.key || payload?.node?.key;
-    if (!key) return;
-    const entity = entityForKey(state, key);
-    if (!entity) return;
-    const draggingStarted = !finished && !state.visual.draggedKeys.has(key);
-    if (!finished) state.visual.draggedKeys.add(key);
-    const delta = payload?.delta;
-    if (!finished && (entity.type === 'universe' || entity.type === 'group') && delta) {
-      translateEntity(layout, key, delta);
-    } else if (!(finished && (entity.type === 'universe' || entity.type === 'group')) && payload?.position) {
-      dragEntity(layout, key, payload.position);
-    }
-    if (finished) {
-      state.visual.draggedKeys.delete(key);
-      schedulePersist();
-    }
-    if (draggingStarted || finished) invalidateGraph();
-    else dirty = true;
-  }
-
   function initializeRenderer() {
     rendererInitialization = Promise.resolve(createNetworkVisualizerRenderer({
       host: ui.canvas,
@@ -549,8 +535,6 @@ function createNetworkVisualizer(dependencies = {}) {
       callbacks: {
         onNodeClick: (value) => handleNodeClick(value),
         onBackgroundClick: () => selectEntity(null),
-        onNodeDrag: (payload) => onRendererDrag(payload),
-        onNodeDragEnd: (payload) => onRendererDrag(payload, true),
         onContextLost: () => {
           ui.setWebglState('failed', 'The graphics context was lost. Live observations continue in the event drawer.');
           ui.showNotice('WebGL context lost — live observations are still being retained.');
@@ -558,7 +542,6 @@ function createNetworkVisualizer(dependencies = {}) {
         onContextRestored: () => ui.setWebglState('ready'),
         onUnavailable: (error) => ui.setWebglState('failed', error?.message ||
           'The WebGL renderer could not be initialized.'),
-        onOffscreenActivity: ({ count } = {}) => ui.setOffscreenActivity(count),
         onCameraInteraction: () => { /* The renderer permanently disables automatic framing after interaction. */ }
       },
       reducedMotion: Boolean(reducedMotionMedia?.matches)
@@ -572,7 +555,6 @@ function createNetworkVisualizer(dependencies = {}) {
       renderer.setFrozen?.(frozen);
       renderer.setNavigationScope?.(navigationScope);
       renderer.setAutoRotate?.(preferences.autoRotate);
-      renderer.setArrange?.(arrangeMode);
       invalidateGraph();
     }).catch((error) => {
       if (closed) return;
@@ -616,13 +598,12 @@ function createNetworkVisualizer(dependencies = {}) {
 
   function observeGap(detail = {}, optionsValue = {}) {
     const now = Date.now();
-    const first = !hadGap;
     hadGap = true;
     suppressNextSnapshotEffects = true;
     if (!optionsValue.stateAlreadyMarked) markTransportGap(state, detail, state.generation, now);
     suppressedEffectIds.clear();
     renderer?.clearEffects?.();
-    if (first) ui.showNotice('Live observation gap — active transmission continuity is uncertain.', true);
+    ui.clearAffiliationAlert?.();
     updateTransport();
     invalidateGraph();
   }
@@ -732,7 +713,7 @@ function createNetworkVisualizer(dependencies = {}) {
     ui.setCounts({ visibleRadios: 0, retainedRadios: 0, renderedNodes: 0 });
     ui.setSelection(null);
     ui.setEvents([]);
-    ui.setOffscreenActivity(0);
+    ui.clearAffiliationAlert?.();
     ui.searchInput.value = '';
     ui.showNotice('Map cleared. Listening from a new live edge.');
     networkOpen = false;
@@ -786,6 +767,11 @@ function createNetworkVisualizer(dependencies = {}) {
     if (closed) return;
     const suppressBatchEffects = document.hidden || suppressNextIngestEffects;
     const results = drainObservationQueue(state);
+    if (!suppressBatchEffects) {
+      const alert = results.reduce((latest, result) =>
+        affiliationAlertView(state, result?.transitionEvent) || latest, null);
+      if (alert) ui.showAffiliationAlert?.(alert);
+    }
     if (suppressBatchEffects) {
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
     }
@@ -897,6 +883,7 @@ function createNetworkVisualizer(dependencies = {}) {
   function handleVisibility() {
     if (closed) return;
     if (document.hidden) {
+      ui.clearAffiliationAlert?.();
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
       renderer?.setFrozen?.(true);
     } else {
@@ -970,7 +957,7 @@ function createNetworkVisualizer(dependencies = {}) {
         },
         renderer: renderer?.diagnostics?.() || null,
         navigation: { scope: { ...navigationScope }, depth: navigationHistory.length,
-          arrange: arrangeMode, autoRotate: preferences.autoRotate !== false },
+          autoRotate: preferences.autoRotate !== false },
         subscriptions: { channel: Boolean(channelConnection), network: Boolean(networkConnection) },
         timers: { ingestion: ingestionTimer !== null, animation: raf !== null },
         generation: state.generation,
@@ -997,6 +984,7 @@ function createNetworkVisualizer(dependencies = {}) {
       networkConnection = null;
       renderer?.dispose?.();
       renderer = null;
+      ui.clearAffiliationAlert?.();
       disposeLayout(layout);
       ui.close();
     }
@@ -1006,6 +994,7 @@ function createNetworkVisualizer(dependencies = {}) {
 }
 
 export {
+  affiliationAlertView,
   createNetworkVisualizer,
   filterSuppressedEffects,
   loadPreferences,

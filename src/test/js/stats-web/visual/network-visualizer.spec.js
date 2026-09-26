@@ -110,7 +110,9 @@ test('fresh view is empty, opens only shared live topics, and cleans up on repea
   recordMeasurement(testInfo, 'empty_ready', ready.elapsedMs);
 
   await expect(page.getByText('Listening — the map builds as activity arrives.')).toBeVisible();
-  await expect(page.getByText('Showing 0 of 0 retained radios')).toBeVisible();
+  await expect(page.locator('.network-visualizer-counts')).toHaveCount(0);
+  await expect(page.locator('.network-visualizer-offscreen')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
   expect(ready.diagnostic.state).toMatchObject({ universes: 0, groups: 0, radios: 0,
     activeCalls: 0, semanticEvents: 0, queuedObservations: 0 });
   expect(ready.diagnostic.graph).toMatchObject({ nodes: 0, links: 0 });
@@ -159,7 +161,6 @@ test('populated view drills system to talkgroup and search derives the retained 
   expect(snapshot.navigation).toMatchObject({
     scope: { level: 'overview', universeKey: '', groupKey: '' },
     depth: 0,
-    arrange: false,
     autoRotate: true
   });
   expect(snapshot.graph.nodes).toBe(snapshot.graph.counts.visibleUniverses);
@@ -234,20 +235,14 @@ test('populated view drills system to talkgroup and search derives the retained 
   await expect(page.getByRole('heading', { name: 'Unit 12' })).toBeVisible();
 });
 
-test('arrange, cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async ({ page }) => {
+test('cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(fixtureUrl(true));
   await waitForController(page);
   await waitForRenderer(page);
   await waitForFixtureDrain(page);
 
-  const arrange = page.getByRole('button', { name: 'Arrange layout', exact: true });
-  await arrange.click();
-  await expect(arrange).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(async () => (await diagnostics(page)).renderer.arrangeMode).toBe(true);
-  await arrange.click();
-  await expect(arrange).toHaveAttribute('aria-pressed', 'false');
-  await expect.poll(async () => (await diagnostics(page)).renderer.arrangeMode).toBe(false);
+  await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
 
   const autoRotate = page.getByRole('button', { name: 'Auto rotate', exact: true });
   await autoRotate.click();
@@ -310,8 +305,7 @@ test('narrow toolbar, inspector, event drawer, and fullscreen controls stay reac
   await expect(hierarchy.getByRole('button', { name: 'Back to all systems' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Auto rotate', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Arrange layout', exact: true }))
-    .toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
 
   const search = page.getByRole('searchbox', { name: 'Search retained network entities' });
   await search.fill('Unit 12');
@@ -401,18 +395,8 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   expect(snapshot.renderer.labels).toBeLessThanOrEqual(80);
   expect(snapshot.renderer.steadyParticles + snapshot.renderer.pendingParticles).toBeLessThanOrEqual(150);
   await expect(page.locator('.network-visualizer-empty')).toBeHidden();
-  await expect(page.locator('.network-visualizer-counts')).toContainText(/Showing .* of .* retained radios/);
-  const repeatedCountMutations = await page.evaluate(() => new Promise((resolve) => {
-    const target = document.querySelector('.network-visualizer-counts');
-    let count = 0;
-    const observer = new MutationObserver((entries) => { count += entries.length; });
-    observer.observe(target, { childList: true, characterData: true, subtree: true });
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(count);
-    }, 220);
-  }));
-  expect(repeatedCountMutations).toBe(0);
+  await expect(page.locator('.network-visualizer-counts')).toHaveCount(0);
+  await expect(page.locator('.network-visualizer-offscreen')).toHaveCount(0);
 
   const interactionStarted = Date.now();
   await expect(page.getByRole('button', { name: 'Flatten', exact: true })).toHaveCount(0);
@@ -457,7 +441,6 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   await expect.poll(async () => (await diagnostics(page)).graph.nodes).toBe(0);
   await expect(page.getByText('Listening — the map builds as activity arrives.')).toBeVisible();
   await expect(page.getByText('Map cleared. Listening from a new live edge.')).toBeVisible();
-  await expect(page.getByText('Showing 0 of 0 retained radios')).toBeVisible();
   snapshot = await diagnostics(page);
   expect(snapshot.state).toMatchObject({ universes: 0, groups: 0, radios: 0,
     activeCalls: 0, semanticEvents: 0, queuedObservations: 0, pendingEffects: 0 });
@@ -566,6 +549,40 @@ test('activity received while hidden renders current state without replaying tra
   expect(afterBacklog.renderer.animatedEffects).toBe(0);
 });
 
+test('a controlled confirmed affiliation change surfaces the transient alert', async ({ page }) => {
+  await page.goto(fixtureUrl(false));
+  await waitForController(page);
+  await waitForRenderer(page);
+
+  const dispatchAffiliation = (sequence, groupId, groupLabel) => page.evaluate((value) => {
+    const system = 'alert-system';
+    const configuration = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    window.networkVisualizerTest.dispatchNetwork('network_event', {
+      kind: 'affiliation_observed', event_id: `alert-affiliation-${value.sequence}`,
+      observed_at_ms: Date.now(), protocol: 'p25', radio_system_key: system,
+      system_name: 'Alert System', configuration_id: configuration,
+      comparison_scope_key: `${configuration}:1:2:x`, evidence_type: 'group_affiliation_response',
+      outcome: 'accepted', sequence: value.sequence,
+      radio: { kind: 'radio', identity_key: 'radio:alert:41', native_id: '41',
+        label: 'Alert Unit', radio_system_key: system },
+      group: { kind: 'talkgroup', identity_key: `tg:alert:${value.groupId}`,
+        native_id: value.groupId, label: value.groupLabel, radio_system_key: system }
+    });
+  }, { sequence, groupId, groupLabel });
+
+  await dispatchAffiliation(1, '101', 'Dispatch');
+  await expect.poll(async () => (await diagnostics(page)).state.queuedObservations).toBe(0);
+  await dispatchAffiliation(2, '202', 'Tactical');
+  await expect.poll(async () => (await diagnostics(page)).state.queuedObservations).toBe(0);
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText('Observed affiliation change');
+  await expect(alert).toContainText('Alert Unit');
+  await expect(alert).toContainText('Dispatch → Tactical');
+  await expect(alert).toContainText('Alert System');
+});
+
 test('incoming queue overflow is surfaced as a live gap and clears stale work', async ({ page }) => {
   await page.goto(fixtureUrl(false));
   await waitForController(page);
@@ -578,7 +595,11 @@ test('incoming queue overflow is surfaced as a live gap and clears stale work', 
     }
   });
   await expect(page.locator('.network-visualizer-status')).toHaveText('Live gap');
-  await expect(page.getByText('Live observation gap — active transmission continuity is uncertain.')).toBeVisible();
+  await expect(page.locator('.network-visualizer-status'))
+    .toHaveAttribute('title', 'A live observation interval was lost; active call continuity is uncertain.');
+  await expect(page.getByText('Live observation gap — active transmission continuity is uncertain.'))
+    .toHaveCount(0);
+  await expect(page.locator('.network-visualizer-notice')).toBeHidden();
   const snapshot = await diagnostics(page);
   expect(snapshot.state.queuedObservations).toBe(0);
   expect(snapshot.renderer.pendingParticles).toBe(0);

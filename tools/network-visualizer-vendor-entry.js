@@ -17,6 +17,7 @@ export {
   CylinderGeometry,
   DynamicDrawUsage,
   Float32BufferAttribute,
+  FogExp2,
   Group,
   IcosahedronGeometry,
   MOUSE,

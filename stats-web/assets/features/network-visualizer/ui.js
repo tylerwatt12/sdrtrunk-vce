@@ -5,16 +5,89 @@ function text(value, fallback = 'Unknown') {
   return normalized || fallback;
 }
 
-function compactNumber(value) {
-  const count = Math.max(0, Number(value) || 0);
-  return new Intl.NumberFormat(undefined, { notation: count >= 10_000 ? 'compact' : 'standard' }).format(count);
-}
-
 function timeLabel(value) {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp > 0 ? new Intl.DateTimeFormat(undefined, {
     hour: 'numeric', minute: '2-digit', second: '2-digit'
   }).format(timestamp) : 'Unknown';
+}
+
+const ROUTINE_ACTIVITY_KINDS = new Set([
+  'affiliation_observed_after_gap',
+  'grant_pending',
+  'transmission_end',
+  'transmission_observed_after_gap',
+  'transmission_observed_after_uncertainty',
+  'transmission_start'
+]);
+
+function activityEventId(event, index = 0) {
+  return String(event?.id || `${event?.kind || 'event'}:${event?.observedAtMs || 0}:${index}`);
+}
+
+function activityEventDetail(event = {}) {
+  return text(event.detail || [event.radioLabel, event.fromLabel && event.toLabel ?
+    `${event.fromLabel} → ${event.toLabel}` : event.groupLabel].filter(Boolean).join(' · '),
+  'Live observation');
+}
+
+function activityEventLabel(event = {}) {
+  const kind = String(event.kind || '');
+  const labels = {
+    affiliation_change: 'Observed affiliation change',
+    observed_affiliation_change: 'Observed affiliation change',
+    affiliation_observed: 'Affiliation observed',
+    affiliation_observed_after_gap: 'Affiliation after live gap',
+    explicit_presence_remove: 'Presence removed',
+    grant_pending: 'Grant pending',
+    identity_reconciled: 'Identity reconciled',
+    transmission_end: 'TX ended',
+    transmission_observed_after_gap: 'Current TX after live gap',
+    transmission_observed_after_uncertainty: 'Current TX after uncertain updates',
+    transmission_start: 'TX started',
+    transport_gap: 'Live observation gap'
+  };
+  return labels[kind] || text(event.label || kind, 'Observation').replace(/_/g, ' ');
+}
+
+function coalesceActivityEvents(items = [], options = {}) {
+  const maximumSourceEvents = Math.max(1, Number(options.maximumSourceEvents) || 100);
+  const windowMs = Math.max(0, Number(options.windowMs) || 2_000);
+  const source = (Array.isArray(items) ? items : []).slice(-maximumSourceEvents)
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => (Number(left.event?.observedAtMs) || 0) -
+      (Number(right.event?.observedAtMs) || 0) || left.index - right.index);
+  const rows = [];
+
+  source.forEach(({ event }, index) => {
+    const id = activityEventId(event, index);
+    const kind = String(event?.kind || 'event');
+    const observedAtMs = Number(event?.observedAtMs) || 0;
+    const routine = ROUTINE_ACTIVITY_KINDS.has(kind);
+    const previous = routine && rows.at(-1)?.kind === kind ? rows.at(-1) : null;
+    if (previous && observedAtMs - previous.lastObservedAtMs <= windowMs) {
+      previous.count += 1;
+      previous.lastObservedAtMs = observedAtMs;
+      previous.sourceEventIds.push(id);
+      const detail = activityEventDetail(event);
+      if (!previous.sampleDetails.includes(detail) && previous.sampleDetails.length < 2) {
+        previous.sampleDetails.push(detail);
+      }
+      return;
+    }
+    const row = {
+      ...event,
+      id: routine ? `activity-burst:${kind}:${id}` : id,
+      count: 1,
+      firstObservedAtMs: observedAtMs,
+      lastObservedAtMs: observedAtMs,
+      observedAtMs,
+      sourceEventIds: [id],
+      sampleDetails: [activityEventDetail(event)]
+    };
+    rows.push(row);
+  });
+  return rows;
 }
 
 function createTextButton(node, label, className = 'ui-button ui-button-secondary') {
@@ -46,7 +119,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     quiet: dependencies.initialFilters?.quiet !== false
   };
   const initialAutoRotate = dependencies.initialAutoRotate !== false;
-  const initialArrange = dependencies.initialArrange === true;
   const emptyTitle = 'Listening — the map builds as activity arrives.';
   const emptyDetail = 'Only fresh live calls and confirmed affiliation observations appear here.';
   let renderedNodeCount = 0;
@@ -55,6 +127,12 @@ function createNetworkVisualizerUi(dependencies = {}) {
   let autoRotateRequested = initialAutoRotate;
   let reducedMotion = Boolean(dependencies.reducedMotion);
   let inspectorSignature = '';
+  let eventsFollowing = true;
+  let unseenEventCount = 0;
+  let eventScrollFrame = 0;
+  let knownEventIds = new Set();
+  let affiliationAlertTimer = 0;
+  let affiliationAlertId = '';
   const eventRows = new Map();
 
   const layout = node('section', 'network-visualizer-layout');
@@ -97,24 +175,19 @@ function createNetworkVisualizerUi(dependencies = {}) {
   autoRotate.title = 'Slowly orbit the current view while idle';
   cameraActions.append(fit, focus, autoRotate);
 
-  const arrange = iconButton('icon-edit', 'Arrange layout');
-  arrange.setAttribute('aria-pressed', String(initialArrange));
-  arrange.title = 'Drag systems, talkgroups, and radios to arrange the layout';
   const freeze = toggleButton(node, 'Freeze layout', false);
   const eventsToggle = toggleButton(node, 'Events', false);
   const clear = createTextButton(node, 'Clear map', 'ui-button ui-button-danger-quiet');
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   const settingsButton = iconButton('icon-playback-controls', 'Density settings');
   settingsButton.setAttribute('popovertarget', 'network-visualizer-settings');
-  actions.append(cameraActions, arrange, freeze, eventsToggle, clear, fullscreen, settingsButton);
+  actions.append(cameraActions, freeze, eventsToggle, clear, fullscreen, settingsButton);
   toolbar.append(brand, status, search, filterGroup, actions);
 
   const stage = node('div', 'network-visualizer-stage');
   stage.tabIndex = 0;
   stage.setAttribute('aria-label', 'Interactive radio network canvas');
-  stage.dataset.gap = 'false';
   stage.dataset.webgl = 'pending';
-  stage.dataset.interaction = initialArrange ? 'arrange' : 'explore';
   const canvas = node('div', 'network-visualizer-canvas');
 
   const scopeNavigation = node('nav', 'network-visualizer-overlay network-visualizer-scope');
@@ -136,16 +209,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
   const empty = node('div', 'network-visualizer-empty');
   empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', emptyTitle), node('p', '', emptyDetail));
 
-  const counts = node('div', 'network-visualizer-overlay network-visualizer-counts', 'Showing 0 of 0 retained radios');
-  counts.setAttribute('role', 'status');
-  counts.setAttribute('aria-live', 'polite');
-
-  const offscreen = createTextButton(node, '',
-    'network-visualizer-overlay network-visualizer-offscreen');
-  offscreen.hidden = true;
-  offscreen.setAttribute('aria-live', 'polite');
-  offscreen.addEventListener('click', () => callbacks.onFit?.());
-
   const legend = node('div', 'network-visualizer-overlay network-visualizer-legend');
   legend.setAttribute('aria-label', 'Network Visualizer legend');
   const legendItem = (kind, label) => {
@@ -164,6 +227,12 @@ function createNetworkVisualizerUi(dependencies = {}) {
   notice.hidden = true;
   notice.setAttribute('role', 'status');
   notice.setAttribute('aria-live', 'polite');
+
+  const affiliationAlert = node('div', 'network-visualizer-affiliation-alert');
+  affiliationAlert.hidden = true;
+  affiliationAlert.setAttribute('role', 'alert');
+  affiliationAlert.setAttribute('aria-live', 'assertive');
+  affiliationAlert.setAttribute('aria-atomic', 'true');
 
   const inspector = node('aside', 'network-visualizer-inspector');
   inspector.hidden = true;
@@ -189,11 +258,18 @@ function createNetworkVisualizerUi(dependencies = {}) {
   events.setAttribute('aria-label', 'Recent observed network events');
   const eventsHeader = node('div', 'network-visualizer-panel-header');
   const eventsHeading = node('div', 'network-visualizer-panel-heading');
-  eventsHeading.append(node('h3', '', 'Observed activity'),
-    node('p', '', 'Bounded to this live viewing session'));
+  const eventsSubtitle = node('p', '', 'Routine bursts are grouped; affiliation changes stay individual.');
+  eventsHeading.append(node('h3', '', 'Observed activity'), eventsSubtitle);
+  const eventsHeaderActions = node('div', 'network-visualizer-panel-header-actions');
+  const eventsLatest = createTextButton(node, '',
+    'ui-button ui-button-secondary network-visualizer-events-latest');
+  eventsLatest.hidden = true;
   const eventsClose = iconButton('icon-close', 'Close event drawer');
-  eventsHeader.append(eventsHeading, eventsClose);
+  eventsHeaderActions.append(eventsLatest, eventsClose);
+  eventsHeader.append(eventsHeading, eventsHeaderActions);
   const eventList = node('ol', 'network-visualizer-event-list');
+  eventList.tabIndex = 0;
+  eventList.setAttribute('aria-label', 'Observed activity, oldest to newest');
   events.append(eventsHeader, eventList);
 
   const settings = node('div', 'ui-popover network-visualizer-settings');
@@ -227,7 +303,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
   settingsGrid.append(radioRangeLabel, labelRangeLabel, unlock);
   settings.append(settingsHeading, settingsGrid);
 
-  stage.append(canvas, scopeNavigation, empty, counts, offscreen, legend, notice, inspector, events, settings);
+  stage.append(canvas, scopeNavigation, empty, legend, notice, affiliationAlert, inspector, events, settings);
   layout.append(toolbar, stage);
 
   const notifyFilters = () => callbacks.onFilters?.({ ...filters });
@@ -251,14 +327,15 @@ function createNetworkVisualizerUi(dependencies = {}) {
     setAutoRotate(value);
     callbacks.onAutoRotate?.(value);
   });
-  arrange.addEventListener('click', () => {
-    const value = arrange.getAttribute('aria-pressed') !== 'true';
-    setArrange(value);
-    callbacks.onArrange?.(value);
-  });
   freeze.addEventListener('click', () => callbacks.onFreeze?.(freeze.getAttribute('aria-pressed') !== 'true'));
   eventsToggle.addEventListener('click', () => setEventsOpen(events.hidden));
   eventsClose.addEventListener('click', () => setEventsOpen(false));
+  eventsLatest.addEventListener('click', () => {
+    setEventsFollowing(true);
+    scheduleLatestEventScroll();
+    eventsClose.focus({ preventScroll: true });
+  });
+  eventList.addEventListener('scroll', onEventListScroll, { passive: true });
   scopeBack.addEventListener('click', () => callbacks.onBack?.());
   inspectorCollapse.addEventListener('click', () => {
     const collapsed = inspectorCollapse.getAttribute('aria-expanded') === 'true';
@@ -302,23 +379,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
   }
 
   function setCounts(value = {}) {
-    const visible = Math.max(0, Number(value.visibleRadios ?? value.renderedRadios) || 0);
-    const retained = Math.max(visible, Number(value.retainedRadios) || 0);
-    const suppressedActive = Math.max(0, Number(value.suppressedActiveRadios) || 0);
-    const suppressedLegs = Math.max(0, Number(value.suppressedActiveCallLegs) || 0);
-    const nextText = `Showing ${compactNumber(visible)} of ${compactNumber(retained)} retained radios` +
-      (suppressedActive ? ` · +${compactNumber(suppressedActive)} active radios aggregated` : '') +
-      (suppressedLegs ? ` · +${compactNumber(suppressedLegs)} active call legs aggregated` : '');
-    if (counts.textContent !== nextText) counts.textContent = nextText;
     renderedNodeCount = Math.max(0, Number(value.renderedNodes ?? value.visibleNodes) || 0);
     empty.hidden = stage.dataset.webgl === 'failed' ? false : renderedNodeCount > 0;
-  }
-
-  function setOffscreenActivity(value = 0) {
-    const active = Math.max(0, Math.trunc(Number(value) || 0));
-    offscreen.hidden = active === 0;
-    offscreen.textContent = active === 1 ? '1 active entity offscreen · Fit' :
-      `${compactNumber(active)} active entities offscreen · Fit`;
   }
 
   function setAutoRotate(value) {
@@ -336,12 +398,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
   function setReducedMotion(value) {
     reducedMotion = Boolean(value);
     updateAutoRotateControl();
-  }
-
-  function setArrange(value) {
-    const arranging = Boolean(value);
-    arrange.setAttribute('aria-pressed', String(arranging));
-    stage.dataset.interaction = arranging ? 'arrange' : 'explore';
   }
 
   function setScope(value = {}) {
@@ -387,13 +443,68 @@ function createNetworkVisualizerUi(dependencies = {}) {
     freeze.textContent = frozen ? 'Layout frozen' : 'Freeze layout';
   }
 
+  function updateEventsLatestControl() {
+    const waiting = !eventsFollowing && unseenEventCount > 0;
+    eventsLatest.hidden = !waiting;
+    eventsLatest.textContent = waiting ? `${unseenEventCount} new · Jump to latest` : '';
+    eventsLatest.setAttribute('aria-label', waiting ?
+      `${unseenEventCount} new observed ${unseenEventCount === 1 ? 'event' : 'events'}. Jump to latest.` :
+      'Jump to latest observed activity');
+    eventsSubtitle.textContent = eventsFollowing ?
+      'Routine bursts are grouped; affiliation changes stay individual.' :
+      'Paused while you read. New activity will wait below.';
+  }
+
+  function setEventsFollowing(value) {
+    eventsFollowing = Boolean(value);
+    if (eventsFollowing) unseenEventCount = 0;
+    updateEventsLatestControl();
+  }
+
+  function isAtLatestEvent() {
+    return eventList.scrollHeight - eventList.clientHeight - eventList.scrollTop <= 24;
+  }
+
+  function onEventListScroll() {
+    if (events.hidden) return;
+    const atLatest = isAtLatestEvent();
+    if (atLatest !== eventsFollowing) setEventsFollowing(atLatest);
+  }
+
+  function scheduleLatestEventScroll() {
+    const view = document.defaultView || globalThis;
+    if (eventScrollFrame) view.cancelAnimationFrame?.(eventScrollFrame);
+    eventScrollFrame = view.requestAnimationFrame?.(() => {
+      eventScrollFrame = 0;
+      eventList.scrollTop = eventList.scrollHeight;
+    }) || 0;
+    if (!eventScrollFrame) eventList.scrollTop = eventList.scrollHeight;
+  }
+
+  function captureEventScrollAnchor() {
+    if (eventsFollowing) return null;
+    const scrollTop = eventList.scrollTop;
+    const row = [...eventList.children].find((item) => item.offsetTop + item.offsetHeight >= scrollTop);
+    return row ? { id: row.dataset.eventId, offset: row.offsetTop - scrollTop } : null;
+  }
+
+  function restoreEventScrollAnchor(anchor) {
+    if (!anchor) return;
+    const row = eventRows.get(anchor.id);
+    if (row?.isConnected) eventList.scrollTop = row.offsetTop - anchor.offset;
+  }
+
   function setEventsOpen(open) {
     const selected = Boolean(open);
     if (selected && events.hidden) eventsReturnFocus = document.activeElement;
     const restoreFocus = !selected && !events.hidden && events.contains(document.activeElement);
     events.hidden = !selected;
     eventsToggle.setAttribute('aria-pressed', String(selected));
-    if (selected) eventsClose.focus();
+    if (selected) {
+      setEventsFollowing(true);
+      scheduleLatestEventScroll();
+      eventsClose.focus();
+    }
     else {
       if (restoreFocus) {
         const target = eventsReturnFocus?.isConnected && typeof eventsReturnFocus.focus === 'function' ?
@@ -404,11 +515,40 @@ function createNetworkVisualizerUi(dependencies = {}) {
     }
   }
 
-  function showNotice(message = '', gap = false) {
+  function showNotice(message = '') {
     const normalized = text(message, '');
     notice.hidden = !normalized;
     notice.textContent = normalized;
-    stage.dataset.gap = String(Boolean(gap));
+  }
+
+  function clearAffiliationAlert() {
+    const view = document.defaultView || globalThis;
+    if (affiliationAlertTimer) view.clearTimeout?.(affiliationAlertTimer);
+    affiliationAlertTimer = 0;
+    affiliationAlertId = '';
+    affiliationAlert.hidden = true;
+    affiliationAlert.dataset.visible = 'false';
+    affiliationAlert.replaceChildren();
+  }
+
+  function showAffiliationAlert(value = {}) {
+    const id = String(value.id || '');
+    if (!id || id === affiliationAlertId) return false;
+    const view = document.defaultView || globalThis;
+    if (affiliationAlertTimer) view.clearTimeout?.(affiliationAlertTimer);
+    affiliationAlertId = id;
+    affiliationAlert.replaceChildren(
+      node('span', 'network-visualizer-affiliation-alert-kicker', 'Observed affiliation change'),
+      node('strong', 'network-visualizer-affiliation-alert-radio', text(value.radioLabel, 'Radio')),
+      node('span', 'network-visualizer-affiliation-alert-route',
+        `${text(value.fromLabel, 'Unknown talkgroup')} → ${text(value.toLabel, 'Unknown talkgroup')}`),
+      node('span', 'network-visualizer-affiliation-alert-meta',
+        `${text(value.systemLabel, 'Radio system')} · ${timeLabel(value.observedAtMs)}`)
+    );
+    affiliationAlert.hidden = false;
+    affiliationAlert.dataset.visible = 'true';
+    affiliationAlertTimer = view.setTimeout?.(() => clearAffiliationAlert(), 6_000) || 0;
+    return true;
   }
 
   function setSelection(entity, transitions = []) {
@@ -496,38 +636,58 @@ function createNetworkVisualizerUi(dependencies = {}) {
   }
 
   function setEvents(items = []) {
-    const values = Array.isArray(items) ? items.slice(-100).reverse() : [];
+    const scrollAnchor = captureEventScrollAnchor();
+    const source = Array.isArray(items) ? items.slice(-100) : [];
+    const nextKnownEventIds = new Set(source.map((event, index) => activityEventId(event, index)));
+    const introduced = [...nextKnownEventIds].filter((id) => !knownEventIds.has(id)).length;
+    if (!events.hidden && !eventsFollowing && knownEventIds.size && introduced) {
+      unseenEventCount += introduced;
+      updateEventsLatestControl();
+    }
+    knownEventIds = nextKnownEventIds;
+    const values = coalesceActivityEvents(source);
     if (!values.length) {
       eventRows.clear();
-      const emptyRow = node('li', 'network-visualizer-event', 'No observed transitions yet.');
+      const emptyRow = node('li', 'network-visualizer-event', 'No observed activity yet.');
       emptyRow.dataset.eventId = 'empty';
       eventList.replaceChildren(emptyRow);
+      setEventsFollowing(true);
       return;
     }
     const wanted = new Set();
     values.forEach((event, index) => {
-      const id = String(event.id || `${event.kind || 'event'}:${event.observedAtMs || 0}:${index}`);
+      const id = activityEventId(event, index);
       wanted.add(id);
       let item = eventRows.get(id);
-      const created = !item;
       if (!item) {
         item = node('li', 'network-visualizer-event');
         item.dataset.eventId = id;
         eventRows.set(id, item);
       }
-      const kind = ['affiliation_change', 'observed_affiliation_change'].includes(event.kind) ?
-        'Observed affiliation change' :
-        text(event.label || event.kind, 'Observation').replace(/_/g, ' ');
-      const detail = event.detail || [event.radioLabel, event.fromLabel && event.toLabel ?
-        `${event.fromLabel} → ${event.toLabel}` : event.groupLabel].filter(Boolean).join(' · ');
-      const valuesForRow = [kind, text(detail, 'Live observation'), timeLabel(event.observedAtMs)];
+      const kind = activityEventLabel(event);
+      const count = Math.max(1, Number(event.count) || 1);
+      const samples = Array.isArray(event.sampleDetails) && event.sampleDetails.length ?
+        event.sampleDetails : [activityEventDetail(event)];
+      const more = Math.max(0, count - samples.length);
+      const detail = `${samples.join(' • ')}${more ? ` • +${more} more` : ''}`;
+      const valuesForRow = [kind, detail, timeLabel(event.observedAtMs), count];
       if (item.dataset.signature !== JSON.stringify(valuesForRow)) {
         item.dataset.signature = JSON.stringify(valuesForRow);
-        item.replaceChildren(node('span', 'network-visualizer-event-kind', valuesForRow[0]),
-          node('span', 'network-visualizer-event-detail', valuesForRow[1]),
-          node('time', '', valuesForRow[2]));
+        item.dataset.category = ['affiliation_change', 'observed_affiliation_change'].includes(event.kind) ?
+          'affiliation-change' : 'observation';
+        const kindLine = node('span', 'network-visualizer-event-kind-line');
+        kindLine.append(node('span', 'network-visualizer-event-kind', valuesForRow[0]));
+        if (count > 1) {
+          const countBadge = node('span', 'badge ui-pill network-visualizer-event-count', `${count}×`);
+          countBadge.setAttribute('aria-label', `${count} similar observations grouped`);
+          kindLine.append(countBadge);
+        }
+        const timestamp = node('time', '', valuesForRow[2]);
+        timestamp.dateTime = Number.isFinite(Number(event.observedAtMs)) ?
+          new Date(Number(event.observedAtMs)).toISOString() : '';
+        item.replaceChildren(kindLine,
+          node('span', 'network-visualizer-event-detail', valuesForRow[1]), timestamp);
       }
-      if (created) item.dataset.new = 'true';
       const current = eventList.children[index];
       if (current !== item) eventList.insertBefore(item, current || null);
     });
@@ -538,6 +698,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
     }
     const emptyRow = eventList.querySelector?.('[data-event-id="empty"]');
     emptyRow?.remove();
+    if (eventsFollowing && !events.hidden) scheduleLatestEventScroll();
+    else restoreEventScrollAnchor(scrollAnchor);
   }
 
   function setWebglState(value, detail = '') {
@@ -562,18 +724,17 @@ function createNetworkVisualizerUi(dependencies = {}) {
     scopeNavigation,
     scopeBack,
     autoRotate,
-    arrange,
     setTransport,
     setCounts,
-    setOffscreenActivity,
     setAutoRotate,
     setReducedMotion,
-    setArrange,
     setScope,
     setFrozen,
     setInspectorCollapsed,
     setEventsOpen,
     showNotice,
+    showAffiliationAlert,
+    clearAffiliationAlert,
     setSelection,
     setEvents,
     setWebglState,
@@ -581,10 +742,15 @@ function createNetworkVisualizerUi(dependencies = {}) {
       document.removeEventListener('fullscreenchange', fullscreenChanged);
       if (document.fullscreenElement === layout) void document.exitFullscreen().catch(() => {});
       settings.hidePopover?.();
+      clearAffiliationAlert();
+      const view = document.defaultView || globalThis;
+      if (eventScrollFrame) view.cancelAnimationFrame?.(eventScrollFrame);
+      eventList.removeEventListener('scroll', onEventListScroll);
       eventRows.clear();
+      knownEventIds.clear();
       inspectorSignature = '';
     }
   };
 }
 
-export { createNetworkVisualizerUi };
+export { coalesceActivityEvents, createNetworkVisualizerUi };
