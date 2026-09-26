@@ -58,10 +58,7 @@ function createLayoutState(config = BALANCED_CONFIG, options = {}) {
     config: validated,
     frozen: Boolean(options.frozen),
     reducedMotion: Boolean(options.reducedMotion),
-    profileKey: String(options.profileKey || 'default').slice(0, 128),
     positions: new Map(),
-    saved: new Map(),
-    pinned: new Set(),
     graphKeys: new Set(),
     universeOrder: new Map(),
     sleeping: true,
@@ -78,8 +75,7 @@ function universeAnchor(layout, key) {
       layout.positions.forEach((record) => {
         if (record.universeKey) active.add(record.universeKey);
       });
-      const removable = [...layout.universeOrder.keys()].find((candidate) =>
-        !active.has(candidate) && !layout.saved.has(candidate));
+      const removable = [...layout.universeOrder.keys()].find((candidate) => !active.has(candidate));
       const evicted = removable || layout.universeOrder.keys().next().value;
       if (evicted !== undefined) layout.universeOrder.delete(evicted);
     }
@@ -149,7 +145,6 @@ function initialRecord(layout, node, atMs) {
   const type = TYPES.has(node.type) ? node.type : 'aggregate';
   const reconciledFromKey = String(node.entity?.reconciledFromKey || '');
   const reconciled = reconciledFromKey ? layout.positions.get(reconciledFromKey) : null;
-  const saved = layout.saved.get(key) || (reconciledFromKey ? layout.saved.get(reconciledFromKey) : null);
   const universeKey = String(node.universeKey || (type === 'universe' ? key : ''));
   const groupKey = String(node.groupKey || (type === 'group' ? key : ''));
   const shell = localSlot(layout, { key, type });
@@ -170,7 +165,6 @@ function initialRecord(layout, node, atMs) {
     localX: shell.x,
     localY: shell.y,
     localZ: shell.z,
-    pinned: Boolean(reconciled?.pinned || node.pinned),
     createdAtMs: atMs,
     updatedAtMs: atMs
   };
@@ -184,7 +178,7 @@ function initialRecord(layout, node, atMs) {
     record.localY = reconciled.localY;
     record.localZ = reconciled.localZ;
   } else if (type === 'universe') {
-    const position = saved ? copyPosition(saved) : universeAnchor(layout, key);
+    const position = universeAnchor(layout, key);
     record.x = position.x;
     record.y = position.y;
     record.z = position.z;
@@ -195,7 +189,7 @@ function initialRecord(layout, node, atMs) {
     const parent = layout.positions.get(parentKey(record));
     const origin = parent ? { x: parent.targetX, y: parent.targetY, z: parent.targetZ } :
       universeAnchor(layout, universeKey || key);
-    const position = containedGroupPosition(layout, record, saved || {
+    const position = containedGroupPosition(layout, record, {
       x: origin.x + record.localX,
       y: origin.y + record.localY,
       z: origin.z + record.localZ
@@ -203,17 +197,11 @@ function initialRecord(layout, node, atMs) {
     record.x = boundedCoordinate(position.x);
     record.y = boundedCoordinate(position.y);
     record.z = boundedCoordinate(position.z);
-    if (saved) {
-      record.localX = record.x - origin.x;
-      record.localY = record.y - origin.y;
-      record.localZ = record.z - origin.z;
-    }
   }
   record.targetX = record.x;
   record.targetY = record.y;
   record.targetZ = record.z;
   layout.positions.set(key, record);
-  if (record.pinned) layout.pinned.add(key);
   return record;
 }
 
@@ -224,15 +212,9 @@ function applyRecord(node, record) {
   node.vx = 0;
   node.vy = 0;
   node.vz = 0;
-  if (record.pinned) {
-    node.fx = record.x;
-    node.fy = record.y;
-    node.fz = record.z;
-  } else {
-    delete node.fx;
-    delete node.fy;
-    delete node.fz;
-  }
+  delete node.fx;
+  delete node.fy;
+  delete node.fz;
 }
 
 function orderedNodes(graph) {
@@ -267,18 +249,10 @@ function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
 
     const reconciledFromKey = String(node.entity?.reconciledFromKey || '');
     if (reconciledFromKey && reconciledFromKey !== key) {
-      const hadSaved = layout.saved.has(reconciledFromKey);
-      layout.pinned.delete(reconciledFromKey);
       layout.positions.delete(reconciledFromKey);
-      layout.saved.delete(reconciledFromKey);
-      if (hadSaved) updateSaved(layout, record, atMs);
-    }
-    if (node.pinned && !record.pinned && layout.pinned.size < layout.config.state.hardPinnedEntities) {
-      record.pinned = true;
-      layout.pinned.add(key);
     }
     setTarget(layout, record);
-    if (parentChanged && layout.reducedMotion && !record.pinned) {
+    if (parentChanged && layout.reducedMotion) {
       record.x = record.targetX;
       record.y = record.targetY;
       record.z = record.targetZ;
@@ -287,7 +261,7 @@ function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
 
   layout.graphKeys = nextKeys;
   layout.positions.forEach((record, key) => {
-    if (nextKeys.has(key) || record.pinned) return;
+    if (nextKeys.has(key)) return;
     layout.positions.delete(key);
   });
   nodes.forEach((node) => {
@@ -307,7 +281,7 @@ function stepLayout(layout, graph = {}, deltaMs = 16, atMs = Date.now()) {
 
   layout.graphKeys.forEach((key) => {
     const record = layout.positions.get(key);
-    if (!record || record.pinned) return;
+    if (!record) return;
     const dx = record.targetX - record.x;
     const dy = record.targetY - record.y;
     const dz = record.targetZ - record.z;
@@ -345,7 +319,7 @@ function setLayoutFrozen(layout, frozen = true) {
   if (!layout.frozen) {
     layout.sleeping = [...layout.graphKeys].every((key) => {
       const record = layout.positions.get(key);
-      return !record || record.pinned || Math.hypot(record.targetX - record.x,
+      return !record || Math.hypot(record.targetX - record.x,
         record.targetY - record.y, record.targetZ - record.z) <= SETTLE_EPSILON;
     });
   }
@@ -356,7 +330,6 @@ function setReducedMotion(layout, reduced = true) {
   layout.reducedMotion = Boolean(reduced);
   if (layout.reducedMotion) {
     layout.positions.forEach((record) => {
-      if (record.pinned) return;
       record.x = record.targetX;
       record.y = record.targetY;
       record.z = record.targetZ;
@@ -366,107 +339,9 @@ function setReducedMotion(layout, reduced = true) {
   return layout.reducedMotion;
 }
 
-function updateSaved(layout, record, atMs = Date.now()) {
-  if (!record) return;
-  const value = Object.freeze({
-    profileKey: layout.profileKey,
-    key: record.key,
-    type: record.type,
-    x: record.x,
-    y: record.y,
-    z: record.z,
-    pinned: record.pinned,
-    updatedAtMs: finite(atMs, Date.now())
-  });
-  if (layout.saved.has(record.key)) layout.saved.delete(record.key);
-  layout.saved.set(record.key, value);
-  while (layout.saved.size > layout.config.state.hardSavedLayoutRecords) {
-    const removable = [...layout.saved.keys()].find((key) => !layout.pinned.has(key)) ||
-      layout.saved.keys().next().value;
-    layout.saved.delete(removable);
-  }
-}
-
-function setLayoutPinned(layout, key, pinned = true, atMs = Date.now()) {
-  const record = layout.positions.get(String(key || ''));
-  if (!record) return false;
-  if (pinned && !record.pinned && layout.pinned.size >= layout.config.state.hardPinnedEntities) return false;
-  record.pinned = Boolean(pinned);
-  if (record.pinned) {
-    layout.pinned.add(record.key);
-    updateSaved(layout, record, atMs);
-  } else {
-    layout.pinned.delete(record.key);
-    if (layout.saved.has(record.key)) updateSaved(layout, record, atMs);
-  }
-  return true;
-}
-
-function resetTarget(layout, record) {
-  if (record.type === 'universe') {
-    const anchor = universeAnchor(layout, record.key);
-    record.anchorX = anchor.x;
-    record.anchorY = anchor.y;
-    record.anchorZ = anchor.z;
-  } else {
-    const slot = localSlot(layout, record);
-    record.localX = slot.x;
-    record.localY = slot.y;
-    record.localZ = slot.z;
-  }
-}
-
-function unlockLayout(layout, key = null) {
-  const selected = key === null ? null : String(key || '');
-  const records = [...layout.positions.values()].sort((left, right) =>
-    (TYPE_ORDER[left.type] ?? 3) - (TYPE_ORDER[right.type] ?? 3) || left.key.localeCompare(right.key));
-  records.forEach((record) => {
-    if (selected !== null && record.key !== selected) return;
-    record.pinned = false;
-    layout.pinned.delete(record.key);
-    layout.saved.delete(record.key);
-    resetTarget(layout, record);
-  });
-  records.forEach((record) => setTarget(layout, record));
-  if (layout.reducedMotion) setReducedMotion(layout, true);
-  else layout.sleeping = false;
-  if (selected === null) {
-    layout.pinned.clear();
-    layout.saved.clear();
-  }
-  return true;
-}
-
-function savedLayoutRecords(layout) {
-  return [...layout.saved.values()].sort((left, right) => right.updatedAtMs - left.updatedAtMs ||
-    left.key.localeCompare(right.key)).slice(0, layout.config.state.hardSavedLayoutRecords);
-}
-
-function restoreLayoutRecords(layout, records = []) {
-  if (!Array.isArray(records)) return 0;
-  let restored = 0;
-  records.slice(0, layout.config.state.hardSavedLayoutRecords).forEach((candidate) => {
-    if (!candidate || candidate.profileKey !== layout.profileKey || !String(candidate.key || '').trim()) return;
-    const value = {
-      profileKey: layout.profileKey,
-      key: String(candidate.key).slice(0, 512),
-      type: TYPES.has(candidate.type) ? candidate.type : 'radio',
-      x: boundedCoordinate(candidate.x),
-      y: boundedCoordinate(candidate.y),
-      z: boundedCoordinate(candidate.z),
-      pinned: Boolean(candidate.pinned),
-      updatedAtMs: finite(candidate.updatedAtMs)
-    };
-    layout.saved.set(value.key, Object.freeze(value));
-    restored += 1;
-  });
-  return restored;
-}
-
 function resetLayoutSession(layout) {
   if (!layout || layout.disposed) return false;
   layout.positions.clear();
-  layout.pinned.clear();
   layout.graphKeys.clear();
   layout.universeOrder.clear();
   layout.sleeping = true;
@@ -477,8 +352,6 @@ function resetLayoutSession(layout) {
 function disposeLayout(layout) {
   layout.disposed = true;
   layout.positions.clear();
-  layout.saved.clear();
-  layout.pinned.clear();
   layout.graphKeys.clear();
   layout.universeOrder.clear();
 }
@@ -487,12 +360,8 @@ export {
   createLayoutState,
   disposeLayout,
   resetLayoutSession,
-  restoreLayoutRecords,
-  savedLayoutRecords,
   setLayoutFrozen,
-  setLayoutPinned,
   setReducedMotion,
   stepLayout,
-  synchronizeLayout,
-  unlockLayout
+  synchronizeLayout
 };

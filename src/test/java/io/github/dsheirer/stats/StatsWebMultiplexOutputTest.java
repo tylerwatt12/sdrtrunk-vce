@@ -83,6 +83,22 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
+    void networkSignalingRecordUsesTheVersionOneSnakeCaseContract()
+    {
+        var json = ApiHttpResponse.normalizePayload(new DecodeEventViewService.NetworkEventView(
+            "p25-1-1", 1, 2, 3, 4, "signaling_observed", null, null,
+            "emergency", "emergency", "Emergency alarm", "configuration", "Control", "Metro", "North",
+            "APCO25", 851_012_500L, null, new DecodeEventViewService.NetworkSiteView(1, 2, 3, 4, 5),
+            new DecodeEventViewService.NetworkIdentityView(1_201, 1_201, null, null, null), null));
+
+        assertEquals("signaling_observed", json.path("kind").textValue());
+        assertEquals("emergency", json.path("action").textValue());
+        assertEquals("emergency", json.path("event_type").textValue());
+        assertEquals("Emergency alarm", json.path("detail").textValue());
+        assertFalse(json.has("eventType"));
+    }
+
+    @Test
     void staleOrNonP25CatalogMappingsFallBackToChannelScopedNetworkIdentity()
     {
         String configurationId = "00000000-0000-0000-0000-000000000073";

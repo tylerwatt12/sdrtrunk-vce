@@ -13,8 +13,13 @@ function timeLabel(value) {
 }
 
 const ROUTINE_ACTIVITY_KINDS = new Set([
+  'affiliation_observed',
   'affiliation_observed_after_gap',
-  'grant_pending',
+  'explicit_presence_remove',
+  'signal_busy',
+  'signal_check',
+  'signal_denial',
+  'signal_page',
   'transmission_end',
   'transmission_observed_after_gap',
   'transmission_observed_after_uncertainty',
@@ -26,25 +31,33 @@ function activityEventId(event, index = 0) {
 }
 
 function activityEventDetail(event = {}) {
-  return text(event.detail || [event.radioLabel, event.fromLabel && event.toLabel ?
-    `${event.fromLabel} → ${event.toLabel}` : event.groupLabel].filter(Boolean).join(' · '),
-  'Live observation');
+  const identity = [event.radioLabel, event.fromLabel && event.toLabel ?
+    `${event.fromLabel} → ${event.toLabel}` : event.groupLabel].filter(Boolean).join(' · ');
+  const detail = text(event.detail, '');
+  return text([identity, detail].filter(Boolean).join(' — '), 'Live observation');
 }
 
 function activityEventLabel(event = {}) {
   const kind = String(event.kind || '');
+  if (kind === 'transmission_end') {
+    return event.certainty === 'confirmed' ? 'Grant ended' :
+      text(event.label, 'Grant activity became uncertain');
+  }
   const labels = {
     affiliation_change: 'Observed affiliation change',
     observed_affiliation_change: 'Observed affiliation change',
-    affiliation_observed: 'Affiliation observed',
-    affiliation_observed_after_gap: 'Affiliation after live gap',
-    explicit_presence_remove: 'Presence removed',
-    grant_pending: 'Grant pending',
+    affiliation_observed: 'Join',
+    affiliation_observed_after_gap: 'Join after live gap',
+    explicit_presence_remove: 'Logout',
     identity_reconciled: 'Identity reconciled',
-    transmission_end: 'TX ended',
-    transmission_observed_after_gap: 'Current TX after live gap',
-    transmission_observed_after_uncertainty: 'Current TX after uncertain updates',
-    transmission_start: 'TX started',
+    signal_busy: 'Busy',
+    signal_check: 'Check',
+    signal_denial: 'Denial',
+    signal_emergency: 'Emergency',
+    signal_page: 'Page',
+    transmission_observed_after_gap: 'Current Grant after live gap',
+    transmission_observed_after_uncertainty: 'Current Grant after uncertain updates',
+    transmission_start: 'Grant',
     transport_gap: 'Live observation gap'
   };
   return labels[kind] || text(event.label || kind, 'Observation').replace(/_/g, ' ');
@@ -221,7 +234,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
   const lock = node('span', 'network-visualizer-legend-item');
   lock.append(node('span', 'network-visualizer-legend-lock', '▧'), node('span', '', 'Encrypted'));
   legend.append(legendItem('affiliation', 'Affiliation'), legendItem('activity', 'Activity only'),
-    legendItem('tx', 'Transmitting'), lock);
+    legendItem('tx', 'Grant'), lock);
 
   const notice = node('div', 'network-visualizer-notice');
   notice.hidden = true;
@@ -299,8 +312,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
   labelRange.step = '5';
   labelRange.value = String(config?.render?.hardLabels || 80);
   labelRangeLabel.append(labelRange);
-  const unlock = createTextButton(node, 'Unlock saved layout');
-  settingsGrid.append(radioRangeLabel, labelRangeLabel, unlock);
+  settingsGrid.append(radioRangeLabel, labelRangeLabel);
   settings.append(settingsHeading, settingsGrid);
 
   stage.append(canvas, scopeNavigation, empty, legend, notice, affiliationAlert, inspector, events, settings);
@@ -367,8 +379,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     labelRangeOutput.textContent = labelRange.value;
     callbacks.onDensity?.({ softRadiosTotal: Number(radioRange.value), hardLabels: Number(labelRange.value) });
   });
-  unlock.addEventListener('click', () => callbacks.onUnlock?.());
-
   function setTransport(state, detail = '') {
     const value = String(state || '').toLowerCase();
     status.textContent = value === 'open' ? 'Live' : value === 'gap' ? 'Live gap' :
@@ -572,7 +582,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
       entity.affiliationCapability, entity.affiliationLabel, entity.affiliationEvidenceType,
       entity.affiliationObservedAtMs, entity.txTargetLabel, entity.txContinuityUncertain,
       Math.floor(Number(entity.lastMeaningfulAtMs || entity.lastObservedAtMs || 0) / 1_000),
-      entity.encrypted, entity.pinned,
+      entity.encrypted,
       (Array.isArray(transitions) ? transitions : []).slice(-5).map((item) =>
         [item.id, item.oldGroupKey, item.newGroupKey, item.observedAtMs])
     ]);
@@ -588,26 +598,28 @@ function createNetworkVisualizerUi(dependencies = {}) {
     appendFact(node, facts, 'Protocol', entity.protocol);
     appendFact(node, facts, 'System', entity.systemName || entity.radioSystemKey);
     appendFact(node, facts, 'WACN · System', entity.wacn && entity.systemId ? `${entity.wacn}:${entity.systemId}` : '');
-    appendFact(node, facts, 'Observed at', entity.siteName || entity.channelName || entity.configurationId);
-    appendFact(node, facts, 'RFSS · Site', entity.rfssId && entity.siteId ?
+    const radioSystem = entity.type === 'universe' && entity.kind === 'radio_system';
+    if (!radioSystem) appendFact(node, facts, 'Observed at', entity.siteName || entity.channelName || entity.configurationId);
+    if (!radioSystem) appendFact(node, facts, 'RFSS · Site', entity.rfssId && entity.siteId ?
       `${entity.rfssId} / ${entity.siteId}` : '');
-    appendFact(node, facts, 'NAC', entity.nac);
+    if (!radioSystem) appendFact(node, facts, 'NAC', entity.nac);
     appendFact(node, facts, 'Timeslot', entity.timeslot);
-    appendFact(node, facts, 'Configuration', entity.configurationId);
+    if (!radioSystem) appendFact(node, facts, 'Configuration', entity.configurationId);
     appendFact(node, facts, 'Affiliation', entity.affiliationCapability === 'not_applicable' ? '' :
       (entity.affiliationLabel || entity.affiliation?.groupLabel ||
         (entity.affiliationCapability === 'unsupported' ? 'Unsupported by this live feed' :
           (entity.affiliationAmbiguous ? 'Ambiguous across observation scopes' : 'Unknown'))));
     appendFact(node, facts, 'Evidence', text(entity.affiliationEvidenceType, '').replace(/_/g, ' '));
-    appendFact(node, facts, 'Affiliation seen', timeLabel(entity.affiliationObservedAtMs || entity.affiliation?.observedAtMs));
-    appendFact(node, facts, 'Current TX target', entity.txTargetLabel || entity.currentTx?.groupLabel || 'Not transmitting');
-    if (entity.txContinuityUncertain) appendFact(node, facts, 'TX continuity', 'Current after a live gap; start unknown');
-    appendFact(node, facts, 'Last activity', timeLabel(entity.lastMeaningfulAtMs || entity.lastObservedAtMs));
-    if (entity.encrypted) appendFact(node, facts, 'Encryption', 'Observed on current/recent transmission');
+    if (!radioSystem) appendFact(node, facts, 'Affiliation seen',
+      timeLabel(entity.affiliationObservedAtMs || entity.affiliation?.observedAtMs));
+    if (!radioSystem) appendFact(node, facts, 'Current Grant target',
+      entity.txTargetLabel || entity.currentTx?.groupLabel || 'Not transmitting');
+    if (entity.txContinuityUncertain) appendFact(node, facts, 'Grant continuity',
+      'Current after a live gap; start unknown');
+    if (!radioSystem) appendFact(node, facts, 'Last activity',
+      timeLabel(entity.lastMeaningfulAtMs || entity.lastObservedAtMs));
+    if (entity.encrypted) appendFact(node, facts, 'Encryption', 'Observed on current/recent grant');
     const panelActions = node('div', 'network-visualizer-panel-actions');
-    const pin = toggleButton(node, entity.pinned ? 'Pinned' : 'Pin', Boolean(entity.pinned));
-    pin.addEventListener('click', () => callbacks.onPin?.(entity.key, !entity.pinned));
-    panelActions.append(pin);
     const reference = entity.entityRef || entity.entity_ref;
     if (reference && typeof entityRefHref === 'function') {
       const target = entityRefHref(reference);
@@ -617,7 +629,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
         panelActions.append(details);
       }
     }
-    inspectorBody.replaceChildren(facts, panelActions);
+    inspectorBody.replaceChildren(facts);
+    if (panelActions.childElementCount) inspectorBody.append(panelActions);
     if (Array.isArray(transitions) && transitions.length) {
       const recent = node('div', 'network-visualizer-panel-body');
       recent.append(node('strong', '', 'Recent observed transitions'));
@@ -674,7 +687,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
       if (item.dataset.signature !== JSON.stringify(valuesForRow)) {
         item.dataset.signature = JSON.stringify(valuesForRow);
         item.dataset.category = ['affiliation_change', 'observed_affiliation_change'].includes(event.kind) ?
-          'affiliation-change' : 'observation';
+          'affiliation-change' : String(event.kind || '').startsWith('signal_') ?
+            String(event.kind).replace('signal_', 'signal-') : 'observation';
         const kindLine = node('span', 'network-visualizer-event-kind-line');
         kindLine.append(node('span', 'network-visualizer-event-kind', valuesForRow[0]));
         if (count > 1) {
@@ -753,4 +767,4 @@ function createNetworkVisualizerUi(dependencies = {}) {
   };
 }
 
-export { coalesceActivityEvents, createNetworkVisualizerUi };
+export { activityEventDetail, activityEventLabel, coalesceActivityEvents, createNetworkVisualizerUi };

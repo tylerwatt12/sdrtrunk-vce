@@ -18,6 +18,8 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25IncompleteRadioIdentifier;
@@ -139,6 +141,21 @@ class ReceiverActivityMapperTest
         assertNull(mapP25RegistrationFrequency(0L).frequencyHertz());
         assertNull(mapP25RegistrationFrequency(-1L).frequencyHertz());
         assertEquals(851_012_500L, mapP25RegistrationFrequency(851_012_500L).frequencyHertz());
+    }
+
+    @Test
+    void preservesStructuredP25BusySemanticsWithoutANewPersistedEventType()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        P25SignalingEvent event = new P25SignalingEvent(DecodeEventType.RESPONSE, 1_000L,
+            P25SignalingSemantics.Action.BUSY);
+
+        ReceiverActivityRecords.ActivityEvent record = new ReceiverActivityMapper().map(channel, event);
+
+        assertEquals(ReceiverActivityRecords.Action.BUSY, record.action());
+        assertEquals(DecodeEventType.RESPONSE.name(), record.eventType());
     }
 
     @Test

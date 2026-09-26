@@ -161,11 +161,16 @@ function allocateParticles(links, budget) {
 }
 
 function nodeVisualState(node, effect = null) {
+  if (['denial', 'check', 'emergency', 'page', 'busy'].includes(node?.signalAction)) return node.signalAction;
   if (node?.active || effect?.type === 'tx_pulse') return 'active';
   if (['affiliation_arrival', 'migration', 'destination_highlight'].includes(effect?.type)) return 'arrival';
   if (effect?.type === 'afterglow' || node?.afterglow) return 'afterglow';
   if (node?.quiet || node?.stale) return 'quiet';
   return nodeType(node);
+}
+
+function nodeDepthClear(node) {
+  return Boolean(node?.selected || node?.active || node?.signalAction);
 }
 
 function linkVisualState(link) {
@@ -204,8 +209,9 @@ function labelEligible() { return true; }
 function resolvedPalette(host, overrides = {}) {
   const root = host?.ownerDocument?.documentElement;
   const styles = root && typeof getComputedStyle === 'function' ? getComputedStyle(root) : null;
-  const css = (preferred, fallbackName, fallback) => styles?.getPropertyValue(preferred)?.trim() ||
-    styles?.getPropertyValue(fallbackName)?.trim() || fallback;
+  const hostStyles = host && typeof getComputedStyle === 'function' ? getComputedStyle(host) : null;
+  const css = (preferred, fallbackName, fallback) => hostStyles?.getPropertyValue(preferred)?.trim() ||
+    styles?.getPropertyValue(preferred)?.trim() || styles?.getPropertyValue(fallbackName)?.trim() || fallback;
   return {
     background: overrides.background || css('--network-space', '--bg', '#090e13'),
     universe: overrides.universe || css('--network-system', '--accent', '#44b8aa'),
@@ -221,7 +227,12 @@ function resolvedPalette(host, overrides = {}) {
     migration: overrides.migration || css('--network-arrival', '--warning', '#e6a64c'),
     faded: overrides.faded || css('--network-space-muted', '--line', '#52616e'),
     selected: overrides.selected || css('--network-selected', '--ink', '#ffffff'),
-    encrypted: overrides.encrypted || css('--network-encrypted', '--warning', '#e6a64c')
+    encrypted: overrides.encrypted || css('--network-encrypted', '--warning', '#e6a64c'),
+    denial: overrides.denial || css('--network-denial', '--danger', '#ff6f6f'),
+    check: overrides.check || css('--network-check', '--accent', '#65d7e8'),
+    emergency: overrides.emergency || css('--network-emergency', '--danger', '#ff3f68'),
+    page: overrides.page || css('--network-page', '--accent', '#b897ff'),
+    busy: overrides.busy || css('--network-busy', '--warning', '#ffb34d')
   };
 }
 
@@ -256,8 +267,8 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
   };
   const renderer = Object.freeze({
     available: false, layoutOwner: 'external', setGraphData: diagnostics, refresh: () => {}, resize: () => {},
-    setFrozen: Boolean, fitAll: () => false, focus: () => false,
-    setPinned: () => false, pulse: () => false, frameScope: () => false, getCameraPose: () => null,
+    setFrozen: Boolean, fitAll: () => false, focus: () => false, steerOrbitTarget: () => false,
+    pulse: () => false, frameScope: () => false, getCameraPose: () => null,
     restoreCameraPose: () => false, setNavigationScope: (value = {}) => value, setAutoRotate: Boolean,
     setPalette: () => {}, setReducedMotion: Boolean, setLabelBudget: () => 0,
     setParticleBudget: () => 0, clearEffects: () => {}, clear: () => {}, enterFullscreen: async () => false,
@@ -369,14 +380,17 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   const materialOpacity = (state) => ({ universe: 0.46, group: 0.66, radio: 0.72, aggregate: 0.56,
     quiet: 0.26, active: 0.98, afterglow: 0.58, arrival: 0.8, affiliation: 0.48,
-    activity: 0.42, migration: 0.78, faded: 0.18, selected: 1, encrypted: 0.86 })[state] ?? 0.68;
+    activity: 0.42, migration: 0.78, faded: 0.18, selected: 1, encrypted: 0.86,
+    denial: 0.96, check: 0.9, emergency: 1, page: 0.92, busy: 0.94 })[state] ?? 0.68;
   const materialColor = (state) => palette[state] || palette.radio;
 
   function meshMaterial(state, interior = false, depthClear = false) {
     const key = `mesh:${state}:${interior ? 'interior' : 'exterior'}:${depthClear ? 'clear' : 'fog'}`;
     if (materials.has(key)) return materials.get(key).material;
     const settings = { color: materialColor(state), transparent: true,
-      opacity: interior ? (state === 'selected' ? 0.42 : state === 'active' ? 0.32 : 0.2) : materialOpacity(state),
+      opacity: interior ? (state === 'selected' ? 0.42 :
+        ['active', 'denial', 'check', 'emergency', 'page', 'busy'].includes(state) ? 0.32 : 0.2) :
+        materialOpacity(state),
       wireframe: true, depthTest: true, depthWrite: false, fog: !depthClear };
     if (interior) settings.side = library.BackSide;
     const material = protectShared(new library.MeshBasicMaterial(settings));
@@ -433,7 +447,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const kind = nodeGeometryKind(node);
     const interior = kind === 'universe' && node.scopeLevel === 'system';
     const state = nodeVisualState(node, activeNodeEffect(nodeKey(node)));
-    const depthClear = Boolean(node.selected || (kind === 'group' && node.active));
+    const depthClear = nodeDepthClear(node);
     const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.encrypted)}:` +
       `${node.visible !== false}:${nodeRadius(node)}:${interior}:${depthClear}`;
     if (object.userData.visualizerStyleSignature === signature) return;
@@ -550,8 +564,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const renderedPosition = (node) => ({ x: finite(node?.x), y: finite(node?.y), z: finite(node?.z) });
 
   function synchronizeFromLiveSources() {
-    const nodeFields = ['x', 'y', 'z', 'fx', 'fy', 'fz', 'pinned', 'selected', 'active', 'quiet', 'stale',
-      'afterglow', 'pending', 'encrypted', 'visible', 'renderRadius', 'labelPriority', 'labelVisible'];
+    const nodeFields = ['x', 'y', 'z', 'fx', 'fy', 'fz', 'selected', 'active', 'exactActive', 'quiet', 'stale',
+      'afterglow', 'signalAction', 'encrypted', 'visible', 'renderRadius', 'labelPriority', 'labelVisible'];
     for (const node of renderNodes.values()) {
       const source = node.__source;
       if (!source || source === node) continue;
@@ -774,6 +788,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       node: renderNodes.get(key), rank: requestedLabelKeys.length - index
     })).filter(({ node }) => node && node.labelVisible !== false)
       .sort((left, right) => Number(Boolean(right.node.selected)) - Number(Boolean(left.node.selected)) ||
+        Number(Boolean(right.node.signalAction)) - Number(Boolean(left.node.signalAction)) ||
         Number(Boolean(right.node.active)) - Number(Boolean(left.node.active)) || right.rank - left.rank)
       .slice(0, labelBudget);
     const visible = new Set();
@@ -790,7 +805,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
         distance: camera.position.distanceTo(world),
         projectedZ: projected.z,
         density,
-        active: nodeType(node) === 'group' && node.active,
+        active: nodeDepthClear(node),
         selected: node.selected
       });
       let element = labelElements.get(key);
@@ -811,10 +826,10 @@ async function createNetworkVisualizerRenderer(options = {}) {
         String(node.label || node.entity?.displayName || node.entity?.name || key);
       element.dataset.type = nodeType(node);
       element.dataset.active = String(Boolean(node.active));
-      element.dataset.pending = String(Boolean(node.pending));
+      element.dataset.signal = String(node.signalAction || '');
       element.dataset.selected = String(Boolean(node.selected));
       element.dataset.quiet = String(Boolean(node.quiet));
-      element.dataset.depthClear = String(Boolean(node.selected || (nodeType(node) === 'group' && node.active)));
+      element.dataset.depthClear = String(nodeDepthClear(node));
       element.dataset.visible = 'true';
       element.style.opacity = String(presentation.opacity);
       element.style.filter = presentation.blurPx ? `blur(${presentation.blurPx.toFixed(2)}px)` : 'none';
@@ -939,7 +954,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function applyScopeCameraLimit() {
     if (!controls) return;
     const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
-    controls.maxDistance = system ? nodeRadius(system) * 0.94 : Infinity;
+    if (!system) {
+      controls.maxDistance = Infinity;
+      return;
+    }
+    const center = renderedPosition(system);
+    const targetDistance = Math.hypot(finite(controls.target.x) - center.x,
+      finite(controls.target.y) - center.y, finite(controls.target.z) - center.z);
+    controls.maxDistance = Math.max(12, nodeRadius(system) * 0.94 - targetDistance);
   }
 
   function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs) {
@@ -1059,6 +1081,45 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
     return renderNodes.has(key) ? frameScope({ keys: [key], duration, padding: 1.3 }) : false;
   }
+  function steerOrbitTarget(keys, duration = animation.cameraTransitionMs) {
+    if (!graph || !controls || disposed || prefersReducedMotion()) return false;
+    const requested = [...new Set((Array.isArray(keys) ? keys : [keys]).map((key) => String(key || '')))]
+      .map((key) => renderNodes.get(key)).filter((node) => node?.visible !== false);
+    if (!requested.length) return false;
+    const center = requested.reduce((sum, node) => {
+      const position = renderedPosition(node);
+      sum.x += position.x;
+      sum.y += position.y;
+      sum.z += position.z;
+      return sum;
+    }, { x: 0, y: 0, z: 0 });
+    center.x /= requested.length;
+    center.y /= requested.length;
+    center.z /= requested.length;
+    const camera = graph.camera();
+    const offset = { x: finite(camera.position.x) - finite(controls.target.x),
+      y: finite(camera.position.y) - finite(controls.target.y),
+      z: finite(camera.position.z) - finite(controls.target.z) };
+    let target = center;
+    let position = { x: center.x + offset.x, y: center.y + offset.y, z: center.z + offset.z };
+    const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
+    if (system) {
+      const systemCenter = renderedPosition(system);
+      const constrain = (point, radius) => {
+        const delta = { x: finite(point.x) - systemCenter.x, y: finite(point.y) - systemCenter.y,
+          z: finite(point.z) - systemCenter.z };
+        const distance = Math.hypot(delta.x, delta.y, delta.z);
+        if (!distance || distance <= radius) return point;
+        const scale = radius / distance;
+        return { x: systemCenter.x + delta.x * scale, y: systemCenter.y + delta.y * scale,
+          z: systemCenter.z + delta.z * scale };
+      };
+      const radius = nodeRadius(system);
+      target = constrain(target, radius * 0.68);
+      position = constrain(position, radius * 0.9);
+    }
+    return tweenCamera(position, target, duration);
+  }
   const restoreCameraPose = (pose, duration = animation.cameraBackTransitionMs) =>
     pose?.position && pose?.target ? tweenCamera(pose.position, pose.target, duration) : false;
 
@@ -1083,17 +1144,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
     frozen = Boolean(value);
     callbacks.onFreezeChange?.(frozen);
     return frozen;
-  }
-  function setPinned(keyOrNode, pinned) {
-    const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
-    const node = renderNodes.get(key);
-    if (!node) return false;
-    node.pinned = Boolean(pinned);
-    const position = renderedPosition(node);
-    if (node.pinned) Object.assign(node, { fx: position.x, fy: position.y, fz: position.z });
-    else { delete node.fx; delete node.fy; delete node.fz; }
-    callbacks.onPinChange?.({ key, pinned: node.pinned, position, node: node.__source || node });
-    return true;
   }
   function setPalette(nextPalette = {}) {
     paletteOverrides = { ...paletteOverrides, ...nextPalette };
@@ -1335,7 +1385,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
   if (options.graphData) setGraphData(options.graphData);
 
   return Object.freeze({
-    available: true, layoutOwner: 'external', setGraphData, refresh, resize, setFrozen, setPinned,
+    available: true, layoutOwner: 'external', setGraphData, refresh, resize, setFrozen,
     setPalette, setReducedMotion,
     setLabelBudget: (value) => {
       labelBudget = Math.min(config.render.hardLabels, Math.max(1, Math.floor(finite(value, labelBudget))));
@@ -1347,7 +1397,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (updateParticleAllocation()) graph.refresh();
       return particleBudget;
     },
-    fitAll, frameScope, focus, getCameraPose: cameraPose, restoreCameraPose, setNavigationScope,
+    fitAll, frameScope, focus, steerOrbitTarget, getCameraPose: cameraPose, restoreCameraPose, setNavigationScope,
     setAutoRotate, pulse, clearEffects, clear, enterFullscreen, exitFullscreen, diagnostics, dispose
   });
 }
@@ -1364,6 +1414,7 @@ export {
   linkIsDashed,
   linkVisualState,
   linkWidth,
+  nodeDepthClear,
   nodeGeometryKind,
   nodeRadius,
   nodeVisualState,

@@ -8,12 +8,16 @@ package io.github.dsheirer.module.decode.event;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.filter.FilterCatalog;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
@@ -300,7 +304,7 @@ class DecodeEventViewServiceTest
     {
         Channel channel = networkChannel();
         List<DecodeEventViewService.NetworkEventView> views = new CopyOnWriteArrayList<>();
-        CountDownLatch callbacks = new CountDownLatch(3);
+        CountDownLatch callbacks = new CountDownLatch(4);
         io.github.dsheirer.sample.Listener<DecodeEventViewService.NetworkEventView> listener = event -> {
             views.add(event);
             callbacks.countDown();
@@ -326,8 +330,11 @@ class DecodeEventViewServiceTest
                 P25AffiliationEvent.Outcome.CLEARED, false, DecodeEventType.DEREGISTER));
 
             assertTrue(callbacks.await(2, TimeUnit.SECONDS));
-            assertEquals(List.of("affiliation_observed", "presence_observed", "presence_cleared"),
+            assertEquals(List.of("signaling_observed", "affiliation_observed", "presence_observed",
+                    "presence_cleared"),
                 views.stream().map(DecodeEventViewService.NetworkEventView::kind).toList());
+            assertEquals("denial", views.getFirst().action());
+            assertEquals("response", views.getFirst().eventType());
             assertTrue(views.stream().allMatch(view -> view.observationEpoch() >= liveEdge));
             assertTrue(views.stream().allMatch(view -> CONFIGURATION_ID.equals(view.configurationId())));
             assertEquals(FREQUENCY, views.getFirst().frequencyHz());
@@ -343,7 +350,138 @@ class DecodeEventViewServiceTest
             service.getDecodeEventListener().accept(channel, affiliation(1_500L,
                 P25AffiliationEvent.Outcome.ACCEPTED, true, DecodeEventType.RESPONSE));
             assertEquals(0, service.getPendingObservationCount());
-            assertEquals(3, views.size());
+            assertEquals(4, views.size());
+        }
+    }
+
+    @Test
+    void networkProjectionPublishesOnlyTheRequestedTypedP25Signals() throws Exception
+    {
+        Channel channel = networkChannel();
+        List<DecodeEventViewService.NetworkEventView> views = new CopyOnWriteArrayList<>();
+        CountDownLatch callbacks = new CountDownLatch(5);
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addNetworkListener(view -> {
+                views.add(view);
+                callbacks.countDown();
+            });
+            service.advanceLiveEdge();
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.DENIAL, 2_000L, "denied " + "x".repeat(600)));
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.RADIO_CHECK, 2_100L, "radio check"));
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.EMERGENCY, 2_200L, "emergency alarm"));
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.PAGE, 2_300L, "call alert"));
+            service.getDecodeEventListener().accept(channel,
+                p25BusySignal(2_400L, "target busy"));
+
+            // Generic request/response/command observations do not become signaling events, even when P25.
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.REQUEST, 2_500L, "group affiliation"));
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.RESPONSE, 2_600L, "deny-looking display text"));
+            service.getDecodeEventListener().accept(channel,
+                p25Signal(DecodeEventType.COMMAND, 2_700L, "radio check-looking display text"));
+
+            assertTrue(callbacks.await(2, TimeUnit.SECONDS));
+            assertEquals(List.of("denial", "check", "emergency", "page", "busy"),
+                views.stream().map(DecodeEventViewService.NetworkEventView::action).toList());
+            assertTrue(views.stream().allMatch(view -> "signaling_observed".equals(view.kind())));
+            assertEquals(List.of("denial", "radio_check", "emergency", "page", "response"),
+                views.stream().map(DecodeEventViewService.NetworkEventView::eventType).toList());
+            assertEquals(512, views.getFirst().detail().length());
+            assertTrue(views.getFirst().detail().endsWith("…"));
+            assertEquals(1_201, views.getFirst().radio().nativeId());
+            assertEquals(101, views.getFirst().group().nativeId());
+            assertEquals(5, views.size());
+        }
+    }
+
+    @Test
+    void rejectedAffiliationRetainsDenialButOmitsInvalidZeroIdentities() throws Exception
+    {
+        Channel channel = networkChannel();
+        AtomicReference<DecodeEventViewService.NetworkEventView> observed = new AtomicReference<>();
+        CountDownLatch callback = new CountDownLatch(1);
+        P25AffiliationEvent rejected = new P25AffiliationEvent(DecodeEventType.RESPONSE, 2_900L,
+            P25AffiliationEvent.Outcome.REJECTED, APCO25RadioIdentifier.createFrom(0),
+            APCO25Talkgroup.create(0));
+        rejected.setChannelDescriptor(new StandardChannel(FREQUENCY));
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addNetworkListener(view -> {
+                observed.set(view);
+                callback.countDown();
+            });
+            service.advanceLiveEdge();
+            service.getDecodeEventListener().accept(channel, rejected);
+
+            assertTrue(callback.await(2, TimeUnit.SECONDS));
+            assertNotNull(observed.get());
+            assertEquals("signaling_observed", observed.get().kind());
+            assertEquals("denial", observed.get().action());
+            assertNull(observed.get().radio());
+            assertNull(observed.get().group());
+        }
+    }
+
+    @Test
+    void signalingProjectionAndOverflowRemainOffTheProducerThread() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicReference<Thread> projectionThread = new AtomicReference<>();
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.EMERGENCY, 1_000L)
+        {
+            @Override
+            public IdentifierCollection getIdentifierCollection()
+            {
+                projectionThread.compareAndSet(null, Thread.currentThread());
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(3, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getIdentifierCollection();
+            }
+        };
+        blocked.setProtocol(Protocol.APCO25);
+        DecodeEvent ordinary = p25Signal(DecodeEventType.PAGE, 2_000L, "page");
+        Channel channel = networkChannel();
+        Thread producerThread = Thread.currentThread();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addNetworkListener(event -> { });
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+
+            for(int index = 0; index < DecodeEventViewService.UPDATE_QUEUE_SIZE + 16; index++)
+            {
+                service.getDecodeEventListener().accept(channel, ordinary);
+            }
+
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMs < 250, "bounded offers took " + elapsedMs + " ms");
+            assertTrue(service.getDroppedNetworkObservationCount() > 0);
+            assertFalse(producerThread == projectionThread.get());
+            releaseProjection.countDown();
+        }
+        finally
+        {
+            releaseProjection.countDown();
         }
     }
 
@@ -384,7 +522,7 @@ class DecodeEventViewServiceTest
             for(int index = 0; index < DecodeEventViewService.UPDATE_QUEUE_SIZE * 2; index++)
             {
                 P25AffiliationEvent.Outcome outcome = index % 2 == 0 ?
-                    P25AffiliationEvent.Outcome.REQUESTED : P25AffiliationEvent.Outcome.REJECTED;
+                    P25AffiliationEvent.Outcome.REQUESTED : P25AffiliationEvent.Outcome.UNRESOLVED;
                 DecodeEventType eventType = outcome == P25AffiliationEvent.Outcome.REQUESTED ?
                     DecodeEventType.REQUEST : DecodeEventType.RESPONSE;
                 service.getDecodeEventListener().accept(channel,
@@ -392,9 +530,9 @@ class DecodeEventViewServiceTest
             }
 
             assertEquals(0, service.getPendingObservationCount(),
-                "ignored requests and denials must not consume the bounded network queue");
+                "generic requests and unresolved responses must not consume the bounded network queue");
             assertEquals(0, service.getDroppedNetworkObservationCount(),
-                "ignored requests and denials are not lost authoritative observations");
+                "ignored requests and unresolved responses are not lost semantic observations");
             long started = System.nanoTime();
 
             for(int index = 0; index < DecodeEventViewService.UPDATE_QUEUE_SIZE + 16; index++)
@@ -508,6 +646,28 @@ class DecodeEventViewServiceTest
         P25AffiliationEvent event = new P25AffiliationEvent(eventType, timestamp, outcome,
             APCO25RadioIdentifier.createFrom(1_201), withGroup ? APCO25Talkgroup.create(101) : null);
         event.setChannelDescriptor(new StandardChannel(FREQUENCY));
+        return event;
+    }
+
+    private static DecodeEvent p25Signal(DecodeEventType type, long timestamp, String detail)
+    {
+        return DecodeEvent.builder(type, timestamp)
+            .channel(new StandardChannel(FREQUENCY))
+            .details(detail)
+            .identifiers(new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(1_201),
+                APCO25Talkgroup.create(101))))
+            .protocol(Protocol.APCO25)
+            .build();
+    }
+
+    private static P25SignalingEvent p25BusySignal(long timestamp, String detail)
+    {
+        P25SignalingEvent event = new P25SignalingEvent(DecodeEventType.RESPONSE, timestamp,
+            P25SignalingSemantics.Action.BUSY);
+        event.setChannelDescriptor(new StandardChannel(FREQUENCY));
+        event.setDetails(detail);
+        event.setIdentifierCollection(new IdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(1_201),
+            APCO25Talkgroup.create(101))));
         return event;
     }
 

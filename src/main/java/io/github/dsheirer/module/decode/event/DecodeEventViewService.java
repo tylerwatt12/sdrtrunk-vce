@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
+import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
@@ -226,7 +227,7 @@ public class DecodeEventViewService implements AutoCloseable
         }
     }
 
-    /** Adds a typed, affiliation-only consumer while sharing this service's one receiver listener and worker. */
+    /** Adds a typed network-semantic consumer while sharing this service's one receiver listener and worker. */
     public void addNetworkListener(Listener<NetworkEventView> listener)
     {
         if(listener == null || mClosed.get())
@@ -285,8 +286,7 @@ public class DecodeEventViewService implements AutoCloseable
         }
 
         boolean eventActive = mEventActive.get();
-        boolean networkCandidate = mNetworkActive.get() && event instanceof P25AffiliationEvent affiliationEvent &&
-            P25AffiliationSemantics.mayProduceObservation(affiliationEvent);
+        boolean networkCandidate = mNetworkActive.get() && mayProduceNetworkObservation(event);
 
         if(!eventActive && !networkCandidate)
         {
@@ -364,9 +364,9 @@ public class DecodeEventViewService implements AutoCloseable
                 batch.add(view(configurationId, event, sourceFrequency, observation.stamp()));
             }
 
-            if(mNetworkActive.get() && event instanceof P25AffiliationEvent affiliationEvent)
+            if(mNetworkActive.get())
             {
-                NetworkEventView projected = networkView(channel, configurationId, affiliationEvent,
+                NetworkEventView projected = networkView(channel, configurationId, event,
                     sourceFrequency, generation, observation.stamp());
 
                 if(projected != null)
@@ -548,21 +548,77 @@ public class DecodeEventViewService implements AutoCloseable
             Integer.toUnsignedString(System.identityHashCode(event), 36);
     }
 
+    private static boolean mayProduceNetworkObservation(IDecodeEvent event)
+    {
+        if(event instanceof P25AffiliationEvent affiliationEvent)
+        {
+            return P25AffiliationSemantics.mayProduceObservation(affiliationEvent) ||
+                affiliationEvent.getOutcome() == P25AffiliationEvent.Outcome.REJECTED;
+        }
+
+        return P25SignalingSemantics.mayProduceObservation(event);
+    }
+
     private NetworkEventView networkView(Channel channel, String configurationId,
-                                         P25AffiliationEvent event, Long sourceFrequency,
+                                         IDecodeEvent event, Long sourceFrequency,
                                          long sourceGeneration, long observationEpoch)
     {
-        P25AffiliationSemantics.Observation semantics = P25AffiliationSemantics.evaluate(event);
+        if(event instanceof P25AffiliationEvent affiliationEvent)
+        {
+            P25AffiliationSemantics.Observation affiliation = P25AffiliationSemantics.evaluate(affiliationEvent);
 
-        if(!semantics.isObserved())
+            if(affiliation.isObserved())
+            {
+                NetworkIdentityView radio = networkIdentity(affiliationEvent.getRadioIdentifier(), true);
+                NetworkIdentityView group = networkIdentity(affiliationEvent.getTalkgroupIdentifier(), false);
+
+                if(radio == null || affiliation.kind() == P25AffiliationSemantics.Kind.AFFILIATION_OBSERVED &&
+                    group == null)
+                {
+                    return null;
+                }
+
+                return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration,
+                    observationEpoch, wireName(affiliation.kind()), wireName(affiliation.evidence()),
+                    wireName(affiliationEvent.getOutcome()), null, null, null, radio, group);
+            }
+
+            if(affiliationEvent.getOutcome() == P25AffiliationEvent.Outcome.REJECTED)
+            {
+                return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration,
+                    observationEpoch, "signaling_observed", null, null,
+                    wireName(P25SignalingSemantics.Action.DENIAL), wireName(event.getEventType()),
+                    bounded(event.getDetails()),
+                    validSignalingIdentity(networkIdentity(affiliationEvent.getRadioIdentifier(), true)),
+                    validSignalingIdentity(networkIdentity(affiliationEvent.getTalkgroupIdentifier(), false)));
+            }
+
+            return null;
+        }
+
+        P25SignalingSemantics.Action action = P25SignalingSemantics.action(event);
+
+        if(action == null)
         {
             return null;
         }
 
-        NetworkIdentityView radio = networkIdentity(event.getRadioIdentifier(), true);
-        NetworkIdentityView group = networkIdentity(event.getTalkgroupIdentifier(), false);
+        IdentifierCollection identifiers = event.getIdentifierCollection();
+        NetworkIdentityView radio = signalingIdentity(identifiers, Form.RADIO);
+        NetworkIdentityView group = signalingIdentity(identifiers, Form.TALKGROUP);
 
-        if(radio == null || semantics.kind() == P25AffiliationSemantics.Kind.AFFILIATION_OBSERVED && group == null)
+        return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration, observationEpoch,
+            "signaling_observed", null, null, wireName(action), wireName(event.getEventType()),
+            bounded(event.getDetails()), radio, group);
+    }
+
+    private NetworkEventView networkView(Channel channel, String configurationId, IDecodeEvent event,
+                                         Long sourceFrequency, long sourceGeneration, long observationEpoch,
+                                         String kind, String evidenceType, String outcome, String action,
+                                         String eventType, String detail, NetworkIdentityView radio,
+                                         NetworkIdentityView group)
+    {
+        if(event == null)
         {
             return null;
         }
@@ -579,11 +635,48 @@ public class DecodeEventViewService implements AutoCloseable
         NetworkSiteView site = networkSite(siteIdentity, identifiers);
 
         return new NetworkEventView(eventId, sequence, sourceGeneration, observationEpoch, observedAt,
-            wireName(semantics.kind()), wireName(semantics.evidence()), wireName(event.getOutcome()),
+            kind, evidenceType, outcome, action, eventType, detail,
             bounded(configurationId), bounded(channel != null ? channel.getName() : null),
             bounded(channel != null ? channel.getSystem() : null), bounded(channel != null ? channel.getSite() : null),
             event.getProtocol() != null ? event.getProtocol().name() : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, site, radio, group);
+    }
+
+    private static NetworkIdentityView signalingIdentity(IdentifierCollection identifiers, Form form)
+    {
+        if(identifiers == null || form == null)
+        {
+            return null;
+        }
+
+        Identifier<?> preferred = form == Form.RADIO ? identifiers.getFromIdentifier() : identifiers.getToIdentifier();
+
+        if(preferred != null && preferred.getForm() == form)
+        {
+            return validSignalingIdentity(networkIdentity(preferred, form == Form.RADIO));
+        }
+
+        int examined = 0;
+
+        for(Identifier<?> identifier: identifiers.getIdentifiers())
+        {
+            if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
+            {
+                break;
+            }
+
+            if(identifier != null && identifier.getForm() == form)
+            {
+                return validSignalingIdentity(networkIdentity(identifier, form == Form.RADIO));
+            }
+        }
+
+        return null;
+    }
+
+    private static NetworkIdentityView validSignalingIdentity(NetworkIdentityView identity)
+    {
+        return identity != null && identity.nativeId() > 0 ? identity : null;
     }
 
     private static NetworkIdentityView networkIdentity(Identifier<?> identifier, boolean radio)
@@ -793,6 +886,7 @@ public class DecodeEventViewService implements AutoCloseable
     /** Typed, bounded semantic projection used by the global Network Visualizer topic. */
     public record NetworkEventView(String eventId, long sequence, long sourceGeneration, long observationEpoch,
                                    long observedAtMs, String kind, String evidenceType, String outcome,
+                                   String action, String eventType, String detail,
                                    String configurationId, String channelName, String systemName, String siteName,
                                    String protocol, Long frequencyHz, Integer timeslot, NetworkSiteView site,
                                    NetworkIdentityView radio, NetworkIdentityView group)

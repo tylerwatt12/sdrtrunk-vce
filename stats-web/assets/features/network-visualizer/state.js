@@ -34,7 +34,6 @@ function createNetworkState(config = BALANCED_CONFIG, atMs = Date.now()) {
     groups: new Map(),
     radios: new Map(),
     activeCalls: new Map(),
-    pendingGrants: new Map(),
     overflowActive: new Map(),
     overflowCalls: new Map(),
     semanticEvents: [],
@@ -51,7 +50,6 @@ function createNetworkState(config = BALANCED_CONFIG, atMs = Date.now()) {
     },
     visual: {
       selectedKey: null,
-      pinnedKeys: new Set(),
       membership: new Map()
     },
     metadata: {
@@ -82,7 +80,6 @@ function clearNetworkState(state, atMs = Date.now()) {
   state.groups.clear();
   state.radios.clear();
   state.activeCalls.clear();
-  state.pendingGrants.clear();
   state.overflowActive.clear();
   state.overflowCalls.clear();
   state.semanticEvents.length = 0;
@@ -96,7 +93,6 @@ function clearNetworkState(state, atMs = Date.now()) {
   state.maintenance.nextDedupePruneAtMs = state.sessionStartedAtMs;
   state.maintenance.nextRetentionSweepAtMs = state.sessionStartedAtMs;
   state.visual.selectedKey = null;
-  state.visual.pinnedKeys.clear();
   state.visual.membership.clear();
   state.metadata.pending.clear();
   state.metadata.cache.clear();
@@ -159,12 +155,12 @@ function acceptFingerprint(state, fingerprint, atMs) {
   return true;
 }
 
-function entityProtected(state, entity) {
-  return entity.pinned || state.visual.selectedKey === entity.key;
+function entitySelected(state, entity) {
+  return state.visual.selectedKey === entity.key;
 }
 
 function deleteRadio(state, radio) {
-  if (!radio || radio.activeCallKeys.size || entityProtected(state, radio)) return false;
+  if (!radio || radio.activeCallKeys.size || entitySelected(state, radio)) return false;
   radio.relatedGroupKeys.forEach((key) => state.groups.get(key)?.radioKeys.delete(radio.key));
   radio.affiliatedGroupKeys.forEach((key) => state.groups.get(key)?.affiliatedRadioKeys.delete(radio.key));
   state.universes.get(radio.universeKey)?.radioKeys.delete(radio.key);
@@ -173,29 +169,11 @@ function deleteRadio(state, radio) {
   return true;
 }
 
-function clearPendingGrant(state, key) {
-  const pendingKey = String(key || '');
-  if (!pendingKey) return false;
-  const record = state.pendingGrants.get(pendingKey);
-  if (!record) return false;
-  state.pendingGrants.delete(pendingKey);
-  state.groups.get(record.groupKey)?.pendingGrantKeys.delete(pendingKey);
-  state.universes.get(record.universeKey)?.pendingGrantKeys.delete(pendingKey);
-  return true;
-}
-
-function clearPendingGrantsForEntity(state, key) {
-  const entityKey = String(key || '');
-  [...state.pendingGrants.entries()].forEach(([pendingKey, record]) => {
-    if (record.groupKey === entityKey || record.universeKey === entityKey) clearPendingGrant(state, pendingKey);
-  });
-}
-
 function deleteGroup(state, group) {
-  if (!group || group.activeCallKeys.size || entityProtected(state, group)) return false;
+  if (!group || group.activeCallKeys.size || entitySelected(state, group)) return false;
   const radios = [...group.radioKeys].map((key) => state.radios.get(key)).filter(Boolean);
   if (radios.some((radio) => radio.universeKey === group.universeKey &&
-      (radio.activeCallKeys.size || entityProtected(state, radio)))) return false;
+      (radio.activeCallKeys.size || entitySelected(state, radio)))) return false;
   radios.forEach((radio) => {
     for (const [scopeKey, evidence] of radio.affiliations) {
       if (evidence.groupKey === group.key) radio.affiliations.delete(scopeKey);
@@ -209,7 +187,6 @@ function deleteGroup(state, group) {
     if (radio.universeKey === group.universeKey && !radio.affiliations.size &&
         !radio.visualParentGroupKey && !radio.activeCallKeys.size) deleteRadio(state, radio);
   });
-  clearPendingGrantsForEntity(state, group.key);
   state.universes.get(group.universeKey)?.groupKeys.delete(group.key);
   state.groups.delete(group.key);
   state.visual.membership.delete(group.key);
@@ -217,14 +194,13 @@ function deleteGroup(state, group) {
 }
 
 function deleteUniverse(state, universe) {
-  if (!universe || entityProtected(state, universe)) return false;
+  if (!universe || entitySelected(state, universe)) return false;
   const groups = [...universe.groupKeys].map((key) => state.groups.get(key)).filter(Boolean);
-  if (groups.some((group) => group.activeCallKeys.size || entityProtected(state, group))) return false;
+  if (groups.some((group) => group.activeCallKeys.size || entitySelected(state, group))) return false;
   const ownedRadios = [...universe.radioKeys].map((key) => state.radios.get(key)).filter(Boolean);
-  if (ownedRadios.some((radio) => radio.activeCallKeys.size || entityProtected(state, radio))) return false;
+  if (ownedRadios.some((radio) => radio.activeCallKeys.size || entitySelected(state, radio))) return false;
   if (groups.some((group) => !deleteGroup(state, group))) return false;
   ownedRadios.forEach((radio) => deleteRadio(state, radio));
-  clearPendingGrantsForEntity(state, universe.key);
   state.universes.delete(universe.key);
   state.visual.membership.delete(universe.key);
   return true;
@@ -261,7 +237,7 @@ function ensureUniverse(state, event) {
     return universe;
   }
   if (state.universes.size >= state.config.state.hardUniverses && !evictOldest(state.universes,
-    (candidate) => !entityProtected(state, candidate), (candidate) => deleteUniverse(state, candidate))) {
+    (candidate) => !entitySelected(state, candidate), (candidate) => deleteUniverse(state, candidate))) {
     state.overflow.universes += 1;
     return null;
   }
@@ -284,9 +260,10 @@ function ensureUniverse(state, event) {
     createdAtMs: event.observedAtMs,
     lastObservedAtMs: event.observedAtMs,
     lastMeaningfulAtMs: event.observedAtMs,
-    pendingGrantKeys: new Set(),
+    visualActiveUntilMs: 0,
     afterglowUntilMs: 0,
-    pinned: false
+    signalAction: '',
+    signalUntilMs: 0
   };
   state.universes.set(universe.key, universe);
   return universe;
@@ -307,7 +284,7 @@ function ensureGroup(state, universe, event, groupEntity, groupKey = '') {
     return group;
   }
   if (state.groups.size >= state.config.state.hardGroups && !evictOldest(state.groups,
-    (candidate) => !candidate.activeCallKeys.size && !entityProtected(state, candidate),
+    (candidate) => !candidate.activeCallKeys.size && !entitySelected(state, candidate),
     (candidate) => deleteGroup(state, candidate))) {
     state.overflow.groups += 1;
     return null;
@@ -331,9 +308,10 @@ function ensureGroup(state, universe, event, groupEntity, groupKey = '') {
     createdAtMs: event.observedAtMs,
     lastObservedAtMs: event.observedAtMs,
     lastMeaningfulAtMs: event.observedAtMs,
+    visualActiveUntilMs: 0,
     afterglowUntilMs: 0,
-    pendingGrantKeys: new Set(),
-    pinned: false
+    signalAction: '',
+    signalUntilMs: 0
   };
   state.groups.set(key, group);
   universe.groupKeys.add(key);
@@ -356,7 +334,7 @@ function ensureRadio(state, universe, event, radioEntity, radioKey = '') {
     return radio;
   }
   if (state.radios.size >= state.config.state.hardRadios && !evictOldest(state.radios,
-    (candidate) => !candidate.activeCallKeys.size && !entityProtected(state, candidate),
+    (candidate) => !candidate.activeCallKeys.size && !entitySelected(state, candidate),
     (candidate) => deleteRadio(state, candidate))) {
     state.overflow.radios += 1;
     return null;
@@ -386,9 +364,10 @@ function ensureRadio(state, universe, event, radioEntity, radioKey = '') {
     lastObservedAtMs: event.observedAtMs,
     lastMeaningfulAtMs: event.observedAtMs,
     lastMigrationAtMs: 0,
+    visualActiveUntilMs: 0,
     afterglowUntilMs: 0,
-    grantOnly: false,
-    pinned: false
+    signalAction: '',
+    signalUntilMs: 0
   };
   state.radios.set(key, radio);
   universe.radioKeys.add(key);
@@ -468,7 +447,6 @@ function applyAffiliation(state, event) {
   const group = ensureGroup(state, universe, event, event.group);
   const radio = ensureRadio(state, universe, event, event.radio);
   if (!universe || !group || !radio) return { applied: false, reason: 'capacity' };
-  radio.grantOnly = false;
   const previous = radio.affiliations.get(event.scopeKey);
   if (!evidenceNewer(previous, event, radio.comparisonEpoch)) return { applied: false, reason: 'out_of_order' };
   const firstAffiliation = radio.affiliations.size === 0;
@@ -545,7 +523,7 @@ function applyAffiliation(state, event) {
     radio.visualParentGroupKey = group.key;
     appendHistory(state, {
       type: 'affiliation_observed_after_gap',
-      label: 'Affiliation observed after live gap',
+      label: 'Join observed after live gap',
       observedAtMs: event.observedAtMs,
       universeKey: universe.key,
       radioKey: radio.key,
@@ -561,7 +539,7 @@ function applyAffiliation(state, event) {
     radio.visualParentGroupKey = group.key;
     appendHistory(state, {
       type: 'affiliation_observed',
-      label: 'Successful affiliation observed',
+      label: 'Join',
       observedAtMs: event.observedAtMs,
       universeKey: universe.key,
       radioKey: radio.key,
@@ -603,7 +581,7 @@ function applyPresenceRemoval(state, event) {
   radio.lastMeaningfulAtMs = event.observedAtMs;
   appendHistory(state, {
     type: 'explicit_presence_remove',
-    label: 'Explicit presence removal observed',
+    label: 'Logout',
     observedAtMs: event.observedAtMs,
     universeKey: event.universeKey,
     radioKey: radio.key,
@@ -616,6 +594,51 @@ function applyPresenceRemoval(state, event) {
   return { applied: true };
 }
 
+const SIGNAL_PRIORITY = Object.freeze({ check: 1, page: 2, busy: 3, denial: 4, emergency: 5 });
+
+function markSignalingEntity(entity, event, expiresAtMs) {
+  if (!entity) return false;
+  entity.lastObservedAtMs = Math.max(entity.lastObservedAtMs, event.observedAtMs);
+  entity.lastMeaningfulAtMs = Math.max(entity.lastMeaningfulAtMs, event.observedAtMs);
+  const previousAction = entity.signalUntilMs > event.observedAtMs ? entity.signalAction : '';
+  if (!previousAction || previousAction === event.action ||
+      (SIGNAL_PRIORITY[event.action] || 0) >= (SIGNAL_PRIORITY[previousAction] || 0)) {
+    entity.signalAction = event.action;
+    entity.signalUntilMs = Math.max(entity.signalUntilMs, expiresAtMs);
+  }
+  return true;
+}
+
+function applySignaling(state, event) {
+  const universe = ensureUniverse(state, event);
+  if (!universe) return { applied: false, reason: 'capacity' };
+  const group = event.group ? ensureGroup(state, universe, event, event.group, event.groupKey) : null;
+  const radio = event.radio ? ensureRadio(state, universe, event, event.radio, event.radioKey) : null;
+  const holdMs = event.action === 'emergency' ? state.config.animation.emergencyHoldMs :
+    state.config.animation.signalHoldMs;
+  const expiresAtMs = event.observedAtMs + holdMs;
+  [universe, group, radio].forEach((entity) => {
+    if (!entity) return;
+    markSignalingEntity(entity, event, expiresAtMs);
+    addSiteEvidence(entity, event, state.config.state.hardSiteEvidencePerEntity);
+  });
+  const labels = { denial: 'Denial', check: 'Check', emergency: 'Emergency', page: 'Page', busy: 'Busy' };
+  const history = appendHistory(state, {
+    type: `signal_${event.action}`,
+    action: event.action,
+    label: labels[event.action] || 'Signaling event',
+    detail: event.detail,
+    eventType: event.eventType,
+    observedAtMs: event.observedAtMs,
+    universeKey: universe.key,
+    groupKey: group?.key || '',
+    radioKey: radio?.key || '',
+    configurationId: event.configurationId,
+    site: event.site
+  });
+  return { applied: true, signaling: true, action: event.action, historyEvent: history, visualChanged: true };
+}
+
 function mergeReconciledGroup(state, sourceKey, target, observedAtMs) {
   const source = state.groups.get(sourceKey);
   if (!source || !target || source.key === target.key) return false;
@@ -623,8 +646,12 @@ function mergeReconciledGroup(state, sourceKey, target, observedAtMs) {
   target.createdAtMs = Math.min(target.createdAtMs, source.createdAtMs);
   target.lastObservedAtMs = Math.max(target.lastObservedAtMs, source.lastObservedAtMs, observedAtMs);
   target.lastMeaningfulAtMs = Math.max(target.lastMeaningfulAtMs, source.lastMeaningfulAtMs);
+  target.visualActiveUntilMs = Math.max(target.visualActiveUntilMs, source.visualActiveUntilMs);
   target.afterglowUntilMs = Math.max(target.afterglowUntilMs, source.afterglowUntilMs);
-  target.pendingGrantUntilMs = Math.max(target.pendingGrantUntilMs, source.pendingGrantUntilMs);
+  if (source.signalUntilMs > target.signalUntilMs) {
+    target.signalAction = source.signalAction;
+    target.signalUntilMs = source.signalUntilMs;
+  }
   source.siteEvidence.forEach((evidence) => {
     const existing = target.siteEvidence.findIndex((candidate) => candidate.key === evidence.key);
     if (existing >= 0) target.siteEvidence.splice(existing, 1);
@@ -655,11 +682,6 @@ function mergeReconciledGroup(state, sourceKey, target, observedAtMs) {
       refreshRadioGroupMembership(state, radio);
     }
   });
-  if (source.pinned) {
-    target.pinned = true;
-    state.visual.pinnedKeys.delete(source.key);
-    state.visual.pinnedKeys.add(target.key);
-  }
   if (state.visual.selectedKey === source.key) state.visual.selectedKey = target.key;
   const membership = state.visual.membership.get(source.key);
   if (membership) state.visual.membership.set(target.key, membership);
@@ -712,7 +734,12 @@ function applyIdentityReconciliation(state, event) {
     target.lastMeaningfulAtMs = Math.max(target.lastMeaningfulAtMs, source.lastMeaningfulAtMs);
     target.lastMigrationAtMs = Math.max(target.lastMigrationAtMs, source.lastMigrationAtMs);
     target.comparisonEpoch = Math.max(target.comparisonEpoch, source.comparisonEpoch) + 1;
+    target.visualActiveUntilMs = Math.max(target.visualActiveUntilMs, source.visualActiveUntilMs);
     target.afterglowUntilMs = Math.max(target.afterglowUntilMs, source.afterglowUntilMs);
+    if (source.signalUntilMs > target.signalUntilMs) {
+      target.signalAction = source.signalAction;
+      target.signalUntilMs = source.signalUntilMs;
+    }
     target.transitionEventIds = [...new Set([...source.transitionEventIds, ...target.transitionEventIds])]
       .slice(-state.config.state.hardTransitionsPerRadio);
     if (mappedGroup && source.visualParentGroupKey) target.visualParentGroupKey = mappedGroup.key;
@@ -722,11 +749,6 @@ function applyIdentityReconciliation(state, event) {
     source.relatedGroupKeys.forEach((key) => state.groups.get(key)?.radioKeys.delete(source.key));
     source.affiliatedGroupKeys.forEach((key) => state.groups.get(key)?.affiliatedRadioKeys.delete(source.key));
     state.universes.get(source.universeKey)?.radioKeys.delete(source.key);
-    if (source.pinned) {
-      state.visual.pinnedKeys.delete(source.key);
-      target.pinned = true;
-      state.visual.pinnedKeys.add(target.key);
-    }
     if (state.visual.selectedKey === source.key) state.visual.selectedKey = target.key;
     const membership = state.visual.membership.get(source.key);
     if (membership) state.visual.membership.set(target.key, membership);
@@ -787,7 +809,7 @@ function reconcileProvisionalIdentity(state, event) {
   });
   const sourceUniverse = state.universes.get(provisionalUniverseKey);
   if (sourceUniverse && !sourceUniverse.groupKeys.size && !sourceUniverse.radioKeys.size &&
-      !entityProtected(state, sourceUniverse)) {
+      !entitySelected(state, sourceUniverse)) {
     state.universes.delete(provisionalUniverseKey);
     state.visual.membership.delete(provisionalUniverseKey);
   }
@@ -849,6 +871,15 @@ function removeOverflowCall(state, callKey) {
   return true;
 }
 
+function holdReleasedEntity(state, entity, observedAtMs) {
+  if (!entity) return;
+  entity.visualActiveUntilMs = Math.max(entity.visualActiveUntilMs,
+    observedAtMs + state.config.animation.txGreenHoldMs);
+  entity.afterglowUntilMs = Math.max(entity.afterglowUntilMs,
+    observedAtMs + state.config.animation.txReleaseMs);
+  entity.lastObservedAtMs = Math.max(entity.lastObservedAtMs, observedAtMs);
+}
+
 function detachCall(state, call, observedAtMs, proven, reason) {
   const group = state.groups.get(call.groupKey);
   const radio = state.radios.get(call.radioKey);
@@ -856,21 +887,9 @@ function detachCall(state, call, observedAtMs, proven, reason) {
   group?.activeCallKeys.delete(call.key);
   radio?.activeCallKeys.delete(call.key);
   refreshRadioGroupMembership(state, radio);
-  if (group) {
-    group.afterglowUntilMs = Math.max(group.afterglowUntilMs,
-      observedAtMs + state.config.animation.txReleaseMs);
-    group.lastObservedAtMs = Math.max(group.lastObservedAtMs, observedAtMs);
-  }
-  if (radio) {
-    radio.afterglowUntilMs = Math.max(radio.afterglowUntilMs,
-      observedAtMs + state.config.animation.txReleaseMs);
-    radio.lastObservedAtMs = Math.max(radio.lastObservedAtMs, observedAtMs);
-  }
-  if (universe) {
-    universe.afterglowUntilMs = Math.max(universe.afterglowUntilMs,
-      observedAtMs + state.config.animation.txReleaseMs);
-    universe.lastObservedAtMs = Math.max(universe.lastObservedAtMs, observedAtMs);
-  }
+  holdReleasedEntity(state, group, observedAtMs);
+  holdReleasedEntity(state, radio, observedAtMs);
+  holdReleasedEntity(state, universe, observedAtMs);
   state.activeCalls.delete(call.key);
   addEffect(state, {
     type: 'afterglow',
@@ -884,7 +903,7 @@ function detachCall(state, call, observedAtMs, proven, reason) {
   });
   appendHistory(state, {
     type: 'transmission_end',
-    label: proven ? 'Transmission ended' : 'Transmission activity became uncertain',
+    label: proven ? 'Grant ended' : 'Grant activity became uncertain',
     observedAtMs,
     universeKey: call.universeKey,
     groupKey: call.groupKey,
@@ -895,10 +914,19 @@ function detachCall(state, call, observedAtMs, proven, reason) {
   });
 }
 
-function updateCallMembership(state, call, group, radio) {
+function updateCallMembership(state, call, group, radio, observedAtMs) {
+  const previousGroup = state.groups.get(call.groupKey);
   const previousRadio = state.radios.get(call.radioKey);
-  if (call.groupKey && call.groupKey !== group?.key) state.groups.get(call.groupKey)?.activeCallKeys.delete(call.key);
-  if (call.radioKey && call.radioKey !== radio?.key) state.radios.get(call.radioKey)?.activeCallKeys.delete(call.key);
+  const groupChanged = Boolean(call.groupKey && call.groupKey !== group?.key);
+  const radioChanged = Boolean(call.radioKey && call.radioKey !== radio?.key);
+  if (groupChanged) previousGroup?.activeCallKeys.delete(call.key);
+  if (radioChanged) previousRadio?.activeCallKeys.delete(call.key);
+  if (groupChanged && previousGroup && !previousGroup.activeCallKeys.size) {
+    holdReleasedEntity(state, previousGroup, observedAtMs);
+  }
+  if (radioChanged && previousRadio && !previousRadio.activeCallKeys.size) {
+    holdReleasedEntity(state, previousRadio, observedAtMs);
+  }
   call.groupKey = group?.key || '';
   call.radioKey = radio?.key || '';
   group?.activeCallKeys.add(call.key);
@@ -907,36 +935,11 @@ function updateCallMembership(state, call, group, radio) {
   refreshRadioGroupMembership(state, radio);
 }
 
-function setPendingGrant(state, event, universe, group) {
-  const pendingKey = String(event.callKey || event.activationKey || '');
-  if (!pendingKey || !universe) return { changed: false, key: '' };
-  const current = state.pendingGrants.get(pendingKey);
-  if (current?.universeKey === universe.key && current?.groupKey === (group?.key || '')) {
-    current.lastObservedAtMs = Math.max(current.lastObservedAtMs, event.observedAtMs);
-    return { changed: false, key: pendingKey };
-  }
-  if (current) clearPendingGrant(state, pendingKey);
-  if (state.pendingGrants.size >= state.config.state.hardActiveCalls) {
-    const removable = state.pendingGrants.keys().next().value;
-    if (removable !== undefined) clearPendingGrant(state, removable);
-  }
-  const record = {
-    key: pendingKey,
-    universeKey: universe.key,
-    groupKey: group?.key || '',
-    activationKey: String(event.activationKey || ''),
-    firstObservedAtMs: event.observedAtMs,
-    lastObservedAtMs: event.observedAtMs
-  };
-  state.pendingGrants.set(pendingKey, record);
-  universe.pendingGrantKeys.add(pendingKey);
-  group?.pendingGrantKeys.add(pendingKey);
-  return { changed: true, key: pendingKey };
-}
-
 function applyCall(state, event) {
+  // A control-channel grant is intent, not proof that RF traffic is present. This view deliberately ignores it;
+  // confirmed channel_activity is the only source of the user-facing green "Grant" state.
+  if (event.phase === 'granted') return { applied: false, reason: 'pending_grant_ignored' };
   if (event.phase === 'end') {
-    clearPendingGrant(state, event.callKey);
     const call = state.activeCalls.get(event.callKey);
     if (!call) return removeOverflowCall(state, event.callKey) ?
       { applied: true, ended: true, aggregated: true } : { applied: false, reason: 'unknown_call_end' };
@@ -945,31 +948,10 @@ function applyCall(state, event) {
   }
   const universe = ensureUniverse(state, event);
   if (!universe) {
-    if (event.phase !== 'granted') overflowBucket(state, event);
-    return { applied: false, reason: 'capacity', aggregated: event.phase !== 'granted' };
+    overflowBucket(state, event);
+    return { applied: false, reason: 'capacity', aggregated: true };
   }
   const group = ensureGroup(state, universe, event, event.group, event.groupKey);
-  if (event.phase === 'granted') {
-    const radio = event.radio ? ensureRadio(state, universe, event, event.radio, event.radioKey) : null;
-    // A grant can introduce real identities, but it is not evidence that the named radio transmitted to the
-    // granted group. Keep it independent from both TX recency and affiliation/visual-parent relationships.
-    if (radio) {
-      radio.grantOnly = !radio.affiliations.size && !radio.activeCallKeys.size && !radio.recentTxGroupKey;
-      refreshRadioGroupMembership(state, radio);
-    }
-    const pending = setPendingGrant(state, event, universe, group);
-    if (pending.changed) {
-      appendHistory(state, {
-        type: 'grant_pending',
-        label: 'Grant observed; transmission pending',
-        observedAtMs: event.observedAtMs,
-        universeKey: universe.key,
-        groupKey: group?.key || '',
-        callKey: event.callKey
-      });
-    }
-    return { applied: true, granted: true, visualChanged: pending.changed };
-  }
   if (!group) {
     overflowBucket(state, event);
     return { applied: false, reason: 'unknown_target' };
@@ -982,16 +964,16 @@ function applyCall(state, event) {
   }
   if (introduced) removeOverflowCall(state, event.callKey);
   const radio = event.radio ? ensureRadio(state, universe, event, event.radio, event.radioKey) : null;
-  if (radio) radio.grantOnly = false;
   const previousGroupKey = call?.groupKey || '';
   const previousRadioKey = call?.radioKey || '';
   const previousEncrypted = call?.encrypted;
   const groupWasActive = group.activeCallKeys.size > 0;
   const radioWasActive = Boolean(radio?.activeCallKeys.size);
-  const radioInRelease = Boolean(radio && radio.afterglowUntilMs > event.observedAtMs &&
+  const radioInRelease = Boolean(radio && (radio.visualActiveUntilMs > event.observedAtMs ||
+    radio.afterglowUntilMs > event.observedAtMs) &&
     radio.recentTxGroupKey === group.key);
-  const groupInRelease = group.afterglowUntilMs > event.observedAtMs;
-  const pendingCleared = clearPendingGrant(state, event.callKey);
+  const groupInRelease = group.visualActiveUntilMs > event.observedAtMs ||
+    group.afterglowUntilMs > event.observedAtMs;
   if (!call) {
     call = {
       key: event.callKey,
@@ -1013,7 +995,7 @@ function applyCall(state, event) {
   call.expiresAtMs = Math.max(call.expiresAtMs, event.observedAtMs + state.config.state.callStaleAfterMs);
   call.encrypted = event.encrypted;
   call.universeKey = universe.key;
-  updateCallMembership(state, call, group, radio);
+  updateCallMembership(state, call, group, radio, event.observedAtMs);
   group.lastMeaningfulAtMs = event.observedAtMs;
   universe.lastMeaningfulAtMs = event.observedAtMs;
   addSiteEvidence(group, event, state.config.state.hardSiteEvidencePerEntity);
@@ -1032,9 +1014,9 @@ function applyCall(state, event) {
     appendHistory(state, {
       type: uncertainContinuity ? (afterGap ? 'transmission_observed_after_gap' :
         'transmission_observed_after_uncertainty') : 'transmission_start',
-      label: uncertainContinuity ? (afterGap ? 'Current transmission observed after live gap' :
-        'Current transmission observed after uncertain updates') :
-        (radio ? 'Source transmission observed' : 'Transmission observed with unknown source'),
+      label: uncertainContinuity ? (afterGap ? 'Current grant observed after live gap' :
+        'Current grant observed after uncertain updates') :
+        (radio ? 'Grant with source observed' : 'Grant observed with unknown source'),
       observedAtMs: event.observedAtMs,
       universeKey: universe.key,
       groupKey: group.key,
@@ -1060,7 +1042,7 @@ function applyCall(state, event) {
       });
     }
   }
-  const visualChanged = introduced || pendingCleared || previousGroupKey !== group.key ||
+  const visualChanged = introduced || previousGroupKey !== group.key ||
     previousRadioKey !== (radio?.key || '') || previousEncrypted !== event.encrypted;
   return { applied: true, introduced, sourceKnown: Boolean(radio), visualChanged };
 }
@@ -1068,6 +1050,9 @@ function applyCall(state, event) {
 function applyNormalizedObservation(state, event, generation = state.generation, options = {}) {
   if (generation !== state.generation) return { applied: false, reason: 'stale_generation' };
   if (!event) return { applied: false, reason: 'unsupported' };
+  if (event.kind === 'call' && event.phase === 'granted') {
+    return { applied: false, reason: 'pending_grant_ignored' };
+  }
   const atMs = eventTime(event.observedAtMs);
   const dedupeAtMs = eventTime(options.receivedAtMs, atMs);
   const fingerprint = options.skipDedupe ? '' : semanticFingerprint(event);
@@ -1078,6 +1063,7 @@ function applyNormalizedObservation(state, event, generation = state.generation,
   if (event.kind === 'affiliation') return applyAffiliation(state, event);
   if (event.kind === 'presence_remove') return applyPresenceRemoval(state, event);
   if (event.kind === 'identity_reconciled') return applyIdentityReconciliation(state, event);
+  if (event.kind === 'signaling') return applySignaling(state, event);
   if (event.kind === 'call') return applyCall(state, event);
   return { applied: false, reason: 'unsupported' };
 }
@@ -1120,7 +1106,6 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
   let introduced = 0;
   let updated = 0;
   let ended = 0;
-  let pendingChanged = 0;
   let visualChanged = false;
   (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
     (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
@@ -1134,10 +1119,6 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
       const normalized = normalizeSnapshotRow(table, row, receivedAtMs);
       if (!active && !pending) {
         if (previous) {
-          if (previous.pending && clearPendingGrant(state, previous.callKey)) {
-            pendingChanged += 1;
-            visualChanged = true;
-          }
           if (previous.active && previous.callKey) {
             const call = state.activeCalls.get(previous.callKey);
             if (call) detachCall(state, call, receivedAtMs, normalized?.endProven === true,
@@ -1164,15 +1145,6 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
           const call = state.activeCalls.get(previous.callKey);
           if (call) detachCall(state, call, receivedAtMs, false, 'snapshot_pending');
           visualChanged = true;
-        }
-        if (!sameActivation) {
-          if (previous?.pending && clearPendingGrant(state, previous.callKey)) pendingChanged += 1;
-          const result = applyNormalizedObservation(state, { ...normalized, phase: 'granted' }, generation,
-            { skipDedupe: true });
-          if (result.visualChanged) {
-            pendingChanged += 1;
-            visualChanged = true;
-          }
         }
         state.snapshotRows.set(snapshotKey, {
           activationKey: normalized.activationKey,
@@ -1282,11 +1254,7 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
   });
   state.snapshotRows.forEach((record, key) => {
     if (!seen.has(key)) {
-      if (record.pending && clearPendingGrant(state, record.callKey)) {
-        record.pending = false;
-        pendingChanged += 1;
-        visualChanged = true;
-      }
+      if (record.pending) record.pending = false;
       if (record.active) {
         const call = state.activeCalls.get(record.callKey);
         if (call) detachCall(state, call, receivedAtMs, false, 'missing_from_snapshot');
@@ -1300,7 +1268,7 @@ function ingestChannelActivitySnapshot(state, snapshot, generation = state.gener
     }
   });
   trimSnapshotRows(state);
-  return { applied: true, introduced, updated, ended, pendingChanged, visualChanged };
+  return { applied: true, introduced, updated, ended, visualChanged };
 }
 
 function trimSnapshotRows(state) {
@@ -1308,10 +1276,7 @@ function trimSnapshotRows(state) {
   if (snapshotOverflow <= 0) return 0;
   [...state.snapshotRows.entries()].sort((left, right) =>
     left[1].lastObservedAtMs - right[1].lastObservedAtMs || left[0].localeCompare(right[0]))
-    .slice(0, snapshotOverflow).forEach(([key, record]) => {
-      if (record.pending) clearPendingGrant(state, record.callKey);
-      state.snapshotRows.delete(key);
-    });
+    .slice(0, snapshotOverflow).forEach(([key]) => state.snapshotRows.delete(key));
   return snapshotOverflow;
 }
 
@@ -1354,14 +1319,24 @@ function markTransportGap(state, detail = {}, generation = state.generation, atM
   const previousGap = state.transport.status === 'gap' ? state.transport.gap : null;
   const active = [...state.activeCalls.values()];
   active.forEach((call) => detachCall(state, call, observedAtMs, false, detail.reason || 'transport_gap'));
-  state.groups.forEach((group) => { group.afterglowUntilMs = 0; });
-  state.radios.forEach((radio) => { radio.afterglowUntilMs = 0; });
-  state.universes.forEach((universe) => {
-    universe.afterglowUntilMs = 0;
-    universe.pendingGrantKeys.clear();
+  state.groups.forEach((group) => {
+    group.visualActiveUntilMs = 0;
+    group.afterglowUntilMs = 0;
+    group.signalAction = '';
+    group.signalUntilMs = 0;
   });
-  state.groups.forEach((group) => group.pendingGrantKeys.clear());
-  state.pendingGrants.clear();
+  state.radios.forEach((radio) => {
+    radio.visualActiveUntilMs = 0;
+    radio.afterglowUntilMs = 0;
+    radio.signalAction = '';
+    radio.signalUntilMs = 0;
+  });
+  state.universes.forEach((universe) => {
+    universe.visualActiveUntilMs = 0;
+    universe.afterglowUntilMs = 0;
+    universe.signalAction = '';
+    universe.signalUntilMs = 0;
+  });
   state.snapshotRows.forEach((record) => {
     if (!record.active) return;
     record.active = false;
@@ -1406,6 +1381,7 @@ function markTransportGap(state, detail = {}, generation = state.generation, atM
 
 function tickNetworkState(state, atMs = Date.now()) {
   const now = eventTime(atMs);
+  let visualChanged = false;
   [...state.activeCalls.values()].filter((call) => call.expiresAtMs <= now)
     .forEach((call) => {
       detachCall(state, call, now, false, 'missing_update_timeout');
@@ -1423,6 +1399,17 @@ function tickNetworkState(state, atMs = Date.now()) {
   state.overflowActive.forEach((bucket, key) => {
     if (bucket.expiresAtMs <= now) state.overflowActive.delete(key);
   });
+  [state.universes, state.groups, state.radios].forEach((entities) => entities.forEach((entity) => {
+    if (entity.visualActiveUntilMs && entity.visualActiveUntilMs <= now) {
+      entity.visualActiveUntilMs = 0;
+      visualChanged = true;
+    }
+    if (entity.signalUntilMs && entity.signalUntilMs <= now) {
+      entity.signalAction = '';
+      entity.signalUntilMs = 0;
+      visualChanged = true;
+    }
+  }));
   pruneDedupe(state, now);
   if (now >= state.maintenance.nextRetentionSweepAtMs) {
     state.maintenance.nextRetentionSweepAtMs = now + Math.min(60_000,
@@ -1435,23 +1422,12 @@ function tickNetworkState(state, atMs = Date.now()) {
     [...state.universes.values()].filter((universe) => universe.lastMeaningfulAtMs < cutoff)
       .forEach((universe) => deleteUniverse(state, universe));
   }
-  return networkStateCounts(state);
+  return Object.freeze({ ...networkStateCounts(state), visualChanged });
 }
 
 function setSelectedEntity(state, key = null) {
   state.visual.selectedKey = key && (state.universes.has(key) || state.groups.has(key) || state.radios.has(key)) ? key : null;
   return state.visual.selectedKey;
-}
-
-function setEntityPinned(state, key, pinned = true) {
-  const entity = state.universes.get(key) || state.groups.get(key) || state.radios.get(key);
-  if (!entity) return false;
-  if (pinned && !state.visual.pinnedKeys.has(key) &&
-      state.visual.pinnedKeys.size >= state.config.state.hardPinnedEntities) return false;
-  entity.pinned = Boolean(pinned);
-  if (entity.pinned) state.visual.pinnedKeys.add(key);
-  else state.visual.pinnedKeys.delete(key);
-  return true;
 }
 
 function requestMetadataSlot(state, key, atMs = Date.now()) {
@@ -1483,12 +1459,10 @@ function networkStateCounts(state) {
     groups: state.groups.size,
     radios: state.radios.size,
     activeCalls: state.activeCalls.size,
-    pendingGrants: state.pendingGrants.size,
     semanticEvents: state.semanticEvents.length,
     dedupeEntries: state.dedupe.size,
     queuedObservations: state.incomingQueue.length,
     pendingEffects: state.pendingEffects.length,
-    pinnedEntities: state.visual.pinnedKeys.size,
     overflowActive: [...state.overflowActive.values()]
       .reduce((sum, bucket) => sum + bucket.count + (bucket.saturated ? 1 : 0), 0)
   });
@@ -1507,7 +1481,6 @@ export {
   markTransportGap,
   networkStateCounts,
   requestMetadataSlot,
-  setEntityPinned,
   setSelectedEntity,
   tickNetworkState
 };

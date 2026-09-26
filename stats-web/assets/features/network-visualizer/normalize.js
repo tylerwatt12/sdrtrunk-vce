@@ -11,6 +11,7 @@ const AFFILIATION_EVIDENCE = new Set([
 ]);
 const REJECTED_AFFILIATION_EVIDENCE = /deni|reject|register|grant|alias|last.?seen/i;
 const INACTIVE_SNAPSHOT_STATUSES = new Set(['', 'IDLE', 'STOPPED', 'PENDING', 'GRANT', 'GRANTED', 'QUEUED']);
+const SIGNALING_ACTIONS = new Set(['denial', 'check', 'emergency', 'page', 'busy']);
 
 function text(value, maximum = 256) {
   const normalized = typeof value === 'string' ? value.trim() :
@@ -255,6 +256,32 @@ function normalizeIdentityReconciliation(raw, observedAtMs) {
   });
 }
 
+function normalizeSignaling(raw, observedAtMs) {
+  const action = text(raw.action, 32).toLowerCase();
+  if (!SIGNALING_ACTIONS.has(action)) return null;
+  const context = baseContext(raw, observedAtMs);
+  if (!context) return null;
+  const radio = radioEntity(raw);
+  const group = groupEntity(raw);
+  if (context.radioSystemKey &&
+      ((radio?.radioSystemKey && radio.radioSystemKey !== context.radioSystemKey) ||
+       (group?.radioSystemKey && group.radioSystemKey !== context.radioSystemKey))) return null;
+  return Object.freeze({
+    kind: 'signaling',
+    action,
+    eventId: opaqueKey(raw.event_id),
+    eventType: text(raw.event_type, 64).toLowerCase(),
+    detail: text(raw.detail, 512),
+    sequence: optionalInteger(raw.sequence ?? raw.order),
+    radio,
+    radioKey: radio ? radioKeyFor(context.universeKey, radio.identityKey) : '',
+    group,
+    groupKey: group ? groupKeyFor(context.universeKey, group.identityKey, group.kind,
+      context.configurationId) : '',
+    ...context
+  });
+}
+
 function callPhase(raw, kind) {
   const state = text(raw.transmission_state ?? raw.phase ?? raw.state, 32).toLowerCase();
   if (kind.endsWith('_end') || ['ended', 'complete', 'completed', 'stopped'].includes(state)) return 'end';
@@ -324,6 +351,7 @@ function normalizeObservation(raw, receivedAtMs = Date.now()) {
   if (kind === 'presence_cleared') return normalizePresenceRemoval(raw, observedAtMs, true);
   if (kind === 'presence_remove' || kind === 'deaffiliation') return normalizePresenceRemoval(raw, observedAtMs);
   if (kind === 'identity_reconciled') return normalizeIdentityReconciliation(raw, observedAtMs);
+  if (kind === 'signaling_observed') return normalizeSignaling(raw, observedAtMs);
   if (['call', 'call_start', 'call_update', 'call_end', 'tx_start', 'tx_update', 'tx_end', 'grant']
     .includes(kind)) return normalizeCall(raw, kind, observedAtMs);
   return null;
@@ -439,6 +467,10 @@ function semanticFingerprint(event) {
   if (event.kind === 'identity_reconciled') {
     return ['identity-reconciled', event.fromUniverseKey, event.fromRadioIdentityKey, event.universeKey,
       event.radio.identityKey, event.observedAtMs].join('|');
+  }
+  if (event.kind === 'signaling') {
+    return ['signaling', event.action, event.universeKey, event.radioKey, event.groupKey,
+      event.sequence ?? event.observedAtMs].join('|');
   }
   return '';
 }

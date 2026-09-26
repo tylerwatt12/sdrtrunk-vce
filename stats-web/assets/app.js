@@ -15728,7 +15728,7 @@ let networkVisualizerModulePromise = null;
 
 async function renderNetworkVisualizer() {
   const renderContext = captureRenderContext();
-  networkVisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=10');
+  networkVisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=11');
   const visualizerModule = await networkVisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = await visualizerModule.createNetworkVisualizer({

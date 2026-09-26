@@ -470,6 +470,7 @@ async function main() {
     depthPresentation,
     linkIsDashed,
     linkVisualState,
+    nodeDepthClear,
     nodeGeometryKind,
     nodeVisualState,
     scopeFogDensity
@@ -498,6 +499,9 @@ async function main() {
   assert.equal(nodeGeometryKind({ type: 'radio' }), 'radio');
   assert.equal(nodeGeometryKind({ type: 'aggregate' }), 'aggregate');
   assert.equal(nodeVisualState({ type: 'radio', active: true }), 'active');
+  assert.equal(nodeVisualState({ type: 'radio', active: true, signalAction: 'emergency' }), 'emergency');
+  assert.equal(nodeDepthClear({ type: 'radio', active: true }), true);
+  assert.equal(nodeDepthClear({ type: 'radio', signalAction: 'denial' }), true);
   assert.equal(linkVisualState({ type: 'tx', active: true }), 'active');
   assert.equal(linkIsDashed({ type: 'tx' }), true);
   const nearDepth = depthPresentation({ distance: 10, projectedZ: -0.5, density: 0.005 });
@@ -579,7 +583,7 @@ async function main() {
       { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0,
         renderRadius: 300, scopeLevel: 'system', labelVisible: false },
       { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8, active: true },
-      { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15 },
+      { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15, active: true },
       { key: 'aggregate', type: 'aggregate', label: '+20', x: 50, y: -8, z: -12 }
     ], links: [
       { key: 'tx', source: 'radio', target: 'group', type: 'tx', active: true, particleCount: 1 }
@@ -604,7 +608,7 @@ async function main() {
     assert.equal(graphState.linkObjects.get('tx').material.dashed, true);
     assert.equal(graphState.scene.fog instanceof library.FogExp2, true);
     assert.equal(group.material.fog, false, 'active talkgroups should remain clear through fog');
-    assert.equal(radio.material.fog, true);
+    assert.equal(radio.material.fog, false, 'active source radios should remain clear through fog');
     assert.equal(graphState.linkObjects.get('tx').material.fog, false);
     assert.deepEqual(graphState.enableNodeDragCalls, [false]);
     assert.equal(graphState.callbacks.onNodeDrag, undefined);
@@ -624,6 +628,18 @@ async function main() {
     assert(insideDistance > 0 && insideDistance < 300, 'system focus should place the camera inside its sphere');
     assert(controls.maxDistance > insideDistance && controls.maxDistance < 300,
       'system orbit and zoom should remain inside the sphere');
+    assert.equal(renderer.steerOrbitTarget(['group', 'radio'], 0), true);
+    assert.deepEqual({ x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      { x: 39, y: 2.5, z: 11.5 });
+    document.nodes[1].x = 250;
+    document.nodes[2].x = 260;
+    renderer.refresh();
+    assert.equal(renderer.steerOrbitTarget(['group', 'radio'], 0), true);
+    const steeredPose = renderer.diagnostics().camera;
+    assert(Math.hypot(steeredPose.position.x, steeredPose.position.y, steeredPose.position.z) < 300,
+      'hotspot steering should keep the camera inside the focused system sphere');
+    assert(Math.hypot(steeredPose.target.x, steeredPose.target.y, steeredPose.target.z) <= 204.001,
+      'hotspot steering should leave enough room to orbit around a target near the system edge');
 
     const graphDataCalls = graphState.graphDataCalls;
     document.nodes[2].x = 64;

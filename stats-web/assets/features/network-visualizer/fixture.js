@@ -95,6 +95,23 @@ function createNetworkVisualizerFixture(options = {}) {
       evidence_type: 'group_affiliation_query_response', outcome: 'confirmed', sequence: 30,
       radio: alphaRadio, group: alphaDispatch
     }),
+    ...[
+      ['denial', 'deny', 'RESPONSE', 'DENY: TARGET GROUP NOT VALID', alphaRadio, alphaTac],
+      ['check', 'check', 'RADIO_CHECK', 'RADIO CHECK', alphaRadio, null],
+      ['emergency', 'emergency', 'EMERGENCY', 'EMERGENCY ALARM', alphaRadio, alphaDispatch],
+      ['page', 'page', 'PAGE', 'CALL ALERT', bravoRadio, bravoDispatch],
+      ['busy', 'busy', 'BUSY', 'SYSTEM BUSY', alphaRadio, alphaTac]
+    ].map(([action, id, eventType, detail, radio, group], index) =>
+      envelope(startedAtMs + 225 + index * 10, 'network_activity', {
+        kind: 'signaling_observed', action, event_id: `fixture-signal-${id}`,
+        event_type: eventType.toLowerCase(), detail, observed_at_ms: startedAtMs + 225 + index * 10,
+        protocol: 'p25', radio_system_key: action === 'page' ? SYSTEM_BRAVO : SYSTEM_ALPHA,
+        system_name: action === 'page' ? 'Bravo County' : 'Alpha Regional',
+        ...(action === 'page' ? site(CONFIG_BRAVO, 2, 4, 'Bravo West') :
+          site(CONFIG_ALPHA_SITE_1, 1, 1, 'Alpha Simulcast')),
+        radio,
+        ...(group ? { group } : {})
+      })),
     envelope(startedAtMs + 300, 'decode_events', {
       kind: 'affiliation_observed', event_id: 'fixture-alpha-real-change',
       observed_at_ms: startedAtMs + 300, protocol: 'p25', radio_system_key: SYSTEM_ALPHA,

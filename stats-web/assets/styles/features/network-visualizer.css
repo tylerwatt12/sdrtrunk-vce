@@ -32,6 +32,11 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
 }
 
 .network-visualizer-layout {
+  --network-denial: #ff6f6f;
+  --network-check: #65d7e8;
+  --network-emergency: #ff3f68;
+  --network-page: #b897ff;
+  --network-busy: #ffb34d;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -266,6 +271,12 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
 .network-visualizer-label[data-active="true"] {
   color: var(--network-tx);
 }
+
+.network-visualizer-label[data-signal="denial"] { color: var(--network-denial); }
+.network-visualizer-label[data-signal="check"] { color: var(--network-check); }
+.network-visualizer-label[data-signal="emergency"] { color: var(--network-emergency); }
+.network-visualizer-label[data-signal="page"] { color: var(--network-page); }
+.network-visualizer-label[data-signal="busy"] { color: var(--network-busy); }
 
 .network-visualizer-label[data-depth-clear="true"] {
   text-shadow: 0 0 10px color-mix(in srgb, currentColor 35%, transparent);
@@ -591,6 +602,47 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
 .network-visualizer-events > .network-visualizer-event-list >
   .network-visualizer-event[data-category="affiliation-change"] {
   border-inline-start: 3px solid var(--network-arrival);
+}
+
+.network-visualizer-event[data-category="signal-denial"] {
+  border-inline-start: 3px solid var(--network-denial);
+}
+
+.network-visualizer-event[data-category="signal-check"] {
+  border-inline-start: 3px solid var(--network-check);
+}
+
+.network-visualizer-event[data-category="signal-emergency"] {
+  border-inline-start: 4px solid var(--network-emergency);
+  background: color-mix(in srgb, var(--network-emergency) 9%, transparent);
+}
+
+.network-visualizer-event[data-category="signal-page"] {
+  border-inline-start: 3px solid var(--network-page);
+}
+
+.network-visualizer-event[data-category="signal-busy"] {
+  border-inline-start: 3px solid var(--network-busy);
+}
+
+.network-visualizer-event[data-category="signal-denial"] .network-visualizer-event-kind {
+  color: var(--network-denial);
+}
+
+.network-visualizer-event[data-category="signal-check"] .network-visualizer-event-kind {
+  color: var(--network-check);
+}
+
+.network-visualizer-event[data-category="signal-emergency"] .network-visualizer-event-kind {
+  color: var(--network-emergency);
+}
+
+.network-visualizer-event[data-category="signal-page"] .network-visualizer-event-kind {
+  color: var(--network-page);
+}
+
+.network-visualizer-event[data-category="signal-busy"] .network-visualizer-event-kind {
+  color: var(--network-busy);
 }
 
 .network-visualizer-event-kind-line {

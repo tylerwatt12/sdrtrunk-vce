@@ -10,15 +10,17 @@ activity. The overview keeps those system spheres compact. Entering a system mov
 wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
 relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
 
-Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities
-and actively transmitting talkgroups remain sharp even at a distance, and label stacking follows camera depth so that
-nearer labels stay in front of farther ones.
+Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities,
+active talkgroups, and their observed source radios remain sharp even at a distance, and label stacking follows camera
+depth so that nearer labels stay in front of farther ones.
 
 ## Reading the view
 
 - A solid line is successful affiliation evidence currently retained for that observation scope.
 - A dashed line is transmission activity without an inferred affiliation.
-- Green identifies an observed active source and its target. An unknown source lights only the target hub.
+- Green **Grant** state means the shared Live feed has confirmed current RF transmission activity. It identifies an
+  observed active source and its target; an unknown source lights only the target hub. A one-second visual release
+  hold prevents short update boundaries from flashing. A control-channel grant by itself is not shown.
 - Amber introduces a newly observed successful affiliation. A comparable, ordered change moves the same node and is
   recorded as **Observed affiliation change**. Conflicting site evidence is shown as ambiguous instead of inventing a
   sequence.
@@ -38,6 +40,13 @@ DMR and NXDN calls retain the backend's canonical identity scope, but affiliatio
 currently reported as unsupported rather than inferred. Analog AM/NBFM activity lights its configured channel
 without creating a synthetic radio or talkgroup.
 
+The existing demand-driven `network_activity` multiplex subscription also carries bounded P25 `signaling_observed`
+events for **Denial**, **Check**, **Emergency**, **Page**, and **Busy**. These are classified from structured decoder
+semantics on the existing observer worker and do not imply affiliation or transmission. **Join** and **Logout** are the
+existing accepted affiliation and explicit presence-clear events. Confirmed RF activity still comes only from the
+shared `channel_activity` coordinator; the visualizer opens no per-entity connections and consumes no raw decoder
+message stream.
+
 ## Controls
 
 The 3D overview begins with observed systems only. Select a system to enter its live network, then select a talkgroup
@@ -45,24 +54,23 @@ to focus its retained radios. The breadcrumb back button returns through those l
 The view remains three-dimensional at every level. Camera moves are animated unless reduced motion is enabled.
 Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
 Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
-is enabled by default, pauses during manual camera interaction, and resumes around the current level after a short idle
-period.
+is enabled by default. It favors the system or talkgroup with the most current confirmed transmitters, requires a
+candidate to lead for two seconds, holds a target for at least ten seconds, and preserves the current zoom while moving
+the orbit center. Manual camera interaction suppresses attention moves for ten seconds; reduced motion disables them.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
 selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change
 display density.
 Graph objects are not draggable, so pointer gestures remain dedicated to predictable orbit, pan, and zoom controls.
-Use the inspector to pin an entity in its current position. **Unlock saved layout** releases all pins and saved
-coordinates.
 
-Observed activity follows the newest event by default. Short bursts of routine grant and transmission observations are
-grouped while affiliation changes remain individual. Scrolling away from the newest event pauses following and keeps
-the reading position stable; the new-event control returns the drawer to the latest activity.
+Observed activity follows the newest event by default. Short bursts of routine Grant, Join, Logout, Denial, Check,
+Page, and Busy observations are grouped while emergencies and affiliation changes remain individual. Scrolling away
+from the newest event pauses following and keeps the reading position stable; the new-event control returns the drawer
+to the latest activity.
 
 **Clear map** clears this browser session's retained entities, activity history, selection, transitions, active effects,
 and comparison state and establishes a new live edge. It does not stop receivers, delete receiver history, change
-Hold/Avoid, or alter scan lists. Display settings and bounded, profile-scoped coordinates remain separate; a saved
-position is restored only after that entity is observed again.
+Hold/Avoid, or alter scan lists. Display settings remain separate.
 
 The canvas omits retained-count, offscreen-entity, and persistent gap banners so they do not cover the network. Use
 **Fit all** when activity may be outside the current camera frame. Transport loss changes the toolbar status badge to
@@ -75,8 +83,8 @@ The default profile renders at most 1,000 total nodes, 900 links, 80 labels, 150
 trails. It softly targets 100 radios per talkgroup, 1,000 radios overall, 80 expanded talkgroups, and 8 expanded
 systems. Suppressed entities are represented by explicit `+N` aggregates: known sources use retained-radio counts,
 while excess unknown or duplicate active legs are identified as call legs. Retained session state is separately bounded
-to 20,000 radios, 5,000 hubs, 64 regions, 5,000 semantic events, 40,000 deduplication entries, 100 pins, and 512 saved
-layout records. Inactive unpinned state is eligible for removal after 30 minutes and can be evicted sooner at capacity.
+to 20,000 radios, 5,000 hubs, 64 regions, 5,000 semantic events, and 40,000 deduplication entries. Inactive,
+unselected state is eligible for removal after 30 minutes and can be evicted sooner at capacity.
 
 These are guardrails, not a claim about the receiver's whole subscriber population and not a guaranteed frame rate.
 The current transport schema and loss semantics are documented in [Web API v1](api-v1.md#live-data).

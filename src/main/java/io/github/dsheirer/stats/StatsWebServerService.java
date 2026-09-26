@@ -3853,6 +3853,7 @@ public class StatsWebServerService implements AutoCloseable
 
         return new NetworkActivityEvent(event.eventId(), event.sequence(), event.sourceGeneration(),
             event.observationEpoch(), event.observedAtMs(), event.kind(), event.evidenceType(), event.outcome(),
+            event.action(), event.eventType(), event.detail(),
             radioSystemKey != null ? "radio_system" : "channel", event.configurationId(), event.channelName(),
             event.systemName(), event.siteName(), event.protocol(), event.frequencyHz(), event.timeslot(), event.site(),
             radioSystemKey, systemReference != null ? systemReference.toMap() : null,
@@ -3989,7 +3990,8 @@ public class StatsWebServerService implements AutoCloseable
 
     private record NetworkActivityEvent(String eventId, long sequence, long sourceGeneration,
                                         long observationEpoch, long observedAtMs, String kind,
-                                        String evidenceType, String outcome, String scopeKind,
+                                        String evidenceType, String outcome, String action, String eventType,
+                                        String detail, String scopeKind,
                                         String configurationId, String channelName, String systemName,
                                         String siteName, String protocol, Long frequencyHz, Integer timeslot,
                                         DecodeEventViewService.NetworkSiteView site, String radioSystemKey,

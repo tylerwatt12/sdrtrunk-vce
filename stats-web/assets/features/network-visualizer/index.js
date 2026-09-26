@@ -10,7 +10,6 @@ import {
   ingestChannelActivitySnapshot,
   markTransportGap,
   networkStateCounts,
-  setEntityPinned,
   setSelectedEntity,
   tickNetworkState
 } from './state.js';
@@ -19,21 +18,17 @@ import {
   createLayoutState,
   disposeLayout,
   resetLayoutSession,
-  restoreLayoutRecords,
-  savedLayoutRecords,
   setLayoutFrozen,
-  setLayoutPinned,
   setReducedMotion,
   stepLayout,
-  synchronizeLayout,
-  unlockLayout
+  synchronizeLayout
 } from './layout.js';
 import { createNetworkVisualizerRenderer } from './renderer.js';
 import { createNetworkVisualizerUi } from './ui.js';
 import { createNetworkVisualizerFixture } from './fixture.js';
+import { createAttentionCoordinator } from './attention.js';
 
 const STORAGE_PREFIX = 'sdrtrunk-vce.network-visualizer.v1';
-const MAXIMUM_COORDINATE = 1_000_000;
 const FIXTURE_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 function freshSubscriptionId() {
@@ -58,19 +53,6 @@ function profileStorageKey(profileKey) {
   return `${STORAGE_PREFIX}:${encodeURIComponent(String(profileKey || 'anonymous').slice(0, 128))}`;
 }
 
-function validLayoutRecord(value, profileKey = 'default') {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const key = String(value.key || '').trim().slice(0, 512);
-  const x = Number(value.x);
-  const y = Number(value.y);
-  const z = Number(value.z || 0);
-  if (!key || ![x, y, z].every((coordinate) => Number.isFinite(coordinate) &&
-      Math.abs(coordinate) <= MAXIMUM_COORDINATE)) return null;
-  const type = ['universe', 'group', 'radio', 'aggregate'].includes(value.type) ? value.type : 'radio';
-  return Object.freeze({ profileKey: String(profileKey || 'default').slice(0, 128), key, type, x, y, z,
-    pinned: value.pinned === true, updatedAtMs: Number(value.updatedAtMs) || 0 });
-}
-
 function filterSuppressedEffects(graph, suppressedEffectIds) {
   if (!graph || !suppressedEffectIds?.size || !Array.isArray(graph.effects)) return graph;
   const effects = graph.effects.filter((effect) => !suppressedEffectIds.has(effect.id));
@@ -83,21 +65,11 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
     autoRotate: config.animation?.autoRotateDefault !== false,
     filters: { affiliations: true, activity: true, quiet: true },
     softRadiosTotal: config.render.softRadiosTotal,
-    hardLabels: config.render.hardLabels,
-    positions: []
+    hardLabels: config.render.hardLabels
   };
   try {
     const raw = JSON.parse(localStorage.getItem(profileStorageKey(profileKey)) || '{}');
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return defaults;
-    const positions = (Array.isArray(raw.positions) ? raw.positions : [])
-      .map((value) => validLayoutRecord(value, profileKey)).filter(Boolean)
-      .slice(0, config.state.hardSavedLayoutRecords);
-    let pinCount = 0;
-    const boundedPositions = positions.map((record) => {
-      const pinned = record.pinned && pinCount < config.state.hardPinnedEntities;
-      if (pinned) pinCount += 1;
-      return pinned === record.pinned ? record : Object.freeze({ ...record, pinned: false });
-    });
     return {
       autoRotate: raw.autoRotate !== false,
       filters: {
@@ -107,34 +79,24 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
       },
       softRadiosTotal: boundedInteger(raw.softRadiosTotal, defaults.softRadiosTotal, 100,
         config.render.softRadiosTotal),
-      hardLabels: boundedInteger(raw.hardLabels, defaults.hardLabels, 10, config.render.hardLabels),
-      positions: boundedPositions
+      hardLabels: boundedInteger(raw.hardLabels, defaults.hardLabels, 10, config.render.hardLabels)
     };
   } catch (_error) {
     return defaults;
   }
 }
 
-function persistPreferences(profileKey, preferences, layout, config = BALANCED_CONFIG) {
+function persistPreferences(profileKey, preferences) {
   try {
-    const records = savedLayoutRecords(layout).map((value) => validLayoutRecord(value, profileKey)).filter(Boolean)
-      .slice(0, config.state.hardSavedLayoutRecords);
-    let pinCount = 0;
-    const positions = records.map((record) => {
-      const pinned = record.pinned && pinCount < config.state.hardPinnedEntities;
-      if (pinned) pinCount += 1;
-      return { ...record, pinned };
-    });
     localStorage.setItem(profileStorageKey(profileKey), JSON.stringify({
-      version: 1,
+      version: 2,
       autoRotate: preferences.autoRotate !== false,
       filters: preferences.filters,
       softRadiosTotal: preferences.softRadiosTotal,
-      hardLabels: preferences.hardLabels,
-      positions
+      hardLabels: preferences.hardLabels
     }));
   } catch (_error) {
-    // Layout persistence is optional when browser storage is unavailable or full.
+    // Display preference persistence is optional when browser storage is unavailable or full.
   }
 }
 
@@ -253,10 +215,9 @@ function createNetworkVisualizer(dependencies = {}) {
     hardLabels: preferences.hardLabels
   } });
   const state = createNetworkState(config);
+  const attention = createAttentionCoordinator();
   const reducedMotionMedia = window.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
-  const layout = createLayoutState(config, { profileKey: dependencies.profileKey,
-    reducedMotion: Boolean(reducedMotionMedia?.matches) });
-  restoreLayoutRecords(layout, preferences.positions);
+  const layout = createLayoutState(config, { reducedMotion: Boolean(reducedMotionMedia?.matches) });
   const activityTables = new Map();
   let renderer = null;
   let currentGraph = { nodes: [], links: [], counts: {} };
@@ -286,6 +247,7 @@ function createNetworkVisualizer(dependencies = {}) {
   let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
   const navigationHistory = [];
   let pendingCameraAction = null;
+  let pendingAttentionTarget = null;
   const suppressedEffectIds = new Set();
   const fixtureMode = new URLSearchParams(window.location.search).get('network_fixture') === '1' &&
     FIXTURE_HOSTS.has(window.location.hostname);
@@ -319,6 +281,8 @@ function createNetworkVisualizer(dependencies = {}) {
       onBack: () => navigateBack(),
       onAutoRotate: (value) => {
         preferences.autoRotate = Boolean(value);
+        attention.reset();
+        pendingAttentionTarget = null;
         renderer?.setAutoRotate?.(preferences.autoRotate);
         ui.setAutoRotate(preferences.autoRotate);
         schedulePersist();
@@ -333,7 +297,6 @@ function createNetworkVisualizer(dependencies = {}) {
       onClear: () => clearMap(),
       onResize: () => renderer?.resize?.(),
       onSelectionClear: () => selectEntity(null),
-      onPin: (key, value) => pinEntity(key, value),
       onDensity: (value) => {
         preferences.softRadiosTotal = boundedInteger(value.softRadiosTotal, preferences.softRadiosTotal,
           100, config.render.softRadiosTotal);
@@ -342,13 +305,6 @@ function createNetworkVisualizer(dependencies = {}) {
         renderer?.setLabelBudget?.(preferences.hardLabels);
         invalidateGraph();
         schedulePersist();
-      },
-      onUnlock: () => {
-        unlockLayout(layout);
-        [...state.visual.pinnedKeys].forEach((key) => setEntityPinned(state, key, false));
-        preferences.positions = [];
-        invalidateGraph();
-        schedulePersist(true);
       }
     }
   });
@@ -360,7 +316,7 @@ function createNetworkVisualizer(dependencies = {}) {
     if (persistTimer !== null) window.clearTimeout(persistTimer);
     persistTimer = window.setTimeout(() => {
       persistTimer = null;
-      persistPreferences(dependencies.profileKey, preferences, layout, config);
+      persistPreferences(dependencies.profileKey, preferences);
     }, immediate ? 0 : 250);
   }
 
@@ -434,6 +390,8 @@ function createNetworkVisualizer(dependencies = {}) {
       } else pushNavigationHistory(navigationScope, pose);
     }
     navigationScope = next;
+    attention.reset();
+    pendingAttentionTarget = null;
     renderer?.setNavigationScope?.(navigationScope);
     ui.setScope(scopeView());
     setSelectedEntity(state, null);
@@ -511,17 +469,6 @@ function createNetworkVisualizer(dependencies = {}) {
     selectEntity(value);
   }
 
-  function pinEntity(key, value) {
-    if (!setEntityPinned(state, key, value)) {
-      ui.showNotice(`No more than ${config.state.hardPinnedEntities} entities can be pinned.`);
-      return;
-    }
-    setLayoutPinned(layout, key, value);
-    ui.setSelection(selectedEntityView(state), selectedTransitions(state));
-    invalidateGraph();
-    schedulePersist();
-  }
-
   function initializeRenderer() {
     rendererInitialization = Promise.resolve(createNetworkVisualizerRenderer({
       host: ui.canvas,
@@ -542,7 +489,10 @@ function createNetworkVisualizer(dependencies = {}) {
         onContextRestored: () => ui.setWebglState('ready'),
         onUnavailable: (error) => ui.setWebglState('failed', error?.message ||
           'The WebGL renderer could not be initialized.'),
-        onCameraInteraction: () => { /* The renderer permanently disables automatic framing after interaction. */ }
+        onCameraInteraction: () => {
+          attention.noteManualInteraction(Date.now());
+          pendingAttentionTarget = null;
+        }
       },
       reducedMotion: Boolean(reducedMotionMedia?.matches)
     })).then((value) => {
@@ -600,6 +550,8 @@ function createNetworkVisualizer(dependencies = {}) {
     const now = Date.now();
     hadGap = true;
     suppressNextSnapshotEffects = true;
+    attention.reset();
+    pendingAttentionTarget = null;
     if (!optionsValue.stateAlreadyMarked) markTransportGap(state, detail, state.generation, now);
     suppressedEffectIds.clear();
     renderer?.clearEffects?.();
@@ -706,6 +658,8 @@ function createNetworkVisualizer(dependencies = {}) {
     navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
     navigationHistory.length = 0;
     pendingCameraAction = null;
+    attention.reset();
+    pendingAttentionTarget = null;
     renderer?.clear?.();
     renderer?.setNavigationScope?.(navigationScope);
     renderer?.setAutoRotate?.(preferences.autoRotate);
@@ -730,17 +684,6 @@ function createNetworkVisualizer(dependencies = {}) {
       reopenNetworkConnection(state.generation);
     }
     invalidateGraph();
-  }
-
-  function applySavedPins() {
-    let count = 0;
-    savedLayoutRecords(layout).forEach((record) => {
-      if (!record.pinned || count >= config.state.hardPinnedEntities || !entityForKey(state, record.key)) return;
-      if (setEntityPinned(state, record.key, true)) {
-        setLayoutPinned(layout, record.key, true);
-        count += 1;
-      }
-    });
   }
 
   function consumeEffects() {
@@ -780,11 +723,18 @@ function createNetworkVisualizer(dependencies = {}) {
     const now = Date.now();
     if (now - lastTickAt >= 250) {
       const before = networkStateCounts(state);
-      tickNetworkState(state, now);
+      const tick = tickNetworkState(state, now);
       const after = networkStateCounts(state);
       if (before.radios !== after.radios || before.groups !== after.groups ||
-          before.activeCalls !== after.activeCalls || before.pendingEffects !== after.pendingEffects) invalidateGraph();
+          before.activeCalls !== after.activeCalls || before.pendingEffects !== after.pendingEffects ||
+          tick.visualChanged) invalidateGraph();
       lastTickAt = now;
+    }
+    const attentionResult = attention.update({ state, scope: navigationScope, atMs: now,
+      autoRotate: preferences.autoRotate !== false, reducedMotion: Boolean(reducedMotionMedia?.matches) });
+    if (attentionResult.changed && attentionResult.target) {
+      pendingAttentionTarget = attentionResult.target;
+      dirty = true;
     }
     if (!document.hidden && now - lastStaticVisualRefreshAt >= 1_000 &&
         (state.universes.size || state.groups.size || state.radios.size)) {
@@ -815,7 +765,6 @@ function createNetworkVisualizer(dependencies = {}) {
     lastFrameAt = frameAt;
     if (!dirty) return;
     const now = Date.now();
-    if (graphDirty) applySavedPins();
     const selectionChanged = graphDirty;
     let searchChangedScope = false;
     if (selectionChanged) {
@@ -877,6 +826,11 @@ function createNetworkVisualizer(dependencies = {}) {
     } else {
       renderer?.refresh?.();
     }
+    if (pendingAttentionTarget) {
+      const target = pendingAttentionTarget;
+      pendingAttentionTarget = null;
+      queueMicrotask(() => renderer?.steerOrbitTarget?.([target.targetKey, ...(target.centroidKeys || [])]));
+    }
     dirty = graphDirty || (!frozen && !layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
   }
 
@@ -900,6 +854,8 @@ function createNetworkVisualizer(dependencies = {}) {
     setReducedMotion(layout, reduced);
     renderer?.setReducedMotion?.(reduced);
     ui.setReducedMotion(reduced);
+    attention.reset();
+    pendingAttentionTarget = null;
     invalidateGraph();
   }
 
@@ -977,7 +933,7 @@ function createNetworkVisualizer(dependencies = {}) {
       ingestionTimer = null;
       persistTimer = null;
       raf = null;
-      persistPreferences(dependencies.profileKey, preferences, layout, config);
+      persistPreferences(dependencies.profileKey, preferences);
       channelConnection?.close?.();
       networkConnection?.close?.();
       channelConnection = null;

@@ -52,6 +52,8 @@ import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -1420,12 +1422,12 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac.getOpcode() == MacOpcode.PHASE1_67_DENY_RESPONSE && mac instanceof DenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+            broadcast(message, mac, DecodeEventType.DENIAL, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
                     dr.getDenyReason() + ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo());
         }
         else if(mac.getOpcode() == MacOpcode.MOTOROLA_A7_DENY_RESPONSE && mac instanceof MotorolaDenyResponse dr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
+            broadcast(message, mac, DecodeEventType.DENIAL, DENY_LABEL + dr.getDeniedServiceType() + REASON_LABEL +
                     dr.getDenyReason() + (dr.hasAdditionalInformation() ? ADDITIONAL_INFO_LABEL + dr.getAdditionalInfo() : ""));
         }
     }
@@ -1440,21 +1442,27 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             case PHASE1_64_EXTENDED_FUNCTION_COMMAND_ABBREVIATED:
                 if(mac instanceof ExtendedFunctionCommandAbbreviated efc)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                    broadcast(message, mac, P25SignalingSemantics.eventType(efc.getExtendedFunction(),
+                            DecodeEventType.COMMAND),
+                            EXTENDED_FUNCTION_LABEL +
                             efc.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efc.getArguments());
                 }
                 break;
             case PHASE1_E4_EXTENDED_FUNCTION_COMMAND_EXTENDED_VCH:
                 if(mac instanceof ExtendedFunctionCommandExtendedVCH efce)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                    broadcast(message, mac, P25SignalingSemantics.eventType(efce.getExtendedFunction(),
+                            DecodeEventType.COMMAND),
+                            EXTENDED_FUNCTION_LABEL +
                             efce.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efce.getArguments());
                 }
                 break;
             case PHASE1_E5_EXTENDED_FUNCTION_COMMAND_EXTENDED_LCCH:
                 if(mac instanceof ExtendedFunctionCommandExtendedLCCH efce)
                 {
-                    broadcast(message, mac, DecodeEventType.COMMAND, EXTENDED_FUNCTION_LABEL +
+                    broadcast(message, mac, P25SignalingSemantics.eventType(efce.getExtendedFunction(),
+                            DecodeEventType.COMMAND),
+                            EXTENDED_FUNCTION_LABEL +
                             efce.getExtendedFunction() + EXTENDED_FUNCTION_ARGUMENTS_LABEL + efce.getArguments());
                 }
                 break;
@@ -1545,13 +1553,31 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     {
         if(mac.getOpcode() == MacOpcode.PHASE1_61_QUEUED_RESPONSE && mac instanceof QueuedResponse qr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, QUEUED_LABEL + qr.getQueuedResponseServiceType() +
-                    REASON_LABEL + qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo());
+            String details = QUEUED_LABEL + qr.getQueuedResponseServiceType() + REASON_LABEL +
+                qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo();
+
+            if(P25SignalingSemantics.isBusy(qr.getQueuedResponseReason()))
+            {
+                broadcastBusy(message, mac, details);
+            }
+            else
+            {
+                broadcast(message, mac, DecodeEventType.RESPONSE, details);
+            }
         }
         else if(mac.getOpcode() == MacOpcode.MOTOROLA_A6_QUEUED_RESPONSE && mac instanceof MotorolaQueuedResponse qr)
         {
-            broadcast(message, mac, DecodeEventType.RESPONSE, QUEUED_LABEL + qr.getQueuedResponseServiceType() +
-                    REASON_LABEL + qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo());
+            String details = QUEUED_LABEL + qr.getQueuedResponseServiceType() + REASON_LABEL +
+                qr.getQueuedResponseReason() + ADDITIONAL_INFO_LABEL + qr.getAdditionalInfo();
+
+            if(P25SignalingSemantics.isBusy(qr.getQueuedResponseReason()))
+            {
+                broadcastBusy(message, mac, details);
+            }
+            else
+            {
+                broadcast(message, mac, DecodeEventType.RESPONSE, details);
+            }
         }
     }
 
@@ -1964,6 +1990,18 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 .identifiers(mic)
                 .timeslot(getTimeslot())
                 .build());
+    }
+
+    private void broadcastBusy(MacMessage message, MacStructure structure, String details)
+    {
+        MutableIdentifierCollection identifiers = getUpdatedMutableIdentifierCollection(structure);
+        P25SignalingEvent event = new P25SignalingEvent(DecodeEventType.RESPONSE, message.getTimestamp(),
+            P25SignalingSemantics.Action.BUSY);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(identifiers);
+        event.setTimeslot(getTimeslot());
+        broadcast(event);
     }
 
     /**

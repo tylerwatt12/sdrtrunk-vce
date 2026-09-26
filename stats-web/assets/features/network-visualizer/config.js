@@ -28,8 +28,6 @@ const BALANCED_DEFAULTS = {
     hardTransitionsPerRadio: 20,
     hardDedupeEntries: 40_000,
     dedupeTtlMs: 30 * 60_000,
-    hardPinnedEntities: 100,
-    hardSavedLayoutRecords: 512,
     inactiveRetentionMs: 30 * 60_000,
     hardSiteEvidencePerEntity: 16,
     hardActiveCalls: 4_096,
@@ -54,7 +52,10 @@ const BALANCED_DEFAULTS = {
     maximumDeltaMs: 50
   },
   animation: {
+    txGreenHoldMs: 1_000,
     txReleaseMs: 2_400,
+    signalHoldMs: 6_000,
+    emergencyHoldMs: 12_000,
     pulseDurationMs: 700,
     particleFlightMs: 1_500,
     migrationMotionMs: 1_400,
@@ -179,9 +180,6 @@ function validateConfig(candidate) {
       'hardTransitionsPerRadio'),
     hardDedupeEntries: integer(candidate.state.hardDedupeEntries, 1, 500_000, 'hardDedupeEntries'),
     dedupeTtlMs: integer(candidate.state.dedupeTtlMs, 1_000, 24 * 60 * 60_000, 'dedupeTtlMs'),
-    hardPinnedEntities: integer(candidate.state.hardPinnedEntities, 0, 10_000, 'hardPinnedEntities'),
-    hardSavedLayoutRecords: integer(candidate.state.hardSavedLayoutRecords, 0, 25_000,
-      'hardSavedLayoutRecords'),
     inactiveRetentionMs: integer(candidate.state.inactiveRetentionMs, 1_000, 7 * 24 * 60 * 60_000,
       'inactiveRetentionMs'),
     hardSiteEvidencePerEntity: integer(candidate.state.hardSiteEvidencePerEntity, 1, 1_000,
@@ -217,7 +215,10 @@ function validateConfig(candidate) {
   }
 
   const animation = {
+    txGreenHoldMs: integer(candidate.animation.txGreenHoldMs, 0, 30_000, 'txGreenHoldMs'),
     txReleaseMs: integer(candidate.animation.txReleaseMs, 0, 30_000, 'txReleaseMs'),
+    signalHoldMs: integer(candidate.animation.signalHoldMs, 0, 60_000, 'signalHoldMs'),
+    emergencyHoldMs: integer(candidate.animation.emergencyHoldMs, 0, 60_000, 'emergencyHoldMs'),
     pulseDurationMs: integer(candidate.animation.pulseDurationMs, 0, 10_000, 'pulseDurationMs'),
     particleFlightMs: integer(candidate.animation.particleFlightMs, 100, 10_000, 'particleFlightMs'),
     migrationMotionMs: integer(candidate.animation.migrationMotionMs, 0, 30_000, 'migrationMotionMs'),
@@ -232,6 +233,9 @@ function validateConfig(candidate) {
   };
   if (animation.migrationMotionMs > render.migrationTrailTtlMs) {
     throw new TypeError('migrationMotionMs cannot exceed migrationTrailTtlMs.');
+  }
+  if (animation.emergencyHoldMs < animation.signalHoldMs) {
+    throw new TypeError('emergencyHoldMs cannot be less than signalHoldMs.');
   }
 
   return deepFreeze({ profile: 'balanced', render, state, layout, animation });

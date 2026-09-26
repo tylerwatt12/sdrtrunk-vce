@@ -44,6 +44,7 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -822,6 +823,18 @@ class ReceiverActivityMapper
 
     private static ReceiverActivityRecords.Action normalizeAction(IDecodeEvent event, DecoderType decoderType)
     {
+        if(event instanceof P25SignalingEvent signalingEvent)
+        {
+            return switch(signalingEvent.getAction())
+            {
+                case BUSY -> ReceiverActivityRecords.Action.BUSY;
+                case CHECK -> ReceiverActivityRecords.Action.CHECK;
+                case DENIAL -> ReceiverActivityRecords.Action.DENIAL;
+                case EMERGENCY -> ReceiverActivityRecords.Action.EMERGENCY;
+                case PAGE -> ReceiverActivityRecords.Action.PAGE;
+            };
+        }
+
         if(event instanceof P25AffiliationEvent affiliationEvent)
         {
             return switch(affiliationEvent.getOutcome())

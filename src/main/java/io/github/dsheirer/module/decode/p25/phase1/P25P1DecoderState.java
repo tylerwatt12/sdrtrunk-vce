@@ -60,6 +60,8 @@ import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25SignalingEvent;
+import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -681,6 +683,19 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 .build());
     }
 
+    private void broadcastBusyEvent(TSBKMessage message, String details)
+    {
+        MutableIdentifierCollection identifiers = getMutableIdentifierCollection(message.getIdentifiers(),
+            message.getTimestamp());
+        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(identifiers);
+        P25SignalingEvent event = new P25SignalingEvent(DecodeEventType.RESPONSE, message.getTimestamp(),
+            P25SignalingSemantics.Action.BUSY);
+        event.setChannelDescriptor(getCurrentChannel());
+        event.setDetails(details);
+        event.setIdentifierCollection(identifiers);
+        broadcast(event);
+    }
+
     private void broadcastAffiliation(List<Identifier> identifiers, long timestamp, DecodeEventType eventType,
                                       String details, P25AffiliationEvent.Outcome outcome, Identifier<?> radio,
                                       Identifier<?> talkgroup)
@@ -733,7 +748,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     }
                     break;
                 case ISP_CALL_ALERT_REQUEST:
-                    broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(ambtc.getIdentifiers(), ambtc.getTimestamp(), DecodeEventType.PAGE,
                             CALL_ALERT_LABEL);
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
@@ -1706,7 +1721,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                             "RADIO UNIT MONITOR");
                     break;
                 case ISP_CALL_ALERT_REQUEST:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.PAGE,
                             CALL_ALERT_LABEL);
                     break;
                 case ISP_UNIT_ACKNOWLEDGE_RESPONSE:
@@ -1727,12 +1742,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case ISP_EXTENDED_FUNCTION_RESPONSE:
                     if(tsbk instanceof ExtendedFunctionResponse efr)
                     {
-                        broadcastEvent(tsbk, DecodeEventType.RESPONSE, "EXTENDED FUNCTION:" +
+                        broadcastEvent(tsbk, P25SignalingSemantics.eventType(efr.getExtendedFunction(),
+                                DecodeEventType.RESPONSE),
+                                "EXTENDED FUNCTION:" +
                                 efr.getExtendedFunction() + ARGUMENTS_LABEL + efr.getArguments());
                     }
                     break;
                 case ISP_EMERGENCY_ALARM_REQUEST:
-                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.REQUEST,
+                    broadcastEvent(tsbk.getIdentifiers(), tsbk.getTimestamp(), DecodeEventType.EMERGENCY,
                             "EMERGENCY ALARM");
                     break;
                 case ISP_GROUP_AFFILIATION_REQUEST:
@@ -1970,13 +1987,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof DenyResponse dr)
         {
-            broadcastEvent(tsbk, DecodeEventType.RESPONSE,
- 		"DENY: " + dr.getDeniedServiceType().getDescription() +
+            broadcastEvent(tsbk, DecodeEventType.DENIAL,
+                "DENY: " + dr.getDeniedServiceType().getDescription() +
                     REASON_LABEL + dr.getDenyReason() + " - INFO: " + dr.getAdditionalInfo());
         }
         else if(tsbk instanceof MotorolaDenyResponse mdr)
         {
-            broadcastEvent(tsbk, DecodeEventType.RESPONSE, "DENY: " + mdr.getDeniedServiceType().getDescription()
+            broadcastEvent(tsbk, DecodeEventType.DENIAL, "DENY: " + mdr.getDeniedServiceType().getDescription()
                     + REASON_LABEL + mdr.getDenyReason() + " - INFO: " + mdr.getAdditionalInfo());
         }
     }
@@ -1985,7 +2002,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof ExtendedFunctionCommand efc)
         {
-            broadcastEvent(tsbk, DecodeEventType.COMMAND, "FUNCTION: " + efc.getExtendedFunction() +
+            broadcastEvent(tsbk, P25SignalingSemantics.eventType(efc.getExtendedFunction(), DecodeEventType.COMMAND),
+                    "FUNCTION: " + efc.getExtendedFunction() +
                     ARGUMENTS_LABEL + efc.getArguments());
         }
         else if(tsbk instanceof MotorolaExtendedFunctionCommand mefc)
@@ -2015,14 +2033,31 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof QueuedResponse qr)
         {
-            broadcastEvent(tsbk, DecodeEventType.RESPONSE, "QUEUED: " +
-                    qr.getQueuedResponseServiceType().getDescription() + REASON_LABEL + qr.getQueuedResponseReason() +
-                    " INFO: " + qr.getAdditionalInfo());
+            String details = "QUEUED: " + qr.getQueuedResponseServiceType().getDescription() + REASON_LABEL +
+                qr.getQueuedResponseReason() + " INFO: " + qr.getAdditionalInfo();
+
+            if(P25SignalingSemantics.isBusy(qr.getQueuedResponseReason()))
+            {
+                broadcastBusyEvent(tsbk, details);
+            }
+            else
+            {
+                broadcastEvent(tsbk, DecodeEventType.RESPONSE, details);
+            }
         }
         else if(tsbk instanceof MotorolaQueuedResponse mqr)
         {
-            broadcastEvent(tsbk, DecodeEventType.RESPONSE, "QUEUED: " + mqr.getQueuedServiceType().getDescription() +
-                    REASON_LABEL + mqr.getQueuedResponseReason() + " INFO: " + mqr.getAdditionalInfo());
+            String details = "QUEUED: " + mqr.getQueuedServiceType().getDescription() + REASON_LABEL +
+                mqr.getQueuedResponseReason() + " INFO: " + mqr.getAdditionalInfo();
+
+            if(P25SignalingSemantics.isBusy(mqr.getQueuedResponseReason()))
+            {
+                broadcastBusyEvent(tsbk, details);
+            }
+            else
+            {
+                broadcastEvent(tsbk, DecodeEventType.RESPONSE, details);
+            }
         }
     }
 
@@ -2308,7 +2343,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case EXTENDED_FUNCTION_COMMAND:
                 if(lcw instanceof LCExtendedFunctionCommand efc)
                 {
-                    broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.COMMAND, "Function: " +
+                    broadcastEvent(lcw.getIdentifiers(), timestamp,
+                            P25SignalingSemantics.eventType(efc.getExtendedFunction(), DecodeEventType.COMMAND),
+                            "Function: " +
                             efc.getExtendedFunction() +
                             " Arguments:" + efc.getExtendedFunctionArguments());
                 }
@@ -2316,7 +2353,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case EXTENDED_FUNCTION_COMMAND_EXTENDED:
                 if(lcw instanceof LCExtendedFunctionCommandExtended efce)
                 {
-                    broadcastEvent(lcw.getIdentifiers(), timestamp, DecodeEventType.COMMAND, "Function: " +
+                    broadcastEvent(lcw.getIdentifiers(), timestamp,
+                            P25SignalingSemantics.eventType(efce.getExtendedFunction(), DecodeEventType.COMMAND),
+                            "Function: " +
                             efce.getExtendedFunction() + " Arguments:" + efce.getExtendedFunctionArguments());
                 }
                 break;
