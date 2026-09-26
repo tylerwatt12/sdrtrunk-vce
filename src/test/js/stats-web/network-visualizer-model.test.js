@@ -150,7 +150,7 @@ async function main() {
   assert.throws(() => config.createConfig({ render: { migrationTrailTtlMs: 8_001 } }),
     /migrationTrailTtlMs is invalid/);
 
-  // Legacy saved coordinates and pin fields are ignored while display preferences continue to load.
+  // Legacy saved coordinates, filters, and pin fields are ignored while camera and density preferences migrate.
   const storage = new Map();
   global.localStorage = {
     getItem: (key) => storage.get(key) || null,
@@ -165,12 +165,17 @@ async function main() {
     positions: [{ key: 'legacy-radio', x: 1, y: 2, z: 3, pinned: true }]
   }));
   const legacyPreferences = entrypoint.loadPreferences('legacy-layout', config.BALANCED_CONFIG);
-  assert.equal(legacyPreferences.autoRotate, false);
+  assert.equal(legacyPreferences.cameraMode, 'manual');
   assert.equal(legacyPreferences.softRadiosTotal, 500);
+  assert.equal(Object.hasOwn(legacyPreferences, 'autoRotate'), false);
+  assert.equal(Object.hasOwn(legacyPreferences, 'filters'), false);
   assert.equal(Object.hasOwn(legacyPreferences, 'positions'), false);
   entrypoint.persistPreferences('legacy-layout', legacyPreferences);
   const persistedPreferences = JSON.parse(storage.get(legacyStorageKey));
-  assert.equal(persistedPreferences.version, 2);
+  assert.equal(persistedPreferences.version, 3);
+  assert.equal(persistedPreferences.cameraMode, 'manual');
+  assert.equal(Object.hasOwn(persistedPreferences, 'autoRotate'), false);
+  assert.equal(Object.hasOwn(persistedPreferences, 'filters'), false);
   assert.equal(Object.hasOwn(persistedPreferences, 'positions'), false);
   delete global.localStorage;
   assert.throws(() => config.createConfig({ render: { migrationTrailTtlMs: 1_000 } }),

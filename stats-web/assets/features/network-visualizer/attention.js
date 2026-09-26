@@ -285,6 +285,12 @@ function createAttentionCoordinator(options = {}) {
     return result('shot', true, current, reason);
   }
 
+  function visualTargetSignature(target) {
+    if (!target) return '';
+    return [target.attentionKind, ...(target.universeKeys || []), ...(target.groupKeys || []),
+      ...(target.radioKeys || [])].join('|');
+  }
+
   function noteManualInteraction(atMs) {
     const now = finiteTime(atMs);
     suppressedUntilMs = Math.max(suppressedUntilMs, now + settings.manualCooldownMs);
@@ -332,6 +338,14 @@ function createAttentionCoordinator(options = {}) {
       if (shouldPreempt) return shot(importantLeader, now, 'important_event');
       return result('hold', false, current,
         current.attentionKind === 'grant' ? 'routine_hold' : 'event_hold');
+    }
+
+    if (current?.attentionKind === 'grant' && leader?.attentionKind === 'grant' &&
+        visualTargetSignature(current) === visualTargetSignature(leader)) {
+      current = leader;
+      currentSinceMs = now;
+      holdUntilMs = now + settings.routineHoldMs;
+      return result('hold', false, current, 'unchanged_active_set');
     }
 
     clearShot();

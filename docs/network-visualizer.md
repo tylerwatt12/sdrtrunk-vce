@@ -56,22 +56,28 @@ The 3D overview begins with observed systems only. Select a system to enter its 
 to focus its retained radios. The breadcrumb back button returns through those levels without replacing the canvas.
 The view remains three-dimensional at every level. Camera moves are animated unless reduced motion is enabled.
 Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
-Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
-is enabled by default. The opening view keeps every observed universe in focus for four seconds, then enters the
+Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level.
+
+**Auto** is the default camera mode. The opening view keeps every observed universe in focus for four seconds, then enters the
 system with the most current confirmed calls, falling back to the most active system retained in this viewing session.
 Depth fog begins only inside a system.
 
 The automatic camera has one bounded cycle: a centered wide idle orbit, an activity shot, a six-second hang, then a
 centered zoom-out before idle orbit resumes. One confirmed Grant gets a close shot; concurrent Grants are framed
-together from their talkgroups and known source radios. The camera aims first and then dollies, and both its viewpoint
-and target remain inside the enclosing system sphere. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and
+together from their talkgroups and known source radios. The camera moves its viewpoint and aim together on one eased
+path, and both remain inside the enclosing system sphere. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and
 confirmed affiliation-change events rank above routine Grants and can preempt a routine hang. New routine Grants wait
-for the current hang to finish instead of making the camera chase each update. Actual manual orbit, pan, or zoom and
-explicit Fit/Focus actions suppress automatic camera moves for ten seconds. Reduced motion disables automatic moves.
+for the current hang to finish instead of making the camera chase each update. An unchanged active set extends the
+same shot rather than restarting its animation. Mouse orbit, pan, or zoom temporarily overrides Auto for ten seconds.
+Reduced motion disables automatic moves.
 
-Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
-selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change
-display density.
+**Manual** disables automatic framing and rotation. With the canvas focused, W/S move forward and backward, A/D
+strafe, and the arrow keys turn the camera; drag still orbits and the wheel still zooms. An on-canvas guide appears
+only in Manual mode. Explicit system, talkgroup, and breadcrumb navigation remains animated because it is directly
+requested by the operator.
+
+The compact toolbar switches Auto/Manual mode, opens the bounded **Observed activity** drawer, clears the live map,
+enters fullscreen, and changes display density.
 Graph objects are not draggable, so pointer gestures remain dedicated to predictable orbit, pan, and zoom controls.
 
 Observed activity follows the newest event by default. Short bursts of routine Grant, Join, Logout, Denial, Check,
@@ -83,8 +89,8 @@ to the latest activity.
 and comparison state and establishes a new live edge. It does not stop receivers, delete receiver history, change
 Hold/Avoid, or alter scan lists. Display settings remain separate.
 
-The canvas omits retained-count, offscreen-entity, and persistent gap banners so they do not cover the network. Use
-**Fit all** when activity may be outside the current camera frame. Transport loss changes the toolbar status badge to
+The canvas omits retained-count, offscreen-entity, and persistent gap banners so they do not cover the network.
+Transport loss changes the toolbar status badge to
 **Live gap**; active indicators become uncertain and stop, and the view never animates across the missing interval.
 Rendering pauses while the tab is hidden, while bounded live-state ingestion continues without an animation backlog.
 

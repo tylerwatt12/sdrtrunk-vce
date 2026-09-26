@@ -9,13 +9,17 @@ const SYSTEM_CAMERA_RADIUS = 0.88;
 const SYSTEM_MAX_ORBIT_RADIUS = 0.78;
 const ROBOT_CAMERA_TRANSITION_MS = 900;
 const AUTOMATIC_CAMERA_MODES = new Set(['roam', 'shot', 'hold', 'manual', 'disabled']);
+const CAMERA_CONTROL_MODES = new Set(['auto', 'manual']);
 const DEFAULT_ANIMATION = Object.freeze({
   particleFlightMs: 1_500,
   effectCoalesceMs: 2_200,
   cameraTransitionMs: 720,
   cameraBackTransitionMs: 620,
   autoRotateIdleDelayMs: 1_500,
-  autoRotateSpeed: 0.35
+  autoRotateSpeed: 0.35,
+  manualMoveSpeed: 160,
+  manualRotateSpeed: 1.25,
+  manualResponse: 12
 });
 
 let vendorPromise = null;
@@ -264,7 +268,7 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     available: false, disposed, layoutOwner: 'external', mode: '3d', frozen: false,
     nodes: 0, links: 0, labels: 0, steadyParticles: 0, pendingParticles: 0,
     animatedEffects: 0, contextLost: false, paused: false, autoRotateRequested: false,
-    autoRotateEffective: false, automaticCameraMode: 'disabled',
+    autoRotateEffective: false, automaticCameraMode: 'disabled', cameraControlMode: 'auto',
     scope: { level: 'overview', universeKey: '', groupKey: '' }, camera: null, rendererMemory: null, limits: {}
   });
   const dispose = () => {
@@ -282,7 +286,8 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     steerOrbitTarget: () => false,
     pulse: () => false, frameScope: () => false, getCameraPose: () => null,
     restoreCameraPose: () => false, setNavigationScope: (value = {}) => value, setAutoRotate: Boolean,
-    setAutomaticCameraMode: (value) => value,
+    setAutomaticCameraMode: (value) => value, setCameraControlMode: (value) => value,
+    moveManualCamera: () => false,
     setPalette: () => {}, setReducedMotion: Boolean, setLabelBudget: () => 0,
     setParticleBudget: () => 0, clearEffects: () => {}, clear: () => {}, enterFullscreen: async () => false,
     exitFullscreen: async () => false, diagnostics, dispose
@@ -334,8 +339,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let paused = false;
   let contextLost = false;
   let autoRotateRequested = options.autoRotate ?? animation.autoRotateDefault ?? true;
-  let autoRotatePaused = false;
   let automaticCameraMode = 'roam';
+  let cameraControlMode = CAMERA_CONTROL_MODES.has(options.cameraControlMode) ? options.cameraControlMode : 'auto';
   let controlsInteracting = false;
   let interactionStartPose = null;
   let programmaticCamera = false;
@@ -348,6 +353,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let particleAllocation = new Map();
   let labelFrame = null;
   let cameraTweenFrame = null;
+  let cameraTweenDestination = '';
+  let cameraTweenControlState = null;
   let effectTimer = null;
   let initialFrameScheduled = false;
   let nextPulseId = 1;
@@ -355,6 +362,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let resizeFallback = null;
   let themeObserver = null;
   let mediaQuery = null;
+  const manualMotion = { forward: 0, right: 0, up: 0, yaw: 0, pitch: 0 };
 
   const renderNodes = new Map();
   const renderLinks = new Map();
@@ -953,8 +961,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function updateAutoRotate() {
     if (!controls) return false;
-    const effective = Boolean(autoRotateRequested && automaticCameraMode === 'roam' && !controlsInteracting &&
-      !autoRotatePaused && !programmaticCamera &&
+    const effective = Boolean(cameraControlMode === 'auto' && autoRotateRequested &&
+      automaticCameraMode === 'roam' && !controlsInteracting && !programmaticCamera &&
       !prefersReducedMotion() && !documentValue.hidden && renderNodes.size);
     controls.autoRotate = effective;
     controls.autoRotateSpeed = animation.autoRotateSpeed;
@@ -964,14 +972,22 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function scheduleAutoRotateResume() {
-    autoRotatePaused = false;
     updateAutoRotate();
+  }
+
+  function restoreTweenControls() {
+    if (!controls || !cameraTweenControlState) return;
+    controls.enabled = cameraTweenControlState.enabled;
+    controls.enableDamping = cameraTweenControlState.enableDamping;
+    cameraTweenControlState = null;
   }
 
   function stopCameraTween({ resume = true } = {}) {
     if (cameraTweenFrame !== null) cancelAnimationFrame(cameraTweenFrame);
     cameraTweenFrame = null;
+    cameraTweenDestination = '';
     programmaticCamera = false;
+    restoreTweenControls();
     if (resume) scheduleAutoRotateResume();
     else updateAutoRotate();
   }
@@ -1006,43 +1022,62 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs, optionsValue = {}) {
-    if (!graph || disposed || !controls) return false;
+    if (!graph || disposed || !controls || cameraControlMode === 'manual' && optionsValue.force !== true) return false;
+    if (cameraControlMode === 'manual') resetManualMotion();
+    const requestedPosition = { x: finite(position?.x), y: finite(position?.y), z: finite(position?.z) };
+    const requestedTarget = { x: finite(target?.x), y: finite(target?.y), z: finite(target?.z) };
+    const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
+    const destination = system?.scopeLevel === 'system' ?
+      containedSystemPose(system, requestedTarget, requestedPosition) :
+      { position: requestedPosition, target: requestedTarget };
+    const signature = [destination.position.x, destination.position.y, destination.position.z,
+      destination.target.x, destination.target.y, destination.target.z].map((value) => value.toFixed(3)).join(':');
+    if (cameraTweenFrame !== null && signature === cameraTweenDestination) return true;
     stopCameraTween({ resume: false });
-    autoRotatePaused = true;
     programmaticCamera = true;
     updateAutoRotate();
     const camera = graph.camera();
+    cameraTweenControlState = { enabled: controls.enabled !== false, enableDamping: controls.enableDamping !== false };
+    controls.autoRotate = false;
+    controls.enableDamping = false;
+    controls.enabled = false;
     const fromPosition = { x: finite(camera.position.x), y: finite(camera.position.y), z: finite(camera.position.z) };
     const fromTarget = { x: finite(controls.target.x), y: finite(controls.target.y), z: finite(controls.target.z) };
-    const toPosition = { x: finite(position?.x), y: finite(position?.y), z: finite(position?.z) };
-    const toTarget = { x: finite(target?.x), y: finite(target?.y), z: finite(target?.z) };
+    const toPosition = destination.position;
+    const toTarget = destination.target;
+    const positionGap = Math.hypot(toPosition.x - fromPosition.x, toPosition.y - fromPosition.y,
+      toPosition.z - fromPosition.z);
+    const targetGap = Math.hypot(toTarget.x - fromTarget.x, toTarget.y - fromTarget.y,
+      toTarget.z - fromTarget.z);
     const duration = prefersReducedMotion() ? 0 : Math.max(0, finite(requestedDuration));
     const apply = (progress) => {
-      const staged = optionsValue.staged === true;
-      const targetProgress = easeInOutCubic(staged ? clamp(progress / 0.62, 0, 1) : progress);
-      const positionProgress = easeInOutCubic(staged ? clamp((progress - 0.18) / 0.82, 0, 1) : progress);
-      camera.position.set(fromPosition.x + (toPosition.x - fromPosition.x) * positionProgress,
-        fromPosition.y + (toPosition.y - fromPosition.y) * positionProgress,
-        fromPosition.z + (toPosition.z - fromPosition.z) * positionProgress);
-      controls.target.set(fromTarget.x + (toTarget.x - fromTarget.x) * targetProgress,
-        fromTarget.y + (toTarget.y - fromTarget.y) * targetProgress,
-        fromTarget.z + (toTarget.z - fromTarget.z) * targetProgress);
+      const eased = easeInOutCubic(progress);
+      camera.position.set(fromPosition.x + (toPosition.x - fromPosition.x) * eased,
+        fromPosition.y + (toPosition.y - fromPosition.y) * eased,
+        fromPosition.z + (toPosition.z - fromPosition.z) * eased);
+      controls.target.set(fromTarget.x + (toTarget.x - fromTarget.x) * eased,
+        fromTarget.y + (toTarget.y - fromTarget.y) * eased,
+        fromTarget.z + (toTarget.z - fromTarget.z) * eased);
       camera.lookAt?.(controls.target);
-      controls.update?.();
       scheduleLabels();
     };
-    if (!duration) {
+    if (!duration || positionGap < 0.025 && targetGap < 0.025) {
       apply(1);
       programmaticCamera = false;
+      cameraTweenDestination = '';
+      restoreTweenControls();
       applyScopeCameraLimit();
       scheduleAutoRotateResume();
       return true;
     }
+    cameraTweenDestination = signature;
     const startedAt = performance.now();
     const frame = (at) => {
       cameraTweenFrame = null;
       if (disposed || documentValue.hidden) {
         programmaticCamera = false;
+        cameraTweenDestination = '';
+        restoreTweenControls();
         updateAutoRotate();
         return;
       }
@@ -1051,6 +1086,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (progress < 1) cameraTweenFrame = requestAnimationFrame(frame);
       else {
         programmaticCamera = false;
+        cameraTweenDestination = '';
+        restoreTweenControls();
         applyScopeCameraLimit();
         scheduleAutoRotateResume();
       }
@@ -1079,7 +1116,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function frameScope(optionsValue = {}) {
-    if (!graph || disposed || !renderNodes.size) return false;
+    if (!graph || disposed || !renderNodes.size ||
+        cameraControlMode === 'manual' && optionsValue.force !== true) return false;
     const keys = Array.isArray(optionsValue.keys) ? new Set(optionsValue.keys.map(String)) : null;
     const nodes = [...renderNodes.values()].filter((node) => node.visible !== false &&
       (!keys || keys.has(nodeKey(node))));
@@ -1096,7 +1134,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       const distance = clamp(radius * 0.62, Math.min(96, radius * 0.32), radius * 0.72);
       return tweenCamera({ x: center.x + direction.x * distance,
         y: center.y + direction.y * distance, z: center.z + direction.z * distance },
-      center, optionsValue.duration ?? animation.cameraTransitionMs);
+      center, optionsValue.duration ?? Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
+      { force: optionsValue.force === true });
     }
     const bounds = scopeBounds(nodes);
     if (!bounds) return false;
@@ -1114,18 +1153,19 @@ async function createNetworkVisualizerRenderer(options = {}) {
     }
     return tweenCamera({ x: bounds.center.x + direction.x * distance,
       y: bounds.center.y + direction.y * distance, z: bounds.center.z + direction.z * distance },
-    bounds.center, optionsValue.duration ?? animation.cameraTransitionMs);
+    bounds.center, optionsValue.duration ?? Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
+    { force: optionsValue.force === true });
   }
 
-  const fitAll = (duration = animation.cameraTransitionMs, padding = 24) =>
-    frameScope({ duration, padding: 1 + Math.max(0, finite(padding, 24)) / 260 });
-  function focus(keyOrNode, duration = animation.cameraTransitionMs) {
+  const fitAll = (duration = animation.cameraTransitionMs, padding = 24, optionsValue = {}) =>
+    frameScope({ ...optionsValue, duration, padding: 1 + Math.max(0, finite(padding, 24)) / 260 });
+  function focus(keyOrNode, duration = animation.cameraTransitionMs, optionsValue = {}) {
     const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
-    return renderNodes.has(key) ? frameScope({ keys: [key], duration, padding: 1.3 }) : false;
+    return renderNodes.has(key) ? frameScope({ ...optionsValue, keys: [key], duration, padding: 1.3 }) : false;
   }
   function frameActivity(keys, duration = Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
-      fallbackKey = '') {
-    if (!graph || !controls || disposed) return false;
+      fallbackKey = '', optionsValue = {}) {
+    if (!graph || !controls || disposed || cameraControlMode === 'manual' && optionsValue.force !== true) return false;
     let requested = [...new Set((Array.isArray(keys) ? keys : [keys]).map((key) => String(key || '')))]
       .map((key) => renderNodes.get(key)).filter((node) => node?.visible !== false);
     if (!requested.length && fallbackKey) {
@@ -1160,12 +1200,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
     let position = { x: target.x + direction.x * distance, y: target.y + direction.y * distance,
       z: target.z + direction.z * distance };
     if (system) ({ target, position } = containedSystemPose(system, target, position));
-    return tweenCamera(position, target, duration, { staged: true });
+    return tweenCamera(position, target, duration, { force: optionsValue.force === true });
   }
   const steerOrbitTarget = (keys, duration = Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
-    fallbackKey = '') => frameActivity(keys, duration, fallbackKey);
-  const restoreCameraPose = (pose, duration = animation.cameraBackTransitionMs) =>
-    pose?.position && pose?.target ? tweenCamera(pose.position, pose.target, duration) : false;
+    fallbackKey = '', optionsValue = {}) => frameActivity(keys, duration, fallbackKey, optionsValue);
+  const restoreCameraPose = (pose, duration = animation.cameraBackTransitionMs, optionsValue = {}) =>
+    pose?.position && pose?.target ? tweenCamera(pose.position, pose.target, duration, optionsValue) : false;
 
   function setNavigationScope(value = {}) {
     const level = value.level === 'group' || value.level === 'talkgroup' ? 'group' :
@@ -1179,16 +1219,111 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
   function setAutoRotate(value) {
     autoRotateRequested = Boolean(value);
-    autoRotatePaused = false;
     updateAutoRotate();
     return autoRotateRequested;
   }
   function setAutomaticCameraMode(value) {
     const mode = String(value || 'roam').toLowerCase();
     automaticCameraMode = AUTOMATIC_CAMERA_MODES.has(mode) ? mode : 'roam';
-    autoRotatePaused = automaticCameraMode !== 'roam';
     updateAutoRotate();
     return automaticCameraMode;
+  }
+  function resetManualMotion() {
+    for (const key of Object.keys(manualMotion)) manualMotion[key] = 0;
+  }
+  function setCameraControlMode(value) {
+    const mode = String(value || 'auto').toLowerCase();
+    const next = CAMERA_CONTROL_MODES.has(mode) ? mode : 'auto';
+    if (next === cameraControlMode) {
+      updateAutoRotate();
+      return cameraControlMode;
+    }
+    cameraControlMode = next;
+    resetManualMotion();
+    if (cameraControlMode === 'manual') stopCameraTween({ resume: false });
+    if (controls && !programmaticCamera) controls.enableDamping = false;
+    updateAutoRotate();
+    return cameraControlMode;
+  }
+  function moveManualCamera(input = {}, deltaSeconds = 0) {
+    if (!graph || !controls || disposed || cameraControlMode !== 'manual' || programmaticCamera ||
+        controlsInteracting) return false;
+    const delta = clamp(finite(deltaSeconds), 0, 0.05);
+    if (!delta) return false;
+    const requested = {
+      forward: clamp(finite(input.forward), -1, 1),
+      right: clamp(finite(input.right), -1, 1),
+      up: clamp(finite(input.up), -1, 1),
+      yaw: clamp(finite(input.yaw), -1, 1),
+      pitch: clamp(finite(input.pitch), -1, 1)
+    };
+    const translationLength = Math.hypot(requested.forward, requested.right, requested.up);
+    if (translationLength > 1) {
+      requested.forward /= translationLength;
+      requested.right /= translationLength;
+      requested.up /= translationLength;
+    }
+    const response = 1 - Math.exp(-Math.max(1, finite(animation.manualResponse, 12)) * delta);
+    for (const key of Object.keys(manualMotion)) {
+      manualMotion[key] += (requested[key] - manualMotion[key]) * response;
+      if (Math.abs(manualMotion[key]) < 0.0005 && !requested[key]) manualMotion[key] = 0;
+    }
+    const moving = Object.values(manualMotion).some((value) => Math.abs(value) >= 0.0005);
+    if (!moving) return false;
+
+    const camera = graph.camera();
+    let position = { x: finite(camera.position.x), y: finite(camera.position.y), z: finite(camera.position.z) };
+    let target = { x: finite(controls.target.x), y: finite(controls.target.y), z: finite(controls.target.z) };
+    let forward = { x: target.x - position.x, y: target.y - position.y, z: target.z - position.z };
+    let lookDistance = Math.hypot(forward.x, forward.y, forward.z);
+    if (lookDistance < 0.01) {
+      forward = { x: 0, y: 0, z: -1 };
+      lookDistance = 100;
+    } else {
+      forward.x /= lookDistance;
+      forward.y /= lookDistance;
+      forward.z /= lookDistance;
+    }
+    let right = { x: -forward.z, y: 0, z: forward.x };
+    const rightLength = Math.hypot(right.x, right.y, right.z);
+    if (rightLength < 0.001) right = { x: 1, y: 0, z: 0 };
+    else {
+      right.x /= rightLength;
+      right.z /= rightLength;
+    }
+    const localUp = { x: right.y * forward.z - right.z * forward.y,
+      y: right.z * forward.x - right.x * forward.z,
+      z: right.x * forward.y - right.y * forward.x };
+    const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
+    const baseMoveSpeed = system?.scopeLevel === 'system' ?
+      Math.max(80, nodeRadius(system) * 0.5) : finite(animation.manualMoveSpeed, 160);
+    const moveDistance = baseMoveSpeed * (input.boost === true ? 2.2 : 1) * delta;
+    const translation = {
+      x: (forward.x * manualMotion.forward + right.x * manualMotion.right + localUp.x * manualMotion.up) *
+        moveDistance,
+      y: (forward.y * manualMotion.forward + right.y * manualMotion.right + localUp.y * manualMotion.up) *
+        moveDistance,
+      z: (forward.z * manualMotion.forward + right.z * manualMotion.right + localUp.z * manualMotion.up) *
+        moveDistance
+    };
+    position = { x: position.x + translation.x, y: position.y + translation.y, z: position.z + translation.z };
+    target = { x: target.x + translation.x, y: target.y + translation.y, z: target.z + translation.z };
+
+    const rotationSpeed = Math.max(0.1, finite(animation.manualRotateSpeed, 1.25));
+    let yaw = Math.atan2(forward.x, -forward.z) + manualMotion.yaw * rotationSpeed * delta;
+    let pitch = Math.asin(clamp(forward.y, -1, 1)) + manualMotion.pitch * rotationSpeed * delta;
+    pitch = clamp(pitch, -Math.PI * 0.47, Math.PI * 0.47);
+    const cosine = Math.cos(pitch);
+    forward = { x: Math.sin(yaw) * cosine, y: Math.sin(pitch), z: -Math.cos(yaw) * cosine };
+    target = { x: position.x + forward.x * lookDistance, y: position.y + forward.y * lookDistance,
+      z: position.z + forward.z * lookDistance };
+    if (system?.scopeLevel === 'system') ({ position, target } = containedSystemPose(system, target, position));
+    camera.position.set(position.x, position.y, position.z);
+    controls.target.set(target.x, target.y, target.z);
+    camera.lookAt?.(controls.target);
+    applyScopeCameraLimit();
+    scheduleLabels();
+    return true;
   }
   function setFrozen(value) {
     frozen = Boolean(value);
@@ -1211,7 +1346,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const particlesChanged = updateParticleAllocation();
     if (prefersReducedMotion()) {
       stopCameraTween({ resume: false });
-      autoRotatePaused = true;
       clearEffects();
     } else scheduleAutoRotateResume();
     updateAutoRotate();
@@ -1260,17 +1394,17 @@ async function createNetworkVisualizerRenderer(options = {}) {
       steadyParticles: [...particleAllocation.values()].reduce((sum, count) => sum + count, 0),
       pendingParticles: pulseReservations.size, animatedEffects: nodeEffects.size, contextLost, paused,
       autoRotateRequested, autoRotateEffective: Boolean(controls?.autoRotate),
-      automaticCameraMode,
+      automaticCameraMode, cameraControlMode,
       scope: { ...navigationScope }, camera: cameraPose(), rendererMemory,
       limits: currentDocument.rendererLimits || {} });
   }
 
   const onControlsStart = () => {
     controlsInteracting = true;
+    if (cameraControlMode === 'manual') resetManualMotion();
     interactionStartPose = cameraPose();
     stopCameraTween({ resume: false });
     applyScopeCameraLimit();
-    autoRotatePaused = true;
     updateAutoRotate();
   };
   const onControlsEnd = () => {
@@ -1362,7 +1496,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     controls = graph.controls();
     if (controls) {
       Object.assign(controls, { autoRotate: false, autoRotateSpeed: animation.autoRotateSpeed,
-        enableDamping: true, dampingFactor: 0.07, rotateSpeed: 0.45, zoomSpeed: 0.65,
+        enableDamping: false, dampingFactor: 0.07, rotateSpeed: 0.45, zoomSpeed: 0.65,
         enablePan: true, enableZoom: true, enableRotate: true, screenSpacePanning: true, zoomToCursor: true });
       if (library.MOUSE && library.TOUCH && controls.mouseButtons && controls.touches) {
         controls.mouseButtons.LEFT = library.MOUSE.ROTATE;
@@ -1467,7 +1601,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       return particleBudget;
     },
     fitAll, frameScope, focus, frameActivity, steerOrbitTarget, getCameraPose: cameraPose, restoreCameraPose,
-    setNavigationScope, setAutoRotate, setAutomaticCameraMode, pulse, clearEffects, clear,
+    setNavigationScope, setAutoRotate, setAutomaticCameraMode, setCameraControlMode, moveManualCamera,
+    pulse, clearEffects, clear,
     enterFullscreen, exitFullscreen, diagnostics, dispose
   });
 }

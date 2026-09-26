@@ -21,20 +21,6 @@ async function waitForFixtureDrain(page) {
     { timeout: 15_000 }).toBe(0);
 }
 
-async function searchToScope(page, query, expectedScope) {
-  const search = page.getByRole('searchbox', { name: 'Search retained network entities' });
-  await search.fill(query);
-  await search.press('Enter');
-  if (typeof expectedScope === 'string') {
-    await expect.poll(async () => (await diagnostics(page)).navigation.scope.level,
-      { timeout: 10_000 }).toBe(expectedScope);
-  } else {
-    await expect.poll(async () => (await diagnostics(page)).navigation.scope,
-      { timeout: 10_000 }).toEqual(expectedScope);
-  }
-  return diagnostics(page);
-}
-
 async function clickRenderedNode(page, labelText, expectedLevel) {
   const label = page.locator('.network-visualizer-label[data-visible="true"]')
     .filter({ hasText: labelText }).first();
@@ -42,6 +28,12 @@ async function clickRenderedNode(page, labelText, expectedLevel) {
   await label.click();
   await expect.poll(async () => (await diagnostics(page)).navigation.scope.level,
     { timeout: 5_000 }).toBe(expectedLevel);
+}
+
+async function drillToGroup(page, systemLabel, groupLabel) {
+  await clickRenderedNode(page, systemLabel, 'system');
+  await expect.poll(async () => (await diagnostics(page)).graph.counts.visibleGroups).toBeGreaterThan(0);
+  await clickRenderedNode(page, groupLabel, 'group');
 }
 
 function pointDistance(left, right) {
@@ -113,6 +105,13 @@ test('fresh view is empty, opens only shared live topics, and cleans up on repea
   await expect(page.locator('.network-visualizer-counts')).toHaveCount(0);
   await expect(page.locator('.network-visualizer-offscreen')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
+  const toolbar = page.getByRole('toolbar', { name: 'Network Visualizer controls' });
+  await expect(toolbar.getByRole('button', { name: 'Auto', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(toolbar.getByRole('button', { name: 'Manual', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  for (const label of ['Affiliations', 'Activity', 'Quiet', 'Fit all', 'Focus', 'Auto rotate', 'Freeze layout']) {
+    await expect(toolbar.getByRole('button', { name: label, exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole('searchbox', { name: 'Search retained network entities' })).toHaveCount(0);
   expect(ready.diagnostic.state).toMatchObject({ universes: 0, groups: 0, radios: 0,
     activeCalls: 0, semanticEvents: 0, queuedObservations: 0 });
   expect(ready.diagnostic.graph).toMatchObject({ nodes: 0, links: 0 });
@@ -150,7 +149,7 @@ test('fresh view is empty, opens only shared live topics, and cleans up on repea
   expect(apiRequests).toEqual([]);
 });
 
-test('populated view drills system to talkgroup and search derives the retained entity scope', async ({ page }) => {
+test('populated view drills from a system through its talkgroup to a radio', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(fixtureUrl(true));
   await waitForController(page);
@@ -161,7 +160,7 @@ test('populated view drills system to talkgroup and search derives the retained 
   expect(snapshot.navigation).toMatchObject({
     scope: { level: 'overview', universeKey: '', groupKey: '' },
     depth: 0,
-    autoRotate: true
+    cameraMode: 'auto'
   });
   expect(snapshot.graph.nodes).toBe(snapshot.graph.counts.visibleUniverses);
   expect(snapshot.graph.nodes).toBeLessThanOrEqual(64);
@@ -169,7 +168,7 @@ test('populated view drills system to talkgroup and search derives the retained 
   expect(snapshot.state.radios).toBeGreaterThan(1_000);
   await expect(page.getByRole('navigation', { name: 'Network view hierarchy' }))
     .toContainText('Observed radio systems');
-  await expect(page.getByRole('button', { name: 'Auto rotate', exact: true }))
+  await expect(page.getByRole('button', { name: 'Auto', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
   expect(snapshot.renderer.autoRotateRequested).toBe(true);
 
@@ -205,34 +204,20 @@ test('populated view drills system to talkgroup and search derives the retained 
   await expect(page.getByRole('complementary', { name: 'Selected network entity' }))
     .toContainText('North Tac');
 
-  snapshot = await searchToScope(page, 'South Unit 7001', {
-    level: 'group',
-    universeKey: 'system:p25:bravo-proven-system',
-    groupKey: 'system:p25:bravo-proven-system|group:tg:101'
-  });
-  expect(snapshot.navigation.scope).toMatchObject({
-    level: 'group',
-    universeKey: 'system:p25:bravo-proven-system',
-    groupKey: 'system:p25:bravo-proven-system|group:tg:101'
-  });
-  await expect(page.getByRole('button', { name: 'Back to Bravo County' })).toBeVisible();
-  await page.getByRole('button', { name: 'Back to Bravo County' }).click();
-  await expect.poll(async () => (await diagnostics(page)).navigation.scope.level).toBe('system');
-  expect((await diagnostics(page)).navigation.scope.universeKey).toBe('system:p25:bravo-proven-system');
-  await page.getByRole('button', { name: 'Back to all systems' }).click();
-  await expect.poll(async () => (await diagnostics(page)).navigation.scope.level).toBe('overview');
-
-  snapshot = await searchToScope(page, 'Unit 12', {
-    level: 'group',
-    universeKey: 'system:p25:alpha-proven-system',
-    groupKey: 'system:p25:alpha-proven-system|group:tg:202'
-  });
+  await clickRenderedNode(page, 'Unit 12', 'group');
+  snapshot = await diagnostics(page);
   expect(snapshot.navigation.scope).toMatchObject({
     level: 'group',
     universeKey: 'system:p25:alpha-proven-system',
     groupKey: 'system:p25:alpha-proven-system|group:tg:202'
   });
   await expect(page.getByRole('heading', { name: 'Unit 12' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back to Alpha Regional' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Alpha Regional' }).click();
+  await expect.poll(async () => (await diagnostics(page)).navigation.scope.level).toBe('system');
+  expect((await diagnostics(page)).navigation.scope.universeKey).toBe('system:p25:alpha-proven-system');
+  await page.getByRole('button', { name: 'Back to all systems' }).click();
+  await expect.poll(async () => (await diagnostics(page)).navigation.scope.level).toBe('overview');
 });
 
 test('cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async ({ page }) => {
@@ -244,9 +229,13 @@ test('cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async 
 
   await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
 
-  const autoRotate = page.getByRole('button', { name: 'Auto rotate', exact: true });
-  await autoRotate.click();
-  await expect(autoRotate).toHaveAttribute('aria-pressed', 'false');
+  const autoMode = page.getByRole('button', { name: 'Auto', exact: true });
+  const manualMode = page.getByRole('button', { name: 'Manual', exact: true });
+  await manualMode.click();
+  await expect(manualMode).toHaveAttribute('aria-pressed', 'true');
+  await expect(autoMode).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('note', { name: 'Manual camera controls' })).toContainText('W A S D');
+  await expect.poll(async () => (await diagnostics(page)).navigation.cameraMode).toBe('manual');
   await expect.poll(async () => (await diagnostics(page)).renderer.autoRotateEffective).toBe(false);
   await page.waitForTimeout(800);
 
@@ -271,15 +260,13 @@ test('cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async 
   expect(pointDistance(afterZoom.position, afterOrbit.position)).toBeGreaterThan(10);
   expect(pointDistance(afterZoom.target, afterOrbit.target)).toBeLessThan(0.5);
 
-  await autoRotate.click();
-  await expect(autoRotate).toHaveAttribute('aria-pressed', 'true');
-  await expect.poll(async () => (await diagnostics(page)).renderer.autoRotateEffective,
-    { timeout: 4_000 }).toBe(true);
-  const autoCentered = (await diagnostics(page)).renderer.camera;
-  expect(pointDistance(afterOrbit.target, autoCentered.target)).toBeGreaterThan(1);
+  await autoMode.click();
+  await expect(autoMode).toHaveAttribute('aria-pressed', 'true');
+  await expect(manualMode).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(async () => (await diagnostics(page)).navigation.cameraMode).toBe('auto');
+  await expect(page.getByRole('note', { name: 'Manual camera controls' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Flatten', exact: true })).toHaveCount(0);
 
-  await searchToScope(page, 'Unit 12', 'group');
   await page.getByRole('button', { name: 'Clear map', exact: true }).click();
   await expect.poll(async () => (await diagnostics(page)).navigation.scope.level).toBe('overview');
   const cleared = await diagnostics(page);
@@ -303,13 +290,12 @@ test('narrow toolbar, inspector, event drawer, and fullscreen controls stay reac
   await expect(hierarchy).toContainText('Overview');
   await expect(hierarchy).toContainText('Observed radio systems');
   await expect(hierarchy.getByRole('button', { name: 'Back to all systems' })).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Auto rotate', exact: true }))
+  await expect(page.getByRole('button', { name: 'Auto', exact: true }))
     .toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Arrange layout', exact: true })).toHaveCount(0);
 
-  const search = page.getByRole('searchbox', { name: 'Search retained network entities' });
-  await search.fill('Unit 12');
-  await search.press('Enter');
+  await drillToGroup(page, 'Alpha Regional', 'North Tac');
+  await clickRenderedNode(page, 'Unit 12', 'group');
   const inspector = page.getByRole('complementary', { name: 'Selected network entity' });
   await expect(inspector).toBeVisible();
   await expect(inspector.getByRole('button', { name: 'Close inspector' })).toBeVisible();
@@ -329,7 +315,7 @@ test('narrow toolbar, inspector, event drawer, and fullscreen controls stay reac
   await inspectorClose.focus();
   await expect(inspectorClose).toBeFocused();
   await inspectorClose.click();
-  await expect(search).toBeFocused();
+  await expect(inspector).toBeHidden();
 
   await page.setViewportSize({ width: 844, height: 390 });
   const landscape = await page.evaluate(() => {
@@ -377,7 +363,7 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   expect(snapshot.navigation.scope.level).toBe('overview');
   expect(snapshot.graph.nodes).toBe(snapshot.graph.counts.visibleUniverses);
   expect(snapshot.graph.counts).toMatchObject({ visibleGroups: 0, visibleRadios: 0 });
-  await searchToScope(page, 'Overflow Operations', 'group');
+  await drillToGroup(page, 'Alpha Regional', 'Overflow Operations');
   await expect.poll(async () => (await diagnostics(page)).graph.nodes, { timeout: 15_000 }).toBeGreaterThan(100);
   await expect.poll(async () => (await diagnostics(page)).renderer.labels, { timeout: 5_000 }).toBeGreaterThan(10);
 
@@ -403,17 +389,6 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   snapshot = await diagnostics(page);
   if (snapshot.renderer.available) expect(snapshot.renderer.mode).toBe('3d');
 
-  await page.getByRole('button', { name: 'Freeze layout', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Layout frozen', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  snapshot = await diagnostics(page);
-  if (snapshot.renderer.available) expect(snapshot.renderer.frozen).toBe(true);
-
-  const search = page.getByRole('searchbox', { name: 'Search retained network entities' });
-  await search.fill('Unit 12');
-  await search.press('Enter');
-  await expect(page.getByRole('heading', { name: 'Unit 12' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Focus', exact: true })).toBeEnabled();
-
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Recent observed network events' })).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Recent observed network events' })
@@ -427,15 +402,11 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
   await page.getByRole('button', { name: 'Exit fullscreen' }).click();
   await expect(page.getByRole('button', { name: 'Enter fullscreen' })).toBeVisible();
-  await page.getByRole('button', { name: 'Focus', exact: true }).click();
-  await page.waitForTimeout(500);
   recordMeasurement(testInfo, 'toolbar_interactions', Date.now() - interactionStarted);
 
   await expect(page.locator('.network-visualizer-layout')).toHaveScreenshot('network-visualizer-dark-desktop.png', {
     animations: 'disabled'
   });
-  await page.getByRole('button', { name: 'Fit all', exact: true }).click();
-
   await page.getByRole('button', { name: 'Clear map', exact: true }).click();
   await expect.poll(async () => (await diagnostics(page)).state.radios).toBe(0);
   await expect.poll(async () => (await diagnostics(page)).graph.nodes).toBe(0);
@@ -457,13 +428,13 @@ test('reduced motion retains the live graph without transient particle playback'
   expect(snapshot.navigation.scope.level).toBe('overview');
   expect(snapshot.graph.nodes).toBe(snapshot.graph.counts.visibleUniverses);
   expect(snapshot.graph.counts).toMatchObject({ visibleGroups: 0, visibleRadios: 0 });
-  const autoRotate = page.getByRole('button', { name: 'Auto rotate', exact: true });
-  await expect(autoRotate).toBeDisabled();
-  await expect(autoRotate).toHaveAttribute('aria-pressed', 'false');
+  const autoMode = page.getByRole('button', { name: 'Auto', exact: true });
+  await expect(autoMode).toBeEnabled();
+  await expect(autoMode).toHaveAttribute('aria-pressed', 'true');
   expect(snapshot.renderer.autoRotateRequested).toBe(true);
   expect(snapshot.renderer.autoRotateEffective).toBe(false);
 
-  await searchToScope(page, 'Overflow Operations', 'group');
+  await drillToGroup(page, 'Alpha Regional', 'Overflow Operations');
   await expect.poll(async () => (await diagnostics(page)).graph.nodes, { timeout: 15_000 }).toBeGreaterThan(100);
   snapshot = await diagnostics(page);
   recordMeasurement(testInfo, 'reduced_motion_burst_drain', Date.now() - startedAt);
@@ -627,7 +598,8 @@ test('conventional P25 reports affiliation as unsupported and live call updates 
   }, encrypted);
   await dispatchCall(false);
   await expect.poll(async () => (await diagnostics(page)).state.queuedObservations).toBe(0);
-  await searchToScope(page, 'Conventional Unit', 'group');
+  await drillToGroup(page, 'Conventional P25', 'Conventional Group');
+  await clickRenderedNode(page, 'Conventional Unit', 'group');
   const inspector = page.getByRole('complementary', { name: 'Selected network entity' });
   await expect(inspector).toContainText('Unsupported by this live feed');
   await expect(inspector).not.toContainText('Encryption');

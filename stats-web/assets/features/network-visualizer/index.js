@@ -18,7 +18,6 @@ import {
   createLayoutState,
   disposeLayout,
   resetLayoutSession,
-  setLayoutFrozen,
   setReducedMotion,
   stepLayout,
   synchronizeLayout
@@ -31,6 +30,7 @@ import { createAttentionCoordinator } from './attention.js';
 const STORAGE_PREFIX = 'sdrtrunk-vce.network-visualizer.v1';
 const FIXTURE_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const OPENING_OVERVIEW_MS = 4_000;
+const SCOPE_TRANSITION_MS = 1_000;
 
 function freshSubscriptionId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -63,8 +63,7 @@ function filterSuppressedEffects(graph, suppressedEffectIds) {
 
 function loadPreferences(profileKey, config = BALANCED_CONFIG) {
   const defaults = {
-    autoRotate: config.animation?.autoRotateDefault !== false,
-    filters: { affiliations: true, activity: true, quiet: true },
+    cameraMode: config.animation?.autoRotateDefault === false ? 'manual' : 'auto',
     softRadiosTotal: config.render.softRadiosTotal,
     hardLabels: config.render.hardLabels
   };
@@ -72,12 +71,8 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
     const raw = JSON.parse(localStorage.getItem(profileStorageKey(profileKey)) || '{}');
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return defaults;
     return {
-      autoRotate: raw.autoRotate !== false,
-      filters: {
-        affiliations: raw.filters?.affiliations !== false,
-        activity: raw.filters?.activity !== false,
-        quiet: raw.filters?.quiet !== false
-      },
+      cameraMode: raw.cameraMode === 'manual' || (raw.cameraMode === undefined && raw.autoRotate === false) ?
+        'manual' : 'auto',
       softRadiosTotal: boundedInteger(raw.softRadiosTotal, defaults.softRadiosTotal, 100,
         config.render.softRadiosTotal),
       hardLabels: boundedInteger(raw.hardLabels, defaults.hardLabels, 10, config.render.hardLabels)
@@ -90,9 +85,8 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
 function persistPreferences(profileKey, preferences) {
   try {
     localStorage.setItem(profileStorageKey(profileKey), JSON.stringify({
-      version: 2,
-      autoRotate: preferences.autoRotate !== false,
-      filters: preferences.filters,
+      version: 3,
+      cameraMode: preferences.cameraMode,
       softRadiosTotal: preferences.softRadiosTotal,
       hardLabels: preferences.hardLabels
     }));
@@ -225,7 +219,6 @@ function createNetworkVisualizer(dependencies = {}) {
   let networkConnection = null;
   let channelConnection = null;
   let closed = false;
-  let frozen = false;
   let dirty = true;
   let graphDirty = true;
   let channelOpen = false;
@@ -243,8 +236,6 @@ function createNetworkVisualizer(dependencies = {}) {
   let persistTimer = null;
   let rendererInitialization = null;
   let controller = null;
-  let searchPendingFocus = false;
-  let pendingFocusKey = '';
   let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
   const navigationHistory = [];
   let pendingCameraAction = null;
@@ -252,6 +243,9 @@ function createNetworkVisualizer(dependencies = {}) {
   let lastAttentionStatus = 'roam';
   let openingOverviewUntilMs = 0;
   let openingSystemChosen = false;
+  let scopeTransitionUntilMs = 0;
+  let lastManualFrameAt = performance.now();
+  const manualKeys = new Set();
   const suppressedEffectIds = new Set();
   const fixtureMode = new URLSearchParams(window.location.search).get('network_fixture') === '1' &&
     FIXTURE_HOSTS.has(window.location.hostname);
@@ -262,6 +256,7 @@ function createNetworkVisualizer(dependencies = {}) {
   }
 
   function protectCameraIntent() {
+    if (preferences.cameraMode !== 'auto') return;
     attention.noteManualInteraction(Date.now());
     pendingAttentionTarget = null;
     renderer?.setAutomaticCameraMode?.('manual');
@@ -270,49 +265,32 @@ function createNetworkVisualizer(dependencies = {}) {
   const ui = createNetworkVisualizerUi({
     ...dependencies,
     config,
-    initialFilters: preferences.filters,
-    initialAutoRotate: preferences.autoRotate,
+    initialCameraMode: preferences.cameraMode,
     reducedMotion: Boolean(reducedMotionMedia?.matches),
     callbacks: {
-      onFilters: (filters) => {
-        preferences.filters = filters;
-        invalidateGraph();
-        schedulePersist();
-      },
-      onSearch: () => invalidateGraph(),
-      onSearchCommit: () => {
-        searchPendingFocus = true;
-        invalidateGraph();
-      },
-      onFit: () => {
-        protectCameraIntent();
-        renderer?.frameScope?.();
-      },
-      onFocus: () => {
-        protectCameraIntent();
-        if (state.visual.selectedKey) renderer?.focus?.(state.visual.selectedKey);
-      },
       onBack: () => navigateBack(),
-      onAutoRotate: (value) => {
-        preferences.autoRotate = Boolean(value);
+      onCameraMode: (value) => {
+        preferences.cameraMode = value === 'manual' ? 'manual' : 'auto';
         attention.reset();
         pendingAttentionTarget = null;
-        lastAttentionStatus = preferences.autoRotate ? 'roam' : 'disabled';
-        renderer?.setAutoRotate?.(preferences.autoRotate);
-        renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
-        if (preferences.autoRotate) {
-          pendingCameraAction = { type: 'frame' };
+        pendingCameraAction = null;
+        scopeTransitionUntilMs = 0;
+        manualKeys.clear();
+        lastAttentionStatus = preferences.cameraMode === 'auto' ? 'roam' : 'disabled';
+        renderer?.setCameraControlMode?.(preferences.cameraMode);
+        renderer?.setAutoRotate?.(preferences.cameraMode === 'auto');
+        renderer?.setAutomaticCameraMode?.(preferences.cameraMode === 'auto' ? 'hold' : 'disabled');
+        if (preferences.cameraMode === 'auto') {
+          const now = Date.now();
+          if (navigationScope.level === 'overview' && !openingSystemChosen && state.universes.size) {
+            openingOverviewUntilMs = now + OPENING_OVERVIEW_MS;
+          }
+          pendingCameraAction = { type: 'frame', force: true, transition: true };
+          scopeTransitionUntilMs = Number.POSITIVE_INFINITY;
           invalidateGraph();
-        }
-        ui.setAutoRotate(preferences.autoRotate);
+        } else ui.stage.focus({ preventScroll: true });
+        ui.setCameraMode?.(preferences.cameraMode);
         schedulePersist();
-      },
-      onFreeze: (value) => {
-        frozen = Boolean(value);
-        setLayoutFrozen(layout, frozen);
-        renderer?.setFrozen?.(frozen);
-        ui.setFrozen(frozen);
-        invalidateGraph();
       },
       onClear: () => clearMap(),
       onResize: () => renderer?.resize?.(),
@@ -328,7 +306,7 @@ function createNetworkVisualizer(dependencies = {}) {
       }
     }
   });
-  ui.setAutoRotate(preferences.autoRotate);
+  ui.setCameraMode?.(preferences.cameraMode);
   ui.setReducedMotion(Boolean(reducedMotionMedia?.matches));
   ui.setScope({ level: 'overview', title: 'Observed radio systems', canGoBack: false });
 
@@ -400,7 +378,7 @@ function createNetworkVisualizer(dependencies = {}) {
     const next = normalizeScope(value);
     if (sameScope(next, navigationScope)) {
       protectCameraIntent();
-      if (optionsValue.frame !== false) renderer?.frameScope?.();
+      if (optionsValue.frame !== false) renderer?.frameScope?.({ force: true });
       return false;
     }
     if (!optionsValue.back) {
@@ -417,8 +395,16 @@ function createNetworkVisualizer(dependencies = {}) {
     ui.setScope(scopeView());
     setSelectedEntity(state, null);
     ui.setSelection(null);
-    pendingCameraAction = optionsValue.pose ? { type: 'restore', pose: optionsValue.pose } :
-      (optionsValue.frame === false ? null : { type: 'frame' });
+    pendingCameraAction = optionsValue.pose ?
+      { type: 'restore', pose: optionsValue.pose, force: true, transition: true } :
+      (optionsValue.frame === false ? null : { type: 'frame', force: true, transition: true });
+    if (pendingCameraAction) {
+      scopeTransitionUntilMs = Number.POSITIVE_INFINITY;
+      if (preferences.cameraMode === 'auto') {
+        lastAttentionStatus = 'roam';
+        renderer?.setAutomaticCameraMode?.('hold');
+      }
+    }
     invalidateGraph();
     return true;
   }
@@ -447,7 +433,6 @@ function createNetworkVisualizer(dependencies = {}) {
     if (entity.type === 'radio' && inspectRadio) {
       setSelectedEntity(state, entity.key);
       ui.setSelection(selectedEntityView(state), selectedTransitions(state));
-      pendingFocusKey = entity.key;
       invalidateGraph();
     }
     return scopeChanged;
@@ -461,9 +446,6 @@ function createNetworkVisualizer(dependencies = {}) {
         ui.showNotice(value.label || 'Additional live activity is retained in the bounded aggregate.');
         return;
       }
-      pendingFocusKey = key;
-    } else {
-      pendingFocusKey = '';
     }
     setSelectedEntity(state, key);
     const selected = selectedEntityView(state);
@@ -495,7 +477,9 @@ function createNetworkVisualizer(dependencies = {}) {
       host: ui.canvas,
       signal: dependencies.signal,
       config,
-      frozen,
+      frozen: false,
+      cameraControlMode: preferences.cameraMode,
+      autoRotate: preferences.cameraMode === 'auto',
       graphData: currentGraph,
       clock: () => Date.now(),
       labelBudget: preferences.hardLabels,
@@ -511,6 +495,7 @@ function createNetworkVisualizer(dependencies = {}) {
         onUnavailable: (error) => ui.setWebglState('failed', error?.message ||
           'The WebGL renderer could not be initialized.'),
         onCameraInteraction: () => {
+          if (preferences.cameraMode !== 'auto') return;
           attention.noteManualInteraction(Date.now());
           pendingAttentionTarget = null;
           renderer?.setAutomaticCameraMode?.('manual');
@@ -524,10 +509,10 @@ function createNetworkVisualizer(dependencies = {}) {
       }
       renderer = value;
       ui.setWebglState(value?.available === false ? 'failed' : 'ready');
-      renderer.setFrozen?.(frozen);
       renderer.setNavigationScope?.(navigationScope);
-      renderer.setAutoRotate?.(preferences.autoRotate);
-      renderer.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
+      renderer.setCameraControlMode?.(preferences.cameraMode);
+      renderer.setAutoRotate?.(preferences.cameraMode === 'auto');
+      renderer.setAutomaticCameraMode?.(preferences.cameraMode === 'auto' ? 'roam' : 'disabled');
       invalidateGraph();
     }).catch((error) => {
       if (closed) return;
@@ -575,9 +560,11 @@ function createNetworkVisualizer(dependencies = {}) {
     suppressNextSnapshotEffects = true;
     attention.reset();
     pendingAttentionTarget = null;
-    lastAttentionStatus = 'roam';
-    renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
-    pendingCameraAction = { type: 'frame' };
+    lastAttentionStatus = preferences.cameraMode === 'auto' ? 'roam' : 'disabled';
+    renderer?.setAutomaticCameraMode?.(preferences.cameraMode === 'auto' ? 'hold' : 'disabled');
+    pendingCameraAction = preferences.cameraMode === 'auto' ?
+      { type: 'frame', force: true, transition: true } : null;
+    scopeTransitionUntilMs = pendingCameraAction ? Number.POSITIVE_INFINITY : 0;
     if (!optionsValue.stateAlreadyMarked) markTransportGap(state, detail, state.generation, now);
     suppressedEffectIds.clear();
     renderer?.clearEffects?.();
@@ -686,26 +673,27 @@ function createNetworkVisualizer(dependencies = {}) {
     pendingCameraAction = null;
     attention.reset();
     pendingAttentionTarget = null;
-    lastAttentionStatus = preferences.autoRotate ? 'roam' : 'disabled';
+    manualKeys.clear();
+    lastAttentionStatus = preferences.cameraMode === 'auto' ? 'roam' : 'disabled';
     openingOverviewUntilMs = 0;
     openingSystemChosen = false;
+    scopeTransitionUntilMs = 0;
     renderer?.clear?.();
     renderer?.setNavigationScope?.(navigationScope);
-    renderer?.setAutoRotate?.(preferences.autoRotate);
-    renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
+    renderer?.setCameraControlMode?.(preferences.cameraMode);
+    renderer?.setAutoRotate?.(preferences.cameraMode === 'auto');
+    renderer?.setAutomaticCameraMode?.(preferences.cameraMode === 'auto' ? 'roam' : 'disabled');
     ui.setScope(scopeView());
     ui.setCounts({ visibleRadios: 0, retainedRadios: 0, renderedNodes: 0 });
     ui.setSelection(null);
     ui.setEvents([]);
     ui.clearAffiliationAlert?.();
-    ui.searchInput.value = '';
     ui.showNotice('Map cleared. Listening from a new live edge.');
     networkOpen = false;
     channelOpen = false;
     hadGap = false;
     suppressNextSnapshotEffects = false;
     suppressNextIngestEffects = false;
-    pendingFocusKey = '';
     networkSourceToken = '';
     if (fixtureMode) {
       ui.setTransport('open', 'Deterministic development fixture');
@@ -778,27 +766,35 @@ function createNetworkVisualizer(dependencies = {}) {
       lastTickAt = now;
     }
     if (!openingOverviewUntilMs && state.universes.size) openingOverviewUntilMs = now + OPENING_OVERVIEW_MS;
-    const automaticOpening = preferences.autoRotate !== false && !reducedMotionMedia?.matches &&
+    const automaticOpening = preferences.cameraMode === 'auto' && !reducedMotionMedia?.matches &&
       !openingSystemChosen && navigationScope.level === 'overview' && openingOverviewUntilMs;
     if (automaticOpening && now >= openingOverviewUntilMs) {
       const universe = mostActiveUniverse();
       if (universe) navigateToScope({ level: 'system', universeKey: universe.key });
     }
     const openingGrace = automaticOpening && navigationScope.level === 'overview' && now < openingOverviewUntilMs;
-    const attentionResult = openingGrace ?
-      { status: 'roam', changed: false, target: null, reason: 'opening_overview' } :
-      attention.update({ state, scope: navigationScope, atMs: now,
-        autoRotate: preferences.autoRotate !== false, reducedMotion: Boolean(reducedMotionMedia?.matches) });
-    renderer?.setAutomaticCameraMode?.(attentionResult.status);
-    if (attentionResult.status === 'roam' && lastAttentionStatus !== 'roam' &&
-        lastAttentionStatus !== 'disabled') {
-      pendingCameraAction = { type: 'frame' };
-      invalidateGraph();
-    }
-    lastAttentionStatus = attentionResult.status;
-    if (attentionResult.changed && attentionResult.target) {
-      pendingAttentionTarget = attentionResult.target;
-      dirty = true;
+    const scopeTransitioning = preferences.cameraMode === 'auto' && now < scopeTransitionUntilMs;
+    if (scopeTransitioning) {
+      renderer?.setAutomaticCameraMode?.('hold');
+    } else {
+      const attentionResult = preferences.cameraMode !== 'auto' ?
+        { status: 'disabled', changed: false, target: null, reason: 'manual_camera' } : openingGrace ?
+          { status: 'roam', changed: false, target: null, reason: 'opening_overview' } :
+          attention.update({ state, scope: navigationScope, atMs: now,
+            autoRotate: true, reducedMotion: Boolean(reducedMotionMedia?.matches) });
+      const returningToRoam = attentionResult.status === 'roam' && lastAttentionStatus !== 'roam' &&
+        lastAttentionStatus !== 'disabled';
+      renderer?.setAutomaticCameraMode?.(returningToRoam ? 'hold' : attentionResult.status);
+      if (returningToRoam) {
+        pendingCameraAction = { type: 'frame', transition: true };
+        scopeTransitionUntilMs = Number.POSITIVE_INFINITY;
+        invalidateGraph();
+      }
+      lastAttentionStatus = attentionResult.status;
+      if (attentionResult.changed && attentionResult.target) {
+        pendingAttentionTarget = attentionResult.target;
+        dirty = true;
+      }
     }
     if (!document.hidden && now - lastStaticVisualRefreshAt >= 1_000 &&
         (state.universes.size || state.groups.size || state.radios.size)) {
@@ -824,17 +820,24 @@ function createNetworkVisualizer(dependencies = {}) {
   function draw(frameAt) {
     if (closed) return;
     raf = window.requestAnimationFrame(draw);
+    const manualDeltaSeconds = Math.min(0.05, Math.max(0, frameAt - lastManualFrameAt) / 1_000);
+    lastManualFrameAt = frameAt;
+    if (!document.hidden && preferences.cameraMode === 'manual') {
+      renderer?.moveManualCamera?.({
+        forward: Number(manualKeys.has('KeyW')) - Number(manualKeys.has('KeyS')),
+        right: Number(manualKeys.has('KeyD')) - Number(manualKeys.has('KeyA')),
+        yaw: Number(manualKeys.has('ArrowRight')) - Number(manualKeys.has('ArrowLeft')),
+        pitch: Number(manualKeys.has('ArrowUp')) - Number(manualKeys.has('ArrowDown'))
+      }, manualDeltaSeconds);
+    }
     if (document.hidden || frameAt - lastFrameAt < 30) return;
     const delta = Math.min(config.layout.maximumDeltaMs, Math.max(1, frameAt - lastFrameAt));
     lastFrameAt = frameAt;
     if (!dirty) return;
     const now = Date.now();
     const selectionChanged = graphDirty;
-    let searchChangedScope = false;
     if (selectionChanged) {
       currentGraph = decorateGraphForScope(filterSuppressedEffects(selectVisibleGraph(state, now, {
-        filters: preferences.filters,
-        query: ui.searchInput.value,
         softRadiosTotal: preferences.softRadiosTotal,
         hardLabels: preferences.hardLabels,
         scope: navigationScope
@@ -844,25 +847,14 @@ function createNetworkVisualizer(dependencies = {}) {
         navigationScope = resolvedScope;
         navigationHistory.length = 0;
         pendingCameraAction = { type: 'frame' };
+        scopeTransitionUntilMs = 0;
         renderer?.setNavigationScope?.(navigationScope);
         ui.setScope(scopeView());
       }
       graphDirty = false;
-      if (searchPendingFocus) {
-        searchPendingFocus = false;
-        const match = currentGraph.searchResults?.[0];
-        if (match) {
-          const entity = entityForKey(state, match.key);
-          if (entity) searchChangedScope = navigateToEntity(entity);
-        } else if (ui.searchInput.value.trim()) ui.showNotice('No retained entity matches that search.');
-      }
-    }
-    if (searchChangedScope) {
-      dirty = true;
-      return;
     }
     synchronizeLayout(layout, currentGraph, now);
-    if (!frozen) stepLayout(layout, currentGraph, delta);
+    stepLayout(layout, currentGraph, delta);
     if (selectionChanged) {
       renderer?.setNavigationScope?.(navigationScope);
       renderer?.setGraphData?.(currentGraph);
@@ -874,23 +866,23 @@ function createNetworkVisualizer(dependencies = {}) {
         renderedNodes: currentGraph.nodes.length,
         suppressedActiveRadios: counts.suppressedActiveRadios ?? counts.activeAggregated ?? 0
       });
-      if (pendingFocusKey && currentGraph.nodes.some((node) => node.key === pendingFocusKey)) {
-        const key = pendingFocusKey;
-        pendingFocusKey = '';
-        queueMicrotask(() => renderer?.focus?.(key));
-      }
-      if (pendingCameraAction && sameScope(currentGraph.scope, navigationScope)) {
+      if (renderer && pendingCameraAction && sameScope(currentGraph.scope, navigationScope)) {
         const action = pendingCameraAction;
         pendingCameraAction = null;
         queueMicrotask(() => {
-          if (action.type === 'restore' && action.pose) renderer?.restoreCameraPose?.(action.pose);
-          else renderer?.frameScope?.();
+          let started = false;
+          if (action.type === 'restore' && action.pose) {
+            started = renderer?.restoreCameraPose?.(action.pose, undefined, { force: action.force === true }) === true;
+          } else started = renderer?.frameScope?.({ force: action.force === true }) === true;
+          if (action.transition === true) {
+            scopeTransitionUntilMs = started ? Date.now() + SCOPE_TRANSITION_MS : 0;
+          }
         });
       }
     } else {
       renderer?.refresh?.();
     }
-    if (pendingAttentionTarget) {
+    if (preferences.cameraMode === 'auto' && pendingAttentionTarget) {
       const target = pendingAttentionTarget;
       pendingAttentionTarget = null;
       const keys = [...new Set([
@@ -901,20 +893,22 @@ function createNetworkVisualizer(dependencies = {}) {
       ].filter(Boolean))];
       queueMicrotask(() => renderer?.frameActivity?.(keys, undefined, target.universeKey));
     }
-    dirty = graphDirty || (!frozen && !layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
+    dirty = graphDirty || (!layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
   }
 
   function handleVisibility() {
     if (closed) return;
     if (document.hidden) {
+      manualKeys.clear();
       ui.clearAffiliationAlert?.();
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
       renderer?.setFrozen?.(true);
     } else {
       state.pendingEffects.forEach((effect) => suppressedEffectIds.add(effect.id));
       suppressNextIngestEffects = state.incomingQueue.length > 0;
-      renderer?.setFrozen?.(frozen);
+      renderer?.setFrozen?.(false);
       lastFrameAt = performance.now();
+      lastManualFrameAt = lastFrameAt;
       invalidateGraph();
     }
   }
@@ -926,9 +920,12 @@ function createNetworkVisualizer(dependencies = {}) {
     ui.setReducedMotion(reduced);
     attention.reset();
     pendingAttentionTarget = null;
-    lastAttentionStatus = reduced || preferences.autoRotate === false ? 'disabled' : 'roam';
-    renderer?.setAutomaticCameraMode?.(reduced || preferences.autoRotate === false ? 'disabled' : 'roam');
-    if (!reduced && preferences.autoRotate !== false) pendingCameraAction = { type: 'frame' };
+    lastAttentionStatus = reduced || preferences.cameraMode !== 'auto' ? 'disabled' : 'roam';
+    renderer?.setAutomaticCameraMode?.(reduced || preferences.cameraMode !== 'auto' ? 'disabled' : 'roam');
+    if (!reduced && preferences.cameraMode === 'auto') {
+      pendingCameraAction = { type: 'frame', force: true, transition: true };
+      scopeTransitionUntilMs = Number.POSITIVE_INFINITY;
+    }
     invalidateGraph();
   }
 
@@ -955,7 +952,15 @@ function createNetworkVisualizer(dependencies = {}) {
   }
 
   const handleAbort = () => controller?.close();
+  const manualControlCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD',
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
   const handleStageKeyDown = (event) => {
+    if (preferences.cameraMode === 'manual' && event.target === ui.stage && manualControlCodes.has(event.code)) {
+      manualKeys.add(event.code);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== 'Escape' || event.defaultPrevented) return;
     if (state.visual.selectedKey) selectEntity(null);
     else if (navigationScope.level !== 'overview') navigateBack();
@@ -963,8 +968,22 @@ function createNetworkVisualizer(dependencies = {}) {
     event.preventDefault();
     event.stopPropagation();
   };
+  const handleManualKeyUp = (event) => {
+    if (!manualControlCodes.has(event.code)) return;
+    manualKeys.delete(event.code);
+  };
+  const clearManualKeys = () => manualKeys.clear();
+  const focusStageForManualControls = (event) => {
+    if (preferences.cameraMode !== 'manual') return;
+    const interactive = event.target?.closest?.('button, input, select, textarea, a, [tabindex]');
+    if (interactive && interactive !== ui.stage) return;
+    ui.stage.focus({ preventScroll: true });
+  };
   document.addEventListener('visibilitychange', handleVisibility);
   ui.stage.addEventListener('keydown', handleStageKeyDown);
+  ui.stage.addEventListener('pointerdown', focusStageForManualControls);
+  window.addEventListener('keyup', handleManualKeyUp);
+  window.addEventListener('blur', clearManualKeys);
   reducedMotionMedia?.addEventListener?.('change', handleReducedMotion);
   dependencies.signal?.addEventListener('abort', handleAbort, { once: true });
   ingestionTimer = window.setInterval(ingest, 50);
@@ -986,7 +1005,7 @@ function createNetworkVisualizer(dependencies = {}) {
         },
         renderer: renderer?.diagnostics?.() || null,
         navigation: { scope: { ...navigationScope }, depth: navigationHistory.length,
-          autoRotate: preferences.autoRotate !== false },
+          cameraMode: preferences.cameraMode },
         subscriptions: { channel: Boolean(channelConnection), network: Boolean(networkConnection) },
         timers: { ingestion: ingestionTimer !== null, animation: raf !== null },
         generation: state.generation,
@@ -998,6 +1017,9 @@ function createNetworkVisualizer(dependencies = {}) {
       closed = true;
       document.removeEventListener('visibilitychange', handleVisibility);
       ui.stage.removeEventListener('keydown', handleStageKeyDown);
+      ui.stage.removeEventListener('pointerdown', focusStageForManualControls);
+      window.removeEventListener('keyup', handleManualKeyUp);
+      window.removeEventListener('blur', clearManualKeys);
       reducedMotionMedia?.removeEventListener?.('change', handleReducedMotion);
       dependencies.signal?.removeEventListener?.('abort', handleAbort);
       if (ingestionTimer !== null) window.clearInterval(ingestionTimer);

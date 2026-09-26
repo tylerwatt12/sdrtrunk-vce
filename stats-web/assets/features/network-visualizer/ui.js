@@ -126,19 +126,13 @@ function createNetworkVisualizerUi(dependencies = {}) {
   if (typeof node !== 'function' || typeof iconGlyph !== 'function' || typeof iconButton !== 'function') {
     throw new TypeError('Network Visualizer UI helpers are required.');
   }
-  const filters = {
-    affiliations: dependencies.initialFilters?.affiliations !== false,
-    activity: dependencies.initialFilters?.activity !== false,
-    quiet: dependencies.initialFilters?.quiet !== false
-  };
-  const initialAutoRotate = dependencies.initialAutoRotate !== false;
+  const initialCameraMode = dependencies.initialCameraMode === 'manual' ? 'manual' : 'auto';
   const emptyTitle = 'Listening — the map builds as activity arrives.';
   const emptyDetail = 'Only fresh live calls and confirmed affiliation observations appear here.';
   let renderedNodeCount = 0;
   let eventsReturnFocus = null;
   let inspectorReturnFocus = null;
-  let autoRotateRequested = initialAutoRotate;
-  let reducedMotion = Boolean(dependencies.reducedMotion);
+  let cameraMode = initialCameraMode;
   let inspectorSignature = '';
   let eventsFollowing = true;
   let unseenEventCount = 0;
@@ -160,48 +154,43 @@ function createNetworkVisualizerUi(dependencies = {}) {
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
-  const search = node('label', 'ui-search network-visualizer-search');
-  search.append(iconGlyph('icon-search'));
-  const searchInput = node('input');
-  searchInput.type = 'search';
-  searchInput.placeholder = 'Find a system, talkgroup, or radio';
-  searchInput.setAttribute('aria-label', 'Search retained network entities');
-  search.append(searchInput);
-
-  const filterGroup = node('div', 'network-visualizer-filter-group');
-  filterGroup.setAttribute('role', 'group');
-  filterGroup.setAttribute('aria-label', 'Display filters');
-  const affiliationFilter = toggleButton(node, 'Affiliations', filters.affiliations);
-  const activityFilter = toggleButton(node, 'Activity', filters.activity);
-  const quietFilter = toggleButton(node, 'Quiet', filters.quiet);
-  filterGroup.append(affiliationFilter, activityFilter, quietFilter);
-
   const actions = node('div', 'network-visualizer-actions');
-  const cameraActions = node('div', 'network-visualizer-action-group');
-  cameraActions.setAttribute('role', 'group');
-  cameraActions.setAttribute('aria-label', 'Camera');
-  const fit = createTextButton(node, 'Fit all');
-  const focus = createTextButton(node, 'Focus');
-  focus.disabled = true;
-  const autoRotate = iconButton('icon-replay', 'Auto rotate');
-  autoRotate.setAttribute('aria-pressed', String(initialAutoRotate));
-  autoRotate.title = 'Slowly orbit the current view while idle';
-  cameraActions.append(fit, focus, autoRotate);
+  const cameraModes = node('div', 'network-visualizer-camera-modes');
+  cameraModes.setAttribute('role', 'group');
+  cameraModes.setAttribute('aria-label', 'Camera mode');
+  const autoMode = toggleButton(node, 'Auto', initialCameraMode === 'auto');
+  autoMode.classList.add('network-visualizer-camera-mode');
+  autoMode.title = 'Follow live activity and orbit while idle';
+  const manualMode = toggleButton(node, 'Manual', initialCameraMode === 'manual');
+  manualMode.classList.add('network-visualizer-camera-mode');
+  manualMode.title = 'Move through the scene without automatic camera movement';
+  cameraModes.append(autoMode, manualMode);
 
-  const freeze = toggleButton(node, 'Freeze layout', false);
   const eventsToggle = toggleButton(node, 'Events', false);
   const clear = createTextButton(node, 'Clear map', 'ui-button ui-button-danger-quiet');
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   const settingsButton = iconButton('icon-playback-controls', 'Density settings');
   settingsButton.setAttribute('popovertarget', 'network-visualizer-settings');
-  actions.append(cameraActions, freeze, eventsToggle, clear, fullscreen, settingsButton);
-  toolbar.append(brand, status, search, filterGroup, actions);
+  actions.append(cameraModes, eventsToggle, clear, fullscreen, settingsButton);
+  toolbar.append(brand, status, actions);
 
   const stage = node('div', 'network-visualizer-stage');
   stage.tabIndex = 0;
   stage.setAttribute('aria-label', 'Interactive radio network canvas');
   stage.dataset.webgl = 'pending';
   const canvas = node('div', 'network-visualizer-canvas');
+
+  const manualGuide = node('aside', 'network-visualizer-overlay network-visualizer-manual-guide');
+  manualGuide.hidden = initialCameraMode !== 'manual';
+  manualGuide.setAttribute('role', 'note');
+  manualGuide.setAttribute('aria-label', 'Manual camera controls');
+  const guideItem = (keys, label) => {
+    const item = node('span', 'network-visualizer-manual-guide-item');
+    item.append(node('kbd', '', keys), node('span', '', label));
+    return item;
+  };
+  manualGuide.append(node('strong', '', 'Manual camera'), guideItem('W A S D', 'Move'),
+    guideItem('← ↑ ↓ →', 'Look'), guideItem('Drag', 'Orbit'), guideItem('Wheel', 'Zoom'));
 
   const scopeNavigation = node('nav', 'network-visualizer-overlay network-visualizer-scope');
   scopeNavigation.setAttribute('aria-label', 'Network view hierarchy');
@@ -315,31 +304,17 @@ function createNetworkVisualizerUi(dependencies = {}) {
   settingsGrid.append(radioRangeLabel, labelRangeLabel);
   settings.append(settingsHeading, settingsGrid);
 
-  stage.append(canvas, scopeNavigation, empty, legend, notice, affiliationAlert, inspector, events, settings);
+  stage.append(canvas, scopeNavigation, empty, legend, manualGuide, notice, affiliationAlert, inspector, events, settings);
   layout.append(toolbar, stage);
+  setCameraMode(initialCameraMode);
 
-  const notifyFilters = () => callbacks.onFilters?.({ ...filters });
-  [[affiliationFilter, 'affiliations'], [activityFilter, 'activity'], [quietFilter, 'quiet']].forEach(([button, key]) => {
-    button.addEventListener('click', () => {
-      filters[key] = !filters[key];
-      button.setAttribute('aria-pressed', String(filters[key]));
-      notifyFilters();
-    });
-  });
-  searchInput.addEventListener('input', () => callbacks.onSearch?.(searchInput.value));
-  searchInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    callbacks.onSearchCommit?.(searchInput.value);
-  });
-  fit.addEventListener('click', () => callbacks.onFit?.());
-  focus.addEventListener('click', () => callbacks.onFocus?.());
-  autoRotate.addEventListener('click', () => {
-    const value = autoRotate.getAttribute('aria-pressed') !== 'true';
-    setAutoRotate(value);
-    callbacks.onAutoRotate?.(value);
-  });
-  freeze.addEventListener('click', () => callbacks.onFreeze?.(freeze.getAttribute('aria-pressed') !== 'true'));
+  const selectCameraMode = (value) => {
+    if (value === cameraMode) return;
+    setCameraMode(value);
+    callbacks.onCameraMode?.(cameraMode);
+  };
+  autoMode.addEventListener('click', () => selectCameraMode('auto'));
+  manualMode.addEventListener('click', () => selectCameraMode('manual'));
   eventsToggle.addEventListener('click', () => setEventsOpen(events.hidden));
   eventsClose.addEventListener('click', () => setEventsOpen(false));
   eventsLatest.addEventListener('click', () => {
@@ -393,22 +368,19 @@ function createNetworkVisualizerUi(dependencies = {}) {
     empty.hidden = stage.dataset.webgl === 'failed' ? false : renderedNodeCount > 0;
   }
 
-  function setAutoRotate(value) {
-    autoRotateRequested = Boolean(value);
-    updateAutoRotateControl();
+  function setCameraMode(value) {
+    cameraMode = value === 'manual' ? 'manual' : 'auto';
+    const automatic = cameraMode === 'auto';
+    autoMode.setAttribute('aria-pressed', String(automatic));
+    manualMode.setAttribute('aria-pressed', String(!automatic));
+    stage.dataset.cameraMode = cameraMode;
+    stage.setAttribute('aria-label', automatic ? 'Interactive radio network canvas' :
+      'Interactive radio network canvas. Manual camera: use W A S D to move, arrow keys to look, ' +
+      'drag to orbit, and the mouse wheel to zoom.');
+    manualGuide.hidden = automatic;
   }
 
-  function updateAutoRotateControl() {
-    autoRotate.disabled = reducedMotion;
-    autoRotate.setAttribute('aria-pressed', String(autoRotateRequested && !reducedMotion));
-    autoRotate.title = reducedMotion ? 'Auto rotate is disabled by reduced motion' :
-      'Slowly orbit the current view while idle';
-  }
-
-  function setReducedMotion(value) {
-    reducedMotion = Boolean(value);
-    updateAutoRotateControl();
-  }
+  function setReducedMotion() {}
 
   function setScope(value = {}) {
     const requestedLevel = value.level === 'group' ? 'talkgroup' : value.level;
@@ -445,12 +417,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     const label = collapsed ? 'Expand inspector' : 'Collapse inspector';
     inspectorCollapse.setAttribute('aria-label', label);
     inspectorCollapse.title = label;
-  }
-
-  function setFrozen(value) {
-    const frozen = Boolean(value);
-    freeze.setAttribute('aria-pressed', String(frozen));
-    freeze.textContent = frozen ? 'Layout frozen' : 'Freeze layout';
   }
 
   function updateEventsLatestControl() {
@@ -566,7 +532,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
       inspectorSignature = '';
       const restoreFocus = !inspector.hidden && inspector.contains(document.activeElement);
       inspector.hidden = true;
-      focus.disabled = true;
       if (restoreFocus) {
         const target = inspectorReturnFocus?.isConnected && typeof inspectorReturnFocus.focus === 'function' ?
           inspectorReturnFocus : stage;
@@ -590,7 +555,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     inspectorSignature = signature;
     if (inspector.hidden) inspectorReturnFocus = document.activeElement;
     inspector.hidden = false;
-    focus.disabled = false;
     inspectorTitle.textContent = text(entity.label || entity.name || entity.displayId, 'Unlabeled entity');
     inspectorSubtitle.textContent = text(entity.kind, 'entity').replace(/_/g, ' ');
     const facts = node('dl', 'network-visualizer-facts');
@@ -735,16 +699,14 @@ function createNetworkVisualizerUi(dependencies = {}) {
     element: layout,
     stage,
     canvas,
-    searchInput,
     scopeNavigation,
     scopeBack,
-    autoRotate,
+    cameraModes,
     setTransport,
     setCounts,
-    setAutoRotate,
+    setCameraMode,
     setReducedMotion,
     setScope,
-    setFrozen,
     setInspectorCollapsed,
     setEventsOpen,
     showNotice,
