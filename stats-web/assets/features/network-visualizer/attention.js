@@ -3,7 +3,22 @@
 const ATTENTION_DEFAULTS = Object.freeze({
   candidateLeadMs: 2_000,
   minimumDwellMs: 10_000,
-  manualCooldownMs: 10_000
+  manualCooldownMs: 10_000,
+  importantEventHoldMs: 6_000,
+  emergencyEventHoldMs: 12_000
+});
+
+const IMPORTANT_EVENT_PRIORITY = Object.freeze({
+  affiliation_observed: 2,
+  affiliation_observed_after_gap: 2,
+  explicit_presence_remove: 3,
+  signal_check: 4,
+  signal_page: 5,
+  signal_busy: 6,
+  signal_denial: 7,
+  observed_affiliation_change: 8,
+  affiliation_change: 8,
+  signal_emergency: 9
 });
 
 function finiteTime(value) {
@@ -108,6 +123,78 @@ function rankActiveCallHotspots(state, scopeValue, atMs = 0, currentTargetKey = 
     .sort((left, right) => compareHotspots(left, right, currentTargetKey)));
 }
 
+function eventGroupKey(state, event) {
+  const direct = String(event?.newGroupKey || event?.groupKey || event?.oldGroupKey || '');
+  if (direct) return direct;
+  const radio = state?.radios instanceof Map ? state.radios.get(event?.radioKey) : null;
+  return String(radio?.visualParentGroupKey || radio?.recentTxGroupKey || '');
+}
+
+function eventTarget(state, event, scope) {
+  const universeKey = String(event?.universeKey || '');
+  if (!universeKey) return null;
+  const groupKey = eventGroupKey(state, event);
+  const radioKey = String(event?.radioKey || '');
+  if (scope.level === 'overview') {
+    return { targetKey: universeKey, targetType: 'universe', universeKey, groupKey, radioKey };
+  }
+  if (universeKey !== scope.universeKey) return null;
+  if (scope.level === 'system') {
+    return { targetKey: groupKey || radioKey || universeKey,
+      targetType: groupKey ? 'group' : radioKey ? 'radio' : 'universe', universeKey, groupKey, radioKey };
+  }
+  if (groupKey !== scope.groupKey) return null;
+  return { targetKey: scope.groupKey, targetType: 'group', universeKey, groupKey, radioKey };
+}
+
+function compareAttentionHotspots(left, right, currentTargetKey = '') {
+  const scoreDelta = right.score.importance - left.score.importance ||
+    right.score.transmittingRadios - left.score.transmittingRadios ||
+    right.score.callLegs - left.score.callLegs ||
+    right.score.lastObservedAtMs - left.score.lastObservedAtMs;
+  if (scoreDelta) return scoreDelta;
+  if (left.targetKey === currentTargetKey) return -1;
+  if (right.targetKey === currentTargetKey) return 1;
+  return left.targetKey.localeCompare(right.targetKey);
+}
+
+/** Ranks recent semantic events ahead of confirmed Grant hotspots without changing either underlying state model. */
+function rankAttentionHotspots(state, scopeValue, atMs = 0, currentTargetKey = '', options = {}) {
+  const scope = normalizeScope(scopeValue);
+  const now = finiteTime(atMs);
+  const settings = { ...ATTENTION_DEFAULTS, ...options };
+  const ranked = rankActiveCallHotspots(state, scope, now, currentTargetKey).map((grant) => {
+    const active = grant.callKeys.length > 0;
+    return Object.freeze({ ...grant,
+      attentionKind: active ? 'grant' : 'idle',
+      score: Object.freeze({ ...grant.score, importance: active ? 1 : 0 })
+    });
+  });
+
+  const events = Array.isArray(state?.semanticEvents) ? state.semanticEvents : [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const kind = String(event?.type || event?.kind || '');
+    const importance = IMPORTANT_EVENT_PRIORITY[kind] || 0;
+    if (!importance) continue;
+    const observedAtMs = finiteTime(event?.observedAtMs);
+    const holdMs = kind === 'signal_emergency' ? settings.emergencyEventHoldMs : settings.importantEventHoldMs;
+    if (!observedAtMs || observedAtMs > now || now - observedAtMs > holdMs) continue;
+    const target = eventTarget(state, event, scope);
+    if (!target?.targetKey) continue;
+    const radioKeys = target.radioKey ? [target.radioKey] : [];
+    const groupKeys = target.groupKey ? [target.groupKey] : [];
+    ranked.push(Object.freeze({ ...target,
+      radioKeys: Object.freeze(radioKeys), groupKeys: Object.freeze(groupKeys), callKeys: Object.freeze([]),
+      centroidKeys: Object.freeze([...new Set([...groupKeys, ...radioKeys, target.targetKey])]),
+      attentionKind: kind,
+      score: Object.freeze({ importance, transmittingRadios: 0, callLegs: 0, lastObservedAtMs: observedAtMs })
+    }));
+  }
+
+  return Object.freeze(ranked.sort((left, right) => compareAttentionHotspots(left, right, currentTargetKey)));
+}
+
 function validateOptions(value = {}) {
   const result = { ...ATTENTION_DEFAULTS, ...value };
   Object.entries(result).forEach(([key, entry]) => {
@@ -170,7 +257,7 @@ function createAttentionCoordinator(options = {}) {
       candidateSinceMs = 0;
     }
 
-    const ranked = rankActiveCallHotspots(input.state, scope, now, current?.targetKey || '');
+    const ranked = rankAttentionHotspots(input.state, scope, now, current?.targetKey || '', settings);
     if (scope.level === 'group') {
       current = ranked[0] || null;
       currentSinceMs ||= now;
@@ -206,7 +293,8 @@ function createAttentionCoordinator(options = {}) {
     }
 
     const ledLongEnough = now - candidateSinceMs >= settings.candidateLeadMs;
-    const dwelledLongEnough = !current || now - currentSinceMs >= settings.minimumDwellMs;
+    const higherPriority = (candidate?.score?.importance || 0) > (current?.score?.importance || 0);
+    const dwelledLongEnough = higherPriority || !current || now - currentSinceMs >= settings.minimumDwellMs;
     if (!ledLongEnough || !dwelledLongEnough) {
       return result(current ? 'hold' : 'candidate', false, current,
         !ledLongEnough ? 'candidate_delay' : 'minimum_dwell');
@@ -235,4 +323,4 @@ function createAttentionCoordinator(options = {}) {
   return Object.freeze({ update, reset, noteManualInteraction, snapshot });
 }
 
-export { ATTENTION_DEFAULTS, createAttentionCoordinator, rankActiveCallHotspots };
+export { ATTENTION_DEFAULTS, createAttentionCoordinator, rankActiveCallHotspots, rankAttentionHotspots };

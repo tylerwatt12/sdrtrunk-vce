@@ -11,10 +11,12 @@ function call(key, universeKey, groupKey, radioKey, lastObservedAtMs, expiresAtM
   return { key, universeKey, groupKey, radioKey, lastObservedAtMs, expiresAtMs };
 }
 
-function state(calls, generation = 1) {
+function state(calls, generation = 1, semanticEvents = []) {
   return {
     generation,
     activeCalls: new Map(calls.map((entry) => [entry.key, entry])),
+    semanticEvents,
+    radios: new Map(),
     pendingGrants: new Map([['grant-only', { universeKey: 'u-grant', groupKey: 'g-grant' }]]),
     universes: new Map([['u-afterglow', { key: 'u-afterglow', afterglowUntilMs: 99_000 }]])
   };
@@ -22,11 +24,14 @@ function state(calls, generation = 1) {
 
 async function main() {
   const moduleUrl = `${pathToFileURL(path.join(feature, 'attention.js')).href}?attention-test=1`;
-  const { ATTENTION_DEFAULTS, createAttentionCoordinator, rankActiveCallHotspots } = await import(moduleUrl);
+  const { ATTENTION_DEFAULTS, createAttentionCoordinator, rankActiveCallHotspots,
+    rankAttentionHotspots } = await import(moduleUrl);
   assert.deepEqual(ATTENTION_DEFAULTS, {
     candidateLeadMs: 2_000,
     minimumDwellMs: 10_000,
-    manualCooldownMs: 10_000
+    manualCooldownMs: 10_000,
+    importantEventHoldMs: 6_000,
+    emergencyEventHoldMs: 12_000
   });
 
   const calls = [
@@ -70,6 +75,38 @@ async function main() {
   ]), { level: 'system', universeKey: 'u-a' }, 100);
   assert.deepEqual(recency.map((entry) => entry.targetKey), ['g-new', 'g-old']);
 
+  const important = rankAttentionHotspots(state([
+    call('grant-a', 'u-a', 'g-grant', 'r-grant', 9_900),
+    call('grant-b', 'u-a', 'g-grant', 'r-grant-2', 9_950)
+  ], 1, [
+    { type: 'affiliation_observed', universeKey: 'u-a', newGroupKey: 'g-join',
+      radioKey: 'r-join', observedAtMs: 9_800 },
+    { type: 'signal_denial', universeKey: 'u-a', groupKey: 'g-denial',
+      radioKey: 'r-denial', observedAtMs: 9_700 },
+    { type: 'signal_emergency', universeKey: 'u-b', groupKey: 'g-emergency',
+      radioKey: 'r-emergency', observedAtMs: 1_000 }
+  ]), { level: 'system', universeKey: 'u-a' }, 10_000);
+  assert.deepEqual(important.map((entry) => entry.targetKey), ['g-denial', 'g-join', 'g-grant']);
+  assert.deepEqual(important.map((entry) => entry.attentionKind),
+    ['signal_denial', 'affiliation_observed', 'grant']);
+  assert.equal(important[0].score.importance > important[2].score.importance, true);
+
+  const overviewEmergency = rankAttentionHotspots(state([
+    call('grant-a', 'u-a', 'g-a', 'r-a', 11_900)
+  ], 1, [{ type: 'signal_emergency', universeKey: 'u-b', groupKey: 'g-b',
+    radioKey: 'r-b', observedAtMs: 1_000 }]), { level: 'overview' }, 12_000);
+  assert.equal(overviewEmergency[0].targetKey, 'u-b');
+  assert.equal(overviewEmergency[0].attentionKind, 'signal_emergency');
+  for (const kind of ['affiliation_observed', 'explicit_presence_remove', 'signal_denial', 'signal_check',
+    'signal_emergency', 'signal_page', 'signal_busy', 'observed_affiliation_change']) {
+    const ranked = rankAttentionHotspots(state([
+      call('grant', 'u-a', 'g-grant', 'r-grant', 9_999)
+    ], 1, [{ type: kind, universeKey: 'u-a', groupKey: 'g-important',
+      newGroupKey: 'g-important', oldGroupKey: 'g-important', radioKey: 'r-important', observedAtMs: 9_999 }]),
+    { level: 'system', universeKey: 'u-a' }, 10_000);
+    assert.equal(ranked[0].attentionKind, kind, `${kind} should outrank a routine Grant`);
+  }
+
   const group = rankActiveCallHotspots(state(systemCalls),
     { level: 'group', universeKey: 'u-a', groupKey: 'g-2' }, 100);
   assert.equal(group.length, 1);
@@ -99,6 +136,20 @@ async function main() {
     autoRotate: true });
   assert.equal(afterDwell.changed, true);
   assert.equal(afterDwell.target.targetKey, 'u-b');
+
+  const override = createAttentionCoordinator();
+  override.update({ state: activeA, scope: { level: 'overview' }, atMs: 0, autoRotate: true });
+  override.update({ state: activeA, scope: { level: 'overview' }, atMs: 2_000, autoRotate: true });
+  const emergencyB = state([call('a', 'u-a', 'g-a', 'r-a', 3_000)], 1,
+    [{ type: 'signal_emergency', universeKey: 'u-b', groupKey: 'g-b',
+      radioKey: 'r-b', observedAtMs: 3_000 }]);
+  assert.equal(override.update({ state: emergencyB, scope: { level: 'overview' }, atMs: 3_000,
+    autoRotate: true }).reason, 'candidate_delay');
+  const emergencyFocus = override.update({ state: emergencyB, scope: { level: 'overview' }, atMs: 5_000,
+    autoRotate: true });
+  assert.equal(emergencyFocus.changed, true, 'important events should bypass Grant dwell after the lead delay');
+  assert.equal(emergencyFocus.target.targetKey, 'u-b');
+  assert.equal(emergencyFocus.target.attentionKind, 'signal_emergency');
 
   const switching = createAttentionCoordinator({ candidateLeadMs: 2_000, minimumDwellMs: 0,
     manualCooldownMs: 10_000 });

@@ -56,7 +56,9 @@ Left-dragging the canvas orbits the current level, right-dragging pans it, and t
 Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
 is enabled by default. It favors the system or talkgroup with the most current confirmed transmitters, requires a
 candidate to lead for two seconds, holds a target for at least ten seconds, and preserves the current zoom while moving
-the orbit center. Manual camera interaction suppresses attention moves for ten seconds; reduced motion disables them.
+the orbit center. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and confirmed affiliation-change events
+rank above routine Grants; a stable higher-priority event may preempt the normal Grant dwell. Manual camera interaction
+still suppresses all attention moves for ten seconds, and reduced motion disables them.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
 selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change
