@@ -86,12 +86,14 @@ public class ReceiverActivitySchema
     private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
     private static final int P25_FIRST_SPECIAL_RADIO = 0xFFFFFC;
 
+    private static final int FORMAT_25_MAXIMUM_EVENT_TYPE_CODE = 57;
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes();
+    private static final List<ReceiverActivityCodes.EventTypeCode> EVENT_TYPES = ReceiverActivityCodes.eventTypeCodes();
+    private static final List<ReceiverActivityCodes.EventTypeCode> PRE_FORMAT_26_EVENT_TYPES = EVENT_TYPES.stream()
+        .filter(eventType -> eventType.code() <= FORMAT_25_MAXIMUM_EVENT_TYPE_CODE)
+        .toList();
     private static final String ACTION_CODES = ACTIONS.stream()
         .map(action -> Integer.toString(action.code()))
-        .collect(Collectors.joining(", "));
-    private static final String EVENT_TYPE_CODES = ReceiverActivityCodes.eventTypeCodes().stream()
-        .map(eventType -> Integer.toString(eventType.code()))
         .collect(Collectors.joining(", "));
     private static final List<ReceiverActivityRecords.Action> TRUNKED_SIGNALING_ACTIONS = ACTIONS.stream()
         .filter(action -> action != ReceiverActivityRecords.Action.CALL).toList();
@@ -125,26 +127,27 @@ public class ReceiverActivitySchema
 
     public static void create(Connection connection) throws SQLException
     {
-        create(connection, MAXIMUM_OBSERVED_SITE, true, true);
+        create(connection, MAXIMUM_OBSERVED_SITE, true, true, EVENT_TYPES);
     }
 
     /** Creates the frozen format-17 activity schema for the historical format-14-to-15 migration. */
     public static void createFormat17(Connection connection) throws SQLException
     {
-        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false);
+        create(connection, FORMAT_17_MAXIMUM_OBSERVED_SITE, false, false, PRE_FORMAT_26_EVENT_TYPES);
     }
 
     private static void create(Connection connection, int maximumObservedSite, boolean allowNxdnNullGroup,
-                               boolean includeActivityFilterIndexes) throws SQLException
+                               boolean includeActivityFilterIndexes,
+                               List<ReceiverActivityCodes.EventTypeCode> eventTypes) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(receiverChannelSql());
-            statement.executeUpdate(receiverActivityEventSql(maximumObservedSite));
+            statement.executeUpdate(receiverActivityEventSql(maximumObservedSite, eventTypes));
             statement.executeUpdate(createActivityEventIdentityMemberSql());
             createTrunkedCallTables(statement);
             RadioSystemSchema.create(statement);
-            createConventionalTables(statement);
+            createConventionalTables(statement, eventTypes);
             createConventionalCallIdentityTable(statement, allowNxdnNullGroup);
             createP25SiteTables(statement);
             createControlChannelQualityTable(statement);
@@ -155,7 +158,7 @@ public class ReceiverActivitySchema
                     updated_at_ms INTEGER NOT NULL CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
                 )
                 """);
-            createIndexesAndViews(statement, includeActivityFilterIndexes);
+            createIndexesAndViews(statement, includeActivityFilterIndexes, eventTypes);
         }
 
         SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
@@ -477,10 +480,11 @@ public class ReceiverActivitySchema
 
     private static String receiverActivityEventSql()
     {
-        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE);
+        return receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES);
     }
 
-    private static String receiverActivityEventSql(int maximumObservedSite)
+    private static String receiverActivityEventSql(int maximumObservedSite,
+                                                   List<ReceiverActivityCodes.EventTypeCode> eventTypes)
     {
         return """
             CREATE TABLE IF NOT EXISTS receiver_activity_event (
@@ -543,7 +547,7 @@ public class ReceiverActivitySchema
                     REFERENCES radio_system_identity_summary(
                         id, radio_system_id, identity_kind_code) ON DELETE CASCADE
             )
-            """.formatted(ACTION_CODES, EVENT_TYPE_CODES, maximumObservedSite);
+            """.formatted(ACTION_CODES, eventTypeCodes(eventTypes), maximumObservedSite);
     }
 
     /** Creates the replacement event table used only by the adjacent format-17-to-18 migration. */
@@ -551,8 +555,29 @@ public class ReceiverActivitySchema
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE)
+            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, PRE_FORMAT_26_EVENT_TYPES)
                 .replace("receiver_activity_event (", "receiver_activity_event_format18 ("));
+        }
+    }
+
+    /** Creates the replacement event table used only by the adjacent format-25-to-26 migration. */
+    public static void createFormat26ReceiverActivityEventMigrationTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(receiverActivityEventSql(MAXIMUM_OBSERVED_SITE, EVENT_TYPES)
+                .replace("receiver_activity_event (", "receiver_activity_event_format26 ("));
+        }
+    }
+
+    /** Creates the replacement conventional summary used only by the adjacent format-25-to-26 migration. */
+    public static void createFormat26ConventionalActivitySummaryMigrationTable(Connection connection)
+        throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(createConventionalActivitySummarySql(EVENT_TYPES).replace(
+                "conventional_activity_summary (", "conventional_activity_summary_format26 ("));
         }
     }
 
@@ -567,12 +592,21 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Restores the frozen pre-format-24 indexes and resolved view after a historical event-table rebuild. */
+    /** Restores the frozen pre-format-24 indexes and pre-format-26 view after a historical table rebuild. */
     public static void createCurrentIndexesAndViews(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
         {
-            createIndexesAndViews(statement, false);
+            createIndexesAndViews(statement, false, PRE_FORMAT_26_EVENT_TYPES);
+        }
+    }
+
+    /** Restores the complete format-26 indexes and resolved view after its adjacent table rebuild. */
+    public static void createFormat26IndexesAndViews(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            createIndexesAndViews(statement, true, EVENT_TYPES);
         }
     }
 
@@ -2104,9 +2138,32 @@ public class ReceiverActivitySchema
             """;
     }
 
-    private static void createConventionalTables(Statement statement) throws SQLException
+    private static void createConventionalTables(Statement statement,
+                                                 List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+        throws SQLException
     {
+        statement.executeUpdate(createConventionalActivitySummarySql(eventTypes));
         statement.executeUpdate("""
+            CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
+                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
+                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
+                frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz >= 0),
+                timeslot INTEGER NOT NULL DEFAULT -1
+                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
+                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
+                %s,
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_count) = 'integer' AND recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
+                PRIMARY KEY(channel_id, frequency_hz, timeslot, bucket_start_ms)
+            )
+            """.formatted(ACTION_COUNT_DEFINITIONS));
+    }
+
+    private static String createConventionalActivitySummarySql(
+        List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+    {
+        return """
             CREATE TABLE IF NOT EXISTS conventional_activity_summary (
                 channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
                     CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
@@ -2123,22 +2180,7 @@ public class ReceiverActivitySchema
                 streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
                 PRIMARY KEY(channel_id, frequency_hz, timeslot)
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS, EVENT_TYPE_CODES));
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS conventional_activity_bucket (
-                channel_id INTEGER NOT NULL REFERENCES receiver_channel(id) ON DELETE CASCADE
-                    CHECK(typeof(channel_id) = 'integer' AND channel_id > 0),
-                frequency_hz INTEGER NOT NULL CHECK(typeof(frequency_hz) = 'integer' AND frequency_hz >= 0),
-                timeslot INTEGER NOT NULL DEFAULT -1
-                    CHECK(typeof(timeslot) = 'integer' AND timeslot IN (-1, 1, 2)),
-                bucket_start_ms INTEGER NOT NULL CHECK(typeof(bucket_start_ms) = 'integer' AND bucket_start_ms >= 0),
-                %s,
-                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(encrypted_count) = 'integer' AND encrypted_count >= 0),
-                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recorded_count) = 'integer' AND recorded_count >= 0),
-                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(typeof(streamed_count) = 'integer' AND streamed_count >= 0),
-                PRIMARY KEY(channel_id, frequency_hz, timeslot, bucket_start_ms)
-            )
-            """.formatted(ACTION_COUNT_DEFINITIONS));
+            """.formatted(ACTION_COUNT_DEFINITIONS, eventTypeCodes(eventTypes));
     }
 
     /**
@@ -2622,7 +2664,8 @@ public class ReceiverActivitySchema
             """);
     }
 
-    private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes)
+    private static void createIndexesAndViews(Statement statement, boolean includeActivityFilterIndexes,
+                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes)
         throws SQLException
     {
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_receiver_channel_radio_system ON receiver_channel(radio_system_id, id)");
@@ -2715,7 +2758,7 @@ public class ReceiverActivitySchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_neighbor_summary_channel_site ON p25_site_neighbor_summary(channel_id, system_id, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_trunked_control_quality_channel_time ON trunked_control_channel_quality(channel_id, observed_at_ms DESC)");
         createControlChannelQualityRetentionIndex(statement);
-        statement.executeUpdate(createResolvedViewSql());
+        statement.executeUpdate(createResolvedViewSql(eventTypes));
     }
 
     /**
@@ -4927,6 +4970,11 @@ public class ReceiverActivitySchema
 
     private static String createResolvedViewSql()
     {
+        return createResolvedViewSql(EVENT_TYPES);
+    }
+
+    private static String createResolvedViewSql(List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+    {
         return """
             CREATE VIEW IF NOT EXISTS receiver_activity_event_resolved AS
             SELECT
@@ -4994,7 +5042,7 @@ public class ReceiverActivitySchema
             """.formatted(
             receiverKindCase(receiverKindSql("configured.channel_kind", "configured.decoder_type")),
             protocolCase(protocolSql("configured.decoder_type")),
-            actionCase("a.action_code"), decodeEventTypeCase("a.event_type_code"),
+            actionCase("a.action_code"), decodeEventTypeCase("a.event_type_code", eventTypes),
             radioSystemIdentityKeySql("source_identity"), radioSystemIdentityKeySql("target_identity"),
             targetKindCase("a.target_kind_code"),
             receiverKindSql("configured.channel_kind", "configured.decoder_type"),
@@ -5068,16 +5116,23 @@ public class ReceiverActivitySchema
         return sb.append(" ELSE 'UNKNOWN' END").toString();
     }
 
-    private static String decodeEventTypeCase(String expression)
+    private static String decodeEventTypeCase(String expression,
+                                              List<ReceiverActivityCodes.EventTypeCode> eventTypes)
     {
         StringBuilder sb = new StringBuilder("CASE ").append(expression);
 
-        for(ReceiverActivityCodes.EventTypeCode value: ReceiverActivityCodes.eventTypeCodes())
+        for(ReceiverActivityCodes.EventTypeCode value: eventTypes)
         {
             sb.append(" WHEN ").append(value.code()).append(" THEN '").append(value.eventType().name()).append("'");
         }
 
         return sb.append(" ELSE NULL END").toString();
+    }
+
+    private static String eventTypeCodes(List<ReceiverActivityCodes.EventTypeCode> eventTypes)
+    {
+        return eventTypes.stream().map(eventType -> Integer.toString(eventType.code()))
+            .collect(Collectors.joining(", "));
     }
 
     private static String safe(Object value)

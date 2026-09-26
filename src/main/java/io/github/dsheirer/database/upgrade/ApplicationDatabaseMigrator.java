@@ -421,7 +421,7 @@ public final class ApplicationDatabaseMigrator
         return updatePortableDirectoryPreferences(connection, relocation, true);
     }
 
-    /** Read-only count used by the semantic format-24-to-25 step before the strict current-format stamp. */
+    /** Read-only count used by semantic adjacent migrations before the strict current-format stamp. */
     static int inspectCurrentPortablePreferenceRepairs(Connection connection) throws SQLException
     {
         return currentPortablePreferenceRepairs(connection, false);

@@ -107,7 +107,11 @@ final class ReceiverActivityCodes
         event(DecodeEventType.UNKNOWN_PACKET, 54),
         event(DecodeEventType.XCMP, 55),
         event(DecodeEventType.UNKNOWN, 56),
-        event(DecodeEventType.DENIAL, 57)
+        event(DecodeEventType.DENIAL, 57),
+        event(DecodeEventType.RADIO_UNINHIBIT, 58),
+        event(DecodeEventType.RADIO_INHIBIT, 59),
+        event(DecodeEventType.RADIO_UNINHIBIT_ACK, 60),
+        event(DecodeEventType.RADIO_INHIBIT_ACK, 61)
     );
     private static final Map<DecodeEventType,Integer> EVENT_TYPE_TO_CODE = buildCodeMap();
 

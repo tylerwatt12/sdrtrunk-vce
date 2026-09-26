@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 25;
+    public static final int CURRENT_VERSION = 26;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -82,6 +82,8 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_24_FINGERPRINT =
         "9c45651252ddabe25930b701487c30840132f9a9be4dc33b7b7bd305b0c7a03d";
     private static final String FORMAT_25_FINGERPRINT = FORMAT_24_FINGERPRINT;
+    private static final String FORMAT_26_FINGERPRINT =
+        "578ba3ea7686e7a04703a8e8536903cf4ab2bddb7ef2539ac67bef59feb704d2";
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -324,10 +326,20 @@ public final class DatabaseFormatCatalog
             "Preserve an explicit existing NXDN encrypted-call suppression selection",
             "Keep the saved preference unchanged when a loaded voice-decryption module overrides it at runtime"));
 
+    private static final FormatDescriptor FORMAT_26 = new FormatDescriptor(26, "p25-radio-control-activity-v1",
+        "Exact P25 radio inhibit and uninhibit Activity event format", FORMAT_26_FINGERPRINT, Map.of(),
+        List.of("main format 26"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format26TestDatabase.java", List.of(
+            "Preserve every administrator-owned setting and every retained receiver activity row and event ID",
+            "Preserve every Activity event identity-member relationship and conventional Activity summary",
+            "Repair recoverable direct format-25 row damage before rebuilding the Activity tables",
+            "Allow exact radio uninhibit, radio inhibit, and their acknowledgement event types",
+            "Keep existing Activity action/time indexes, retention, pruning, identity, and encryption behavior unchanged"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25);
+            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -507,7 +519,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_25;
+        return FORMAT_26;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -790,7 +802,7 @@ public final class DatabaseFormatCatalog
             case 9, 10, 11 -> 4;
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
-            case 23, 24, 25 -> 7;
+            case 23, 24, 25, 26 -> 7;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

@@ -83,6 +83,29 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    void adoptsTheMarkerForAnExactMarkerlessFormat26Database() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 26 -> 26 [adopt-global-format-marker]"), result::output);
+        assertEquals("26", metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+        try(Connection connection = open(database))
+        {
+            assertEquals(26, DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
+    }
+
+    @Test
     void repairsWrongShapePortablePreferencesInCurrentStagedDatabase() throws Exception
     {
         Path database = newStagedDatabase();
@@ -158,7 +181,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 25 -> 25 [repair-portable-preferences]"), result::output);
+            "COMPLETED STEP: 26 -> 26 [repair-portable-preferences]"), result::output);
         assertTrue(result.output().contains(
             "RESET unusable portable preference components: 6 preference component(s)"), result::output);
         assertEquals("keep", scalar(database, """
@@ -204,15 +227,56 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         int completedRepair = result.output().indexOf(
-            "COMPLETED STEP: 25 -> 25 [repair-portable-preferences]");
+            "COMPLETED STEP: 26 -> 26 [repair-portable-preferences]");
         int completedAdministrative = result.output().indexOf(
-            "COMPLETED STEP: 25 -> 25 [repair-current-administrative-state]");
+            "COMPLETED STEP: 26 -> 26 [repair-current-administrative-state]");
         assertTrue(completedRepair >= 0 && completedAdministrative > completedRepair, result::output);
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
         assertEquals("{}", scalar(database, """
             SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
             """));
+    }
+
+    @Test
+    void repairsDirectFormat25StateInsideTheFormat26MigrationStep() throws Exception
+    {
+        Path database = newStagedDatabase();
+        Format25TestDatabase.create(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key, settings_json, updated_at_ms)
+                VALUES ('portable_java_preferences_v1', '[]', 1)
+                ON CONFLICT(key) DO UPDATE SET settings_json=excluded.settings_json,
+                                               updated_at_ms=excluded.updated_at_ms
+                """);
+            statement.executeUpdate("""
+                UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertTrue(result.output().contains(
+            "COMPLETED STEP: 25 -> 26 [format-25-to-26]"), result::output);
+        assertTrue(result.output().contains(
+            "RESET unusable portable preference components: 1 row(s)"), result::output);
+        assertTrue(result.output().contains("DEFAULT unusable setup progress: 1 row(s)"), result::output);
+        assertFalse(result.output().contains(
+            "COMPLETED STEP: 26 -> 26 [repair-current-administrative-state]"), result::output);
+        assertEquals("{}", scalar(database, """
+            SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
+            """));
+        assertEquals("1", scalar(database, """
+            SELECT json_extract(settings_json, '$.imported')
+            FROM application_settings WHERE key='setup_wizard'
+            """));
+        try(Connection connection = open(database))
+        {
+            assertEquals(26, DatabaseFormatCatalog.requireCurrent(connection).version());
+        }
     }
 
     @Test
@@ -263,7 +327,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 25 -> 25 [repair-current-administrative-state]"), result::output);
+            "COMPLETED STEP: 26 -> 26 [repair-current-administrative-state]"), result::output);
         assertTrue(result.output().contains("DEFAULT unusable setup progress: 1 row(s)"), result::output);
         assertTrue(result.output().contains("DEFAULT unusable spectrum-snap settings: 1 row(s)"), result::output);
         assertTrue(result.output().contains(
@@ -405,7 +469,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 25 -> 25 [repair-current-configuration-relationships]"), result::output);
+            "COMPLETED STEP: 26 -> 26 [repair-current-configuration-relationships]"), result::output);
         assertTrue(result.output().contains(
             "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
         assertEquals("1", scalar(database, "SELECT COUNT(*) FROM alias WHERE id=16478"));
@@ -455,7 +519,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 25 -> 25 [reset-damaged-current-derived-state]"), result::output);
+            "COMPLETED STEP: 26 -> 26 [reset-damaged-current-derived-state]"), result::output);
         assertTrue(result.output().contains(
             "RESET bounded receiver activity and statistics rows: 2 row(s)"), result::output);
         assertTrue(result.output().contains(
@@ -546,9 +610,9 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.output().contains(
             "DROP orphaned stream and scan-list relationship rows: 1 row(s)"), result::output);
         int completedDerived = result.output().indexOf(
-            "COMPLETED STEP: 25 -> 25 [reset-damaged-current-derived-state]");
+            "COMPLETED STEP: 26 -> 26 [reset-damaged-current-derived-state]");
         int completedConfiguration = result.output().indexOf(
-            "COMPLETED STEP: 25 -> 25 [repair-current-configuration-relationships]");
+            "COMPLETED STEP: 26 -> 26 [repair-current-configuration-relationships]");
         assertTrue(completedDerived >= 0 && completedConfiguration > completedDerived, result::output);
         assertTrue(result.output().contains(
             "RESET bounded receiver activity and statistics rows: 1 row(s)"), result::output);
@@ -684,7 +748,7 @@ class ApplicationDatabaseMigratorTest
     void refusesMarkerlessFormat24And25SharedLayout() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkTestDatabase.create(database);
+        Format25TestDatabase.create(database);
         new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); var statement = connection.prepareStatement(
@@ -706,7 +770,7 @@ class ApplicationDatabaseMigratorTest
     void doesNotUseRepairableMetadataToGuessAMissingFormat24Or25Marker() throws Exception
     {
         Path database = newStagedDatabase();
-        SdrTrunkTestDatabase.create(database);
+        Format25TestDatabase.create(database);
         new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -740,7 +804,7 @@ class ApplicationDatabaseMigratorTest
         assertFalse(result.output().contains("format-1-to-2"));
         assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
         assertTrue(result.output().indexOf("COMPLETED STEP: 2 -> 3 [format-2-to-3]") <
-            result.output().indexOf("COMPLETED STEP: 25 -> 25 [repair-portable-preferences]"), result::output);
+            result.output().indexOf("COMPLETED STEP: 26 -> 26 [repair-portable-preferences]"), result::output);
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             metadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
 
@@ -1534,7 +1598,7 @@ class ApplicationDatabaseMigratorTest
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
         assertTrue(result.output().contains(
-            "COMPLETED STEP: 25 -> 25 [repair-portable-preferences]"), result::output);
+            "COMPLETED STEP: 26 -> 26 [repair-portable-preferences]"), result::output);
         assertTrue(result.output().contains(
             "RESET unusable portable preference components: 1 preference component(s)"), result::output);
 

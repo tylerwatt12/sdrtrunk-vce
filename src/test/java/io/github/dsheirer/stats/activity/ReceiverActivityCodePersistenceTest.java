@@ -24,6 +24,10 @@ class ReceiverActivityCodePersistenceTest
         assertEquals(28, ReceiverActivityCodes.eventTypeCode(DecodeEventType.DEREGISTER));
         assertEquals(56, ReceiverActivityCodes.eventTypeCode(DecodeEventType.UNKNOWN));
         assertEquals(57, ReceiverActivityCodes.eventTypeCode(DecodeEventType.DENIAL));
+        assertEquals(58, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_UNINHIBIT));
+        assertEquals(59, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT));
+        assertEquals(60, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_UNINHIBIT_ACK));
+        assertEquals(61, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT_ACK));
         assertEquals(12, ReceiverActivityRecords.Action.GRANT.code());
         assertEquals(23, ReceiverActivityRecords.Action.UNKNOWN.code());
     }

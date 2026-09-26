@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -304,6 +304,15 @@ current; every repair, default, reset, or skipped row is reported exactly before
 explicit existing NXDN selection is preserved. Loading a voice-decryption module may temporarily override the effective
 setting at runtime, but does not rewrite the administrator's saved preference. Formats 24 and 25 share one DDL
 fingerprint and row layout, so a markerless file is ambiguous and requires its authoritative global format marker.
+
+The format 25-to-26 step preserves every detailed Activity event and event ID, every attached identity-member
+relationship, and every compact conventional Activity summary. It rebuilds only the two tables whose event-type
+checks change, then restores the complete format-24 index set and resolved Activity view. The expanded checks and view
+retain radio inhibit, radio uninhibit, and their acknowledgements as four exact stable event types. Existing retention,
+pruning, identity, encryption, and administrator-owned configuration are unchanged, and historical rows are not
+reclassified. When format 25 is the directly selected source, the step first applies the same bounded repairs used for
+recoverable current-format preference, administrative, receiver-derived, and configuration damage. An intermediate
+format 25 produced by the preceding step does not repeat those repairs.
 
 ## Schema-Change Rule
 

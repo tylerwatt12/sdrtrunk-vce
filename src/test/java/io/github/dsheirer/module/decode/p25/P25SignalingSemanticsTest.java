@@ -20,6 +20,19 @@ import org.junit.jupiter.api.Test;
 class P25SignalingSemanticsTest
 {
     @Test
+    void retainsStableRadioInhibitEventOrderAndCommandGrouping()
+    {
+        assertEquals(58, DecodeEventType.RADIO_UNINHIBIT.ordinal() + 1);
+        assertEquals(59, DecodeEventType.RADIO_INHIBIT.ordinal() + 1);
+        assertEquals(60, DecodeEventType.RADIO_UNINHIBIT_ACK.ordinal() + 1);
+        assertEquals(61, DecodeEventType.RADIO_INHIBIT_ACK.ordinal() + 1);
+        assertTrue(DecodeEventType.COMMANDS.contains(DecodeEventType.RADIO_UNINHIBIT));
+        assertTrue(DecodeEventType.COMMANDS.contains(DecodeEventType.RADIO_INHIBIT));
+        assertTrue(DecodeEventType.COMMANDS.contains(DecodeEventType.RADIO_UNINHIBIT_ACK));
+        assertTrue(DecodeEventType.COMMANDS.contains(DecodeEventType.RADIO_INHIBIT_ACK));
+    }
+
+    @Test
     void mapsOnlyExactP25SignalTypes()
     {
         assertEquals(P25SignalingSemantics.Action.DENIAL, action(DecodeEventType.DENIAL));
@@ -44,10 +57,20 @@ class P25SignalingSemanticsTest
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_CHECK, DecodeEventType.COMMAND));
         assertEquals(DecodeEventType.RADIO_CHECK,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_CHECK_ACK, DecodeEventType.RESPONSE));
-        assertEquals(DecodeEventType.COMMAND,
+        assertEquals(DecodeEventType.RADIO_UNINHIBIT,
+            P25SignalingSemantics.eventType(ExtendedFunction.RADIO_UNINHIBIT, DecodeEventType.COMMAND));
+        assertEquals(DecodeEventType.RADIO_INHIBIT,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_INHIBIT, DecodeEventType.COMMAND));
-        assertEquals(DecodeEventType.RESPONSE,
+        assertEquals(DecodeEventType.RADIO_UNINHIBIT_ACK,
+            P25SignalingSemantics.eventType(ExtendedFunction.RADIO_UNINHIBIT_ACK, DecodeEventType.RESPONSE));
+        assertEquals(DecodeEventType.RADIO_INHIBIT_ACK,
             P25SignalingSemantics.eventType(ExtendedFunction.RADIO_INHIBIT_ACK, DecodeEventType.RESPONSE));
+        assertEquals(DecodeEventType.COMMAND,
+            P25SignalingSemantics.eventType(ExtendedFunction.RADIO_DETACH, DecodeEventType.COMMAND));
+        assertEquals(DecodeEventType.RESPONSE,
+            P25SignalingSemantics.eventType(ExtendedFunction.RADIO_DETACH_ACK, DecodeEventType.RESPONSE));
+        assertEquals(DecodeEventType.COMMAND,
+            P25SignalingSemantics.eventType(null, DecodeEventType.COMMAND));
 
         assertTrue(P25SignalingSemantics.isBusy(QueuedResponseReason.REQUESTING_UNIT_BUSY_OTHER_SERVICE));
         assertTrue(P25SignalingSemantics.isBusy(QueuedResponseReason.TARGET_GROUP_CURRENTLY_ACTIVE));

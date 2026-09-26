@@ -84,6 +84,16 @@ assert.equal(rollingApi.frequency_hz, 851012500);
 assert.equal(rollingApi.lcn, '1-125');
 assert.equal(rollingApi.timeslot, 2);
 
+for (const eventType of [
+  'RADIO_UNINHIBIT', 'RADIO_INHIBIT', 'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK'
+]) {
+  const eventFilters = context.activityRouteFilters(parameters({
+    activity_event_type: eventType.toLowerCase()
+  }), systemContext);
+  assert.equal(eventFilters.eventType, eventType);
+  assert.equal(context.activityApiFilterParameters(eventFilters).event_type, eventType);
+}
+
 const custom = context.activityRouteFilters(parameters({
   activity_range: 'custom', activity_from_ms: '1000', activity_to_ms: '2000'
 }), systemContext, 99_000);

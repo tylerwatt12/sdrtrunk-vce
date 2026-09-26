@@ -818,7 +818,7 @@ class ApplicationMigrationServiceTest
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("markerless-current-foreign-key-source"));
-        SdrTrunkTestDatabase.create(database);
+        Format25TestDatabase.create(database);
         new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
@@ -951,6 +951,25 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void plansMarkerAdoptionForExactMarkerlessFormat26() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("markerless-format-26-plan"));
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+        }
+
+        DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
+
+        assertFormat(plan.source(), 26, DatabaseFormatCatalog.current().id(), false);
+        assertEquals(1, plan.steps().size());
+        assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
+    }
+
+    @Test
     void startupSkipsDeepDerivedStateInspectionForExactCurrentFormat() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("fast-startup"));
@@ -982,7 +1001,7 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readStartupPlan(older));
 
         Path markerless = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("markerless-startup"));
-        SdrTrunkTestDatabase.create(markerless);
+        Format25TestDatabase.create(markerless);
         new WebAccessService(markerless).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
         try(Connection connection = open(markerless); Statement statement = connection.createStatement())
         {

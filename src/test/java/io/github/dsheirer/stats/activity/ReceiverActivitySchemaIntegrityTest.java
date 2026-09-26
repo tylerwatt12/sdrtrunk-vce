@@ -55,6 +55,10 @@ class ReceiverActivitySchemaIntegrityTest
             assertEquals(1, ReceiverActivityCodes.eventTypeCode(DecodeEventType.AFFILIATE));
             assertEquals(56, ReceiverActivityCodes.eventTypeCode(DecodeEventType.UNKNOWN));
             assertEquals(57, ReceiverActivityCodes.eventTypeCode(DecodeEventType.DENIAL));
+            assertEquals(58, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_UNINHIBIT));
+            assertEquals(59, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT));
+            assertEquals(60, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_UNINHIBIT_ACK));
+            assertEquals(61, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT_ACK));
 
             insertConfiguredChannel(connection);
             execute(connection, """
@@ -68,13 +72,24 @@ class ReceiverActivitySchemaIntegrityTest
             assertEquals("GRANT|DENIAL", text(connection, """
                 SELECT action || '|' || event_type FROM receiver_activity_event_resolved WHERE id=1
                 """));
+            execute(connection, """
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code, event_type_code)
+                VALUES (1, 1001, 21, 58), (1, 1002, 21, 59), (1, 1003, 1, 60), (1, 1004, 1, 61)
+                """);
+            assertEquals("RADIO_UNINHIBIT,RADIO_INHIBIT,RADIO_UNINHIBIT_ACK,RADIO_INHIBIT_ACK",
+                text(connection, """
+                    SELECT group_concat(event_type, ',') FROM (
+                        SELECT event_type FROM receiver_activity_event_resolved
+                        WHERE event_type_code BETWEEN 58 AND 61 ORDER BY event_type_code
+                    )
+                    """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
                 VALUES (1, 1001, 24)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code, event_type_code)
-                VALUES (1, 1001, 12, 58)
+                VALUES (1, 1005, 12, 62)
                 """));
         }
     }

@@ -14,6 +14,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
@@ -159,6 +160,17 @@ class ReceiverActivityMapperTest
     }
 
     @Test
+    void mapsRadioInhibitAcknowledgementsWithoutAddingPersistedActions()
+    {
+        assertEquals(ReceiverActivityRecords.Action.UNKNOWN, mapP25Event(DecodeEventType.RADIO_UNINHIBIT).action());
+        assertEquals(ReceiverActivityRecords.Action.UNKNOWN, mapP25Event(DecodeEventType.RADIO_INHIBIT).action());
+        assertEquals(ReceiverActivityRecords.Action.ACKNOWLEDGE,
+            mapP25Event(DecodeEventType.RADIO_UNINHIBIT_ACK).action());
+        assertEquals(ReceiverActivityRecords.Action.ACKNOWLEDGE,
+            mapP25Event(DecodeEventType.RADIO_INHIBIT_ACK).action());
+    }
+
+    @Test
     void rejectsExplicitP25SystemAndNacDisagreementEvenWhenTheSiteIsIncomplete()
     {
         Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
@@ -232,6 +244,16 @@ class ReceiverActivityMapperTest
             P25AffiliationEvent.Outcome.ACCEPTED, radio, null);
         event.setIdentifierCollection(new MutableIdentifierCollection(frequency != null ?
             List.of(radio, FrequencyConfigurationIdentifier.create(frequency)) : List.of(radio)));
+        return new ReceiverActivityMapper().map(channel, event);
+    }
+
+    private static ReceiverActivityRecords.ActivityEvent mapP25Event(DecodeEventType eventType)
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        DecodeEvent event = new DecodeEvent(eventType, 1_000L);
+        event.setProtocol(io.github.dsheirer.protocol.Protocol.APCO25);
         return new ReceiverActivityMapper().map(channel, event);
     }
 }

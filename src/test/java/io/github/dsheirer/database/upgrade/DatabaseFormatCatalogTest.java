@@ -83,8 +83,10 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("collapsed row-group")));
         assertTrue(DatabaseFormatCatalog.requireVersion(24).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("action/time indexes")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(25).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("action/time indexes")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -190,6 +192,26 @@ class DatabaseFormatCatalogTest
                     'dmr_activity_schema_version'
                 )
                 """));
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat26IsRecognizedUniquely() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("markerless-format-26.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(26, strict.version());
+            assertFalse(strict.markerPresent());
+            assertEquals(strict, migration);
+            assertEquals("adopt-global-format-marker",
+                DatabaseMigrationChain.validateSource(connection, migration).steps().getFirst().id());
         }
     }
 
@@ -499,8 +521,7 @@ class DatabaseFormatCatalogTest
     @Test
     void markerlessFormat24And25LayoutIsRefusedAsAmbiguous() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = Format25TestDatabase.create(mTemporaryFolder.resolve("unmarked-format-25.sqlite"));
         new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database);
@@ -524,8 +545,8 @@ class DatabaseFormatCatalogTest
     @Test
     void repairableMetadataDoesNotDisambiguateMarkerlessFormat24And25() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("unmarked-current-with-retired-metadata.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = Format25TestDatabase.create(
+            mTemporaryFolder.resolve("unmarked-format-25-with-retired-metadata.sqlite"));
         new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())

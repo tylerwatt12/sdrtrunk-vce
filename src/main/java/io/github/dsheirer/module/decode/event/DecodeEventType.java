@@ -86,7 +86,11 @@ public enum DecodeEventType
     XCMP("Motorola XCMP"),
     UNKNOWN("Unknown"),
     //Receiver activity persistence assigns explicit stable codes outside this enum.
-    DENIAL("Denial");
+    DENIAL("Denial"),
+    RADIO_UNINHIBIT("Radio Uninhibit"),
+    RADIO_INHIBIT("Radio Inhibit"),
+    RADIO_UNINHIBIT_ACK("Radio Uninhibit Acknowledge"),
+    RADIO_INHIBIT_ACK("Radio Inhibit Acknowledge");
 
     private final String mLabel;
 
@@ -112,7 +116,9 @@ public enum DecodeEventType
     public static final Set<@NonNull DecodeEventType> COMMANDS = Set.copyOf(EnumSet.of(DecodeEventType.ANNOUNCEMENT,
             DecodeEventType.STATION_ID, DecodeEventType.ACKNOWLEDGE, DecodeEventType.PAGE, DecodeEventType.QUERY,
             DecodeEventType.RADIO_CHECK, DecodeEventType.STATUS, DecodeEventType.COMMAND, DecodeEventType.EMERGENCY,
-            DecodeEventType.NOTIFICATION, DecodeEventType.FUNCTION, DecodeEventType.DYNAMIC_REGROUP));
+            DecodeEventType.NOTIFICATION, DecodeEventType.FUNCTION, DecodeEventType.DYNAMIC_REGROUP,
+            DecodeEventType.RADIO_UNINHIBIT, DecodeEventType.RADIO_INHIBIT, DecodeEventType.RADIO_UNINHIBIT_ACK,
+            DecodeEventType.RADIO_INHIBIT_ACK));
 
     /**
      * Data call event types for filtering

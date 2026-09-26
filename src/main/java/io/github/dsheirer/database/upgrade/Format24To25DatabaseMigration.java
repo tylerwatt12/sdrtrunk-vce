@@ -100,10 +100,12 @@ final class Format24To25DatabaseMigration implements DatabaseMigrationStep
         int portablePreferenceResets = ApplicationDatabaseMigrator.repairCurrentPortablePreferences(connection);
         CurrentDatabaseAdministrativeRepair.Inspection administrative =
             CurrentDatabaseAdministrativeRepair.repair(connection);
-        CurrentDatabaseDerivedStateRepair.Inspection derived =
-            CurrentDatabaseDerivedStateRepair.repair(connection);
         CurrentDatabaseBestEffortRepair.Inspection configuration =
             CurrentDatabaseBestEffortRepair.repair(connection);
+        //Historical migrations temporarily disable foreign keys. Repair configuration first so that any receiver
+        //rows orphaned by a dropped channel are detected and cleared by the following derived-state sweep.
+        CurrentDatabaseDerivedStateRepair.Inspection derived =
+            CurrentDatabaseDerivedStateRepair.repair(connection);
         return new RepairReport(portablePreferenceResets, administrative, derived, configuration);
     }
 
@@ -117,8 +119,8 @@ final class Format24To25DatabaseMigration implements DatabaseMigrationStep
             "Preserve usable entries and remove or reset only malformed, obsolete, or invalid components before " +
                 "the strict current-format stamp"));
         addRepairEffects(effects, CurrentDatabaseAdministrativeRepair.effects(repairs.administrative()), declared);
-        addRepairEffects(effects, CurrentDatabaseDerivedStateRepair.effects(repairs.derived()), declared);
         addRepairEffects(effects, CurrentDatabaseBestEffortRepair.effects(repairs.configuration()), declared);
+        addRepairEffects(effects, CurrentDatabaseDerivedStateRepair.effects(repairs.derived()), declared);
         return List.copyOf(effects);
     }
 

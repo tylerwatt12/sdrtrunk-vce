@@ -49,8 +49,20 @@ public final class P25SignalingSemantics
 
     public static DecodeEventType eventType(ExtendedFunction function, DecodeEventType fallback)
     {
-        return function == ExtendedFunction.RADIO_CHECK || function == ExtendedFunction.RADIO_CHECK_ACK ?
-            DecodeEventType.RADIO_CHECK : fallback;
+        if(function == null)
+        {
+            return fallback;
+        }
+
+        return switch(function)
+        {
+            case RADIO_CHECK, RADIO_CHECK_ACK -> DecodeEventType.RADIO_CHECK;
+            case RADIO_UNINHIBIT -> DecodeEventType.RADIO_UNINHIBIT;
+            case RADIO_INHIBIT -> DecodeEventType.RADIO_INHIBIT;
+            case RADIO_UNINHIBIT_ACK -> DecodeEventType.RADIO_UNINHIBIT_ACK;
+            case RADIO_INHIBIT_ACK -> DecodeEventType.RADIO_INHIBIT_ACK;
+            default -> fallback;
+        };
     }
 
     private static Action action(DecodeEventType eventType)

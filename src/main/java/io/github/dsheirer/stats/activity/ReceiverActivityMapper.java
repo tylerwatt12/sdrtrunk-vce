@@ -884,7 +884,8 @@ class ReceiverActivityMapper
         {
             return ReceiverActivityRecords.Action.REGISTER;
         }
-        if(eventType == DecodeEventType.ACKNOWLEDGE)
+        if(eventType == DecodeEventType.ACKNOWLEDGE || eventType == DecodeEventType.RADIO_UNINHIBIT_ACK ||
+            eventType == DecodeEventType.RADIO_INHIBIT_ACK)
         {
             return ReceiverActivityRecords.Action.ACKNOWLEDGE;
         }
