@@ -1065,7 +1065,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       metadata.material.color?.set(materialColor(metadata.state));
       metadata.material.needsUpdate = true;
     }
-    graph?.backgroundColor('transparent');
+    graph?.backgroundColor('rgba(0, 0, 0, 0)');
     refresh();
   }
   function setReducedMotion(value = null) {
@@ -1183,7 +1183,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     graph = library.ForceGraph3D({ controlType: 'orbit', rendererConfig: {
       alpha: true, antialias: true, powerPreference: 'high-performance'
     }})(surface)
-      .showNavInfo(false).backgroundColor('transparent').nodeId('id').nodeVal(1)
+      .showNavInfo(false).backgroundColor('rgba(0, 0, 0, 0)').nodeId('id').nodeVal(1)
       .nodeThreeObject((node) => nodeObjects.get(nodeKey(node)) || createNodeObject(node))
       .nodeThreeObjectExtend(false).linkSource('source').linkTarget('target')
       .linkThreeObject((link) => linkObjects.get(linkKey(link)) || createLinkObject(link))
