@@ -9,6 +9,8 @@ conventional channels, triangular pyramids are observed source radios, and facet
 activity. The overview keeps those system spheres compact. Entering a system moves the camera inside its enclosing
 wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
 relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
+The enclosing system wireframe remains a stable structural boundary; Grant color and motion stay on talkgroups,
+radios, and their links instead of flashing the entire sphere.
 
 Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities,
 active talkgroups, and their observed source radios remain sharp even at a distance, and label stacking follows camera
@@ -55,10 +57,12 @@ The view remains three-dimensional at every level. Camera moves are animated unl
 Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
 Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
 is enabled by default. It favors the system or talkgroup with the most current confirmed transmitters, requires a
-candidate to lead for two seconds, holds a target for at least ten seconds, and preserves the current zoom while moving
-the orbit center. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and confirmed affiliation-change events
+candidate to lead for two seconds, retains a short confirmed Grant long enough to qualify, and holds a target for at
+least ten seconds. The camera visibly turns toward that activity; inside a system, its target, viewpoint, zoom, and
+manual orbit remain contained well within the enclosing sphere. Recent Join, Logout, Denial, Check, Emergency, Page,
+Busy, and confirmed affiliation-change events
 rank above routine Grants; a stable higher-priority event may preempt the normal Grant dwell. Manual camera interaction
-still suppresses all attention moves for ten seconds, and reduced motion disables them.
+or explicit scope/focus framing suppresses all attention moves for ten seconds, and reduced motion disables them.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
 selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change

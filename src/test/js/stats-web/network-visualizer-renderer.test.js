@@ -500,6 +500,8 @@ async function main() {
   assert.equal(nodeGeometryKind({ type: 'aggregate' }), 'aggregate');
   assert.equal(nodeVisualState({ type: 'radio', active: true }), 'active');
   assert.equal(nodeVisualState({ type: 'radio', active: true, signalAction: 'emergency' }), 'emergency');
+  assert.equal(nodeVisualState({ type: 'universe', kind: 'radio_system', active: true,
+    signalAction: 'emergency' }), 'universe', 'overview system shells must remain visually stable');
   assert.equal(nodeDepthClear({ type: 'radio', active: true }), true);
   assert.equal(nodeDepthClear({ type: 'radio', signalAction: 'denial' }), true);
   assert.equal(linkVisualState({ type: 'tx', active: true }), 'active');
@@ -580,8 +582,8 @@ async function main() {
     assert.equal(controls.mouseButtons.LEFT, library.MOUSE.ROTATE);
 
     const document = { generation: 1, nodes: [
-      { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0,
-        renderRadius: 300, scopeLevel: 'system', labelVisible: false },
+      { key: 'system', type: 'universe', kind: 'radio_system', label: 'System', x: 0, y: 0, z: 0,
+        renderRadius: 300, scopeLevel: 'system', labelVisible: false, selected: true },
       { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8, active: true },
       { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15, active: true },
       { key: 'aggregate', type: 'aggregate', label: '+20', x: 50, y: -8, z: -12 }
@@ -616,12 +618,39 @@ async function main() {
     assert.equal(renderer.diagnostics().labels, 3);
     assert.equal(renderer.diagnostics().autoRotateEffective, true);
 
+    document.nodes[0].scopeLevel = 'overview';
+    renderer.setGraphData(document);
     renderer.setNavigationScope({ level: 'system', universeKey: 'system' });
+    graphState.camera.position.set(0, 0, 300);
+    controls.target.set(0, 0, 0);
+    controls.dispatchEvent({ type: 'change' });
+    assert.equal(graphState.camera.position.z, 300,
+      'camera containment must wait for the expanded system graph instead of using the compact overview radius');
+    assert.equal(controls.maxDistance, Infinity);
+    document.nodes[0].scopeLevel = 'system';
+    renderer.setGraphData(document);
     assert.equal(graphState.scene.fog.density, scopeFogDensity({ level: 'system' }));
+    assert.equal(renderer.frameScope({ duration: 720 }), true);
+    controls.dispatchEvent({ type: 'start' });
+    const interruptedPose = renderer.diagnostics().camera;
+    assert(Math.hypot(interruptedPose.position.x, interruptedPose.position.y,
+      interruptedPose.position.z) <= 234.001,
+    'interrupting system entry must not leave the camera at its outside overview pose');
+    assert(controls.maxDistance < 300);
+    controls.dispatchEvent({ type: 'end' });
     assert.equal(renderer.frameScope({ duration: 0 }), true);
     const systemObject = graphState.nodeObjects.get('system');
     assert.equal(systemObject.scale.value, 300);
     assert.equal(system.material.side, library.BackSide);
+    assert.equal(system.material.fog, false);
+    assert.equal(systemObject.children[1].visible, false,
+      'the selected outline must not duplicate the full interior shell');
+    const stableSystemMaterial = system.material;
+    document.nodes[0].active = true;
+    document.nodes[0].signalAction = 'emergency';
+    renderer.refresh();
+    assert.equal(system.material, stableSystemMaterial,
+      'child Grant and signaling state must not restyle the enclosing system shell');
     const insidePose = renderer.diagnostics().camera;
     assert.deepEqual(insidePose.target, { x: 0, y: 0, z: 0 });
     const insideDistance = Math.hypot(insidePose.position.x, insidePose.position.y, insidePose.position.z);
@@ -629,6 +658,9 @@ async function main() {
     assert(controls.maxDistance > insideDistance && controls.maxDistance < 300,
       'system orbit and zoom should remain inside the sphere');
     assert.equal(renderer.steerOrbitTarget(['group', 'radio'], 0), true);
+    const aimedPose = renderer.diagnostics().camera;
+    assert.deepEqual(aimedPose.position, insidePose.position,
+      'nearby attention should turn the camera instead of translating the entire camera rig');
     assert.deepEqual({ x: controls.target.x, y: controls.target.y, z: controls.target.z },
       { x: 39, y: 2.5, z: 11.5 });
     document.nodes[1].x = 250;
@@ -640,6 +672,29 @@ async function main() {
       'hotspot steering should keep the camera inside the focused system sphere');
     assert(Math.hypot(steeredPose.target.x, steeredPose.target.y, steeredPose.target.z) <= 204.001,
       'hotspot steering should leave enough room to orbit around a target near the system edge');
+    assert.equal(renderer.steerOrbitTarget(['not-rendered'], 0, 'system'), true,
+      'a suppressed hotspot should fall back to its rendered system');
+    const hotspot = { x: 255, y: 2.5, z: 11.5 };
+    graphState.camera.position.set(hotspot.x, hotspot.y, hotspot.z);
+    controls.target.set(hotspot.x, hotspot.y, hotspot.z);
+    assert.equal(renderer.steerOrbitTarget(['group', 'radio'], 0), true);
+    const nondegeneratePose = renderer.diagnostics().camera;
+    assert(Math.hypot(nondegeneratePose.position.x - nondegeneratePose.target.x,
+      nondegeneratePose.position.y - nondegeneratePose.target.y,
+      nondegeneratePose.position.z - nondegeneratePose.target.z) >= 11.999,
+    'attention steering must preserve a usable orbit radius when camera and hotspot coincide');
+    controls.dispatchEvent({ type: 'start' });
+    graphState.camera.position.set(500, 0, 0);
+    controls.target.set(400, 0, 0);
+    controls.dispatchEvent({ type: 'change' });
+    const constrainedPose = renderer.diagnostics().camera;
+    assert(Math.hypot(constrainedPose.position.x, constrainedPose.position.y,
+      constrainedPose.position.z) <= 270.001, 'manual camera motion must remain inside the system shell');
+    assert(Math.hypot(constrainedPose.target.x, constrainedPose.target.y,
+      constrainedPose.target.z) <= 204.001, 'manual orbit target must remain inside the system shell');
+    assert.deepEqual(graphState.camera.lookAtCalls.at(-1), constrainedPose.target,
+      'camera orientation must follow a target constrained during manual orbit');
+    controls.dispatchEvent({ type: 'end' });
 
     const graphDataCalls = graphState.graphDataCalls;
     document.nodes[2].x = 64;

@@ -257,6 +257,11 @@ function createNetworkVisualizer(dependencies = {}) {
     dirty = true;
   }
 
+  function protectCameraIntent() {
+    attention.noteManualInteraction(Date.now());
+    pendingAttentionTarget = null;
+  }
+
   const ui = createNetworkVisualizerUi({
     ...dependencies,
     config,
@@ -274,8 +279,12 @@ function createNetworkVisualizer(dependencies = {}) {
         searchPendingFocus = true;
         invalidateGraph();
       },
-      onFit: () => renderer?.frameScope?.(),
+      onFit: () => {
+        protectCameraIntent();
+        renderer?.frameScope?.();
+      },
       onFocus: () => {
+        protectCameraIntent();
         if (state.visual.selectedKey) renderer?.focus?.(state.visual.selectedKey);
       },
       onBack: () => navigateBack(),
@@ -379,6 +388,7 @@ function createNetworkVisualizer(dependencies = {}) {
   function navigateToScope(value, optionsValue = {}) {
     const next = normalizeScope(value);
     if (sameScope(next, navigationScope)) {
+      protectCameraIntent();
       if (optionsValue.frame !== false) renderer?.frameScope?.();
       return false;
     }
@@ -391,7 +401,7 @@ function createNetworkVisualizer(dependencies = {}) {
     }
     navigationScope = next;
     attention.reset();
-    pendingAttentionTarget = null;
+    protectCameraIntent();
     renderer?.setNavigationScope?.(navigationScope);
     ui.setScope(scopeView());
     setSelectedEntity(state, null);
@@ -829,7 +839,8 @@ function createNetworkVisualizer(dependencies = {}) {
     if (pendingAttentionTarget) {
       const target = pendingAttentionTarget;
       pendingAttentionTarget = null;
-      queueMicrotask(() => renderer?.steerOrbitTarget?.([target.targetKey, ...(target.centroidKeys || [])]));
+      queueMicrotask(() => renderer?.steerOrbitTarget?.(
+        [target.targetKey, ...(target.centroidKeys || [])], undefined, target.universeKey));
     }
     dirty = graphDirty || (!frozen && !layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
   }

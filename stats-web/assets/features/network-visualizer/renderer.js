@@ -4,6 +4,8 @@ import { BALANCED_CONFIG } from './config.js';
 
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
 const LINK_SEGMENTS = 10;
+const SYSTEM_TARGET_RADIUS = 0.55;
+const SYSTEM_CAMERA_RADIUS = 0.78;
 const DEFAULT_ANIMATION = Object.freeze({
   particleFlightMs: 1_500,
   effectCoalesceMs: 2_200,
@@ -161,6 +163,9 @@ function allocateParticles(links, budget) {
 }
 
 function nodeVisualState(node, effect = null) {
+  // A proven radio system is a spatial enclosure, not an activity lamp. Child talkgroups, radios, and links
+  // carry Grant/signaling state; keeping the shell stable prevents every short event from flashing the whole scene.
+  if (nodeType(node) === 'universe' && node?.kind === 'radio_system') return 'universe';
   if (['denial', 'check', 'emergency', 'page', 'busy'].includes(node?.signalAction)) return node.signalAction;
   if (node?.active || effect?.type === 'tx_pulse') return 'active';
   if (['affiliation_arrival', 'migration', 'destination_highlight'].includes(effect?.type)) return 'arrival';
@@ -170,6 +175,9 @@ function nodeVisualState(node, effect = null) {
 }
 
 function nodeDepthClear(node) {
+  if (nodeType(node) === 'universe' && node?.kind === 'radio_system') {
+    return Boolean(node?.selected);
+  }
   return Boolean(node?.selected || node?.active || node?.signalAction);
 }
 
@@ -391,7 +399,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       opacity: interior ? (state === 'selected' ? 0.42 :
         ['active', 'denial', 'check', 'emergency', 'page', 'busy'].includes(state) ? 0.32 : 0.2) :
         materialOpacity(state),
-      wireframe: true, depthTest: true, depthWrite: false, fog: !depthClear };
+      wireframe: true, depthTest: true, depthWrite: false, alphaToCoverage: true, fog: !depthClear };
     if (interior) settings.side = library.BackSide;
     const material = protectShared(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'mesh' });
@@ -417,7 +425,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function geometry(kind) {
     if (geometries.has(kind)) return geometries.get(kind);
     let value;
-    if (kind === 'universe') value = new library.SphereGeometry(1, 16, 12);
+    if (kind === 'universe') value = new library.SphereGeometry(1, 12, 8);
     else if (kind === 'group') value = new library.BoxGeometry(1.55, 1.55, 1.55);
     else if (kind === 'aggregate') value = new library.IcosahedronGeometry(1, 0);
     else value = new library.CylinderGeometry(0, 1, 1.7, 3, 1, false);
@@ -446,8 +454,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (!object) return;
     const kind = nodeGeometryKind(node);
     const interior = kind === 'universe' && node.scopeLevel === 'system';
-    const state = nodeVisualState(node, activeNodeEffect(nodeKey(node)));
-    const depthClear = nodeDepthClear(node);
+    const state = interior ? 'universe' : nodeVisualState(node, activeNodeEffect(nodeKey(node)));
+    const depthClear = interior || nodeDepthClear(node);
     const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.encrypted)}:` +
       `${node.visible !== false}:${nodeRadius(node)}:${interior}:${depthClear}`;
     if (object.userData.visualizerStyleSignature === signature) return;
@@ -459,11 +467,11 @@ async function createNetworkVisualizerRenderer(options = {}) {
     base.material = meshMaterial(state, interior, depthClear);
     selected.geometry = base.geometry;
     selected.material = meshMaterial('selected', interior, true);
-    selected.visible = Boolean(node.selected);
+    selected.visible = !interior && Boolean(node.selected);
     selected.scale.setScalar(interior ? 1.01 : 1.18);
     encrypted.geometry = base.geometry;
     encrypted.material = meshMaterial('encrypted', interior, depthClear);
-    encrypted.visible = Boolean(node.encrypted || node.entity?.encrypted);
+    encrypted.visible = !interior && Boolean(node.encrypted || node.entity?.encrypted);
     encrypted.scale.setScalar(interior ? 0.99 : 0.78);
     base.raycast = interior ? object.userData.visualizerNoRaycast : object.userData.visualizerBaseRaycast;
     base.renderOrder = interior ? -10 : 0;
@@ -562,6 +570,29 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   const renderedPosition = (node) => ({ x: finite(node?.x), y: finite(node?.y), z: finite(node?.z) });
+
+  function pointWithin(point, center, maximum) {
+    const delta = { x: finite(point?.x) - center.x, y: finite(point?.y) - center.y,
+      z: finite(point?.z) - center.z };
+    const distance = Math.hypot(delta.x, delta.y, delta.z);
+    if (!distance || distance <= maximum) {
+      return { x: finite(point?.x), y: finite(point?.y), z: finite(point?.z) };
+    }
+    const scale = maximum / distance;
+    return { x: center.x + delta.x * scale, y: center.y + delta.y * scale,
+      z: center.z + delta.z * scale };
+  }
+
+  function containedSystemPose(system, requestedTarget, requestedPosition) {
+    const center = renderedPosition(system);
+    const radius = nodeRadius(system);
+    const target = pointWithin(requestedTarget, center, radius * SYSTEM_TARGET_RADIUS);
+    let position = pointWithin(requestedPosition, center, radius * SYSTEM_CAMERA_RADIUS);
+    const targetDistance = Math.hypot(target.x - center.x, target.y - center.y, target.z - center.z);
+    const maximumOrbit = Math.max(12, radius * SYSTEM_CAMERA_RADIUS - targetDistance);
+    position = pointWithin(position, target, maximumOrbit);
+    return { target, position, maximumOrbit };
+  }
 
   function synchronizeFromLiveSources() {
     const nodeFields = ['x', 'y', 'z', 'fx', 'fy', 'fz', 'selected', 'active', 'exactActive', 'quiet', 'stale',
@@ -825,7 +856,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
       element.textContent = `${node.encrypted ? '🔒 ' : ''}` +
         String(node.label || node.entity?.displayName || node.entity?.name || key);
       element.dataset.type = nodeType(node);
-      element.dataset.active = String(Boolean(node.active));
+      const stableSystemLabel = nodeType(node) === 'universe' && node.kind === 'radio_system';
+      element.dataset.active = String(Boolean(node.active) && !stableSystemLabel);
       element.dataset.signal = String(node.signalAction || '');
       element.dataset.selected = String(Boolean(node.selected));
       element.dataset.quiet = String(Boolean(node.quiet));
@@ -952,16 +984,24 @@ async function createNetworkVisualizerRenderer(options = {}) {
   }
 
   function applyScopeCameraLimit() {
-    if (!controls) return;
+    if (!controls || !graph) return;
     const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
-    if (!system) {
+    if (!system || system.scopeLevel !== 'system') {
       controls.maxDistance = Infinity;
       return;
     }
-    const center = renderedPosition(system);
-    const targetDistance = Math.hypot(finite(controls.target.x) - center.x,
-      finite(controls.target.y) - center.y, finite(controls.target.z) - center.z);
-    controls.maxDistance = Math.max(12, nodeRadius(system) * 0.94 - targetDistance);
+    const pose = containedSystemPose(system, controls.target, graph.camera().position);
+    const { target, position, maximumOrbit } = pose;
+    const camera = graph.camera();
+    const changed = target.x !== finite(controls.target.x) || target.y !== finite(controls.target.y) ||
+      target.z !== finite(controls.target.z) || position.x !== finite(camera.position.x) ||
+      position.y !== finite(camera.position.y) || position.z !== finite(camera.position.z);
+    if (changed) {
+      controls.target.set(target.x, target.y, target.z);
+      camera.position.set(position.x, position.y, position.z);
+      camera.lookAt?.(controls.target);
+    }
+    controls.maxDistance = maximumOrbit;
   }
 
   function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs) {
@@ -1051,7 +1091,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001 || optionsValue.hero === true) {
         direction.set(0.72, 0.48, 1).normalize();
       }
-      const distance = clamp(radius * 0.4, Math.min(72, radius * 0.3), radius * 0.7);
+      const distance = clamp(radius * 0.3, Math.min(72, radius * 0.24), radius * 0.6);
       return tweenCamera({ x: center.x + direction.x * distance,
         y: center.y + direction.y * distance, z: center.z + direction.z * distance },
       center, optionsValue.duration ?? animation.cameraTransitionMs);
@@ -1081,10 +1121,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
     return renderNodes.has(key) ? frameScope({ keys: [key], duration, padding: 1.3 }) : false;
   }
-  function steerOrbitTarget(keys, duration = animation.cameraTransitionMs) {
+  function steerOrbitTarget(keys, duration = animation.cameraTransitionMs, fallbackKey = '') {
     if (!graph || !controls || disposed || prefersReducedMotion()) return false;
-    const requested = [...new Set((Array.isArray(keys) ? keys : [keys]).map((key) => String(key || '')))]
+    let requested = [...new Set((Array.isArray(keys) ? keys : [keys]).map((key) => String(key || '')))]
       .map((key) => renderNodes.get(key)).filter((node) => node?.visible !== false);
+    if (!requested.length && fallbackKey) {
+      const fallback = renderNodes.get(String(fallbackKey));
+      if (fallback?.visible !== false) requested = [fallback];
+    }
     if (!requested.length) return false;
     const center = requested.reduce((sum, node) => {
       const position = renderedPosition(node);
@@ -1097,26 +1141,22 @@ async function createNetworkVisualizerRenderer(options = {}) {
     center.y /= requested.length;
     center.z /= requested.length;
     const camera = graph.camera();
-    const offset = { x: finite(camera.position.x) - finite(controls.target.x),
-      y: finite(camera.position.y) - finite(controls.target.y),
-      z: finite(camera.position.z) - finite(controls.target.z) };
+    const viewDirection = new library.Vector3().copy(camera.position).sub(controls.target).normalize();
+    if (!Number.isFinite(viewDirection.x) || viewDirection.lengthSq() < 0.001) {
+      viewDirection.set(0.72, 0.48, 1).normalize();
+    }
     let target = center;
-    let position = { x: center.x + offset.x, y: center.y + offset.y, z: center.z + offset.z };
+    // Hold the viewpoint while turning toward the hotspot. Translating camera and target by the same offset kept
+    // the old view direction, which made attention changes look like no camera response at all.
+    let position = { x: finite(camera.position.x), y: finite(camera.position.y), z: finite(camera.position.z) };
     const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
     if (system) {
-      const systemCenter = renderedPosition(system);
-      const constrain = (point, radius) => {
-        const delta = { x: finite(point.x) - systemCenter.x, y: finite(point.y) - systemCenter.y,
-          z: finite(point.z) - systemCenter.z };
-        const distance = Math.hypot(delta.x, delta.y, delta.z);
-        if (!distance || distance <= radius) return point;
-        const scale = radius / distance;
-        return { x: systemCenter.x + delta.x * scale, y: systemCenter.y + delta.y * scale,
-          z: systemCenter.z + delta.z * scale };
-      };
-      const radius = nodeRadius(system);
-      target = constrain(target, radius * 0.68);
-      position = constrain(position, radius * 0.9);
+      ({ target, position } = containedSystemPose(system, target, position));
+    }
+    if (Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z) < 12) {
+      position = { x: target.x + viewDirection.x * 12, y: target.y + viewDirection.y * 12,
+        z: target.z + viewDirection.z * 12 };
+      if (system) ({ target, position } = containedSystemPose(system, target, position));
     }
     return tweenCamera(position, target, duration);
   }
@@ -1218,13 +1258,20 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   const onControlsStart = () => {
     stopCameraTween({ resume: false });
+    applyScopeCameraLimit();
     autoRotatePaused = true;
     clearAutoRotateTimer();
     updateAutoRotate();
     callbacks.onCameraInteraction?.();
   };
-  const onControlsEnd = () => scheduleAutoRotateResume();
-  const onControlsChange = () => scheduleLabels();
+  const onControlsEnd = () => {
+    applyScopeCameraLimit();
+    scheduleAutoRotateResume();
+  };
+  const onControlsChange = () => {
+    if (!programmaticCamera) applyScopeCameraLimit();
+    scheduleLabels();
+  };
   const onContextLost = (event) => {
     event.preventDefault();
     contextLost = true;

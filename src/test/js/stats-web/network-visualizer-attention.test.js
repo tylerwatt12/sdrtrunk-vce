@@ -30,6 +30,7 @@ async function main() {
     candidateLeadMs: 2_000,
     minimumDwellMs: 10_000,
     manualCooldownMs: 10_000,
+    grantEventHoldMs: 4_000,
     importantEventHoldMs: 6_000,
     emergencyEventHoldMs: 12_000
   });
@@ -91,6 +92,23 @@ async function main() {
     ['signal_denial', 'affiliation_observed', 'grant']);
   assert.equal(important[0].score.importance > important[2].score.importance, true);
 
+  const recentShortGrant = rankAttentionHotspots(state([], 1, [
+    { id: 91, type: 'transmission_start', universeKey: 'u-a', groupKey: 'g-short',
+      radioKey: 'r-short', observedAtMs: 8_000 }
+  ]), { level: 'system', universeKey: 'u-a' }, 10_000);
+  assert.equal(recentShortGrant[0].attentionKind, 'grant');
+  assert.equal(recentShortGrant[0].targetKey, 'g-short');
+  const interruptedGrantState = state([], 1, [
+    { id: 93, type: 'transmission_start', universeKey: 'u-a', groupKey: 'g-short',
+      radioKey: 'r-short', observedAtMs: 8_000 },
+    { id: 94, type: 'signal_emergency', universeKey: 'u-a', groupKey: 'g-short',
+      radioKey: 'r-short', observedAtMs: 8_000 }
+  ]);
+  interruptedGrantState.transport = { status: 'gap' };
+  assert.equal(rankAttentionHotspots(interruptedGrantState,
+    { level: 'system', universeKey: 'u-a' }, 10_000).length, 0,
+  'retained semantic events must not replay camera motion across a live gap');
+
   const overviewEmergency = rankAttentionHotspots(state([
     call('grant-a', 'u-a', 'g-a', 'r-a', 11_900)
   ], 1, [{ type: 'signal_emergency', universeKey: 'u-b', groupKey: 'g-b',
@@ -151,6 +169,48 @@ async function main() {
   assert.equal(emergencyFocus.target.targetKey, 'u-b');
   assert.equal(emergencyFocus.target.attentionKind, 'signal_emergency');
 
+  const sameSystemOverride = createAttentionCoordinator();
+  const systemScope = { level: 'system', universeKey: 'u-a' };
+  sameSystemOverride.update({ state: activeA, scope: systemScope, atMs: 0, autoRotate: true });
+  sameSystemOverride.update({ state: activeA, scope: systemScope, atMs: 2_000, autoRotate: true });
+  const denialInA = state([call('a', 'u-a', 'g-a', 'r-a', 3_000)], 1,
+    [{ type: 'signal_denial', universeKey: 'u-a', groupKey: 'g-a',
+      radioKey: 'r-denied', observedAtMs: 3_000 }]);
+  assert.equal(sameSystemOverride.update({ state: denialInA, scope: systemScope, atMs: 3_000,
+    autoRotate: true }).reason, 'candidate_delay');
+  const sameSystemFocus = sameSystemOverride.update({ state: denialInA, scope: systemScope, atMs: 5_000,
+    autoRotate: true });
+  assert.equal(sameSystemFocus.changed, true, 'an important event must retarget within the current talkgroup');
+  assert.equal(sameSystemFocus.target.attentionKind, 'signal_denial');
+
+  const overviewSameSystem = createAttentionCoordinator();
+  overviewSameSystem.update({ state: activeA, scope: { level: 'overview' }, atMs: 0, autoRotate: true });
+  overviewSameSystem.update({ state: activeA, scope: { level: 'overview' }, atMs: 2_000, autoRotate: true });
+  assert.equal(overviewSameSystem.update({ state: denialInA, scope: { level: 'overview' }, atMs: 5_000,
+    autoRotate: true }).changed, false,
+  'hidden descendants must not trigger a redundant overview tween to the same system globe');
+
+  const shortGrant = createAttentionCoordinator();
+  const shortGrantState = state([], 1, [{ id: 92, type: 'transmission_start', universeKey: 'u-short',
+    groupKey: 'g-short', radioKey: 'r-short', observedAtMs: 1_000 }]);
+  shortGrant.update({ state: shortGrantState, scope: { level: 'overview' }, atMs: 1_000, autoRotate: true });
+  assert.equal(shortGrant.update({ state: shortGrantState, scope: { level: 'overview' }, atMs: 3_000,
+    autoRotate: true }).changed, true, 'a short Grant should remain focusable after its call leg ends');
+
+  const repeatedEvent = createAttentionCoordinator();
+  const firstDenial = state([], 1, [{ id: 94, type: 'signal_denial', universeKey: 'u-a',
+    groupKey: 'g-a', radioKey: 'r-a', observedAtMs: 1_000 }]);
+  repeatedEvent.update({ state: firstDenial, scope: systemScope, atMs: 1_000, autoRotate: true });
+  assert.equal(repeatedEvent.update({ state: firstDenial, scope: systemScope, atMs: 3_000,
+    autoRotate: true }).changed, true);
+  assert.equal(repeatedEvent.update({ state: state([], 1, []), scope: systemScope, atMs: 8_000,
+    autoRotate: true }).status, 'idle');
+  const laterDenial = state([], 1, [{ id: 95, type: 'signal_denial', universeKey: 'u-a',
+    groupKey: 'g-a', radioKey: 'r-a', observedAtMs: 9_000 }]);
+  repeatedEvent.update({ state: laterDenial, scope: systemScope, atMs: 9_000, autoRotate: true });
+  assert.equal(repeatedEvent.update({ state: laterDenial, scope: systemScope, atMs: 11_000,
+    autoRotate: true }).changed, true, 'a later occurrence must re-aim after the earlier event expires');
+
   const switching = createAttentionCoordinator({ candidateLeadMs: 2_000, minimumDwellMs: 0,
     manualCooldownMs: 10_000 });
   switching.update({ state: activeA, scope: { level: 'overview' }, atMs: 0, autoRotate: true });
@@ -170,9 +230,15 @@ async function main() {
   assert.equal(manual.update({ state: activeA, scope: { level: 'overview' }, atMs: 9_999,
     autoRotate: true }).status, 'suppressed');
   assert.equal(manual.update({ state: activeA, scope: { level: 'overview' }, atMs: 10_000,
-    autoRotate: true }).status, 'candidate');
-  assert.equal(manual.update({ state: activeA, scope: { level: 'overview' }, atMs: 12_000,
     autoRotate: true }).status, 'focus');
+  assert.equal(manual.update({ state: activeA, scope: { level: 'overview' }, atMs: 12_000,
+    autoRotate: true }).status, 'hold');
+
+  const scopeIntent = createAttentionCoordinator();
+  scopeIntent.noteManualInteraction(1_000);
+  assert.equal(scopeIntent.update({ state: activeA, scope: { level: 'system', universeKey: 'u-a' },
+    atMs: 1_001, autoRotate: true }).status, 'suppressed',
+  'a scope change must not erase the camera-intent cooldown');
 
   assert.equal(manual.update({ state: activeA, scope: { level: 'overview' }, atMs: 13_000,
     autoRotate: false }).reason, 'auto_rotate_off');
