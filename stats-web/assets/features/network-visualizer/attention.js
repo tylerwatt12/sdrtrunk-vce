@@ -1,10 +1,8 @@
 'use strict';
 
 const ATTENTION_DEFAULTS = Object.freeze({
-  candidateLeadMs: 2_000,
-  minimumDwellMs: 10_000,
+  routineHoldMs: 6_000,
   manualCooldownMs: 10_000,
-  grantEventHoldMs: 4_000,
   importantEventHoldMs: 6_000,
   emergencyEventHoldMs: 12_000
 });
@@ -91,8 +89,8 @@ function compareHotspots(left, right, currentTargetKey = '') {
 }
 
 /**
- * Ranks exact active-call hotspots for the current hierarchy level. Pending grants and entity afterglow are
- * intentionally invisible to this function because neither is an active call leg.
+ * Ranks exact active-call hotspots for consumers that need the individual hierarchy buckets. Pending grants and
+ * entity afterglow are intentionally invisible because neither is a confirmed active call leg.
  */
 function rankActiveCallHotspots(state, scopeValue, atMs = 0, currentTargetKey = '') {
   const scope = normalizeScope(scopeValue);
@@ -123,6 +121,43 @@ function rankActiveCallHotspots(state, scopeValue, atMs = 0, currentTargetKey = 
 
   return Object.freeze([...buckets.values()].map((bucket) => frozenHotspot(bucket, scope))
     .sort((left, right) => compareHotspots(left, right, currentTargetKey)));
+}
+
+function combinedActiveCallTarget(state, scope, atMs) {
+  if (scope.level === 'group') return null;
+  const calls = activeCalls(state, atMs).filter((call) =>
+    scope.level === 'overview' || call.universeKey === scope.universeKey);
+  if (!calls.length) return null;
+
+  const universeKeys = [...new Set(calls.map((call) => String(call.universeKey || '')).filter(Boolean))].sort();
+  const groupKeys = [...new Set(calls.map((call) => String(call.groupKey || '')).filter(Boolean))].sort();
+  const radioKeys = [...new Set(calls.map((call) => String(call.radioKey || '')).filter(Boolean))].sort();
+  const callKeys = [...new Set(calls.map((call) => String(call.key || '')).filter(Boolean))].sort();
+  const visibleAnchors = scope.level === 'overview' ? universeKeys : groupKeys;
+  const centroidKeys = [...new Set([...visibleAnchors, ...groupKeys, ...radioKeys])];
+  const targetKey = visibleAnchors[0] || radioKeys[0] || scope.universeKey;
+  const lastObservedAtMs = calls.reduce((latest, call) => Math.max(latest,
+    finiteTime(call.lastObservedAtMs || call.startedAtMs)), 0);
+
+  return Object.freeze({
+    attentionKey: `grant|active-set|${scopeSignature(scope)}`,
+    attentionKind: 'grant',
+    targetKey,
+    targetType: 'active_set',
+    universeKey: scope.level === 'system' ? scope.universeKey : (universeKeys.length === 1 ? universeKeys[0] : ''),
+    universeKeys: Object.freeze(universeKeys),
+    groupKey: groupKeys.length === 1 ? groupKeys[0] : '',
+    groupKeys: Object.freeze(groupKeys),
+    radioKeys: Object.freeze(radioKeys),
+    callKeys: Object.freeze(callKeys),
+    centroidKeys: Object.freeze(centroidKeys),
+    score: Object.freeze({
+      importance: 1,
+      transmittingRadios: radioKeys.length,
+      callLegs: callKeys.length,
+      lastObservedAtMs
+    })
+  });
 }
 
 function eventGroupKey(state, event) {
@@ -160,57 +195,54 @@ function compareAttentionHotspots(left, right, currentTargetKey = '') {
   return left.targetKey.localeCompare(right.targetKey);
 }
 
-function recentGrantKind(kind) {
-  return ['transmission_start', 'transmission_observed_after_gap',
-    'transmission_observed_after_uncertainty'].includes(kind);
-}
-
-/** Ranks recent semantic events ahead of confirmed Grant hotspots without changing either underlying state model. */
+/** Ranks fresh high-priority events ahead of one combined confirmed-call target for the current scope. */
 function rankAttentionHotspots(state, scopeValue, atMs = 0, currentTargetKey = '', options = {}) {
   const scope = normalizeScope(scopeValue);
   const now = finiteTime(atMs);
   const settings = { ...ATTENTION_DEFAULTS, ...options };
-  const ranked = rankActiveCallHotspots(state, scope, now, currentTargetKey).map((grant) => {
-    const active = grant.callKeys.length > 0;
-    return Object.freeze({ ...grant,
-      attentionKind: active ? 'grant' : 'idle',
-      score: Object.freeze({ ...grant.score, importance: active ? 1 : 0 })
-    });
-  });
-
+  const activeSet = combinedActiveCallTarget(state, scope, now);
+  const ranked = activeSet ? [activeSet] : [];
   const events = Array.isArray(state?.semanticEvents) ? state.semanticEvents : [];
   const transportInterrupted = ['gap', 'error'].includes(String(state?.transport?.status || ''));
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    const kind = String(event?.type || event?.kind || '');
-    const grant = recentGrantKind(kind);
-    if (transportInterrupted) continue;
-    const importance = grant ? 1 : (IMPORTANT_EVENT_PRIORITY[kind] || 0);
-    if (!importance) continue;
-    const observedAtMs = finiteTime(event?.observedAtMs);
-    const holdMs = grant ? settings.grantEventHoldMs :
-      (kind === 'signal_emergency' ? settings.emergencyEventHoldMs : settings.importantEventHoldMs);
-    if (!observedAtMs || observedAtMs > now || now - observedAtMs > holdMs) continue;
-    const target = eventTarget(state, event, scope);
-    if (!target?.targetKey) continue;
-    const radioKeys = target.radioKey ? [target.radioKey] : [];
-    const groupKeys = target.groupKey ? [target.groupKey] : [];
-    ranked.push(Object.freeze({ ...target,
-      attentionKey: scope.level === 'overview' ? `overview|${target.targetKey}` :
-        (grant ? `grant|${target.targetKey}` :
-          `event|${kind}|${target.targetKey}|${target.radioKey}`),
-      radioKeys: Object.freeze(radioKeys), groupKeys: Object.freeze(groupKeys), callKeys: Object.freeze([]),
-      centroidKeys: Object.freeze([...new Set([...groupKeys, ...radioKeys, target.targetKey])]),
-      attentionKind: grant ? 'grant' : kind,
-      score: Object.freeze({ importance, transmittingRadios: 0, callLegs: 0, lastObservedAtMs: observedAtMs })
-    }));
+
+  if (!transportInterrupted) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      const kind = String(event?.type || event?.kind || '');
+      const importance = IMPORTANT_EVENT_PRIORITY[kind] || 0;
+      if (!importance) continue;
+      const observedAtMs = finiteTime(event?.observedAtMs);
+      const holdMs = kind === 'signal_emergency' ? settings.emergencyEventHoldMs : settings.importantEventHoldMs;
+      if (!observedAtMs || observedAtMs > now || now >= observedAtMs + holdMs) continue;
+      const target = eventTarget(state, event, scope);
+      if (!target?.targetKey) continue;
+      const radioKeys = target.radioKey ? [target.radioKey] : [];
+      const groupKeys = target.groupKey ? [target.groupKey] : [];
+      const eventIdentity = String(event?.id ?? `${observedAtMs}|${index}`);
+      ranked.push(Object.freeze({ ...target,
+        attentionKey: `event|${kind}|${eventIdentity}|${target.targetKey}|${target.radioKey}`,
+        universeKeys: Object.freeze([target.universeKey]),
+        radioKeys: Object.freeze(radioKeys),
+        groupKeys: Object.freeze(groupKeys),
+        callKeys: Object.freeze([]),
+        centroidKeys: Object.freeze([...new Set([target.targetKey, ...groupKeys, ...radioKeys])]),
+        attentionKind: kind,
+        expiresAtMs: observedAtMs + holdMs,
+        holdMs,
+        score: Object.freeze({ importance, transmittingRadios: 0, callLegs: 0, lastObservedAtMs: observedAtMs })
+      }));
+    }
   }
 
   return Object.freeze(ranked.sort((left, right) => compareAttentionHotspots(left, right, currentTargetKey)));
 }
 
 function validateOptions(value = {}) {
-  const result = { ...ATTENTION_DEFAULTS, ...value };
+  const result = { ...ATTENTION_DEFAULTS };
+  Object.entries(value).forEach(([key, entry]) => {
+    if (!Object.hasOwn(ATTENTION_DEFAULTS, key)) throw new TypeError(`${key} is not an attention option.`);
+    result[key] = entry;
+  });
   Object.entries(result).forEach(([key, entry]) => {
     if (!Number.isSafeInteger(entry) || entry < 0 || entry > 60_000) {
       throw new TypeError(`${key} must be an integer between 0 and 60000.`);
@@ -225,27 +257,39 @@ function createAttentionCoordinator(options = {}) {
   let scopeKey = '';
   let current = null;
   let currentSinceMs = 0;
-  let candidate = null;
-  let candidateSinceMs = 0;
+  let holdUntilMs = 0;
   let suppressedUntilMs = 0;
 
-  function reset() {
+  function clearShot() {
     current = null;
     currentSinceMs = 0;
-    candidate = null;
-    candidateSinceMs = 0;
+    holdUntilMs = 0;
+  }
+
+  function reset() {
+    generation = null;
+    scopeKey = '';
+    clearShot();
     suppressedUntilMs = 0;
   }
 
   function result(status, changed, target = current, reason = '') {
-    return Object.freeze({
-      status,
-      changed,
-      reason,
-      target,
-      candidate,
-      suppressedUntilMs
-    });
+    return Object.freeze({ status, changed, reason, target, holdUntilMs, suppressedUntilMs });
+  }
+
+  function shot(target, now, reason) {
+    current = target;
+    currentSinceMs = now;
+    holdUntilMs = target.attentionKind === 'grant' ? now + settings.routineHoldMs :
+      Math.max(now, finiteTime(target.expiresAtMs || now + settings.importantEventHoldMs));
+    return result('shot', true, current, reason);
+  }
+
+  function noteManualInteraction(atMs) {
+    const now = finiteTime(atMs);
+    suppressedUntilMs = Math.max(suppressedUntilMs, now + settings.manualCooldownMs);
+    clearShot();
+    return suppressedUntilMs;
   }
 
   function update(input = {}) {
@@ -254,93 +298,49 @@ function createAttentionCoordinator(options = {}) {
     const nextScopeKey = scopeSignature(scope);
     const nextGeneration = input.generation ?? input.state?.generation ?? 0;
     if (generation !== nextGeneration || scopeKey !== nextScopeKey) {
-      const pendingManualSuppression = suppressedUntilMs;
-      reset();
-      suppressedUntilMs = pendingManualSuppression;
+      clearShot();
       generation = nextGeneration;
       scopeKey = nextScopeKey;
     }
 
+    if (input.manualInteraction === true) noteManualInteraction(now);
+
     if (input.autoRotate === false || input.reducedMotion === true) {
-      reset();
+      clearShot();
       return result('disabled', false, null,
         input.reducedMotion === true ? 'reduced_motion' : 'auto_rotate_off');
     }
 
-    if (input.manualInteraction === true) {
-      suppressedUntilMs = Math.max(suppressedUntilMs, now + settings.manualCooldownMs);
-      candidate = null;
-      candidateSinceMs = 0;
+    if (now < suppressedUntilMs) return result('manual', false, null, 'manual_camera');
+
+    if (scope.level === 'group') {
+      const groupActive = activeCalls(input.state, now).some((call) =>
+        call.universeKey === scope.universeKey && call.groupKey === scope.groupKey);
+      clearShot();
+      return result(groupActive ? 'hold' : 'roam', false, null,
+        groupActive ? 'current_group_active' : 'group_scope_idle');
     }
 
     const ranked = rankAttentionHotspots(input.state, scope, now, current?.targetKey || '', settings);
-    if (scope.level === 'group') {
-      current = ranked[0] || null;
-      currentSinceMs ||= now;
-      candidate = null;
-      candidateSinceMs = 0;
-      return now < suppressedUntilMs ? result('suppressed', false, current, 'manual_camera') :
-        result(current ? 'hold' : 'idle', false, current, current ? 'current_group' : 'no_group');
-    }
-
-    const suppressed = now < suppressedUntilMs;
-
     const leader = ranked[0] || null;
-    const refreshedCurrent = current ? ranked.find((entry) => entry.attentionKey === current.attentionKey) : null;
-    if (current && refreshedCurrent) current = refreshedCurrent;
+    const importantLeader = ranked.find((entry) => entry.attentionKind !== 'grant') || null;
 
-    if (!leader) {
-      current = null;
-      currentSinceMs = 0;
-      candidate = null;
-      candidateSinceMs = 0;
-      if (suppressed) return result('suppressed', false, current, 'manual_camera');
-      return result(current ? 'hold' : 'idle', false, current, 'no_active_calls');
+    if (current && now < holdUntilMs) {
+      const currentImportance = current.score?.importance || 0;
+      const shouldPreempt = importantLeader && importantLeader.attentionKey !== current.attentionKey &&
+        (current.attentionKind === 'grant' || importantLeader.score.importance > currentImportance);
+      if (shouldPreempt) return shot(importantLeader, now, 'important_event');
+      return result('hold', false, current,
+        current.attentionKind === 'grant' ? 'routine_hold' : 'event_hold');
     }
 
-    if (current?.attentionKey === leader.attentionKey) {
-      candidate = null;
-      candidateSinceMs = 0;
-      if (suppressed) return result('suppressed', false, current, 'manual_camera');
-      return result('hold', false, current, 'current_leads');
-    }
-
-    if (candidate?.attentionKey !== leader.attentionKey) {
-      candidate = leader;
-      candidateSinceMs = now;
-    } else {
-      candidate = leader;
-    }
-    if (suppressed) return result('suppressed', false, current, 'manual_camera');
-
-    const ledLongEnough = now - candidateSinceMs >= settings.candidateLeadMs;
-    const higherPriority = (candidate?.score?.importance || 0) > (current?.score?.importance || 0);
-    const dwelledLongEnough = higherPriority || !current || now - currentSinceMs >= settings.minimumDwellMs;
-    if (!ledLongEnough || !dwelledLongEnough) {
-      return result(current ? 'hold' : 'candidate', false, current,
-        !ledLongEnough ? 'candidate_delay' : 'minimum_dwell');
-    }
-
-    current = candidate;
-    currentSinceMs = now;
-    candidate = null;
-    candidateSinceMs = 0;
-    return result('focus', true, current, 'hotspot_changed');
-  }
-
-  function noteManualInteraction(atMs) {
-    const now = finiteTime(atMs);
-    suppressedUntilMs = Math.max(suppressedUntilMs, now + settings.manualCooldownMs);
-    current = null;
-    currentSinceMs = 0;
-    candidate = null;
-    candidateSinceMs = 0;
-    return suppressedUntilMs;
+    clearShot();
+    if (!leader) return result('roam', false, null, 'no_active_calls');
+    return shot(leader, now, leader.attentionKind === 'grant' ? 'active_calls' : 'important_event');
   }
 
   function snapshot() {
-    return Object.freeze({ generation, scopeKey, current, currentSinceMs, candidate,
-      candidateSinceMs, suppressedUntilMs });
+    return Object.freeze({ generation, scopeKey, current, currentSinceMs, holdUntilMs, suppressedUntilMs });
   }
 
   return Object.freeze({ update, reset, noteManualInteraction, snapshot });

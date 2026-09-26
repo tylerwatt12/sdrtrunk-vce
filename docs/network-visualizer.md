@@ -57,13 +57,17 @@ to focus its retained radios. The breadcrumb back button returns through those l
 The view remains three-dimensional at every level. Camera moves are animated unless reduced motion is enabled.
 Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
 Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level. **Auto rotate**
-is enabled by default. It favors the system or talkgroup with the most current confirmed transmitters, requires a
-candidate to lead for two seconds, retains a short confirmed Grant long enough to qualify, and holds a target for at
-least ten seconds. The camera visibly turns toward that activity; inside a system, its target, viewpoint, zoom, and
-manual orbit remain contained well within the enclosing sphere. Recent Join, Logout, Denial, Check, Emergency, Page,
-Busy, and confirmed affiliation-change events
-rank above routine Grants; a stable higher-priority event may preempt the normal Grant dwell. Manual camera interaction
-or explicit scope/focus framing suppresses all attention moves for ten seconds, and reduced motion disables them.
+is enabled by default. The opening view keeps every observed universe in focus for four seconds, then enters the
+system with the most current confirmed calls, falling back to the most active system retained in this viewing session.
+Depth fog begins only inside a system.
+
+The automatic camera has one bounded cycle: a centered wide idle orbit, an activity shot, a six-second hang, then a
+centered zoom-out before idle orbit resumes. One confirmed Grant gets a close shot; concurrent Grants are framed
+together from their talkgroups and known source radios. The camera aims first and then dollies, and both its viewpoint
+and target remain inside the enclosing system sphere. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and
+confirmed affiliation-change events rank above routine Grants and can preempt a routine hang. New routine Grants wait
+for the current hang to finish instead of making the camera chase each update. Actual manual orbit, pan, or zoom and
+explicit Fit/Focus actions suppress automatic camera moves for ten seconds. Reduced motion disables automatic moves.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
 selection, freeze only layout motion, open the bounded **Observed activity** drawer, enter fullscreen, or change

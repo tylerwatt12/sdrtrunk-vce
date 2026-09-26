@@ -30,6 +30,7 @@ import { createAttentionCoordinator } from './attention.js';
 
 const STORAGE_PREFIX = 'sdrtrunk-vce.network-visualizer.v1';
 const FIXTURE_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const OPENING_OVERVIEW_MS = 4_000;
 
 function freshSubscriptionId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -248,6 +249,9 @@ function createNetworkVisualizer(dependencies = {}) {
   const navigationHistory = [];
   let pendingCameraAction = null;
   let pendingAttentionTarget = null;
+  let lastAttentionStatus = 'roam';
+  let openingOverviewUntilMs = 0;
+  let openingSystemChosen = false;
   const suppressedEffectIds = new Set();
   const fixtureMode = new URLSearchParams(window.location.search).get('network_fixture') === '1' &&
     FIXTURE_HOSTS.has(window.location.hostname);
@@ -260,6 +264,7 @@ function createNetworkVisualizer(dependencies = {}) {
   function protectCameraIntent() {
     attention.noteManualInteraction(Date.now());
     pendingAttentionTarget = null;
+    renderer?.setAutomaticCameraMode?.('manual');
   }
 
   const ui = createNetworkVisualizerUi({
@@ -292,7 +297,13 @@ function createNetworkVisualizer(dependencies = {}) {
         preferences.autoRotate = Boolean(value);
         attention.reset();
         pendingAttentionTarget = null;
+        lastAttentionStatus = preferences.autoRotate ? 'roam' : 'disabled';
         renderer?.setAutoRotate?.(preferences.autoRotate);
+        renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
+        if (preferences.autoRotate) {
+          pendingCameraAction = { type: 'frame' };
+          invalidateGraph();
+        }
         ui.setAutoRotate(preferences.autoRotate);
         schedulePersist();
       },
@@ -399,9 +410,9 @@ function createNetworkVisualizer(dependencies = {}) {
         pushNavigationHistory({ level: 'system', universeKey: next.universeKey }, null);
       } else pushNavigationHistory(navigationScope, pose);
     }
+    if (next.level !== 'overview') openingSystemChosen = true;
     navigationScope = next;
-    attention.reset();
-    protectCameraIntent();
+    pendingAttentionTarget = null;
     renderer?.setNavigationScope?.(navigationScope);
     ui.setScope(scopeView());
     setSelectedEntity(state, null);
@@ -502,6 +513,7 @@ function createNetworkVisualizer(dependencies = {}) {
         onCameraInteraction: () => {
           attention.noteManualInteraction(Date.now());
           pendingAttentionTarget = null;
+          renderer?.setAutomaticCameraMode?.('manual');
         }
       },
       reducedMotion: Boolean(reducedMotionMedia?.matches)
@@ -515,6 +527,7 @@ function createNetworkVisualizer(dependencies = {}) {
       renderer.setFrozen?.(frozen);
       renderer.setNavigationScope?.(navigationScope);
       renderer.setAutoRotate?.(preferences.autoRotate);
+      renderer.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
       invalidateGraph();
     }).catch((error) => {
       if (closed) return;
@@ -562,6 +575,9 @@ function createNetworkVisualizer(dependencies = {}) {
     suppressNextSnapshotEffects = true;
     attention.reset();
     pendingAttentionTarget = null;
+    lastAttentionStatus = 'roam';
+    renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
+    pendingCameraAction = { type: 'frame' };
     if (!optionsValue.stateAlreadyMarked) markTransportGap(state, detail, state.generation, now);
     suppressedEffectIds.clear();
     renderer?.clearEffects?.();
@@ -670,9 +686,13 @@ function createNetworkVisualizer(dependencies = {}) {
     pendingCameraAction = null;
     attention.reset();
     pendingAttentionTarget = null;
+    lastAttentionStatus = preferences.autoRotate ? 'roam' : 'disabled';
+    openingOverviewUntilMs = 0;
+    openingSystemChosen = false;
     renderer?.clear?.();
     renderer?.setNavigationScope?.(navigationScope);
     renderer?.setAutoRotate?.(preferences.autoRotate);
+    renderer?.setAutomaticCameraMode?.(preferences.autoRotate ? 'roam' : 'disabled');
     ui.setScope(scopeView());
     ui.setCounts({ visibleRadios: 0, retainedRadios: 0, renderedNodes: 0 });
     ui.setSelection(null);
@@ -716,6 +736,23 @@ function createNetworkVisualizer(dependencies = {}) {
     consumeEffects();
   }
 
+  function mostActiveUniverse() {
+    const eventCounts = new Map();
+    const activeCounts = new Map();
+    state.activeCalls.forEach((call) => {
+      if (!call?.universeKey || call.active === false) return;
+      activeCounts.set(call.universeKey, (activeCounts.get(call.universeKey) || 0) + 1);
+    });
+    state.semanticEvents.forEach((event) => {
+      if (!event?.universeKey || Number(event.observedAtMs) < state.sessionStartedAtMs) return;
+      eventCounts.set(event.universeKey, (eventCounts.get(event.universeKey) || 0) + 1);
+    });
+    return [...state.universes.values()].sort((left, right) =>
+      (activeCounts.get(right.key) || 0) - (activeCounts.get(left.key) || 0) ||
+      (eventCounts.get(right.key) || 0) - (eventCounts.get(left.key) || 0) ||
+      right.lastMeaningfulAtMs - left.lastMeaningfulAtMs || left.key.localeCompare(right.key))[0] || null;
+  }
+
   function ingest() {
     if (closed) return;
     const suppressBatchEffects = document.hidden || suppressNextIngestEffects;
@@ -740,8 +777,25 @@ function createNetworkVisualizer(dependencies = {}) {
           tick.visualChanged) invalidateGraph();
       lastTickAt = now;
     }
-    const attentionResult = attention.update({ state, scope: navigationScope, atMs: now,
-      autoRotate: preferences.autoRotate !== false, reducedMotion: Boolean(reducedMotionMedia?.matches) });
+    if (!openingOverviewUntilMs && state.universes.size) openingOverviewUntilMs = now + OPENING_OVERVIEW_MS;
+    const automaticOpening = preferences.autoRotate !== false && !reducedMotionMedia?.matches &&
+      !openingSystemChosen && navigationScope.level === 'overview' && openingOverviewUntilMs;
+    if (automaticOpening && now >= openingOverviewUntilMs) {
+      const universe = mostActiveUniverse();
+      if (universe) navigateToScope({ level: 'system', universeKey: universe.key });
+    }
+    const openingGrace = automaticOpening && navigationScope.level === 'overview' && now < openingOverviewUntilMs;
+    const attentionResult = openingGrace ?
+      { status: 'roam', changed: false, target: null, reason: 'opening_overview' } :
+      attention.update({ state, scope: navigationScope, atMs: now,
+        autoRotate: preferences.autoRotate !== false, reducedMotion: Boolean(reducedMotionMedia?.matches) });
+    renderer?.setAutomaticCameraMode?.(attentionResult.status);
+    if (attentionResult.status === 'roam' && lastAttentionStatus !== 'roam' &&
+        lastAttentionStatus !== 'disabled') {
+      pendingCameraAction = { type: 'frame' };
+      invalidateGraph();
+    }
+    lastAttentionStatus = attentionResult.status;
     if (attentionResult.changed && attentionResult.target) {
       pendingAttentionTarget = attentionResult.target;
       dirty = true;
@@ -839,8 +893,13 @@ function createNetworkVisualizer(dependencies = {}) {
     if (pendingAttentionTarget) {
       const target = pendingAttentionTarget;
       pendingAttentionTarget = null;
-      queueMicrotask(() => renderer?.steerOrbitTarget?.(
-        [target.targetKey, ...(target.centroidKeys || [])], undefined, target.universeKey));
+      const keys = [...new Set([
+        ...(target.groupKeys || []),
+        ...(target.radioKeys || []),
+        ...(target.centroidKeys || []),
+        target.targetKey
+      ].filter(Boolean))];
+      queueMicrotask(() => renderer?.frameActivity?.(keys, undefined, target.universeKey));
     }
     dirty = graphDirty || (!frozen && !layout.reducedMotion && !layout.sleeping && currentGraph.nodes.length > 0);
   }
@@ -867,6 +926,9 @@ function createNetworkVisualizer(dependencies = {}) {
     ui.setReducedMotion(reduced);
     attention.reset();
     pendingAttentionTarget = null;
+    lastAttentionStatus = reduced || preferences.autoRotate === false ? 'disabled' : 'roam';
+    renderer?.setAutomaticCameraMode?.(reduced || preferences.autoRotate === false ? 'disabled' : 'roam');
+    if (!reduced && preferences.autoRotate !== false) pendingCameraAction = { type: 'frame' };
     invalidateGraph();
   }
 

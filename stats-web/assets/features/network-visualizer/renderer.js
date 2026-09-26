@@ -4,8 +4,11 @@ import { BALANCED_CONFIG } from './config.js';
 
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
 const LINK_SEGMENTS = 10;
-const SYSTEM_TARGET_RADIUS = 0.55;
-const SYSTEM_CAMERA_RADIUS = 0.78;
+const SYSTEM_TARGET_RADIUS = 0.9;
+const SYSTEM_CAMERA_RADIUS = 0.88;
+const SYSTEM_MAX_ORBIT_RADIUS = 0.78;
+const ROBOT_CAMERA_TRANSITION_MS = 900;
+const AUTOMATIC_CAMERA_MODES = new Set(['roam', 'shot', 'hold', 'manual', 'disabled']);
 const DEFAULT_ANIMATION = Object.freeze({
   particleFlightMs: 1_500,
   effectCoalesceMs: 2_200,
@@ -48,7 +51,7 @@ function depthPresentation(value = {}) {
 function scopeFogDensity(scope = {}, config = BALANCED_CONFIG) {
   if (scope.level === 'group') return 0.9 / Math.max(1, config.layout.radioOrbitRadius * 3);
   if (scope.level === 'system') return 0.9 / Math.max(1, config.layout.systemRadius);
-  return 0.9 / Math.max(1, config.layout.universeSpacing * 5);
+  return 0;
 }
 
 function easeInOutCubic(value) {
@@ -261,7 +264,7 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
     available: false, disposed, layoutOwner: 'external', mode: '3d', frozen: false,
     nodes: 0, links: 0, labels: 0, steadyParticles: 0, pendingParticles: 0,
     animatedEffects: 0, contextLost: false, paused: false, autoRotateRequested: false,
-    autoRotateEffective: false,
+    autoRotateEffective: false, automaticCameraMode: 'disabled',
     scope: { level: 'overview', universeKey: '', groupKey: '' }, camera: null, rendererMemory: null, limits: {}
   });
   const dispose = () => {
@@ -275,9 +278,11 @@ function createUnavailableRenderer(host, surface, labelLayer, status, error, cal
   };
   const renderer = Object.freeze({
     available: false, layoutOwner: 'external', setGraphData: diagnostics, refresh: () => {}, resize: () => {},
-    setFrozen: Boolean, fitAll: () => false, focus: () => false, steerOrbitTarget: () => false,
+    setFrozen: Boolean, fitAll: () => false, focus: () => false, frameActivity: () => false,
+    steerOrbitTarget: () => false,
     pulse: () => false, frameScope: () => false, getCameraPose: () => null,
     restoreCameraPose: () => false, setNavigationScope: (value = {}) => value, setAutoRotate: Boolean,
+    setAutomaticCameraMode: (value) => value,
     setPalette: () => {}, setReducedMotion: Boolean, setLabelBudget: () => 0,
     setParticleBudget: () => 0, clearEffects: () => {}, clear: () => {}, enterFullscreen: async () => false,
     exitFullscreen: async () => false, diagnostics, dispose
@@ -330,6 +335,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let contextLost = false;
   let autoRotateRequested = options.autoRotate ?? animation.autoRotateDefault ?? true;
   let autoRotatePaused = false;
+  let automaticCameraMode = 'roam';
+  let controlsInteracting = false;
+  let interactionStartPose = null;
   let programmaticCamera = false;
   let reducedMotionOverride = typeof options.reducedMotion === 'boolean' ? options.reducedMotion : null;
   let navigationScope = { level: 'overview', universeKey: '', groupKey: '' };
@@ -340,7 +348,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
   let particleAllocation = new Map();
   let labelFrame = null;
   let cameraTweenFrame = null;
-  let autoRotateTimer = null;
   let effectTimer = null;
   let initialFrameScheduled = false;
   let nextPulseId = 1;
@@ -589,9 +596,16 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const radius = nodeRadius(system);
     const target = pointWithin(requestedTarget, center, radius * SYSTEM_TARGET_RADIUS);
     let position = pointWithin(requestedPosition, center, radius * SYSTEM_CAMERA_RADIUS);
-    const targetDistance = Math.hypot(target.x - center.x, target.y - center.y, target.z - center.z);
-    const maximumOrbit = Math.max(12, radius * SYSTEM_CAMERA_RADIUS - targetDistance);
-    position = pointWithin(position, target, maximumOrbit);
+    const minimumOrbit = Math.max(12, radius * 0.04);
+    if (Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z) < minimumOrbit) {
+      const inward = new library.Vector3(center.x - target.x, center.y - target.y, center.z - target.z);
+      if (!Number.isFinite(inward.x) || inward.lengthSq() < 0.001) inward.set(0.72, 0.48, 1);
+      inward.normalize();
+      position = pointWithin({ x: target.x + inward.x * minimumOrbit,
+        y: target.y + inward.y * minimumOrbit, z: target.z + inward.z * minimumOrbit },
+      center, radius * SYSTEM_CAMERA_RADIUS);
+    }
+    const maximumOrbit = Math.max(minimumOrbit, radius * SYSTEM_MAX_ORBIT_RADIUS);
     return { target, position, maximumOrbit };
   }
 
@@ -937,35 +951,21 @@ async function createNetworkVisualizerRenderer(options = {}) {
     scheduleLabels();
   }
 
-  function clearAutoRotateTimer() {
-    if (autoRotateTimer !== null) clearTimeout(autoRotateTimer);
-    autoRotateTimer = null;
-  }
-
   function updateAutoRotate() {
     if (!controls) return false;
-    const effective = Boolean(autoRotateRequested && !autoRotatePaused && !programmaticCamera &&
+    const effective = Boolean(autoRotateRequested && automaticCameraMode === 'roam' && !controlsInteracting &&
+      !autoRotatePaused && !programmaticCamera &&
       !prefersReducedMotion() && !documentValue.hidden && renderNodes.size);
     controls.autoRotate = effective;
     controls.autoRotateSpeed = animation.autoRotateSpeed;
     callbacks.onAutoRotateState?.({ requested: autoRotateRequested, effective,
-      paused: autoRotateRequested && !effective });
+      paused: autoRotateRequested && !effective, mode: automaticCameraMode });
     return effective;
   }
 
   function scheduleAutoRotateResume() {
-    clearAutoRotateTimer();
-    if (!autoRotateRequested || prefersReducedMotion() || documentValue.hidden) {
-      updateAutoRotate();
-      return;
-    }
-    autoRotatePaused = true;
+    autoRotatePaused = false;
     updateAutoRotate();
-    autoRotateTimer = setTimeout(() => {
-      autoRotateTimer = null;
-      autoRotatePaused = false;
-      updateAutoRotate();
-    }, animation.autoRotateIdleDelayMs);
   }
 
   function stopCameraTween({ resume = true } = {}) {
@@ -1005,10 +1005,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     controls.maxDistance = maximumOrbit;
   }
 
-  function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs) {
+  function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs, optionsValue = {}) {
     if (!graph || disposed || !controls) return false;
     stopCameraTween({ resume: false });
-    clearAutoRotateTimer();
     autoRotatePaused = true;
     programmaticCamera = true;
     updateAutoRotate();
@@ -1019,13 +1018,15 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const toTarget = { x: finite(target?.x), y: finite(target?.y), z: finite(target?.z) };
     const duration = prefersReducedMotion() ? 0 : Math.max(0, finite(requestedDuration));
     const apply = (progress) => {
-      const eased = easeInOutCubic(progress);
-      camera.position.set(fromPosition.x + (toPosition.x - fromPosition.x) * eased,
-        fromPosition.y + (toPosition.y - fromPosition.y) * eased,
-        fromPosition.z + (toPosition.z - fromPosition.z) * eased);
-      controls.target.set(fromTarget.x + (toTarget.x - fromTarget.x) * eased,
-        fromTarget.y + (toTarget.y - fromTarget.y) * eased,
-        fromTarget.z + (toTarget.z - fromTarget.z) * eased);
+      const staged = optionsValue.staged === true;
+      const targetProgress = easeInOutCubic(staged ? clamp(progress / 0.62, 0, 1) : progress);
+      const positionProgress = easeInOutCubic(staged ? clamp((progress - 0.18) / 0.82, 0, 1) : progress);
+      camera.position.set(fromPosition.x + (toPosition.x - fromPosition.x) * positionProgress,
+        fromPosition.y + (toPosition.y - fromPosition.y) * positionProgress,
+        fromPosition.z + (toPosition.z - fromPosition.z) * positionProgress);
+      controls.target.set(fromTarget.x + (toTarget.x - fromTarget.x) * targetProgress,
+        fromTarget.y + (toTarget.y - fromTarget.y) * targetProgress,
+        fromTarget.z + (toTarget.z - fromTarget.z) * targetProgress);
       camera.lookAt?.(controls.target);
       controls.update?.();
       scheduleLabels();
@@ -1092,7 +1093,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001 || optionsValue.hero === true) {
         direction.set(0.72, 0.48, 1).normalize();
       }
-      const distance = clamp(radius * 0.3, Math.min(72, radius * 0.24), radius * 0.6);
+      const distance = clamp(radius * 0.62, Math.min(96, radius * 0.32), radius * 0.72);
       return tweenCamera({ x: center.x + direction.x * distance,
         y: center.y + direction.y * distance, z: center.z + direction.z * distance },
       center, optionsValue.duration ?? animation.cameraTransitionMs);
@@ -1122,8 +1123,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const key = typeof keyOrNode === 'object' ? nodeKey(keyOrNode) : String(keyOrNode || '');
     return renderNodes.has(key) ? frameScope({ keys: [key], duration, padding: 1.3 }) : false;
   }
-  function steerOrbitTarget(keys, duration = animation.cameraTransitionMs, fallbackKey = '') {
-    if (!graph || !controls || disposed || prefersReducedMotion()) return false;
+  function frameActivity(keys, duration = Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
+      fallbackKey = '') {
+    if (!graph || !controls || disposed) return false;
     let requested = [...new Set((Array.isArray(keys) ? keys : [keys]).map((key) => String(key || '')))]
       .map((key) => renderNodes.get(key)).filter((node) => node?.visible !== false);
     if (!requested.length && fallbackKey) {
@@ -1131,36 +1133,37 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (fallback?.visible !== false) requested = [fallback];
     }
     if (!requested.length) return false;
-    const center = requested.reduce((sum, node) => {
-      const position = renderedPosition(node);
-      sum.x += position.x;
-      sum.y += position.y;
-      sum.z += position.z;
-      return sum;
-    }, { x: 0, y: 0, z: 0 });
-    center.x /= requested.length;
-    center.y /= requested.length;
-    center.z /= requested.length;
+    const bounds = scopeBounds(requested);
+    if (!bounds) return false;
     const camera = graph.camera();
-    const viewDirection = new library.Vector3().copy(camera.position).sub(controls.target).normalize();
-    if (!Number.isFinite(viewDirection.x) || viewDirection.lengthSq() < 0.001) {
-      viewDirection.set(0.72, 0.48, 1).normalize();
-    }
-    let target = center;
-    // Hold the viewpoint while turning toward the hotspot. Translating camera and target by the same offset kept
-    // the old view direction, which made attention changes look like no camera response at all.
-    let position = { x: finite(camera.position.x), y: finite(camera.position.y), z: finite(camera.position.z) };
+    const aspect = Math.max(0.25, (surface.clientWidth || host.clientWidth || 1) /
+      Math.max(1, surface.clientHeight || host.clientHeight || 1));
+    const verticalHalfFov = clamp(finite(camera.fov, 60), 25, 100) * Math.PI / 360;
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * aspect);
+    const halfFov = Math.max(0.1, Math.min(verticalHalfFov, horizontalHalfFov));
+    const padding = requested.length === 1 ? 1.08 : 1.28;
+    const distance = Math.max(requested.length === 1 ? 72 : 104,
+      bounds.radius * padding / Math.sin(halfFov));
+    const direction = new library.Vector3().copy(camera.position).sub(controls.target);
     const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
     if (system) {
-      ({ target, position } = containedSystemPose(system, target, position));
+      const systemCenter = renderedPosition(system);
+      direction.set(systemCenter.x - bounds.center.x, systemCenter.y - bounds.center.y,
+        systemCenter.z - bounds.center.z);
     }
-    if (Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z) < 12) {
-      position = { x: target.x + viewDirection.x * 12, y: target.y + viewDirection.y * 12,
-        z: target.z + viewDirection.z * 12 };
-      if (system) ({ target, position } = containedSystemPose(system, target, position));
+    if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001) {
+      direction.copy(camera.position).sub(controls.target);
+      if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001) direction.set(0.72, 0.48, 1);
     }
-    return tweenCamera(position, target, duration);
+    direction.normalize();
+    let target = bounds.center;
+    let position = { x: target.x + direction.x * distance, y: target.y + direction.y * distance,
+      z: target.z + direction.z * distance };
+    if (system) ({ target, position } = containedSystemPose(system, target, position));
+    return tweenCamera(position, target, duration, { staged: true });
   }
+  const steerOrbitTarget = (keys, duration = Math.max(ROBOT_CAMERA_TRANSITION_MS, animation.cameraTransitionMs),
+    fallbackKey = '') => frameActivity(keys, duration, fallbackKey);
   const restoreCameraPose = (pose, duration = animation.cameraBackTransitionMs) =>
     pose?.position && pose?.target ? tweenCamera(pose.position, pose.target, duration) : false;
 
@@ -1177,9 +1180,15 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function setAutoRotate(value) {
     autoRotateRequested = Boolean(value);
     autoRotatePaused = false;
-    clearAutoRotateTimer();
     updateAutoRotate();
     return autoRotateRequested;
+  }
+  function setAutomaticCameraMode(value) {
+    const mode = String(value || 'roam').toLowerCase();
+    automaticCameraMode = AUTOMATIC_CAMERA_MODES.has(mode) ? mode : 'roam';
+    autoRotatePaused = automaticCameraMode !== 'roam';
+    updateAutoRotate();
+    return automaticCameraMode;
   }
   function setFrozen(value) {
     frozen = Boolean(value);
@@ -1202,7 +1211,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const particlesChanged = updateParticleAllocation();
     if (prefersReducedMotion()) {
       stopCameraTween({ resume: false });
-      clearAutoRotateTimer();
       autoRotatePaused = true;
       clearEffects();
     } else scheduleAutoRotateResume();
@@ -1225,7 +1233,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
 
   function clear() {
     stopCameraTween({ resume: false });
-    clearAutoRotateTimer();
     clearEffects();
     currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
     currentStructure = '';
@@ -1253,21 +1260,36 @@ async function createNetworkVisualizerRenderer(options = {}) {
       steadyParticles: [...particleAllocation.values()].reduce((sum, count) => sum + count, 0),
       pendingParticles: pulseReservations.size, animatedEffects: nodeEffects.size, contextLost, paused,
       autoRotateRequested, autoRotateEffective: Boolean(controls?.autoRotate),
+      automaticCameraMode,
       scope: { ...navigationScope }, camera: cameraPose(), rendererMemory,
       limits: currentDocument.rendererLimits || {} });
   }
 
   const onControlsStart = () => {
+    controlsInteracting = true;
+    interactionStartPose = cameraPose();
     stopCameraTween({ resume: false });
     applyScopeCameraLimit();
     autoRotatePaused = true;
-    clearAutoRotateTimer();
     updateAutoRotate();
-    callbacks.onCameraInteraction?.();
   };
   const onControlsEnd = () => {
     applyScopeCameraLimit();
-    scheduleAutoRotateResume();
+    const finished = cameraPose();
+    const started = interactionStartPose;
+    const positionMoved = started && finished ? Math.hypot(
+      finished.position.x - started.position.x,
+      finished.position.y - started.position.y,
+      finished.position.z - started.position.z) : 0;
+    const targetMoved = started && finished ? Math.hypot(
+      finished.target.x - started.target.x,
+      finished.target.y - started.target.y,
+      finished.target.z - started.target.z) : 0;
+    controlsInteracting = false;
+    interactionStartPose = null;
+    if (positionMoved > 0.25 || targetMoved > 0.1) callbacks.onCameraInteraction?.();
+    else scheduleAutoRotateResume();
+    updateAutoRotate();
   };
   const onControlsChange = () => {
     if (!programmaticCamera) applyScopeCameraLimit();
@@ -1292,7 +1314,6 @@ async function createNetworkVisualizerRenderer(options = {}) {
   const onVisibilityChange = () => {
     if (!graph || disposed) return;
     if (documentValue.hidden) {
-      clearAutoRotateTimer();
       stopCameraTween({ resume: false });
       graph.pauseAnimation();
       paused = true;
@@ -1389,9 +1410,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     disposed = true;
     if (labelFrame !== null) cancelAnimationFrame(labelFrame);
     if (cameraTweenFrame !== null) cancelAnimationFrame(cameraTweenFrame);
-    if (autoRotateTimer !== null) clearTimeout(autoRotateTimer);
     if (effectTimer !== null) clearTimeout(effectTimer);
-    labelFrame = cameraTweenFrame = autoRotateTimer = effectTimer = null;
+    labelFrame = cameraTweenFrame = effectTimer = null;
     clearEffects();
     resizeObserver?.disconnect();
     if (resizeFallback) window.removeEventListener('resize', resizeFallback);
@@ -1422,6 +1442,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     currentDocument = { nodes: [], links: [], labels: [], effects: [], rendererLimits: {} };
     requestedLabelKeys = [];
     graph = controls = scene = rendererCanvas = resizeObserver = resizeFallback = themeObserver = mediaQuery = null;
+    interactionStartPose = null;
     surface.remove();
     labelLayer.remove();
     status.remove();
@@ -1445,8 +1466,9 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (updateParticleAllocation()) graph.refresh();
       return particleBudget;
     },
-    fitAll, frameScope, focus, steerOrbitTarget, getCameraPose: cameraPose, restoreCameraPose, setNavigationScope,
-    setAutoRotate, pulse, clearEffects, clear, enterFullscreen, exitFullscreen, diagnostics, dispose
+    fitAll, frameScope, focus, frameActivity, steerOrbitTarget, getCameraPose: cameraPose, restoreCameraPose,
+    setNavigationScope, setAutoRotate, setAutomaticCameraMode, pulse, clearEffects, clear,
+    enterFullscreen, exitFullscreen, diagnostics, dispose
   });
 }
 
