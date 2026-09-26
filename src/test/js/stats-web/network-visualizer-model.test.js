@@ -129,16 +129,11 @@ async function main() {
   assert.equal(config.BALANCED_CONFIG.state.hardSavedLayoutRecords, 512);
   assert.equal(config.BALANCED_CONFIG.state.hardOverflowCallKeys, 4_096);
   assert.deepEqual(config.BALANCED_CONFIG.animation, {
-    txAttackMs: 180,
     txReleaseMs: 2_400,
     pulseDurationMs: 700,
     particleFlightMs: 1_500,
-    pulseScale: 0.10,
     migrationMotionMs: 1_400,
     effectCoalesceMs: 2_200,
-    labelMinimumResidenceMs: 1_600,
-    labelHiddenResidenceMs: 420,
-    softAnimatedEffects: 24,
     cameraTransitionMs: 720,
     cameraBackTransitionMs: 560,
     autoRotateDefault: true,
@@ -148,7 +143,6 @@ async function main() {
   assert(Object.isFrozen(config.BALANCED_CONFIG));
   assert(Object.isFrozen(config.BALANCED_CONFIG.animation));
   assert.throws(() => config.createConfig({ render: { unknown: 1 } }), /unknown or missing/);
-  assert.throws(() => config.createConfig({ animation: { pulseScale: 0.75 } }), /pulseScale is invalid/);
   assert.throws(() => config.createConfig({ animation: { autoRotateDefault: 1 } }),
     /autoRotateDefault is invalid/);
   assert.throws(() => config.createConfig({ render: { migrationTrailTtlMs: 8_001 } }),
@@ -994,8 +988,6 @@ async function main() {
     { x: 80, y: 60, z: 12 });
   assert(!implicitLayout.positions.has(provisionalRadioKey));
   assert(!implicitLayout.positions.has(provisionalGroupKey));
-  assert(!implicitLayout.velocities.has(provisionalRadioKey));
-  assert(!implicitLayout.velocities.has(provisionalGroupKey));
   assert(!implicitLayout.saved.has(provisionalRadioKey));
   assert(!implicitLayout.saved.has(provisionalGroupKey));
   assert.deepEqual([...implicitLayout.pinned], [canonicalRadioNode.key]);
@@ -1156,7 +1148,8 @@ async function main() {
     group: ref('talkgroup', 'tg:901', 901, 'Group 901', SYSTEM_B) }), 1, BASE_TIME + 4);
   assert.equal(model.networkStateCounts(universeOverflow).overflowActive, 0);
 
-  // One deterministic layout model supports 3D/flat, hierarchy translation, pinning, and bounded persistence.
+  // One deterministic 3D layout model supports stable hierarchy slots, monotonic reparenting,
+  // hierarchy translation, pinning, and bounded persistence without a continuously running force simulation.
   const layoutGraph = {
     nodes: [
       { key: 'u', id: 'u', type: 'universe', universeKey: 'u' },
@@ -1200,33 +1193,38 @@ async function main() {
   assert.equal(layoutGraph.nodes.find((node) => node.key === 'r1').x, beforeUniverseMove.r1.x + 14);
   assert.equal(layoutGraph.nodes.find((node) => node.key === 'r2').x, beforeUniverseMove.r2.x,
     'a pinned descendant must remain fixed when its universe moves');
-  layout.setLayoutMode(firstLayout, 'flat');
-  layout.stepLayout(firstLayout, layoutGraph, 16, BASE_TIME + 2);
-  assert(layoutGraph.nodes.every((node) => node.z === 0));
   const migrationNodes = () => [
     { key: 'migration-u', type: 'universe', universeKey: 'migration-u' },
     { key: 'migration-old', type: 'group', universeKey: 'migration-u', groupKey: 'migration-old' },
     { key: 'migration-new', type: 'group', universeKey: 'migration-u', groupKey: 'migration-new' },
-    { key: 'migration-radio', type: 'radio', universeKey: 'migration-u', groupKey: 'migration-new' }
+    { key: 'migration-radio', type: 'radio', universeKey: 'migration-u', groupKey: 'migration-old' }
   ];
-  const migrationEffect = { type: 'migration', nodeKey: 'migration-radio', sourceKey: 'migration-old',
-    targetKey: 'migration-new', createdAtMs: BASE_TIME, expiresAtMs: BASE_TIME + 8_000 };
-  const reducedLayout = layout.createLayoutState(limitedConfig, { reducedMotion: true });
-  const reducedGraph = { nodes: migrationNodes(), links: [], effects: [migrationEffect] };
-  layout.synchronizeLayout(reducedLayout, reducedGraph, BASE_TIME + 3_999);
-  const reducedRecord = reducedLayout.positions.get('migration-radio');
-  reducedRecord.x += 37;
-  reducedRecord.y -= 19;
-  reducedRecord.z += 11;
-  reducedLayout.velocities.set('migration-radio', { x: 20, y: -10, z: 8 });
-  layout.setReducedMotion(reducedLayout, true);
-  const reducedBefore = { x: reducedRecord.x, y: reducedRecord.y, z: reducedRecord.z };
-  layout.stepLayout(reducedLayout, reducedGraph, 16, BASE_TIME + 4_000);
-  layout.stepLayout(reducedLayout, reducedGraph, 50, BASE_TIME + 4_050);
-  const reducedRadio = reducedGraph.nodes.find((node) => node.key === 'migration-radio');
-  assert.deepEqual({ x: reducedRadio.x, y: reducedRadio.y, z: reducedRadio.z }, reducedBefore);
-  assert.deepEqual(reducedLayout.velocities.get('migration-radio'), { x: 0, y: 0, z: 0 });
-  assert.equal(layout.setReducedMotion(reducedLayout, false), false);
+
+  const easingLayout = layout.createLayoutState(limitedConfig);
+  const easingGraph = { nodes: migrationNodes(), links: [], effects: [] };
+  layout.synchronizeLayout(easingLayout, easingGraph, BASE_TIME + 3_999);
+  const easingRecord = easingLayout.positions.get('migration-radio');
+  easingGraph.nodes.find((node) => node.key === 'migration-radio').groupKey = 'migration-new';
+  layout.synchronizeLayout(easingLayout, easingGraph, BASE_TIME + 4_000);
+  const destination = { x: easingRecord.targetX, y: easingRecord.targetY, z: easingRecord.targetZ };
+  let previousDistance = Math.hypot(destination.x - easingRecord.x, destination.y - easingRecord.y,
+    destination.z - easingRecord.z);
+  assert(previousDistance > 1);
+  for (let frame = 0; frame < 240; frame += 1) {
+    layout.stepLayout(easingLayout, easingGraph, 16, BASE_TIME + 4_001 + frame * 16);
+    const distance = Math.hypot(destination.x - easingRecord.x, destination.y - easingRecord.y,
+      destination.z - easingRecord.z);
+    assert(distance <= previousDistance + 1e-9, 'a reparented radio must approach its slot without overshoot');
+    previousDistance = distance;
+  }
+  assert.deepEqual({ x: easingRecord.x, y: easingRecord.y, z: easingRecord.z }, destination);
+  assert.equal(easingLayout.sleeping, true);
+  const settledPosition = { x: easingRecord.x, y: easingRecord.y, z: easingRecord.z };
+  for (let frame = 0; frame < 30; frame += 1) {
+    layout.stepLayout(easingLayout, easingGraph, 16, BASE_TIME + 8_000 + frame * 16);
+  }
+  assert.deepEqual({ x: easingRecord.x, y: easingRecord.y, z: easingRecord.z }, settledPosition,
+    'settled nodes must not rock or drift');
 
   const reducedReparentLayout = layout.createLayoutState(limitedConfig, { reducedMotion: true });
   const reducedReparentGraph = { nodes: [
@@ -1251,64 +1249,14 @@ async function main() {
   layout.synchronizeLayout(dynamicReducedLayout, dynamicReducedGraph, BASE_TIME + 4_200);
   const dynamicReducedRecord = dynamicReducedLayout.positions.get('migration-radio');
   const dynamicReducedParent = dynamicReducedLayout.positions.get('migration-new');
-  dynamicReducedRecord.x += 29;
-  dynamicReducedRecord.y -= 17;
-  dynamicReducedRecord.z += 9;
-  layout.setReducedMotion(dynamicReducedLayout, true);
+  dynamicReducedGraph.nodes.find((node) => node.key === 'migration-radio').groupKey = 'migration-new';
   layout.synchronizeLayout(dynamicReducedLayout, dynamicReducedGraph, BASE_TIME + 4_201);
+  layout.setReducedMotion(dynamicReducedLayout, true);
   assert.deepEqual({ x: dynamicReducedRecord.x, y: dynamicReducedRecord.y, z: dynamicReducedRecord.z }, {
-    x: dynamicReducedParent.x + dynamicReducedRecord.localX,
-    y: dynamicReducedParent.y + dynamicReducedRecord.localY,
-    z: dynamicReducedParent.z + dynamicReducedRecord.localZ
+    x: dynamicReducedParent.targetX + dynamicReducedRecord.localX,
+    y: dynamicReducedParent.targetY + dynamicReducedRecord.localY,
+    z: dynamicReducedParent.targetZ + dynamicReducedRecord.localZ
   }, 'enabling reduced motion mid-migration must settle the radio at its current parent');
-
-  // A retained migration trail does not keep bending or pulsing the radio after its short motion window.
-  const timedMigrationEffect = { ...migrationEffect, animationEndsAtMs: BASE_TIME + 1_400 };
-  const activeMotionLayout = layout.createLayoutState(limitedConfig);
-  const activeMotionGraph = { nodes: migrationNodes(), links: [], effects: [timedMigrationEffect] };
-  const activeMotionBaseline = layout.createLayoutState(limitedConfig);
-  const activeMotionBaselineGraph = { nodes: migrationNodes(), links: [], effects: [] };
-  layout.stepLayout(activeMotionLayout, activeMotionGraph, 16, BASE_TIME + 700);
-  layout.stepLayout(activeMotionBaseline, activeMotionBaselineGraph, 16, BASE_TIME + 700);
-  assert.notDeepEqual(activeMotionGraph.nodes.find((node) => node.key === 'migration-radio'),
-    activeMotionBaselineGraph.nodes.find((node) => node.key === 'migration-radio'));
-
-  const retainedTrailLayout = layout.createLayoutState(limitedConfig);
-  const retainedTrailGraph = { nodes: migrationNodes(), links: [], effects: [timedMigrationEffect] };
-  const retainedTrailBaseline = layout.createLayoutState(limitedConfig);
-  const retainedTrailBaselineGraph = { nodes: migrationNodes(), links: [], effects: [] };
-  layout.stepLayout(retainedTrailLayout, retainedTrailGraph, 16, BASE_TIME + 4_000);
-  layout.stepLayout(retainedTrailBaseline, retainedTrailBaselineGraph, 16, BASE_TIME + 4_000);
-  assert.deepEqual(retainedTrailGraph.nodes.find((node) => node.key === 'migration-radio'),
-    retainedTrailBaselineGraph.nodes.find((node) => node.key === 'migration-radio'));
-
-  // Broad-phase collision buckets must include overlaps beyond one configured 30-unit cell.
-  // These pairs start in cells 0 and 2 but are closer than their combined radii plus padding.
-  for (const [leftType, rightType] of [
-    ['universe', 'universe'],
-    ['universe', 'group'],
-    ['universe', 'radio'],
-    ['group', 'group']
-  ]) {
-    const collisionLayout = layout.createLayoutState(limitedConfig, { mode: 'flat' });
-    const collisionGraph = { nodes: [
-      { key: `collision-left-${leftType}`, type: leftType },
-      { key: `collision-right-${rightType}`, type: rightType }
-    ], links: [], effects: [] };
-    layout.synchronizeLayout(collisionLayout, collisionGraph, BASE_TIME);
-    const left = collisionLayout.positions.get(`collision-left-${leftType}`);
-    const right = collisionLayout.positions.get(`collision-right-${rightType}`);
-    left.x = 29;
-    left.y = 0;
-    left.z = 0;
-    right.x = 61;
-    right.y = 0;
-    right.z = 0;
-    if (left.type === 'universe') left.anchorX = 29;
-    if (right.type === 'universe') right.anchorX = 61;
-    layout.stepLayout(collisionLayout, collisionGraph, 16, BASE_TIME + 1);
-    assert(right.x - left.x > 32, `${leftType}/${rightType} overlap should receive a collision impulse`);
-  }
 
   const saved = layout.savedLayoutRecords(firstLayout);
   const restoredLayout = layout.createLayoutState(limitedConfig, { profileKey: 'profile-a' });

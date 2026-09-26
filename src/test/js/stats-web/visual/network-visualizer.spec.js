@@ -234,7 +234,7 @@ test('populated view drills system to talkgroup and search derives the retained 
   await expect(page.getByRole('heading', { name: 'Unit 12' })).toBeVisible();
 });
 
-test('arrange, cursor zoom, orbit, flatten, and Clear keep camera and hierarchy semantics', async ({ page }) => {
+test('arrange, cursor zoom, orbit, and Clear keep camera and hierarchy semantics', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(fixtureUrl(true));
   await waitForController(page);
@@ -282,11 +282,7 @@ test('arrange, cursor zoom, orbit, flatten, and Clear keep camera and hierarchy 
     { timeout: 4_000 }).toBe(true);
   const autoCentered = (await diagnostics(page)).renderer.camera;
   expect(pointDistance(afterOrbit.target, autoCentered.target)).toBeGreaterThan(1);
-  const flatten = page.getByRole('button', { name: 'Flatten', exact: true });
-  await flatten.click();
-  await expect(flatten).toHaveAttribute('aria-pressed', 'true');
-  await expect(autoRotate).toBeDisabled();
-  await expect.poll(async () => (await diagnostics(page)).renderer.autoRotateEffective).toBe(false);
+  await expect(page.getByRole('button', { name: 'Flatten', exact: true })).toHaveCount(0);
 
   await searchToScope(page, 'Unit 12', 'group');
   await page.getByRole('button', { name: 'Clear map', exact: true }).click();
@@ -419,10 +415,9 @@ test('deterministic burst stays bounded and all canvas controls preserve one sta
   expect(repeatedCountMutations).toBe(0);
 
   const interactionStarted = Date.now();
-  await page.getByRole('button', { name: 'Flatten', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Flatten', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Flatten', exact: true })).toHaveCount(0);
   snapshot = await diagnostics(page);
-  if (snapshot.renderer.available) expect(snapshot.renderer.mode).toBe('flat');
+  if (snapshot.renderer.available) expect(snapshot.renderer.mode).toBe('3d');
 
   await page.getByRole('button', { name: 'Freeze layout', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Layout frozen', exact: true })).toHaveAttribute('aria-pressed', 'true');

@@ -3,8 +3,8 @@
 import { BALANCED_CONFIG, validateConfig } from './config.js';
 
 const TYPES = new Set(['universe', 'group', 'radio', 'aggregate']);
-const COLLISION_RADII = Object.freeze({ universe: 30, group: 18, aggregate: 12, radio: 7 });
-const MAXIMUM_COLLISION_RADIUS = Math.max(...Object.values(COLLISION_RADII));
+const TYPE_ORDER = Object.freeze({ universe: 0, group: 1, radio: 2, aggregate: 3 });
+const SETTLE_EPSILON = 0.02;
 
 function finite(value, fallback = 0) {
   const number = Number(value);
@@ -25,8 +25,8 @@ function stableHash(value) {
   return hash >>> 0;
 }
 
-function unit(hash, shift = 0) {
-  return ((hash >>> shift) & 0xffff) / 0xffff;
+function unit(value) {
+  return (stableHash(value) & 0xffff) / 0xffff;
 }
 
 function copyPosition(position = {}) {
@@ -41,19 +41,15 @@ function createLayoutState(config = BALANCED_CONFIG, options = {}) {
   const validated = config === BALANCED_CONFIG ? config : validateConfig(config);
   return {
     config: validated,
-    mode: options.mode === 'flat' || options.mode === '2d' ? 'flat' : '3d',
     frozen: Boolean(options.frozen),
     reducedMotion: Boolean(options.reducedMotion),
     profileKey: String(options.profileKey || 'default').slice(0, 128),
     positions: new Map(),
-    velocities: new Map(),
     saved: new Map(),
     pinned: new Set(),
     graphKeys: new Set(),
     universeOrder: new Map(),
-    settledFrames: 0,
-    sleeping: false,
-    snapToParents: false,
+    sleeping: true,
     disposed: false,
     lastStepAtMs: 0
   };
@@ -63,12 +59,12 @@ function universeAnchor(layout, key) {
   if (!layout.universeOrder.has(key)) {
     const limit = layout.config.state.hardUniverses;
     if (layout.universeOrder.size >= limit) {
-      const activeUniverseKeys = new Set();
+      const active = new Set();
       layout.positions.forEach((record) => {
-        if (record.universeKey) activeUniverseKeys.add(record.universeKey);
+        if (record.universeKey) active.add(record.universeKey);
       });
       const removable = [...layout.universeOrder.keys()].find((candidate) =>
-        !activeUniverseKeys.has(candidate) && !layout.saved.has(candidate));
+        !active.has(candidate) && !layout.saved.has(candidate));
       const evicted = removable || layout.universeOrder.keys().next().value;
       if (evicted !== undefined) layout.universeOrder.delete(evicted);
     }
@@ -78,103 +74,146 @@ function universeAnchor(layout, key) {
     layout.universeOrder.set(key, Math.min(ordinal, Math.max(0, limit - 1)));
   }
   const index = layout.universeOrder.get(key);
-  const spacing = layout.config.layout.universeSpacing;
   if (index === 0) return { x: 0, y: 0, z: 0 };
+  const spacing = Math.max(layout.config.layout.universeSpacing,
+    layout.config.layout.groupOrbitRadius * 2.6);
   const angle = index * Math.PI * (3 - Math.sqrt(5));
   const radius = spacing * Math.sqrt(index);
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius,
-    z: layout.mode === 'flat' ? 0 : ((index % 5) - 2) * spacing * 0.12 };
+  return {
+    x: Math.cos(angle) * radius,
+    y: ((index % 5) - 2) * spacing * 0.32,
+    z: Math.sin(angle) * radius
+  };
 }
 
-function initialRecord(layout, node, graphNodes, atMs) {
+function localSlot(layout, record) {
+  if (record.type === 'universe') return { x: 0, y: 0, z: 0 };
+  const key = record.key;
+  const baseRadius = record.type === 'group' ? layout.config.layout.groupOrbitRadius :
+    layout.config.layout.radioOrbitRadius * (record.type === 'aggregate' ? 1.35 : 1);
+  const radius = baseRadius * (0.64 + unit(`${key}:radius`) * 0.36);
+  const vertical = unit(`${key}:vertical`) * 2 - 1;
+  const angle = unit(`${key}:angle`) * Math.PI * 2;
+  const horizontal = Math.sqrt(Math.max(0, 1 - vertical * vertical));
+  return {
+    x: Math.cos(angle) * horizontal * radius,
+    y: vertical * radius,
+    z: Math.sin(angle) * horizontal * radius
+  };
+}
+
+function parentKey(record) {
+  if (record.type === 'group') return record.universeKey;
+  if (record.type === 'radio' || record.type === 'aggregate') {
+    return record.groupKey || record.universeKey;
+  }
+  return '';
+}
+
+function targetFor(layout, record) {
+  if (record.type === 'universe') {
+    return { x: record.anchorX, y: record.anchorY, z: record.anchorZ };
+  }
+  const parent = layout.positions.get(parentKey(record));
+  if (!parent) return { x: record.x, y: record.y, z: record.z };
+  return {
+    x: parent.targetX + record.localX,
+    y: parent.targetY + record.localY,
+    z: parent.targetZ + record.localZ
+  };
+}
+
+function setTarget(layout, record) {
+  const target = targetFor(layout, record);
+  record.targetX = boundedCoordinate(target.x);
+  record.targetY = boundedCoordinate(target.y);
+  record.targetZ = boundedCoordinate(target.z);
+}
+
+function initialRecord(layout, node, atMs) {
   const key = String(node.key || node.id || '');
   const type = TYPES.has(node.type) ? node.type : 'aggregate';
   const reconciledFromKey = String(node.entity?.reconciledFromKey || '');
-  const reconciledRecord = reconciledFromKey ? layout.positions.get(reconciledFromKey) : null;
-  const reconciledSaved = reconciledFromKey ? layout.saved.get(reconciledFromKey) : null;
-  const saved = layout.saved.get(key) || reconciledSaved;
-  const hash = stableHash(key);
-  const parentKey = type === 'group' ? node.universeKey : (node.groupKey || node.universeKey);
-  const parentPosition = type === 'universe' ? null :
-    (layout.positions.get(parentKey) || universeAnchor(layout, node.universeKey || key));
-  let position;
-  let local = { x: 0, y: 0, z: 0 };
-  if (reconciledRecord) {
-    position = copyPosition(reconciledRecord);
-    local = { x: reconciledRecord.localX, y: reconciledRecord.localY, z: reconciledRecord.localZ };
-  } else if (saved) {
-    position = copyPosition(saved);
-    if (type !== 'universe') {
-      local = {
-        x: position.x - parentPosition.x,
-        y: position.y - parentPosition.y,
-        z: layout.mode === 'flat' ? 0 : position.z - parentPosition.z
-      };
-    }
-  } else if (type === 'universe') {
-    position = universeAnchor(layout, key);
-  } else {
-    const maximumRadius = type === 'group' ? layout.config.layout.groupOrbitRadius :
-      (type === 'aggregate' ? layout.config.layout.radioOrbitRadius * 1.45 : layout.config.layout.radioOrbitRadius);
-    const radialSample = unit(stableHash(`${key}:domain-radius`));
-    // Groups fill a deterministic system volume instead of sitting on one solar-system ring.  Cube-root
-    // sampling is uniform in 3D; square-root sampling keeps Flatten uniform on its plane.  A small central
-    // clearance preserves a calm label/selection target for the enclosing system field.
-    const domainFactor = type === 'group' ? 0.26 + 0.74 * (layout.mode === 'flat' ?
-      Math.sqrt(radialSample) : Math.cbrt(radialSample)) : 1;
-    const radius = maximumRadius * domainFactor;
-    const azimuth = unit(hash) * Math.PI * 2;
-    const elevationSample = unit(stableHash(`${key}:domain-elevation`));
-    const elevation = layout.mode === 'flat' ? 0 : Math.asin(elevationSample * 2 - 1) * 0.82;
-    local = {
-      x: Math.cos(azimuth) * Math.cos(elevation) * radius,
-      y: Math.sin(azimuth) * Math.cos(elevation) * radius,
-      z: layout.mode === 'flat' ? 0 : Math.sin(elevation) * radius
-    };
-    position = {
-      x: parentPosition.x + local.x,
-      y: parentPosition.y + local.y,
-      z: layout.mode === 'flat' ? 0 : parentPosition.z + local.z
-    };
-  }
+  const reconciled = reconciledFromKey ? layout.positions.get(reconciledFromKey) : null;
+  const saved = layout.saved.get(key) || (reconciledFromKey ? layout.saved.get(reconciledFromKey) : null);
+  const universeKey = String(node.universeKey || (type === 'universe' ? key : ''));
+  const groupKey = String(node.groupKey || (type === 'group' ? key : ''));
+  const shell = localSlot(layout, { key, type });
   const record = {
     key,
     type,
-    universeKey: String(node.universeKey || (type === 'universe' ? key : '')),
-    groupKey: String(node.groupKey || (type === 'group' ? key : '')),
-    x: boundedCoordinate(position.x),
-    y: boundedCoordinate(position.y),
-    z: layout.mode === 'flat' ? 0 : boundedCoordinate(position.z),
-    anchorX: type === 'universe' ? boundedCoordinate(reconciledRecord?.anchorX ?? position.x) : 0,
-    anchorY: type === 'universe' ? boundedCoordinate(reconciledRecord?.anchorY ?? position.y) : 0,
-    anchorZ: type === 'universe' && layout.mode !== 'flat' ?
-      boundedCoordinate(reconciledRecord?.anchorZ ?? position.z) : 0,
-    localX: boundedCoordinate(local.x),
-    localY: boundedCoordinate(local.y),
-    localZ: layout.mode === 'flat' ? 0 : boundedCoordinate(local.z),
-    // Saved coordinates are advisory until the independently observed entity is admitted through
-    // the semantic pin budget. The accepted node flag prevents saved records bypassing that cap.
-    pinned: Boolean(reconciledRecord?.pinned || node.pinned),
+    universeKey,
+    groupKey,
+    x: 0,
+    y: 0,
+    z: 0,
+    targetX: 0,
+    targetY: 0,
+    targetZ: 0,
+    anchorX: 0,
+    anchorY: 0,
+    anchorZ: 0,
+    localX: shell.x,
+    localY: shell.y,
+    localZ: shell.z,
+    pinned: Boolean(reconciled?.pinned || node.pinned),
     createdAtMs: atMs,
     updatedAtMs: atMs
   };
+
+  if (reconciled) {
+    Object.assign(record, copyPosition(reconciled));
+    record.anchorX = reconciled.anchorX;
+    record.anchorY = reconciled.anchorY;
+    record.anchorZ = reconciled.anchorZ;
+    record.localX = reconciled.localX;
+    record.localY = reconciled.localY;
+    record.localZ = reconciled.localZ;
+  } else if (type === 'universe') {
+    const position = saved ? copyPosition(saved) : universeAnchor(layout, key);
+    record.x = position.x;
+    record.y = position.y;
+    record.z = position.z;
+    record.anchorX = position.x;
+    record.anchorY = position.y;
+    record.anchorZ = position.z;
+  } else {
+    const parent = layout.positions.get(parentKey(record));
+    const origin = parent ? { x: parent.targetX, y: parent.targetY, z: parent.targetZ } :
+      universeAnchor(layout, universeKey || key);
+    const position = saved ? copyPosition(saved) : {
+      x: origin.x + record.localX,
+      y: origin.y + record.localY,
+      z: origin.z + record.localZ
+    };
+    record.x = boundedCoordinate(position.x);
+    record.y = boundedCoordinate(position.y);
+    record.z = boundedCoordinate(position.z);
+    if (saved) {
+      record.localX = record.x - origin.x;
+      record.localY = record.y - origin.y;
+      record.localZ = record.z - origin.z;
+    }
+  }
+  record.targetX = record.x;
+  record.targetY = record.y;
+  record.targetZ = record.z;
   layout.positions.set(key, record);
-  layout.velocities.set(key, { x: 0, y: 0, z: 0 });
   if (record.pinned) layout.pinned.add(key);
   return record;
 }
 
-function applyRecord(node, record, velocity, mode) {
+function applyRecord(node, record) {
   node.x = record.x;
   node.y = record.y;
-  node.z = mode === 'flat' ? 0 : record.z;
-  node.vx = velocity.x;
-  node.vy = velocity.y;
-  node.vz = mode === 'flat' ? 0 : velocity.z;
+  node.z = record.z;
+  node.vx = 0;
+  node.vy = 0;
+  node.vz = 0;
   if (record.pinned) {
     node.fx = record.x;
     node.fy = record.y;
-    node.fz = mode === 'flat' ? 0 : record.z;
+    node.fz = record.z;
   } else {
     delete node.fx;
     delete node.fy;
@@ -182,272 +221,133 @@ function applyRecord(node, record, velocity, mode) {
   }
 }
 
+function orderedNodes(graph) {
+  return [...(Array.isArray(graph.nodes) ? graph.nodes : [])].sort((left, right) =>
+    (TYPE_ORDER[left.type] ?? 3) - (TYPE_ORDER[right.type] ?? 3) ||
+    String(left.key || left.id || '').localeCompare(String(right.key || right.id || '')));
+}
+
 function synchronizeLayout(layout, graph = {}, atMs = Date.now()) {
   if (layout.disposed) return graph;
   const previousKeys = layout.graphKeys;
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-  const ordered = [...nodes].sort((left, right) => {
-    const order = { universe: 0, group: 1, radio: 2, aggregate: 3 };
-    return (order[left.type] ?? 3) - (order[right.type] ?? 3) ||
-      String(left.key || left.id || '').localeCompare(String(right.key || right.id || ''));
-  });
+  const nodes = orderedNodes(graph);
   const nextKeys = new Set();
-  ordered.forEach((node) => {
+  let changed = previousKeys.size !== nodes.length;
+
+  nodes.forEach((node) => {
     const key = String(node.key || node.id || '');
     if (!key || nextKeys.has(key)) return;
     nextKeys.add(key);
     let record = layout.positions.get(key);
-    if (!record) record = initialRecord(layout, node, ordered, atMs);
-    const previousUniverseKey = record.universeKey;
-    const previousGroupKey = record.groupKey;
+    if (!record) {
+      record = initialRecord(layout, node, atMs);
+      changed = true;
+    }
+    const oldUniverseKey = record.universeKey;
+    const oldGroupKey = record.groupKey;
     record.type = TYPES.has(node.type) ? node.type : record.type;
     record.universeKey = String(node.universeKey || (record.type === 'universe' ? key : record.universeKey));
     record.groupKey = String(node.groupKey || (record.type === 'group' ? key : record.groupKey));
-    const parentChanged = record.universeKey !== previousUniverseKey || record.groupKey !== previousGroupKey;
-    if (parentChanged) {
-      layout.sleeping = false;
-      layout.settledFrames = 0;
-    }
+    const parentChanged = oldUniverseKey !== record.universeKey || oldGroupKey !== record.groupKey;
+    changed ||= parentChanged || !previousKeys.has(key);
+
     const reconciledFromKey = String(node.entity?.reconciledFromKey || '');
-    let hadReconciledSavedPosition = false;
     if (reconciledFromKey && reconciledFromKey !== key) {
-      hadReconciledSavedPosition = layout.saved.has(reconciledFromKey);
+      const hadSaved = layout.saved.has(reconciledFromKey);
       layout.pinned.delete(reconciledFromKey);
       layout.positions.delete(reconciledFromKey);
-      layout.velocities.delete(reconciledFromKey);
       layout.saved.delete(reconciledFromKey);
+      if (hadSaved) updateSaved(layout, record, atMs);
     }
     if (node.pinned && !record.pinned && layout.pinned.size < layout.config.state.hardPinnedEntities) {
       record.pinned = true;
       layout.pinned.add(key);
     }
-    if (hadReconciledSavedPosition) updateSaved(layout, record, atMs);
-    const velocity = layout.velocities.get(key) || { x: 0, y: 0, z: 0 };
-    layout.velocities.set(key, velocity);
-    if (record.type === 'radio' && !record.pinned && layout.reducedMotion &&
-        (parentChanged || layout.snapToParents)) {
-      const parent = layout.positions.get(record.groupKey || record.universeKey);
-      if (parent) {
-        record.x = boundedCoordinate(parent.x + record.localX);
-        record.y = boundedCoordinate(parent.y + record.localY);
-        record.z = layout.mode === 'flat' ? 0 : boundedCoordinate(parent.z + record.localZ);
-        record.updatedAtMs = atMs;
-        velocity.x = 0;
-        velocity.y = 0;
-        velocity.z = 0;
-      }
+    setTarget(layout, record);
+    if (parentChanged && layout.reducedMotion && !record.pinned) {
+      record.x = record.targetX;
+      record.y = record.targetY;
+      record.z = record.targetZ;
     }
-    applyRecord(node, record, velocity, layout.mode);
   });
-  layout.snapToParents = false;
+
   layout.graphKeys = nextKeys;
-  if (previousKeys.size !== nextKeys.size || [...nextKeys].some((key) => !previousKeys.has(key))) {
-    layout.sleeping = false;
-    layout.settledFrames = 0;
-  }
-  for (const [key, record] of layout.positions) {
-    if (nextKeys.has(key) || record.pinned) continue;
+  layout.positions.forEach((record, key) => {
+    if (nextKeys.has(key) || record.pinned) return;
     layout.positions.delete(key);
-    layout.velocities.delete(key);
-  }
+  });
+  nodes.forEach((node) => {
+    const record = layout.positions.get(String(node.key || node.id || ''));
+    if (record) applyRecord(node, record);
+  });
+  if (changed) layout.sleeping = false;
   return graph;
-}
-
-function targetFor(layout, record, migrations = new Map(), atMs = Date.now()) {
-  if (record.type === 'universe') {
-    return { x: record.anchorX, y: record.anchorY, z: layout.mode === 'flat' ? 0 : record.anchorZ,
-      strength: layout.config.layout.universeStrength };
-  }
-  const parentKey = record.type === 'group' ? record.universeKey : (record.groupKey || record.universeKey);
-  const parent = layout.positions.get(parentKey);
-  if (!parent) return { x: record.x, y: record.y, z: layout.mode === 'flat' ? 0 : record.z, strength: 0 };
-  const target = {
-    x: parent.x + record.localX,
-    y: parent.y + record.localY,
-    z: layout.mode === 'flat' ? 0 : parent.z + record.localZ,
-    strength: record.type === 'group' ? layout.config.layout.groupStrength : layout.config.layout.radioStrength
-  };
-  const migration = !layout.reducedMotion && record.type === 'radio' ? migrations.get(record.key) : null;
-  if (migration) {
-    const oldGroup = layout.positions.get(migration.sourceKey);
-    const newGroup = layout.positions.get(migration.targetKey);
-    const motionEndsAtMs = Number.isFinite(Number(migration.animationEndsAtMs)) ?
-      Math.min(migration.expiresAtMs, Number(migration.animationEndsAtMs)) : migration.expiresAtMs;
-    const duration = Math.max(1, motionEndsAtMs - migration.createdAtMs);
-    const progress = Math.max(0, Math.min(1, (atMs - migration.createdAtMs) / duration));
-    const envelope = Math.sin(progress * Math.PI);
-    if (oldGroup && newGroup && progress > 0 && progress < 1) {
-      const dx = newGroup.x - oldGroup.x;
-      const dy = newGroup.y - oldGroup.y;
-      const distance = Math.hypot(dx, dy) || 1;
-      const direction = stableHash(record.key) % 2 ? 1 : -1;
-      const arc = Math.min(72, Math.max(18, distance * 0.16)) * envelope * direction;
-      target.x += (-dy / distance) * arc;
-      target.y += (dx / distance) * arc;
-      if (layout.mode !== 'flat') target.z += Math.abs(arc) * 0.35;
-    }
-  }
-  return target;
-}
-
-function collisionRadius(record) {
-  return COLLISION_RADII[record.type] ?? COLLISION_RADII.radio;
-}
-
-function collisionImpulse(layout) {
-  // Scanning the 3x3x3 neighboring cells is complete only when a cell is at least as wide as the
-  // largest possible collision distance. Treat the configured size as a lower bound so a small
-  // tuning value cannot make broad-phase bucketing silently miss large universe/group overlaps.
-  const size = Math.max(layout.config.layout.collisionCellSize,
-    MAXIMUM_COLLISION_RADIUS * 2 + layout.config.layout.collisionPadding);
-  const cells = new Map();
-  const movable = [...layout.graphKeys].map((key) => layout.positions.get(key)).filter(Boolean);
-  movable.forEach((record) => {
-    const cell = `${Math.floor(record.x / size)}:${Math.floor(record.y / size)}:` +
-      `${layout.mode === 'flat' ? 0 : Math.floor(record.z / size)}`;
-    if (!cells.has(cell)) cells.set(cell, []);
-    cells.get(cell).push(record);
-  });
-  const offsets = [-1, 0, 1];
-  const visited = new Set();
-  cells.forEach((records, cellKey) => {
-    const [cellX, cellY, cellZ] = cellKey.split(':').map(Number);
-    offsets.forEach((dx) => offsets.forEach((dy) => offsets.forEach((dz) => {
-      if (layout.mode === 'flat' && dz !== 0) return;
-      const peers = cells.get(`${cellX + dx}:${cellY + dy}:${cellZ + dz}`);
-      if (!peers) return;
-      records.forEach((left) => peers.forEach((right) => {
-        if (left.key === right.key) return;
-        const pairKey = left.key < right.key ? `${left.key}\u0000${right.key}` : `${right.key}\u0000${left.key}`;
-        if (visited.has(pairKey)) return;
-        visited.add(pairKey);
-        const x = right.x - left.x;
-        const y = right.y - left.y;
-        const z = layout.mode === 'flat' ? 0 : right.z - left.z;
-        const minimum = collisionRadius(left) + collisionRadius(right) + layout.config.layout.collisionPadding;
-        const squared = x * x + y * y + z * z;
-        if (squared >= minimum * minimum) return;
-        const distance = Math.sqrt(squared) || 0.001;
-        const force = Math.min(4, (minimum - distance) * 0.08);
-        const nx = squared ? x / distance : (stableHash(pairKey) % 2 ? 1 : -1);
-        const ny = squared ? y / distance : (stableHash(pairKey) % 3 ? 0.5 : -0.5);
-        const nz = squared && layout.mode !== 'flat' ? z / distance : 0;
-        const leftVelocity = layout.velocities.get(left.key);
-        const rightVelocity = layout.velocities.get(right.key);
-        if (!left.pinned) {
-          leftVelocity.x -= nx * force;
-          leftVelocity.y -= ny * force;
-          leftVelocity.z -= nz * force;
-        }
-        if (!right.pinned) {
-          rightVelocity.x += nx * force;
-          rightVelocity.y += ny * force;
-          rightVelocity.z += nz * force;
-        }
-      }));
-    })));
-  });
 }
 
 function stepLayout(layout, graph = {}, deltaMs = 16, atMs = Date.now()) {
   synchronizeLayout(layout, graph, atMs);
-  if (layout.disposed || layout.frozen || layout.reducedMotion) return graph;
-  const hasMigration = (Array.isArray(graph.effects) ? graph.effects : [])
-    .some((effect) => effect?.type === 'migration' &&
-      Number(effect.animationEndsAtMs || effect.expiresAtMs) > atMs);
-  if (hasMigration) {
-    layout.sleeping = false;
-    layout.settledFrames = 0;
-  } else if (layout.sleeping) return graph;
+  if (layout.disposed || layout.frozen) return graph;
   const milliseconds = Math.max(0, Math.min(layout.config.layout.maximumDeltaMs, finite(deltaMs, 16)));
-  const scale = milliseconds / 16.6667;
-  const damping = Math.pow(layout.config.layout.damping, scale);
-  const migrations = new Map((Array.isArray(graph.effects) ? graph.effects : [])
-    .filter((effect) => effect?.type === 'migration' && effect.nodeKey && effect.expiresAtMs > atMs)
-    .map((effect) => [effect.nodeKey, effect]));
-  let maximumMotion = 0;
+  const frameScale = milliseconds / 16.6667;
+  let moving = false;
+
   layout.graphKeys.forEach((key) => {
     const record = layout.positions.get(key);
-    const velocity = layout.velocities.get(key);
-    if (!record || !velocity || record.pinned) return;
-    const target = targetFor(layout, record, migrations, atMs);
-    velocity.x += (target.x - record.x) * target.strength * scale;
-    velocity.y += (target.y - record.y) * target.strength * scale;
-    velocity.z += ((layout.mode === 'flat' ? 0 : target.z) - record.z) *
-      (layout.mode === 'flat' ? layout.config.layout.flattenStrength : target.strength) * scale;
-  });
-  collisionImpulse(layout);
-  layout.graphKeys.forEach((key) => {
-    const record = layout.positions.get(key);
-    const velocity = layout.velocities.get(key);
-    if (!record || !velocity) return;
-    if (record.pinned) {
-      velocity.x = 0;
-      velocity.y = 0;
-      velocity.z = 0;
-    } else {
-      velocity.x *= damping;
-      velocity.y *= damping;
-      velocity.z *= damping;
-      const magnitude = Math.hypot(velocity.x, velocity.y, velocity.z);
-      maximumMotion = Math.max(maximumMotion, magnitude);
-      if (magnitude > layout.config.layout.maximumVelocity) {
-        const ratio = layout.config.layout.maximumVelocity / magnitude;
-        velocity.x *= ratio;
-        velocity.y *= ratio;
-        velocity.z *= ratio;
-      }
-      record.x = boundedCoordinate(record.x + velocity.x * scale);
-      record.y = boundedCoordinate(record.y + velocity.y * scale);
-      record.z = layout.mode === 'flat' ? 0 : boundedCoordinate(record.z + velocity.z * scale);
-      record.updatedAtMs = atMs;
+    if (!record || record.pinned) return;
+    const dx = record.targetX - record.x;
+    const dy = record.targetY - record.y;
+    const dz = record.targetZ - record.z;
+    const distance = Math.hypot(dx, dy, dz);
+    if (layout.reducedMotion || distance <= SETTLE_EPSILON) {
+      record.x = record.targetX;
+      record.y = record.targetY;
+      record.z = record.targetZ;
+      return;
     }
+    const strength = record.type === 'universe' ? layout.config.layout.universeStrength :
+      record.type === 'group' ? layout.config.layout.groupStrength : layout.config.layout.radioStrength;
+    const amount = 1 - Math.pow(1 - Math.max(0.001, strength), frameScale);
+    record.x = boundedCoordinate(record.x + dx * amount);
+    record.y = boundedCoordinate(record.y + dy * amount);
+    record.z = boundedCoordinate(record.z + dz * amount);
+    record.updatedAtMs = atMs;
+    moving = true;
   });
+
   const nodeByKey = new Map((Array.isArray(graph.nodes) ? graph.nodes : [])
     .map((node) => [String(node.key || node.id || ''), node]));
   layout.graphKeys.forEach((key) => {
     const node = nodeByKey.get(key);
     const record = layout.positions.get(key);
-    const velocity = layout.velocities.get(key);
-    if (node && record && velocity) applyRecord(node, record, velocity, layout.mode);
+    if (node && record) applyRecord(node, record);
   });
   layout.lastStepAtMs = atMs;
-  if (!hasMigration && maximumMotion < 0.012) layout.settledFrames += 1;
-  else layout.settledFrames = 0;
-  layout.sleeping = layout.settledFrames >= 24;
+  layout.sleeping = !moving;
   return graph;
-}
-
-function setLayoutMode(layout, mode) {
-  layout.mode = mode === 'flat' || mode === '2d' ? 'flat' : '3d';
-  if (layout.mode === 'flat') {
-    layout.positions.forEach((record) => { record.z = 0; });
-    layout.velocities.forEach((velocity) => { velocity.z = 0; });
-  }
-  layout.sleeping = false;
-  layout.settledFrames = 0;
-  return layout.mode;
 }
 
 function setLayoutFrozen(layout, frozen = true) {
   layout.frozen = Boolean(frozen);
   if (!layout.frozen) {
-    layout.sleeping = false;
-    layout.settledFrames = 0;
+    layout.sleeping = [...layout.graphKeys].every((key) => {
+      const record = layout.positions.get(key);
+      return !record || record.pinned || Math.hypot(record.targetX - record.x,
+        record.targetY - record.y, record.targetZ - record.z) <= SETTLE_EPSILON;
+    });
   }
   return layout.frozen;
 }
 
 function setReducedMotion(layout, reduced = true) {
-  const next = Boolean(reduced);
-  if (next && !layout.reducedMotion) layout.snapToParents = true;
-  layout.reducedMotion = next;
+  layout.reducedMotion = Boolean(reduced);
   if (layout.reducedMotion) {
-    layout.velocities.forEach((velocity) => {
-      velocity.x = 0;
-      velocity.y = 0;
-      velocity.z = 0;
+    layout.positions.forEach((record) => {
+      if (record.pinned) return;
+      record.x = record.targetX;
+      record.y = record.targetY;
+      record.z = record.targetZ;
     });
+    layout.sleeping = true;
   }
   return layout.reducedMotion;
 }
@@ -467,7 +367,8 @@ function updateSaved(layout, record, atMs = Date.now()) {
   if (layout.saved.has(record.key)) layout.saved.delete(record.key);
   layout.saved.set(record.key, value);
   while (layout.saved.size > layout.config.state.hardSavedLayoutRecords) {
-    const removable = [...layout.saved.keys()].find((key) => !layout.pinned.has(key)) || layout.saved.keys().next().value;
+    const removable = [...layout.saved.keys()].find((key) => !layout.pinned.has(key)) ||
+      layout.saved.keys().next().value;
     layout.saved.delete(removable);
   }
 }
@@ -475,38 +376,31 @@ function updateSaved(layout, record, atMs = Date.now()) {
 function translateEntity(layout, key, delta = {}, atMs = Date.now()) {
   const root = layout.positions.get(String(key || ''));
   if (!root || layout.disposed) return false;
-  layout.sleeping = false;
-  layout.settledFrames = 0;
   const offset = copyPosition(delta);
-  const targets = [];
   layout.positions.forEach((record) => {
-    if (record.key === root.key) targets.push(record);
-    else if (root.type === 'universe' && record.universeKey === root.key && !record.pinned) targets.push(record);
-    else if (root.type === 'group' && record.groupKey === root.key && !record.pinned) targets.push(record);
-  });
-  targets.forEach((record) => {
+    const included = record.key === root.key ||
+      (root.type === 'universe' && record.universeKey === root.key && !record.pinned) ||
+      (root.type === 'group' && record.groupKey === root.key && !record.pinned);
+    if (!included) return;
     record.x = boundedCoordinate(record.x + offset.x);
     record.y = boundedCoordinate(record.y + offset.y);
-    record.z = layout.mode === 'flat' ? 0 : boundedCoordinate(record.z + offset.z);
+    record.z = boundedCoordinate(record.z + offset.z);
+    record.targetX = boundedCoordinate(record.targetX + offset.x);
+    record.targetY = boundedCoordinate(record.targetY + offset.y);
+    record.targetZ = boundedCoordinate(record.targetZ + offset.z);
     record.updatedAtMs = atMs;
-    const velocity = layout.velocities.get(record.key);
-    if (velocity) velocity.x = velocity.y = velocity.z = 0;
   });
   if (root.type === 'universe') {
     root.anchorX += offset.x;
     root.anchorY += offset.y;
-    root.anchorZ = layout.mode === 'flat' ? 0 : root.anchorZ + offset.z;
-  } else if (root.type === 'group') {
-    root.localX += offset.x;
-    root.localY += offset.y;
-    root.localZ = layout.mode === 'flat' ? 0 : root.localZ + offset.z;
+    root.anchorZ += offset.z;
   } else {
     root.localX += offset.x;
     root.localY += offset.y;
-    root.localZ = layout.mode === 'flat' ? 0 : root.localZ + offset.z;
+    root.localZ += offset.z;
   }
-  // Only deliberate interaction writes preferences. Physics steps never call this path.
   updateSaved(layout, root, atMs);
+  layout.sleeping = true;
   return true;
 }
 
@@ -517,14 +411,16 @@ function dragEntity(layout, key, position, atMs = Date.now()) {
   const translated = translateEntity(layout, record.key, {
     x: next.x - record.x,
     y: next.y - record.y,
-    z: layout.mode === 'flat' ? 0 : next.z - record.z
+    z: next.z - record.z
   }, atMs);
   if (!translated) return false;
-  // Preserve the exact pointer-plane coordinate instead of retaining floating-point residue from
-  // translating an already-computed orbit position. Descendants still receive the same cluster delta.
+  const correction = { x: next.x - record.x, y: next.y - record.y, z: next.z - record.z };
   record.x = next.x;
   record.y = next.y;
-  record.z = layout.mode === 'flat' ? 0 : next.z;
+  record.z = next.z;
+  record.targetX = boundedCoordinate(record.targetX + correction.x);
+  record.targetY = boundedCoordinate(record.targetY + correction.y);
+  record.targetZ = boundedCoordinate(record.targetZ + correction.z);
   updateSaved(layout, record, atMs);
   return true;
 }
@@ -532,8 +428,6 @@ function dragEntity(layout, key, position, atMs = Date.now()) {
 function setLayoutPinned(layout, key, pinned = true, position = null, atMs = Date.now()) {
   const record = layout.positions.get(String(key || ''));
   if (!record) return false;
-  layout.sleeping = false;
-  layout.settledFrames = 0;
   if (position) dragEntity(layout, record.key, position, atMs);
   if (pinned && !record.pinned && layout.pinned.size >= layout.config.state.hardPinnedEntities) return false;
   record.pinned = Boolean(pinned);
@@ -542,22 +436,39 @@ function setLayoutPinned(layout, key, pinned = true, position = null, atMs = Dat
     updateSaved(layout, record, atMs);
   } else {
     layout.pinned.delete(record.key);
-    const saved = layout.saved.get(record.key);
-    if (saved) updateSaved(layout, record, atMs);
+    if (layout.saved.has(record.key)) updateSaved(layout, record, atMs);
   }
   return true;
 }
 
+function resetTarget(layout, record) {
+  if (record.type === 'universe') {
+    const anchor = universeAnchor(layout, record.key);
+    record.anchorX = anchor.x;
+    record.anchorY = anchor.y;
+    record.anchorZ = anchor.z;
+  } else {
+    const slot = localSlot(layout, record);
+    record.localX = slot.x;
+    record.localY = slot.y;
+    record.localZ = slot.z;
+  }
+}
+
 function unlockLayout(layout, key = null) {
   const selected = key === null ? null : String(key || '');
-  layout.sleeping = false;
-  layout.settledFrames = 0;
-  layout.positions.forEach((record) => {
+  const records = [...layout.positions.values()].sort((left, right) =>
+    (TYPE_ORDER[left.type] ?? 3) - (TYPE_ORDER[right.type] ?? 3) || left.key.localeCompare(right.key));
+  records.forEach((record) => {
     if (selected !== null && record.key !== selected) return;
     record.pinned = false;
     layout.pinned.delete(record.key);
     layout.saved.delete(record.key);
+    resetTarget(layout, record);
   });
+  records.forEach((record) => setTarget(layout, record));
+  if (layout.reducedMotion) setReducedMotion(layout, true);
+  else layout.sleeping = false;
   if (selected === null) {
     layout.pinned.clear();
     layout.saved.clear();
@@ -594,13 +505,10 @@ function restoreLayoutRecords(layout, records = []) {
 function resetLayoutSession(layout) {
   if (!layout || layout.disposed) return false;
   layout.positions.clear();
-  layout.velocities.clear();
   layout.pinned.clear();
   layout.graphKeys.clear();
   layout.universeOrder.clear();
-  layout.settledFrames = 0;
-  layout.sleeping = false;
-  layout.snapToParents = false;
+  layout.sleeping = true;
   layout.lastStepAtMs = 0;
   return true;
 }
@@ -608,7 +516,6 @@ function resetLayoutSession(layout) {
 function disposeLayout(layout) {
   layout.disposed = true;
   layout.positions.clear();
-  layout.velocities.clear();
   layout.saved.clear();
   layout.pinned.clear();
   layout.graphKeys.clear();
@@ -623,7 +530,6 @@ export {
   restoreLayoutRecords,
   savedLayoutRecords,
   setLayoutFrozen,
-  setLayoutMode,
   setLayoutPinned,
   setReducedMotion,
   stepLayout,

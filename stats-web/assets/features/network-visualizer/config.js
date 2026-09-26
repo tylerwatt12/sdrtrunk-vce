@@ -44,32 +44,20 @@ const BALANCED_DEFAULTS = {
   },
   layout: {
     universeSpacing: 105,
-    // Talkgroups occupy a stable volume inside their system field.  The legacy
-    // name is retained for saved-profile compatibility, but this is now the
-    // maximum domain radius rather than a single orbital ring.
-    groupOrbitRadius: 150,
-    radioOrbitRadius: 54,
-    maximumVelocity: 180,
-    damping: 0.84,
+    // Each level occupies a deterministic 3D shell around its visual parent.
+    groupOrbitRadius: 220,
+    radioOrbitRadius: 38,
     universeStrength: 0.025,
     groupStrength: 0.055,
     radioStrength: 0.09,
-    flattenStrength: 0.14,
-    collisionCellSize: 30,
-    collisionPadding: 5,
     maximumDeltaMs: 50
   },
   animation: {
-    txAttackMs: 180,
     txReleaseMs: 2_400,
     pulseDurationMs: 700,
     particleFlightMs: 1_500,
-    pulseScale: 0.10,
     migrationMotionMs: 1_400,
     effectCoalesceMs: 2_200,
-    labelMinimumResidenceMs: 1_600,
-    labelHiddenResidenceMs: 420,
-    softAnimatedEffects: 24,
     cameraTransitionMs: 720,
     cameraBackTransitionMs: 560,
     autoRotateDefault: true,
@@ -217,30 +205,18 @@ function validateConfig(candidate) {
     universeSpacing: finite(candidate.layout.universeSpacing, 10, 10_000, 'universeSpacing'),
     groupOrbitRadius: finite(candidate.layout.groupOrbitRadius, 5, 5_000, 'groupOrbitRadius'),
     radioOrbitRadius: finite(candidate.layout.radioOrbitRadius, 2, 1_000, 'radioOrbitRadius'),
-    maximumVelocity: finite(candidate.layout.maximumVelocity, 1, 10_000, 'maximumVelocity'),
-    damping: finite(candidate.layout.damping, 0, 0.999, 'damping'),
     universeStrength: finite(candidate.layout.universeStrength, 0, 1, 'universeStrength'),
     groupStrength: finite(candidate.layout.groupStrength, 0, 1, 'groupStrength'),
     radioStrength: finite(candidate.layout.radioStrength, 0, 1, 'radioStrength'),
-    flattenStrength: finite(candidate.layout.flattenStrength, 0, 1, 'flattenStrength'),
-    collisionCellSize: finite(candidate.layout.collisionCellSize, 2, 1_000, 'collisionCellSize'),
-    collisionPadding: finite(candidate.layout.collisionPadding, 0, 100, 'collisionPadding'),
     maximumDeltaMs: integer(candidate.layout.maximumDeltaMs, 1, 1_000, 'maximumDeltaMs')
   };
 
   const animation = {
-    txAttackMs: integer(candidate.animation.txAttackMs, 0, 5_000, 'txAttackMs'),
     txReleaseMs: integer(candidate.animation.txReleaseMs, 0, 30_000, 'txReleaseMs'),
     pulseDurationMs: integer(candidate.animation.pulseDurationMs, 0, 10_000, 'pulseDurationMs'),
     particleFlightMs: integer(candidate.animation.particleFlightMs, 100, 10_000, 'particleFlightMs'),
-    pulseScale: finite(candidate.animation.pulseScale, 0, 0.5, 'pulseScale'),
     migrationMotionMs: integer(candidate.animation.migrationMotionMs, 0, 30_000, 'migrationMotionMs'),
     effectCoalesceMs: integer(candidate.animation.effectCoalesceMs, 0, 10_000, 'effectCoalesceMs'),
-    labelMinimumResidenceMs: integer(candidate.animation.labelMinimumResidenceMs, 0, 10_000,
-      'labelMinimumResidenceMs'),
-    labelHiddenResidenceMs: integer(candidate.animation.labelHiddenResidenceMs, 0, 5_000,
-      'labelHiddenResidenceMs'),
-    softAnimatedEffects: integer(candidate.animation.softAnimatedEffects, 0, 1_000, 'softAnimatedEffects'),
     cameraTransitionMs: integer(candidate.animation.cameraTransitionMs, 0, 10_000, 'cameraTransitionMs'),
     cameraBackTransitionMs: integer(candidate.animation.cameraBackTransitionMs, 0, 10_000,
       'cameraBackTransitionMs'),

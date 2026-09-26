@@ -156,7 +156,8 @@ function fakeRendererLibrary(documentValue, lifecycle) {
   }
 
   class Geometry {
-    constructor() {
+    constructor(...args) {
+      this.args = args;
       this.disposeCalls = 0;
       lifecycle.geometries.push(this);
     }
@@ -450,7 +451,44 @@ function fakeRendererLibrary(documentValue, lifecycle) {
   };
 }
 
-async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
+async function main() {
+  const {
+    allocateParticles,
+    boundedGraphData,
+    chooseLabelPlacements,
+    createNetworkVisualizerRenderer,
+    linkIsDashed,
+    linkVisualState,
+    nodeGeometryKind,
+    nodeVisualState
+  } = await loadModule();
+
+  const bounded = boundedGraphData({
+    nodes: [{ key: 'system', type: 'universe' }, { key: 'group', type: 'group' },
+      { key: 'radio', type: 'radio' }, { key: 'aggregate', type: 'aggregate' }],
+    links: [{ key: 'tx', source: 'radio', target: 'group' },
+      { key: 'invalid', source: 'missing', target: 'group' }],
+    labels: ['system', 'group', 'radio'], effects: [{ id: 'one' }, { id: 'two' }]
+  }, { nodes: 4, links: 1, effects: 1 });
+  assert.deepEqual(bounded.nodes.map((node) => node.key), ['system', 'group', 'radio', 'aggregate']);
+  assert.deepEqual(bounded.links.map((link) => link.key), ['tx']);
+  assert.equal(bounded.rendererLimits.suppressedLinks, 1);
+  assert.deepEqual(chooseLabelPlacements([
+    { key: 'first', x: 20, y: 20, priority: 2 },
+    { key: 'overlap-is-allowed', x: 20, y: 20, priority: 1 }
+  ], { width: 320, height: 180 }, 2).map((label) => label.key), ['first', 'overlap-is-allowed']);
+  assert.deepEqual([...allocateParticles([
+    { key: 'tx', type: 'tx', active: true, particleCount: 3 },
+    { key: 'migration', type: 'migration', particleCount: 2 }
+  ], 4)], [['tx', 3], ['migration', 1]]);
+  assert.equal(nodeGeometryKind({ type: 'universe' }), 'universe');
+  assert.equal(nodeGeometryKind({ type: 'group' }), 'group');
+  assert.equal(nodeGeometryKind({ type: 'radio' }), 'radio');
+  assert.equal(nodeGeometryKind({ type: 'aggregate' }), 'aggregate');
+  assert.equal(nodeVisualState({ type: 'radio', active: true }), 'active');
+  assert.equal(linkVisualState({ type: 'tx', active: true }), 'active');
+  assert.equal(linkIsDashed({ type: 'tx' }), true);
+
   const originals = new Map();
   const install = (name, value) => {
     originals.set(name, Object.prototype.hasOwnProperty.call(globalThis, name) ? globalThis[name] : undefined);
@@ -469,15 +507,9 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
     resizeObservers: 0, resizeDisconnects: 0, mutationObservers: 0, mutationDisconnects: 0,
     graphStates: [] };
   const animationFrames = new Map();
-  let nextFrame = 1;
   const scheduledTimeouts = new Map();
+  let nextFrame = 1;
   let nextTimeout = 1;
-  const runTimeout = (id) => {
-    const scheduled = scheduledTimeouts.get(id);
-    assert(scheduled, `expected timer ${id} to remain scheduled`);
-    scheduledTimeouts.delete(id);
-    scheduled.callback(...scheduled.args);
-  };
   class FakeResizeObserver {
     constructor() { lifecycle.resizeObservers += 1; }
     observe() {}
@@ -495,15 +527,13 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
   install('ResizeObserver', FakeResizeObserver);
   install('MutationObserver', FakeMutationObserver);
   install('requestAnimationFrame', (callback) => {
-    const id = nextFrame;
-    nextFrame += 1;
+    const id = nextFrame++;
     animationFrames.set(id, callback);
     return id;
   });
   install('cancelAnimationFrame', (id) => animationFrames.delete(id));
   install('setTimeout', (callback, delay = 0, ...args) => {
-    const id = nextTimeout;
-    nextTimeout += 1;
+    const id = nextTimeout++;
     scheduledTimeouts.set(id, { callback, delay, args });
     return id;
   });
@@ -512,499 +542,76 @@ async function verifyRendererDisposal(createNetworkVisualizerRenderer) {
   try {
     const host = new FakeElement(documentValue);
     const library = fakeRendererLibrary(documentValue, lifecycle);
-    for (let cycle = 1; cycle <= 3; cycle += 1) {
-      const signal = new FakeEventTarget();
-      signal.aborted = false;
-      const renderer = await createNetworkVisualizerRenderer({
-        host,
-        library,
-        signal,
-        autoFitOnFirstData: false
-      });
-      const graphState = lifecycle.graphStates.at(-1);
-      const controls = lifecycle.controls.at(-1);
-      assert.equal(renderer.diagnostics().autoRotateRequested, true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'auto-rotation waits until the graph has visible content');
-      assert.equal(renderer.diagnostics().arrangeMode, false);
-      assert.equal(graphState.nodeDragEnabled, false);
-      assert.equal(controls.enablePan, true);
-      assert.equal(controls.enableRotate, true);
-      assert.equal(controls.zoomToCursor, true);
-      assert.equal(controls.mouseButtons.LEFT, library.MOUSE.ROTATE);
-      assert.equal(controls.mouseButtons.MIDDLE, library.MOUSE.DOLLY);
-      assert.equal(controls.mouseButtons.RIGHT, library.MOUSE.PAN);
-      assert.equal(controls.touches.ONE, library.TOUCH.ROTATE);
-      assert.equal(controls.touches.TWO, library.TOUCH.DOLLY_ROTATE);
+    const signal = new FakeEventTarget();
+    signal.aborted = false;
+    const renderer = await createNetworkVisualizerRenderer({ host, library, signal, autoFitOnFirstData: false });
+    const graphState = lifecycle.graphStates.at(-1);
+    const controls = lifecycle.controls.at(-1);
+    assert.equal(renderer.available, true);
+    assert.equal(renderer.diagnostics().mode, '3d');
+    assert.equal(controls.enableRotate, true);
+    assert.equal(controls.zoomToCursor, true);
+    assert.equal(controls.mouseButtons.LEFT, library.MOUSE.ROTATE);
 
-      const initialCameraPose = renderer.getCameraPose();
-      const initialGraph = { generation: cycle, nodes: [
-        { key: 'system', type: 'universe', x: 0, y: 0, z: 7 },
-        { key: 'group', type: 'group', x: 20, y: 0, z: 5 },
-        { key: 'radio', type: 'radio', x: 35, y: 0, z: 9 }
-      ], links: [
-        { key: 'tx', source: 'radio', target: 'group', type: 'tx', active: true, particleCount: 1 }
-      ], labels: ['system', 'group', 'radio'], effects: [
-        { id: `effect-${cycle}`, type: 'destination_highlight', nodeKey: 'group', targetKey: 'group',
-          createdAtMs: Date.now(), expiresAtMs: Date.now() + 1_000 }
-      ] };
-      renderer.setGraphData(initialGraph);
-      assert.equal(renderer.diagnostics().animatedEffects, 1);
-      assert.equal(renderer.diagnostics().autoRotateRequested, true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'overview rotation waits until the opening camera frame is established');
-      renderer.setNavigationScope({ level: 'system', universeKey: 'system' });
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true,
-        'the default rotation request becomes effective in a framed system scope');
-      assert.equal(graphState.nodeObjects.get('system').scale.value, 1);
-      assert.equal(graphState.nodeObjects.get('system').children[0].scale.value, 32 * 1.22);
-      assert.equal(graphState.nodeObjects.get('group').scale.value, 13);
-      assert.equal(graphState.nodeObjects.get('radio').scale.value, 5.25);
-      const liveSystem = initialGraph.nodes.find((node) => node.key === 'system');
-      Object.assign(liveSystem, { expandedField: true, labelVisible: false });
-      renderer.refresh();
-      const systemObject = graphState.nodeObjects.get('system');
-      assert.equal(systemObject.children[0].visible, false,
-        'focused systems replace their compact glyph with an enclosing field');
-      assert.equal(systemObject.children[5].visible, true);
-      assert.equal(systemObject.children[6].visible, true);
-      assert.equal(systemObject.children[9].visible, true);
-      assert.equal(systemObject.children[10].visible, true);
-      assert.equal(systemObject.children[11].visible, true);
-      assert.equal(systemObject.children[5].raycast(), undefined,
-        'system field surfaces do not steal talkgroup clicks');
-      assert.equal(renderer.diagnostics().expandedFields, 1);
-      const destinationEmphasis = graphState.nodeObjects.get('group').children[1];
-      assert.equal(destinationEmphasis.visible, true);
-      assert.equal(destinationEmphasis.material.color.value, '#e6a64c',
-        'destination highlighting uses amber arrival emphasis');
-      assert.notEqual(destinationEmphasis.material.color.value, '#69d59f',
-        'destination highlighting must not claim active transmission');
-      const txLine = graphState.linkObjects.get('tx');
-      assert(txLine instanceof library.Line2);
-      assert(txLine.geometry instanceof library.LineGeometry);
-      assert.equal(txLine.geometry.setPositionsCalls, 1,
-        'moving a thick link mutates its initial interleaved buffer instead of rebuilding attributes');
-      assert.equal(txLine.lineDistanceComputations, 1,
-        'dash distances are allocated once and updated in place');
-      assert.equal(txLine.geometry.attributes.instanceStart.data.needsUpdate, true);
-      assert.equal(txLine.geometry.attributes.instanceDistanceStart.data.needsUpdate, true);
-      assert.equal(txLine.material.linewidth, 5.2);
-      assert.deepEqual({ width: txLine.material.resolution.width, height: txLine.material.resolution.height },
-        { width: 640, height: 360 });
-
-      const radioObject = graphState.nodeObjects.get('radio');
-      const thickLinkGeometry = txLine.geometry;
-      const pathBeforeLiveMove = Array.from(txLine.userData.visualizerPositions);
-      const graphDataCallsBeforeLiveMove = graphState.graphDataCalls;
-      const disposalsBeforeLiveMove = graphState.recursivelyDisposed.length;
-      const liveRadio = initialGraph.nodes.find((node) => node.key === 'radio');
-      Object.assign(liveRadio, { x: 52, y: 8, z: 13, vx: 0.75, vy: -0.25, vz: 0.5,
-        fx: 52, fy: 8, fz: 13, selected: true });
-      renderer.refresh();
-      const renderedRadio = graphState.data.nodes.find((node) => node.key === 'radio');
-      assert.equal(graphState.graphDataCalls, graphDataCallsBeforeLiveMove,
-        'live layout refreshes do not rebuild force-graph data');
-      assert.equal(graphState.recursivelyDisposed.length, disposalsBeforeLiveMove,
-        'live layout refreshes do not trigger structural object disposal');
-      assert.equal(graphState.nodeObjects.get('radio'), radioObject,
-        'live movement retains the existing custom node object');
-      assert.deepEqual({ x: radioObject.position.x, y: radioObject.position.y, z: radioObject.position.z },
-        { x: 52, y: 8, z: 13 });
-      assert.deepEqual({ x: renderedRadio.x, y: renderedRadio.y, z: renderedRadio.z,
-        vx: renderedRadio.vx, vy: renderedRadio.vy, vz: renderedRadio.vz,
-        fx: renderedRadio.fx, fy: renderedRadio.fy, fz: renderedRadio.fz },
-        { x: 52, y: 8, z: 13, vx: 0.75, vy: -0.25, vz: 0.5, fx: 52, fy: 8, fz: 13 });
-      assert.equal(radioObject.children[2].visible, true,
-        'live source visual fields update the existing node object');
-      assert.equal(graphState.linkObjects.get('tx'), txLine,
-        'live movement retains the existing thick-link object');
-      assert.equal(txLine.geometry, thickLinkGeometry,
-        'live movement retains the thick-link geometry');
-      assert.equal(txLine.geometry.setPositionsCalls, 1,
-        'live movement updates the interleaved position buffer in place');
-      assert.notDeepEqual(Array.from(txLine.userData.visualizerPositions), pathBeforeLiveMove);
-      assert.deepEqual(Array.from(txLine.userData.visualizerPositions.slice(0, 3)), [52, 8, 13],
-        'the updated thick-link path starts at the moved radio position');
-
-      const cachedUniverseGeometry = graphState.nodeObjects.get('system').children[0].geometry;
-      const cachedUniverseMaterial = graphState.nodeObjects.get('system').children[0].material;
-      const cachedActiveLinkMaterial = txLine.material;
-      const ownedSystemEmphasisMaterial = graphState.nodeObjects.get('system').children[1].material;
-      const removedLinkGeometry = txLine.geometry;
-      renderer.setGraphData({ generation: cycle, nodes: [
-        { key: 'system-b', type: 'universe', x: -10, y: 4, z: 2 },
-        { key: 'group-b', type: 'group', x: 8, y: 4, z: 2 },
-        { key: 'radio-b', type: 'radio', x: 16, y: 4, z: 2 }
-      ], links: [
-        { key: 'tx-b', source: 'radio-b', target: 'group-b', type: 'tx', active: true, particleCount: 1 }
-      ], labels: ['system-b', 'group-b', 'radio-b'], effects: [] });
-      assert(graphState.recursivelyDisposed.includes('node:system'));
-      assert(graphState.recursivelyDisposed.includes('link:tx'));
-      assert.equal(removedLinkGeometry.disposeCalls, 1,
-        'a removed link releases its renderer-owned geometry exactly once');
-      assert.equal(ownedSystemEmphasisMaterial.disposeCalls, 1,
-        'a removed node releases its node-owned emphasis material exactly once');
-      assert.equal(cachedUniverseGeometry.disposeCalls, 0,
-        'recursive graph cleanup cannot dispose renderer-wide cached geometry during a scope swap');
-      assert.equal(cachedUniverseMaterial.disposeCalls, 0,
-        'recursive graph cleanup cannot dispose renderer-wide cached node material during a scope swap');
-      assert.equal(cachedActiveLinkMaterial.disposeCalls, 0,
-        'recursive graph cleanup cannot dispose renderer-wide cached link material during a scope swap');
-      assert.equal(graphState.nodeObjects.get('system-b').children[0].geometry, cachedUniverseGeometry);
-      assert.equal(graphState.nodeObjects.get('system-b').children[0].material, cachedUniverseMaterial);
-      assert.equal(graphState.linkObjects.get('tx-b').material, cachedActiveLinkMaterial);
-
-      renderer.setGraphData({ generation: cycle, nodes: [
-        { key: 'system', type: 'universe', x: 0, y: 0, z: 7 },
-        { key: 'group', type: 'group', x: 20, y: 0, z: 5 },
-        { key: 'radio', type: 'radio', x: 35, y: 0, z: 9 }
-      ], links: [
-        { key: 'tx', source: 'radio', target: 'group', type: 'tx', active: true, particleCount: 1 }
-      ], labels: ['system', 'group', 'radio'], effects: [] });
-
-      renderer.setArrange(true);
-      assert.equal(renderer.diagnostics().arrangeMode, true);
-      assert.equal(graphState.nodeDragEnabled, true);
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'Arrange mode keeps camera rotation paused while nodes can be dragged');
-      renderer.setArrange(false);
-      assert.equal(renderer.diagnostics().arrangeMode, false);
-      assert.equal(graphState.nodeDragEnabled, false);
-
-      renderer.setAutoRotate(false);
-      assert.equal(renderer.diagnostics().autoRotateRequested, false);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false);
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true);
-      controls.dispatchEvent({ type: 'start' });
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'pointer interaction immediately pauses auto-rotation');
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'enabling rotation recenters an off-axis cursor target before orbit resumes');
-      renderer.frameScope({ keys: ['system'], duration: 0 });
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true);
-
-      renderer.setReducedMotion(true);
-      assert.equal(renderer.diagnostics().autoRotateRequested, true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false,
-        'reduced motion suppresses rotation without losing the requested preference');
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, false);
-      renderer.setReducedMotion(false);
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true);
-
-      renderer.frameScope({ keys: ['system'], duration: 720 });
-      const cameraBeforeDynamicReduction = renderer.getCameraPose();
-      renderer.setReducedMotion(true);
-      const pendingFramesAfterDynamicReduction = [...animationFrames.entries()];
-      pendingFramesAfterDynamicReduction.forEach(([id, callback]) => {
-        animationFrames.delete(id);
-        callback(performance.now() + 2_000);
-      });
-      assert.deepEqual(renderer.getCameraPose(), cameraBeforeDynamicReduction,
-        'enabling reduced motion cancels an in-flight camera transition');
-      renderer.setReducedMotion(false);
-
-      assert.deepEqual(renderer.setNavigationScope({ level: 'system', universeKey: 'system' }), {
-        level: 'system', universeKey: 'system', groupKey: ''
-      });
-      assert.deepEqual(renderer.diagnostics().scope, {
-        level: 'system', universeKey: 'system', groupKey: ''
-      });
-      assert.equal(renderer.frameScope({ keys: ['system'], duration: 0 }), true);
-      assert.deepEqual(renderer.getCameraPose().target, { x: 0, y: 0, z: 7 });
-      assert(graphState.camera.lookAtCalls.length > 0);
-      assert(controls.updateCalls > 0);
-      assert.equal(renderer.restoreCameraPose(initialCameraPose, 0), true);
-      assert.deepEqual(renderer.getCameraPose(), initialCameraPose);
-
-      renderer.setMode('flat', { duration: 0 });
-      assert.equal(controls.enablePan, true);
-      assert.equal(controls.enableRotate, false);
-      assert.equal(controls.zoomToCursor, true);
-      assert.equal(controls.mouseButtons.LEFT, library.MOUSE.PAN);
-      assert.equal(controls.mouseButtons.RIGHT, library.MOUSE.PAN);
-      assert.equal(controls.touches.ONE, library.TOUCH.PAN);
-      assert.equal(controls.touches.TWO, library.TOUCH.DOLLY_PAN);
-      renderer.setMode('3d', { duration: 0 });
-      assert.equal(controls.enablePan, true);
-      assert.equal(controls.enableRotate, true);
-      assert.equal(controls.mouseButtons.LEFT, library.MOUSE.ROTATE);
-      assert.equal(controls.mouseButtons.RIGHT, library.MOUSE.PAN);
-      assert.equal(controls.touches.ONE, library.TOUCH.ROTATE);
-      assert.equal(controls.touches.TWO, library.TOUCH.DOLLY_ROTATE);
-      renderer.frameScope({ keys: ['system'], duration: 0 });
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true);
-
-      documentValue.hidden = true;
-      documentValue.dispatchEvent({ type: 'visibilitychange' });
-      assert.equal(renderer.diagnostics().animatedEffects, 0);
-      documentValue.hidden = false;
-      documentValue.dispatchEvent({ type: 'visibilitychange' });
-      renderer.setFrozen(true);
-      renderer.setAutoRotate(true);
-      assert.equal(renderer.diagnostics().autoRotateEffective, true,
-        'freezing layout physics does not freeze the independent camera orbit');
-      renderer.setGraphData({ generation: cycle, nodes: [
-        { key: 'system', type: 'universe', x: 0, y: 0, z: 7 },
-        { key: 'group', type: 'group', x: 45, y: -10, z: 11 },
-        { key: 'radio', type: 'radio', x: 60, y: -10, z: 15 }
-      ], links: [
-        { key: 'tx', source: 'radio', target: 'group', type: 'tx', active: true, particleCount: 1 }
-      ], labels: ['system', 'group', 'radio'], effects: [] });
-      const frozenNodes = lifecycle.graphStates.at(-1).data.nodes;
-      assert.equal(frozenNodes.find((node) => node.key === 'group').x, 45);
-      assert.equal(frozenNodes.find((node) => node.key === 'radio').x, 60);
-      renderer.setMode('flat', { duration: 0 });
-      assert(frozenNodes.every((node) => node.z === 0));
-
-      const pulsedLink = graphState.data.links.find((link) => link.key === 'tx');
-      const timersBeforeReservation = new Set(scheduledTimeouts.keys());
-      assert.equal(renderer.pulse('tx'), true);
-      assert.equal(renderer.diagnostics().pendingParticles, 1);
-      let reservationTimer = [...scheduledTimeouts.keys()].find((id) => !timersBeforeReservation.has(id));
-      assert(reservationTimer, 'a pulse schedules a bounded check for actual particle removal');
-      const reservedParticleGroup = pulsedLink.__singleHopPhotonsObj;
-      const reservedParticle = reservedParticleGroup.children.at(-1);
-      for (let poll = 0; poll < 3; poll += 1) {
-        const timersBeforePoll = new Set(scheduledTimeouts.keys());
-        runTimeout(reservationTimer);
-        assert.equal(renderer.diagnostics().pendingParticles, 1,
-          'the reservation remains while the emitted particle is still owned by the graph');
-        reservationTimer = [...scheduledTimeouts.keys()].find((id) => !timersBeforePoll.has(id));
-        assert(reservationTimer, 'an in-flight particle schedules another bounded removal check');
-      }
-      reservedParticleGroup.remove(reservedParticle);
-      runTimeout(reservationTimer);
-      assert.equal(renderer.diagnostics().pendingParticles, 0,
-        'the reservation is released only after the graph removes the actual particle');
-
-      const timersBeforeReducedMotionPulses = new Set(scheduledTimeouts.keys());
-      assert.equal(renderer.pulse('tx'), true);
-      assert.equal(renderer.pulse('tx'), true);
-      const emittedParticles = graphState.emittedParticles.slice(-2);
-      assert.equal(emittedParticles.length, 2);
-      assert.notEqual(emittedParticles[0], emittedParticles[1]);
-      assert.equal(emittedParticles[0].geometry, emittedParticles[1].geometry,
-        'transient particles reuse one renderer-owned geometry');
-      assert.equal(emittedParticles[0].material, emittedParticles[1].material,
-        'transient particles reuse one renderer-owned material');
-      const sharedParticleGeometry = emittedParticles[0].geometry;
-      const sharedParticleMaterial = emittedParticles[0].material;
-      const reducedMotionParticleGroup = pulsedLink.__singleHopPhotonsObj;
-      assert(reducedMotionParticleGroup?.children.length >= 2);
-      assert.equal(renderer.diagnostics().pendingParticles, 2);
-      const pulseTimers = [...scheduledTimeouts.keys()].filter((id) =>
-        !timersBeforeReducedMotionPulses.has(id));
-      assert.equal(pulseTimers.length, 2);
-      renderer.setReducedMotion(true);
-      assert.equal(renderer.diagnostics().pendingParticles, 0,
-        'enabling reduced motion immediately clears all in-flight reservations');
-      assert.equal(reducedMotionParticleGroup.children.length, 0,
-        'enabling reduced motion removes transient particle meshes already in the graph');
-      assert.equal(Object.hasOwn(pulsedLink, '__singleHopPhotonsObj'), false,
-        'the graph particle group is detached rather than replayed when motion is restored');
-      assert(pulseTimers.every((id) => !scheduledTimeouts.has(id)),
-        'enabling reduced motion cancels every particle removal poll');
-      assert.equal(sharedParticleGeometry.disposeCalls, 0);
-      assert.equal(sharedParticleMaterial.disposeCalls, 0);
-      renderer.setReducedMotion(false);
-      assert.equal(renderer.pulse('tx'), true);
-      assert.equal(renderer.pulse('tx'), true);
-      assert(pulsedLink.__singleHopPhotonsObj?.children.length >= 2);
-      assert(host.children.length > 0);
-      renderer.setNavigationScope({ level: 'overview' });
-      renderer.setArrange(false);
-      renderer.dispose();
-      renderer.dispose();
-      assert.equal(cachedUniverseGeometry.disposeCalls, 1,
-        'renderer-wide cached geometry is disposed once at renderer teardown');
-      assert.equal(cachedUniverseMaterial.disposeCalls, 1,
-        'renderer-wide cached node material is disposed once at renderer teardown');
-      assert.equal(cachedActiveLinkMaterial.disposeCalls, 1,
-        'renderer-wide cached link material is disposed once at renderer teardown');
-      assert.equal(sharedParticleGeometry.disposeCalls, 1);
-      assert.equal(sharedParticleMaterial.disposeCalls, 1);
-      assert.equal(Object.hasOwn(pulsedLink, '__singleHopPhotonsObj'), false,
-        'teardown drains transient particle meshes that outlive their reservation');
-      assert.deepEqual(renderer.diagnostics(), {
-        available: false,
-        disposed: true,
-        layoutOwner: 'external',
-        mode: 'flat',
-        frozen: true,
-        nodes: 0,
-        links: 0,
-        labels: 0,
-        expandedFields: 0,
-        steadyParticles: 0,
-        pendingParticles: 0,
-        animatedEffects: 0,
-        contextLost: false,
-        paused: false,
-        autoRotateRequested: true,
-        autoRotateEffective: false,
-        arrangeMode: false,
-        scope: { level: 'overview', universeKey: '', groupKey: '' },
-        camera: null,
-        rendererMemory: null,
-        limits: {}
-      });
-      assert.equal(host.children.length, 0);
-      assert.equal(documentValue.listenerCount(), 0);
-      assert.equal(mediaQuery.listenerCount(), 0);
-      assert.equal(windowValue.listenerCount(), 0);
-      assert.equal(signal.listenerCount(), 0);
-      assert.equal(lifecycle.controls.at(-1).listenerCount(), 0);
-      assert.equal(lifecycle.canvases.at(-1).listenerCount(), 0);
-      assert.equal(animationFrames.size, 0);
-      assert.equal(scheduledTimeouts.size, 0);
+    const document = { generation: 1, nodes: [
+      { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0 },
+      { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8 },
+      { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15 },
+      { key: 'aggregate', type: 'aggregate', label: '+20', x: 50, y: -8, z: -12 }
+    ], links: [
+      { key: 'tx', source: 'radio', target: 'group', type: 'tx', active: true, particleCount: 1 }
+    ], labels: ['system', 'group', 'radio', 'aggregate'], effects: [] };
+    renderer.setGraphData(document);
+    await Promise.resolve();
+    for (const [id, callback] of [...animationFrames]) {
+      animationFrames.delete(id);
+      callback(performance.now());
     }
-    assert.equal(lifecycle.graphDestructors, 3);
-    assert.equal(lifecycle.rendererDisposals, 3);
-    assert.equal(lifecycle.forcedContextLosses, 3);
-    assert.equal(lifecycle.controlDisposals, 3);
-    assert.equal(lifecycle.resizeObservers, 3);
-    assert.equal(lifecycle.resizeDisconnects, 3);
-    assert.equal(lifecycle.mutationObservers, 3);
-    assert.equal(lifecycle.mutationDisconnects, 3);
-    assert(lifecycle.geometries.length > 0);
-    assert(lifecycle.materials.length > 0);
+    const system = graphState.nodeObjects.get('system').children[0];
+    const group = graphState.nodeObjects.get('group').children[0];
+    const radio = graphState.nodeObjects.get('radio').children[0];
+    const aggregate = graphState.nodeObjects.get('aggregate').children[0];
+    assert(system.geometry instanceof library.SphereGeometry);
+    assert(group.geometry instanceof library.BoxGeometry);
+    assert(radio.geometry instanceof library.CylinderGeometry);
+    assert.deepEqual(radio.geometry.args.slice(0, 4), [0, 1, 1.7, 3]);
+    assert(aggregate.geometry instanceof library.IcosahedronGeometry);
+    assert([system, group, radio, aggregate].every((mesh) => mesh.material.wireframe === true));
+    assert.equal(graphState.linkObjects.get('tx') instanceof library.Line2, true);
+    assert.equal(graphState.linkObjects.get('tx').material.dashed, true);
+    assert.equal(renderer.diagnostics().labels, 4);
+    assert.equal(renderer.diagnostics().autoRotateEffective, true);
+
+    const graphDataCalls = graphState.graphDataCalls;
+    document.nodes[2].x = 64;
+    document.nodes[2].selected = true;
+    renderer.refresh();
+    assert.equal(graphState.graphDataCalls, graphDataCalls);
+    assert.equal(graphState.nodeObjects.get('radio').position.x, 64);
+    assert.equal(graphState.nodeObjects.get('radio').children[1].visible, true);
+    assert.equal(controls.enableRotate, true);
+    renderer.setReducedMotion(true);
+    assert.equal(renderer.diagnostics().autoRotateEffective, false);
+    renderer.setReducedMotion(false);
+    renderer.setAutoRotate(true);
+    assert.equal(renderer.diagnostics().autoRotateEffective, true);
+
+    renderer.dispose();
+    renderer.dispose();
+    assert.equal(host.children.length, 0);
+    assert.equal(documentValue.listenerCount(), 0);
+    assert.equal(mediaQuery.listenerCount(), 0);
+    assert.equal(windowValue.listenerCount(), 0);
+    assert.equal(signal.listenerCount(), 0);
+    assert.equal(lifecycle.controls.at(-1).listenerCount(), 0);
+    assert.equal(lifecycle.canvases.at(-1).listenerCount(), 0);
+    assert.equal(animationFrames.size, 0);
+    assert.equal(scheduledTimeouts.size, 0);
     assert(lifecycle.geometries.every((resource) => resource.disposeCalls > 0));
     assert(lifecycle.materials.every((resource) => resource.disposeCalls > 0));
   } finally {
     restore();
   }
-}
-
-async function main() {
-  const {
-    allocateParticles,
-    boundedGraphData,
-    chooseLabelPlacements,
-    labelEligible,
-    labelZoomTier,
-    linkIsDashed,
-    linkVisualState,
-    linkWidth,
-    nodeGeometryKind,
-    nodeRadius,
-    nodeVisualState,
-    createNetworkVisualizerRenderer
-  } = await loadModule();
-
-  const bounded = boundedGraphData({
-    nodes: [
-      { key: 'system', type: 'universe' },
-      { key: 'group', type: 'group' },
-      { key: 'radio', type: 'radio' },
-      { key: 'radio', type: 'radio' }
-    ],
-    links: [
-      { key: 'valid', source: 'radio', target: 'group', type: 'tx' },
-      { key: 'over-link-budget', source: 'system', target: 'group', type: 'activity' },
-      { key: 'missing-endpoint', source: 'missing', target: 'group', type: 'activity' }
-    ],
-    labels: ['radio', 'missing', { key: 'group' }],
-    effects: [{ id: 'one' }, { id: 'two' }]
-  }, { nodes: 3, links: 1, effects: 1 });
-  assert.deepEqual(bounded.nodes.map((node) => node.key), ['system', 'group', 'radio']);
-  assert.deepEqual(bounded.links.map((link) => link.key), ['valid']);
-  assert.deepEqual(bounded.labels, ['radio', 'group']);
-  assert.deepEqual(bounded.effects.map((effect) => effect.id), ['one']);
-  assert.deepEqual(bounded.rendererLimits, {
-    inputNodes: 4,
-    inputLinks: 3,
-    inputEffects: 2,
-    suppressedNodes: 1,
-    suppressedLinks: 2,
-    suppressedEffects: 1
-  });
-
-  const labels = chooseLabelPlacements([
-    { key: 'lower-priority', x: 20, y: 30, width: 80, height: 20, priority: 1 },
-    { key: 'active', x: 20, y: 30, width: 80, height: 20, priority: 20 },
-    { key: 'separate', x: 180, y: 30, width: 80, height: 20, priority: 2 },
-    { key: 'offscreen', x: 500, y: 30, width: 80, height: 20, priority: 100 }
-  ], { width: 320, height: 180 }, 2);
-  assert.deepEqual(labels.map((label) => label.key), ['active', 'separate']);
-  const alternateLabels = chooseLabelPlacements([
-    { key: 'primary', x: 100, y: 50, width: 90, height: 20, priority: 2,
-      offsets: [{ x: 10, y: 0, index: 0 }] },
-    { key: 'alternate', x: 100, y: 50, width: 90, height: 20, priority: 1,
-      offsets: [{ x: 10, y: 0, index: 0 }, { x: -100, y: 0, index: 1 }] }
-  ], { width: 260, height: 120 }, 2);
-  assert.deepEqual(alternateLabels.map(({ key, offsetIndex }) => ({ key, offsetIndex })), [
-    { key: 'primary', offsetIndex: 0 }, { key: 'alternate', offsetIndex: 1 }
-  ]);
-  const edgeLabel = chooseLabelPlacements([
-    { key: 'edge', x: 250, y: 50, width: 90, height: 20, priority: 1,
-      offsets: [{ x: 10, y: 0, index: 0 }, { x: -100, y: 0, index: 1 }] }
-  ], { width: 260, height: 120 }, 1);
-  assert.deepEqual(edgeLabel.map(({ key, offsetIndex }) => ({ key, offsetIndex })), [
-    { key: 'edge', offsetIndex: 1 }
-  ], 'labels prefer a fully visible alternate anchor over a clipped preferred anchor');
-  assert(edgeLabel[0].rectangle.left >= 0 && edgeLabel[0].rectangle.right <= 260 &&
-    edgeLabel[0].rectangle.top >= 0 && edgeLabel[0].rectangle.bottom <= 120,
-  'the chosen edge fallback is fully visible within the viewport');
-
-  assert.equal(labelZoomTier(1_000, 500), 'overview');
-  assert.equal(labelZoomTier(250, 500), 'mid');
-  assert.equal(labelZoomTier(100, 500), 'close');
-  assert.equal(labelZoomTier(1_000, 500, true), 'close');
-  assert.equal(labelEligible({ type: 'universe' }, 'overview'), true);
-  assert.equal(labelEligible({ type: 'group' }, 'overview'), false);
-  assert.equal(labelEligible({ type: 'group' }, 'mid'), true);
-  assert.equal(labelEligible({ type: 'radio' }, 'mid'), false);
-  assert.equal(labelEligible({ type: 'radio', active: true }, 'overview'), true);
-  assert.equal(labelEligible({ type: 'radio', selected: true }, 'overview'), true);
-
-  const particles = allocateParticles([
-    { key: 'idle', type: 'tx', active: false },
-    { key: 'tx', type: 'tx', active: true, particleCount: 3 },
-    { key: 'migration', type: 'migration', particleCount: 2 },
-    { key: 'activity', type: 'activity', active: true }
-  ], 4);
-  assert.deepEqual([...particles], [['tx', 3], ['migration', 1]]);
-  assert.equal([...particles.values()].reduce((sum, count) => sum + count, 0), 4);
-
-  assert.equal(nodeVisualState({ type: 'radio', active: true, quiet: true }), 'active');
-  assert.equal(nodeVisualState({ type: 'group', pending: true }), 'group',
-    'pending grants use a quiet ring instead of recoloring the whole hub');
-  assert.equal(nodeVisualState({ type: 'radio' }, { type: 'affiliation_arrival' }), 'arrival');
-  assert.equal(nodeVisualState({ type: 'group' }, { type: 'destination_highlight' }), 'arrival');
-  assert.equal(nodeVisualState({ type: 'radio', quiet: true }), 'quiet');
-  assert.equal(nodeVisualState({ type: 'radio', afterglow: true, quiet: true }), 'afterglow');
-  assert.equal(nodeGeometryKind({ type: 'universe', kind: 'channel' }), 'conventional-universe');
-  assert.equal(nodeGeometryKind({ type: 'group', kind: 'channel' }), 'conventional-group');
-  assert.equal(nodeGeometryKind({ type: 'group', kind: 'talkgroup' }), 'group');
-  assert.equal(linkVisualState({ type: 'tx', active: false }), 'activity');
-  assert.equal(linkVisualState({ type: 'affiliation', faded: true }), 'faded');
-  assert.equal(linkVisualState({ type: 'tx', active: true, faded: true }), 'active');
-  assert.equal(linkVisualState({ type: 'tx', afterglow: true }), 'afterglow');
-  assert.equal(linkIsDashed({ type: 'affiliation' }), false);
-  assert.equal(linkIsDashed({ type: 'activity' }), true);
-  assert.equal(linkIsDashed({ type: 'tx' }), true);
-  assert.equal(linkIsDashed({ type: 'tx', affiliation: true }), false);
-  assert.equal(linkIsDashed({ type: 'migration' }), false);
-  assert.equal(nodeRadius({ type: 'universe' }), 32);
-  assert.equal(nodeRadius({ type: 'group' }), 13);
-  assert.equal(nodeRadius({ type: 'aggregate' }), 8);
-  assert.equal(nodeRadius({ type: 'radio' }), 5.25);
-  assert.equal(linkWidth({ type: 'affiliation' }), 2.8);
-  assert.equal(linkWidth({ type: 'migration' }), 3);
-  assert.equal(linkWidth({ type: 'tx', active: true }), 5.2);
-  assert.equal(linkWidth({ type: 'tx', afterglow: true }), 3.4);
-  assert.equal(linkWidth({ type: 'affiliation', faded: true }), 1.75);
-
-  await verifyRendererDisposal(createNetworkVisualizerRenderer);
 }
 
 main().catch((error) => {

@@ -4,9 +4,10 @@ Network Visualizer is a live, session-scoped view of observed radio activity. Op
 Visualizer**. Every visit starts empty and builds one shared canvas only from activity observed at that visit's live
 edge. It does not load saved systems, historical calls, idle Live rows, or subscriber catalogs.
 
-The canvas groups canonical radio systems into regions, talkgroups into hubs, and observed source radios into smaller
-nodes. Conventional channels use channel-scoped regions instead of invented trunked systems. Positions show logical
-relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
+The 3D canvas uses a deliberately small wireframe vocabulary: spheres are radio systems, cubes are talkgroups or
+conventional channels, triangular pyramids are observed source radios, and faceted aggregate nodes account for hidden
+activity. Positions show logical relationships—not geography, subscriber location, RF coverage, or proof that a radio
+is listening.
 
 ## Reading the view
 
@@ -37,10 +38,9 @@ inspector while the shared canvas drills into that level. **Auto rotate** is ena
 camera interaction or node arrangement, and resumes around the current level after a short idle period.
 
 Use the toolbar to search retained entities, filter relationship detail, fit the current level, focus the current
-selection, switch the same scene between 3D and Flatten, freeze only the layout physics, open the bounded event drawer,
-enter fullscreen, or change display density. Enable **Arrange** before dragging nodes: drag a system to translate its
-cluster or a talkgroup to move its unpinned radios. Use the inspector to pin an entity. **Unlock saved layout** releases
-all pins and saved coordinates.
+selection, freeze only layout motion, open the bounded event drawer, enter fullscreen, or change display density.
+Enable **Arrange** before dragging nodes: drag a system to translate its cluster or a talkgroup to move its unpinned
+radios. Use the inspector to pin an entity. **Unlock saved layout** releases all pins and saved coordinates.
 
 **Clear map** clears this browser session's nodes, counters, selection, transitions, active effects, and comparison
 state and establishes a new live edge. It does not stop receivers, delete receiver history, change Hold/Avoid, or alter

@@ -53,7 +53,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
   let eventsReturnFocus = null;
   let inspectorReturnFocus = null;
   let autoRotateRequested = initialAutoRotate;
-  let flatMode = false;
   let reducedMotion = Boolean(dependencies.reducedMotion);
   let inspectorSignature = '';
   const eventRows = new Map();
@@ -98,13 +97,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
   autoRotate.title = 'Slowly orbit the current view while idle';
   cameraActions.append(fit, focus, autoRotate);
 
-  const modeActions = node('div', 'network-visualizer-action-group');
-  modeActions.setAttribute('role', 'group');
-  modeActions.setAttribute('aria-label', 'View mode');
-  const mode3d = toggleButton(node, '3D');
-  const modeFlat = toggleButton(node, 'Flatten', false);
-  modeActions.append(mode3d, modeFlat);
-
   const arrange = iconButton('icon-edit', 'Arrange layout');
   arrange.setAttribute('aria-pressed', String(initialArrange));
   arrange.title = 'Drag systems, talkgroups, and radios to arrange the layout';
@@ -114,7 +106,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   const settingsButton = iconButton('icon-playback-controls', 'Density settings');
   settingsButton.setAttribute('popovertarget', 'network-visualizer-settings');
-  actions.append(cameraActions, modeActions, arrange, freeze, eventsToggle, clear, fullscreen, settingsButton);
+  actions.append(cameraActions, arrange, freeze, eventsToggle, clear, fullscreen, settingsButton);
   toolbar.append(brand, status, search, filterGroup, actions);
 
   const stage = node('div', 'network-visualizer-stage');
@@ -259,8 +251,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     setAutoRotate(value);
     callbacks.onAutoRotate?.(value);
   });
-  mode3d.addEventListener('click', () => callbacks.onMode?.('3d'));
-  modeFlat.addEventListener('click', () => callbacks.onMode?.('flat'));
   arrange.addEventListener('click', () => {
     const value = arrange.getAttribute('aria-pressed') !== 'true';
     setArrange(value);
@@ -331,23 +321,16 @@ function createNetworkVisualizerUi(dependencies = {}) {
       `${compactNumber(active)} active entities offscreen · Fit`;
   }
 
-  function setMode(mode) {
-    flatMode = mode === 'flat' || mode === '2d';
-    mode3d.setAttribute('aria-pressed', String(!flatMode));
-    modeFlat.setAttribute('aria-pressed', String(flatMode));
-    updateAutoRotateControl();
-  }
-
   function setAutoRotate(value) {
     autoRotateRequested = Boolean(value);
     updateAutoRotateControl();
   }
 
   function updateAutoRotateControl() {
-    autoRotate.disabled = flatMode || reducedMotion;
+    autoRotate.disabled = reducedMotion;
     autoRotate.setAttribute('aria-pressed', String(autoRotateRequested && !reducedMotion));
-    autoRotate.title = reducedMotion ? 'Auto rotate is disabled by reduced motion' : flatMode ?
-      'Auto rotate is available in 3D view' : 'Slowly orbit the current view while idle';
+    autoRotate.title = reducedMotion ? 'Auto rotate is disabled by reduced motion' :
+      'Slowly orbit the current view while idle';
   }
 
   function setReducedMotion(value) {
@@ -583,7 +566,6 @@ function createNetworkVisualizerUi(dependencies = {}) {
     setTransport,
     setCounts,
     setOffscreenActivity,
-    setMode,
     setAutoRotate,
     setReducedMotion,
     setArrange,

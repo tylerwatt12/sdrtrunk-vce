@@ -23,7 +23,6 @@ import {
   restoreLayoutRecords,
   savedLayoutRecords,
   setLayoutFrozen,
-  setLayoutMode,
   setLayoutPinned,
   setReducedMotion,
   stepLayout,
@@ -83,7 +82,6 @@ function filterSuppressedEffects(graph, suppressedEffectIds) {
 
 function loadPreferences(profileKey, config = BALANCED_CONFIG) {
   const defaults = {
-    mode: '3d',
     autoRotate: config.animation?.autoRotateDefault !== false,
     filters: { affiliations: true, activity: true, quiet: true },
     softRadiosTotal: config.render.softRadiosTotal,
@@ -103,7 +101,6 @@ function loadPreferences(profileKey, config = BALANCED_CONFIG) {
       return pinned === record.pinned ? record : Object.freeze({ ...record, pinned: false });
     });
     return {
-      mode: raw.mode === 'flat' ? 'flat' : '3d',
       autoRotate: raw.autoRotate !== false,
       filters: {
         affiliations: raw.filters?.affiliations !== false,
@@ -132,7 +129,6 @@ function persistPreferences(profileKey, preferences, layout, config = BALANCED_C
     });
     localStorage.setItem(profileStorageKey(profileKey), JSON.stringify({
       version: 1,
-      mode: preferences.mode,
       autoRotate: preferences.autoRotate !== false,
       filters: preferences.filters,
       softRadiosTotal: preferences.softRadiosTotal,
@@ -243,7 +239,7 @@ function createNetworkVisualizer(dependencies = {}) {
   } });
   const state = createNetworkState(config);
   const reducedMotionMedia = window.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
-  const layout = createLayoutState(config, { mode: preferences.mode, profileKey: dependencies.profileKey,
+  const layout = createLayoutState(config, { profileKey: dependencies.profileKey,
     reducedMotion: Boolean(reducedMotionMedia?.matches) });
   restoreLayoutRecords(layout, preferences.positions);
   const activityTables = new Map();
@@ -307,14 +303,6 @@ function createNetworkVisualizer(dependencies = {}) {
       onFocus: () => {
         if (state.visual.selectedKey) renderer?.focus?.(state.visual.selectedKey);
       },
-      onMode: (mode) => {
-        preferences.mode = mode === 'flat' ? 'flat' : '3d';
-        setLayoutMode(layout, preferences.mode);
-        renderer?.setMode?.(preferences.mode);
-        ui.setMode(preferences.mode);
-        invalidateGraph();
-        schedulePersist();
-      },
       onBack: () => navigateBack(),
       onAutoRotate: (value) => {
         preferences.autoRotate = Boolean(value);
@@ -356,7 +344,6 @@ function createNetworkVisualizer(dependencies = {}) {
       }
     }
   });
-  ui.setMode(preferences.mode);
   ui.setAutoRotate(preferences.autoRotate);
   ui.setReducedMotion(Boolean(reducedMotionMedia?.matches));
   ui.setArrange(arrangeMode);
@@ -554,7 +541,6 @@ function createNetworkVisualizer(dependencies = {}) {
       host: ui.canvas,
       signal: dependencies.signal,
       config,
-      mode: preferences.mode,
       frozen,
       graphData: currentGraph,
       clock: () => Date.now(),
@@ -583,7 +569,6 @@ function createNetworkVisualizer(dependencies = {}) {
       }
       renderer = value;
       ui.setWebglState(value?.available === false ? 'failed' : 'ready');
-      renderer.setMode?.(preferences.mode);
       renderer.setFrozen?.(frozen);
       renderer.setNavigationScope?.(navigationScope);
       renderer.setAutoRotate?.(preferences.autoRotate);
@@ -831,8 +816,7 @@ function createNetworkVisualizer(dependencies = {}) {
     const nodes = (graph?.nodes || []).map((value) => ({ ...value,
       renderRadius: radii[value.type] || 5,
       scopeLevel: resolved.level,
-      expandedField: value.type === 'universe' && resolved.level === 'system',
-      labelVisible: !(value.type === 'universe' && resolved.level === 'system')
+      labelVisible: true
     }));
     return { ...graph, scope: resolved, nodes };
   }

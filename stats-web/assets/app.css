@@ -22,7 +22,7 @@
 @import url("./styles/features/live.css?v=13") layer(features);
 @import url("./styles/features/radio-directory.css?v=4") layer(features);
 @import url("./styles/features/tuner-spectrum.css?v=10") layer(features);
-@import url("./styles/features/network-visualizer.css?v=2") layer(features);
+@import url("./styles/features/network-visualizer.css?v=3") layer(features);
 @import url("./styles/features/scanner.css?v=5") layer(features);
 @import url("./styles/features/rf-planner.css?v=3") layer(features);
 @import url("./styles/features/aliases.css?v=8") layer(features);
