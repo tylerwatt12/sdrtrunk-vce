@@ -316,9 +316,7 @@ public class ReceiverActivitySchema
     static Long recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
                                boolean detailedEventHistoryEnabled) throws SQLException
     {
-        Long activityId = null;
         int activityProtocolCode = protocolCode(activity.protocol());
-        int activityProtocol = TrunkedIdentityPolicy.protocolFamilyCode(activityProtocolCode);
 
         if(!configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
             activityProtocolCode, activity.identityDomain()))
@@ -326,11 +324,70 @@ public class ReceiverActivitySchema
             return null;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(activity),
+            activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE);
         if(channelId <= 0)
         {
             return null;
         }
+        return recordAcceptedActivity(connection, activity, detailedEventHistoryEnabled, channelId, null);
+    }
+
+    static void recordActivityBatch(Connection connection, List<ReceiverActivityRecords.ActivityEvent> activities,
+                                    boolean detailedEventHistoryEnabled) throws SQLException
+    {
+        if(activities.isEmpty())
+        {
+            return;
+        }
+
+        List<ReceiverActivityRecords.ActivityEvent> accepted = new ArrayList<>(activities.size());
+        Map<String,ReceiverChannelMetadata> channels = new LinkedHashMap<>();
+        Map<String,Boolean> trunked = new LinkedHashMap<>();
+
+        for(ReceiverActivityRecords.ActivityEvent activity: activities)
+        {
+            int protocol = protocolCode(activity.protocol());
+            if(configurationAccepts(connection, activity.configurationId(), receiverKindCode(activity.receiverKind()),
+                protocol, activity.identityDomain()))
+            {
+                accepted.add(activity);
+                ReceiverChannelMetadata metadata = ReceiverChannelMetadata.from(activity);
+                channels.merge(activity.configurationId(), metadata, (first, next) ->
+                    new ReceiverChannelMetadata(first.configurationId(),
+                        Math.min(first.firstSeenEpochMilliseconds(), next.firstSeenEpochMilliseconds()),
+                        Math.max(first.lastSeenEpochMilliseconds(), next.lastSeenEpochMilliseconds())));
+                trunked.put(activity.configurationId(),
+                    activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE);
+            }
+        }
+
+        Map<String,Integer> channelIds = new LinkedHashMap<>();
+        //Channel assignment timestamps are constrained by last_seen_ms, so extend each run's bounds first.
+        for(Map.Entry<String,ReceiverChannelMetadata> entry: channels.entrySet())
+        {
+            channelIds.put(entry.getKey(), upsertReceiverChannel(connection, entry.getValue(),
+                trunked.get(entry.getKey())));
+        }
+
+        RadioSystemSchema.ActivityBatch batch = new RadioSystemSchema.ActivityBatch();
+        for(ReceiverActivityRecords.ActivityEvent activity: accepted)
+        {
+            int channelId = channelIds.getOrDefault(activity.configurationId(), 0);
+            if(channelId > 0)
+            {
+                recordAcceptedActivity(connection, activity, detailedEventHistoryEnabled, channelId, batch);
+            }
+        }
+        batch.flush(connection);
+    }
+
+    private static Long recordAcceptedActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
+                                               boolean detailedEventHistoryEnabled, int channelId,
+                                               RadioSystemSchema.ActivityBatch batch) throws SQLException
+    {
+        Long activityId = null;
+        int activityProtocol = TrunkedIdentityPolicy.protocolFamilyCode(protocolCode(activity.protocol()));
         ReceiverChannelIdentity channel = selectReceiverChannelIdentity(connection, activity.configurationId());
 
         if(activityProtocol == TrunkedIdentityPolicy.PROTOCOL_P25 &&
@@ -342,7 +399,7 @@ public class ReceiverActivitySchema
         if(activity.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE)
         {
             RadioSystemSchema.RadioSystem radioSystem =
-                RadioSystemSchema.recordActivity(connection, activity, channelId);
+                RadioSystemSchema.recordActivity(connection, activity, channelId, batch);
 
             if(radioSystem == null)
             {
@@ -719,7 +776,7 @@ public class ReceiverActivitySchema
             return null;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), true);
         if(channelId <= 0)
         {
             return null;
@@ -981,10 +1038,10 @@ public class ReceiverActivitySchema
             return false;
         }
 
-        boolean applied = RadioSystemSchema.applyAttribution(connection, channel.channelId(), attribution);
         RadioSystemSchema.RadioSystem radioSystem = RadioSystemSchema.ensureRadioSystem(connection,
             channel.channelId(), attribution.callStartEpochMilliseconds(), attribution.identityDomain(), null, null,
             attribution.radioSystemKey());
+        boolean applied = RadioSystemSchema.applyAttribution(connection, radioSystem, attribution);
         if(applied && radioSystem != null)
         {
             enrichDetailedTrunkedCall(connection, channel.channelId(), radioSystem, attribution);
@@ -1168,7 +1225,7 @@ public class ReceiverActivitySchema
         {
             return null;
         }
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
 
         if(!matchesReceiverChannel(selectReceiverChannelIdentity(connection, call.configurationId()),
             RECEIVER_CONVENTIONAL_DMR, TrunkedIdentityPolicy.PROTOCOL_DMR))
@@ -1218,7 +1275,7 @@ public class ReceiverActivitySchema
         {
             return null;
         }
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(call), false);
 
         if(!matchesReceiverChannel(selectReceiverChannelIdentity(connection, call.configurationId()),
             RECEIVER_CONVENTIONAL_NXDN, TrunkedIdentityPolicy.PROTOCOL_NXDN))
@@ -1401,7 +1458,7 @@ public class ReceiverActivitySchema
             (previousChannel.kindCode() != RECEIVER_TRUNKED_SITE ||
              TrunkedIdentityPolicy.protocolFamilyCode(previousChannel.protocolCode()) !=
                  TrunkedIdentityPolicy.PROTOCOL_P25 || nativeComponentChanged);
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
         if(channelId <= 0)
         {
             return;
@@ -1634,7 +1691,7 @@ public class ReceiverActivitySchema
             return false;
         }
 
-        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot));
+        int channelId = upsertReceiverChannel(connection, ReceiverChannelMetadata.from(snapshot), true);
         if(channelId <= 0)
         {
             return false;
@@ -3241,10 +3298,11 @@ public class ReceiverActivitySchema
         }
     }
 
-    private static int upsertReceiverChannel(Connection connection, ReceiverChannelMetadata metadata)
+    private static int upsertReceiverChannel(Connection connection, ReceiverChannelMetadata metadata,
+                                             boolean trunked)
         throws SQLException
     {
-        if(metadata == null || !configurationChannelExists(connection, metadata.configurationId()))
+        if(metadata == null)
         {
             return 0;
         }
@@ -3254,33 +3312,20 @@ public class ReceiverActivitySchema
             VALUES (?, ?, ?)
             ON CONFLICT(configuration_id) DO UPDATE SET
                 first_seen_ms = min(receiver_channel.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms)
+                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms),
+                radio_system_id = CASE WHEN ? THEN receiver_channel.radio_system_id END,
+                radio_system_assigned_at_ms = CASE WHEN ? THEN receiver_channel.radio_system_assigned_at_ms END
+            RETURNING id
             """))
         {
             statement.setString(1, metadata.configurationId());
             statement.setLong(2, metadata.firstSeenEpochMilliseconds());
             statement.setLong(3, metadata.lastSeenEpochMilliseconds());
-            statement.executeUpdate();
-        }
-        synchronizeReceiverChannelWithConfiguration(connection, metadata.configurationId());
-        return selectReceiverChannelId(connection, metadata.configurationId());
-    }
-
-    private static boolean configurationChannelExists(Connection connection, String configurationId)
-        throws SQLException
-    {
-        if(configurationId == null || configurationId.isBlank())
-        {
-            return false;
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM configuration_channel WHERE configuration_id = ? LIMIT 1"))
-        {
-            statement.setString(1, configurationId);
+            statement.setBoolean(4, trunked);
+            statement.setBoolean(5, trunked);
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return resultSet.next();
+                return resultSet.next() ? resultSet.getInt(1) : 0;
             }
         }
     }
@@ -3350,29 +3395,6 @@ public class ReceiverActivitySchema
         return configuredKind == RECEIVER_TRUNKED_SITE && expectedKind == RECEIVER_TRUNKED_SITE &&
             TrunkedIdentityPolicy.protocolFamilyCode(configuredProtocol) == TrunkedIdentityPolicy.PROTOCOL_P25 &&
             TrunkedIdentityPolicy.protocolFamilyCode(expectedProtocol) == TrunkedIdentityPolicy.PROTOCOL_P25;
-    }
-
-    private static void synchronizeReceiverChannelWithConfiguration(Connection connection, String configurationId)
-        throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE receiver_channel
-            SET radio_system_id = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.channel_kind = 'TRUNKED'
-                ) THEN radio_system_id ELSE NULL END,
-                radio_system_assigned_at_ms = CASE WHEN EXISTS (
-                    SELECT 1 FROM configuration_channel configured
-                    WHERE configured.configuration_id = receiver_channel.configuration_id
-                      AND configured.channel_kind = 'TRUNKED'
-                ) THEN radio_system_assigned_at_ms ELSE NULL END
-            WHERE configuration_id = ?
-            """))
-        {
-            statement.setString(1, configurationId);
-            statement.executeUpdate();
-        }
     }
 
     private static void upsertSiteSnapshot(Connection connection, ReceiverActivityRecords.SiteSnapshot snapshot,

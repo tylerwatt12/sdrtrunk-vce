@@ -797,16 +797,22 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             int writtenRecords = 0;
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
+            List<ReceiverActivityRecords.ActivityEvent> activityEvents = new ArrayList<>();
             pruneResolvedLogicalCalls(System.currentTimeMillis());
 
             for(ReceiverActivityRecord record: batch)
             {
                 if(record instanceof ReceiverActivityRecords.ActivityEvent activityEvent)
                 {
-                    ReceiverActivitySchema.recordActivity(connection, activityEvent, mDetailedEventHistoryEnabled);
+                    activityEvents.add(activityEvent);
                     writtenRecords++;
+                    continue;
                 }
-                else if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
+
+                ReceiverActivitySchema.recordActivityBatch(connection, activityEvents, mDetailedEventHistoryEnabled);
+                activityEvents.clear();
+
+                if(record instanceof ReceiverActivityRecords.SiteSnapshot siteSnapshot)
                 {
                     ReceiverActivitySchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
@@ -887,6 +893,7 @@ class ReceiverActivityWriter implements AutoCloseable
                     writtenRecords++;
                 }
             }
+            ReceiverActivitySchema.recordActivityBatch(connection, activityEvents, mDetailedEventHistoryEnabled);
 
             long writtenTotal = mWrittenRecords.get() + writtenRecords;
             long successfulWrite = System.currentTimeMillis();

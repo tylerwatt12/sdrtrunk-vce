@@ -72,9 +72,115 @@ final class RadioSystemSchema
     private static final String ACTION_INSERT_PLACEHOLDERS = ACTION_COUNT_COLUMNS.stream()
         .map(column -> "?")
         .collect(Collectors.joining(", "));
+    private static final String IDENTITY_DELTA_UPDATE_SQL = """
+        UPDATE radio_system_identity_summary
+        SET first_seen_ms=min(first_seen_ms, ?),
+            last_seen_ms=max(last_seen_ms, ?),
+            %s
+        WHERE id=?
+        """.formatted(ACTION_COUNT_COLUMNS.stream()
+        .map(column -> column + "=" + column + "+?")
+        .collect(Collectors.joining(",\n            ")));
 
     private RadioSystemSchema()
     {
+    }
+
+    /** Transaction-local coalescing for consecutive receiver activity observations. */
+    static final class ActivityBatch
+    {
+        private final Map<String,SystemDelta> mSystems = new LinkedHashMap<>();
+        private final Map<IdentityKey,IdentityDelta> mIdentities = new LinkedHashMap<>();
+
+        private RadioSystem observeSystem(String systemKey, long observedAt, boolean updateFirstSeen)
+        {
+            SystemDelta delta = mSystems.get(systemKey);
+            return delta != null ? delta.observe(observedAt, updateFirstSeen) : null;
+        }
+
+        private void rememberSystem(RadioSystem radioSystem)
+        {
+            if(radioSystem != null)
+            {
+                mSystems.put(radioSystem.systemKey(), new SystemDelta(radioSystem));
+            }
+        }
+
+        private IdentityDelta identity(int radioSystemId, Identity identity)
+        {
+            return mIdentities.get(IdentityKey.from(radioSystemId, identity));
+        }
+
+        private void rememberIdentity(int radioSystemId, Identity identity, int summaryId)
+        {
+            mIdentities.put(IdentityKey.from(radioSystemId, identity), new IdentityDelta(summaryId));
+        }
+
+        void flush(Connection connection) throws SQLException
+        {
+            flushSystems(connection);
+            flushIdentities(connection);
+        }
+
+        private void flushSystems(Connection connection) throws SQLException
+        {
+            if(mSystems.isEmpty())
+            {
+                return;
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                UPDATE radio_system
+                SET first_seen_ms=min(first_seen_ms, coalesce(?, first_seen_ms)),
+                    last_seen_ms=max(last_seen_ms, ?)
+                WHERE id=?
+                """))
+            {
+                for(SystemDelta delta: mSystems.values())
+                {
+                    if(delta.mLastSeen > 0)
+                    {
+                        setLong(statement, 1, delta.mFirstSeen);
+                        statement.setLong(2, delta.mLastSeen);
+                        statement.setInt(3, delta.mRadioSystem.radioSystemId());
+                        statement.addBatch();
+                    }
+                }
+                statement.executeBatch();
+            }
+            mSystems.clear();
+        }
+
+        private void flushIdentities(Connection connection) throws SQLException
+        {
+            if(mIdentities.isEmpty())
+            {
+                return;
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement(IDENTITY_DELTA_UPDATE_SQL))
+            {
+                for(IdentityDelta delta: mIdentities.values())
+                {
+                    if(delta.mLastSeen <= 0)
+                    {
+                        continue;
+                    }
+
+                    int index = 1;
+                    statement.setLong(index++, delta.mFirstSeen);
+                    statement.setLong(index++, delta.mLastSeen);
+                    for(int count: delta.mActionCounts)
+                    {
+                        statement.setInt(index++, count);
+                    }
+                    statement.setInt(index, delta.mSummaryId);
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+            }
+            mIdentities.clear();
+        }
     }
 
     static void create(Statement statement) throws SQLException
@@ -587,11 +693,11 @@ final class RadioSystemSchema
         validateRadioSystemKeys(connection);
     }
 
-    static RadioSystem recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity, int channelId)
-        throws SQLException
+    static RadioSystem recordActivity(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
+                                      int channelId, ActivityBatch batch) throws SQLException
     {
         RadioSystem radioSystem = ensureRadioSystem(connection, channelId, activity.observedAtEpochMilliseconds(),
-            activity.identityDomain(), activity.wacn(), activity.systemId(), activity.radioSystemKey());
+            activity.identityDomain(), activity.wacn(), activity.systemId(), activity.radioSystemKey(), batch);
 
         if(radioSystem == null ||
             (radioSystem.protocolCode() != TrunkedIdentityPolicy.PROTOCOL_P25 &&
@@ -606,6 +712,11 @@ final class RadioSystemSchema
             return radioSystem;
         }
 
+        if(batch != null && (activity.encryptionAlgorithmId() != null || activity.encryptionKeyId() != null))
+        {
+            batch.flushIdentities(connection);
+        }
+
         Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
             integer(activity.sourceRadioId()), activity.p25SourceIdentity());
         List<Identity> destinations = destinationIdentities(radioSystem, activity.targetId(), activity.targetKind(),
@@ -617,18 +728,19 @@ final class RadioSystemSchema
         for(Identity destination: destinations)
         {
             upsertIdentity(connection, radioSystem.radioSystemId(), destination, activity.observedAtEpochMilliseconds(),
-                activity.action(), IdentityCounts.NONE,
-                sourceIdentity,
-                activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
+                activity.action(), IdentityCounts.NONE, activity.encryptionAlgorithmId(), activity.encryptionKeyId(),
+                null, null, batch);
         }
 
         if(sourceIdentity != null)
         {
             boolean alreadyObserved = destinations.stream().anyMatch(sourceIdentity::sameCanonicalIdentity);
-            Identity counterpart = destinations.isEmpty() ? null : destinations.get(0);
-            upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity, activity.observedAtEpochMilliseconds(),
-                alreadyObserved ? null : activity.action(), IdentityCounts.NONE, counterpart,
-                activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null);
+            if(!alreadyObserved)
+            {
+                upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity,
+                    activity.observedAtEpochMilliseconds(), activity.action(), IdentityCounts.NONE,
+                    activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null, batch);
+            }
 
             for(Identity destination: groupDestinations(destinations))
             {
@@ -641,14 +753,15 @@ final class RadioSystemSchema
         if(isCurrentRadioSystem(connection, channelId, radioSystem.radioSystemId(),
             activity.observedAtEpochMilliseconds()))
         {
-            updateRadioPresence(connection, radioSystem, channelId, activity);
+            updateRadioPresence(connection, radioSystem, channelId, activity, batch);
         }
 
         return radioSystem;
     }
 
     private static void updateRadioPresence(Connection connection, RadioSystem radioSystem, int channelId,
-                                            ReceiverActivityRecords.ActivityEvent activity) throws SQLException
+                                            ReceiverActivityRecords.ActivityEvent activity, ActivityBatch batch)
+        throws SQLException
     {
         ReceiverActivityRecords.RadioPresenceUpdate update = activity.radioPresenceUpdate();
         if(update == null)
@@ -663,7 +776,7 @@ final class RadioSystemSchema
             return;
         }
         upsertIdentity(connection, radioSystem.radioSystemId(), radio, activity.observedAtEpochMilliseconds(),
-            null, IdentityCounts.NONE, null, null, null, null, null);
+            null, IdentityCounts.NONE, null, null, null, null, batch);
         int radioIdentityId = identitySummaryId(connection, radioSystem.radioSystemId(), radio);
 
         if(update.cleared())
@@ -748,7 +861,7 @@ final class RadioSystemSchema
             return;
         }
         upsertIdentity(connection, radioSystem.radioSystemId(), talkgroup, activity.observedAtEpochMilliseconds(),
-            null, IdentityCounts.NONE, radio, null, null, null, null);
+            null, IdentityCounts.NONE, null, null, null, null, batch);
         int talkgroupIdentityId = identitySummaryId(connection, radioSystem.radioSystemId(), talkgroup);
         if(talkgroupIdentityId <= 0)
         {
@@ -1028,8 +1141,8 @@ final class RadioSystemSchema
         for(Identity destination: destinations)
         {
             upsertIdentity(connection, radioSystem.radioSystemId(), destination, call.callStartEpochMilliseconds(), null,
-                IdentityCounts.targetResolvedCall(encrypted),
-                sourceIdentity, call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null);
+                IdentityCounts.targetResolvedCall(encrypted), call.encryptionAlgorithmId(), call.encryptionKeyId(),
+                null, null, null);
         }
 
         if(sourceIdentity != null)
@@ -1037,8 +1150,7 @@ final class RadioSystemSchema
             boolean alreadyCounted = destinations.stream().anyMatch(sourceIdentity::sameCanonicalIdentity);
             upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity, call.callStartEpochMilliseconds(), null,
                 IdentityCounts.sourceResolvedCall(alreadyCounted ? 0 : encrypted, !alreadyCounted),
-                destinations.isEmpty() ? null : destinations.get(0),
-                call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null);
+                call.encryptionAlgorithmId(), call.encryptionKeyId(), null, null, null);
 
             for(Identity destination: groupDestinations(destinations))
             {
@@ -1069,8 +1181,7 @@ final class RadioSystemSchema
         for(Identity destination: destinations)
         {
             upsertIdentity(connection, radioSystem.radioSystemId(), destination, call.callStartEpochMilliseconds(), null,
-                IdentityCounts.outputs(recorded, streamed),
-                sourceIdentity, null, null, null, null);
+                IdentityCounts.outputs(recorded, streamed), null, null, null, null, null);
         }
 
         if(sourceIdentity != null)
@@ -1078,7 +1189,7 @@ final class RadioSystemSchema
             boolean alreadyCounted = destinations.stream().anyMatch(sourceIdentity::sameCanonicalIdentity);
             upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity, call.callStartEpochMilliseconds(),
                 null, IdentityCounts.outputs(alreadyCounted ? 0 : recorded, alreadyCounted ? 0 : streamed),
-                destinations.isEmpty() ? null : destinations.get(0), null, null, null, null);
+                null, null, null, null, null);
             for(Identity destination: groupDestinations(destinations))
             {
                 upsertRelationship(connection, radioSystem.radioSystemId(), sourceIdentity, destination,
@@ -1087,12 +1198,9 @@ final class RadioSystemSchema
         }
     }
 
-    static boolean applyAttribution(Connection connection, int channelId,
+    static boolean applyAttribution(Connection connection, RadioSystem radioSystem,
                                     ReceiverActivityRecords.TrunkedCallAttribution attribution) throws SQLException
     {
-        RadioSystem radioSystem = ensureRadioSystem(connection, channelId, attribution.callStartEpochMilliseconds(),
-            attribution.identityDomain(), null, null, attribution.radioSystemKey());
-
         if(radioSystem == null || attribution.callStartEpochMilliseconds() < radioSystem.firstSeenEpochMilliseconds())
         {
             return false;
@@ -1115,8 +1223,8 @@ final class RadioSystemSchema
             for(Identity destination: destinations)
             {
                 applied |= upsertIdentity(connection, radioSystem.radioSystemId(), destination,
-                    attribution.callStartEpochMilliseconds(), null, IdentityCounts.NONE, sourceIdentity,
-                    attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null);
+                    attribution.callStartEpochMilliseconds(), null, IdentityCounts.NONE,
+                    attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null, null);
             }
         }
 
@@ -1124,8 +1232,7 @@ final class RadioSystemSchema
         {
             applied |= upsertIdentity(connection, radioSystem.radioSystemId(), sourceIdentity,
                 attribution.callStartEpochMilliseconds(), null, IdentityCounts.NONE,
-                destinations.isEmpty() ? null : destinations.get(0),
-                attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null);
+                attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null, null);
         }
 
         if(sourceIdentity != null && !destinations.isEmpty() &&
@@ -1207,7 +1314,7 @@ final class RadioSystemSchema
         }
 
         return upsertIdentity(connection, radioSystem.radioSystemId(), radio, observedAt,
-            null, IdentityCounts.NONE, null, null, null, talkerAlias, observedAt);
+            null, IdentityCounts.NONE, null, null, talkerAlias, observedAt, null);
     }
 
     static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
@@ -1221,7 +1328,7 @@ final class RadioSystemSchema
                              Integer p25Wacn, Integer p25SystemId) throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
-            p25SystemId, null, null, null);
+            p25SystemId, null, null, null, null);
     }
 
     static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
@@ -1230,7 +1337,16 @@ final class RadioSystemSchema
         throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
-            p25SystemId, null, radioSystemKey, null);
+            p25SystemId, null, radioSystemKey, null, null);
+    }
+
+    private static RadioSystem ensureRadioSystem(Connection connection, int channelId, long observedAt,
+                                                 TrunkedIdentityDomain observationDomain,
+                                                 Integer p25Wacn, Integer p25SystemId, String radioSystemKey,
+                                                 ActivityBatch batch) throws SQLException
+    {
+        return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
+            p25SystemId, null, radioSystemKey, null, batch);
     }
 
     /** Resolves a DMR/NXDN site using native identity only for the capture-proven protocol variants. */
@@ -1241,7 +1357,8 @@ final class RadioSystemSchema
         throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, null, null,
-            new SiteSystemEvidence(variantCode, modelCode, networkId, locationCategoryCode, systemId), null, null);
+            new SiteSystemEvidence(variantCode, modelCode, networkId, locationCategoryCode, systemId), null, null,
+            null);
     }
 
     /** True when this protocol/variant is one of the native identities supported by the profile-local model. */
@@ -1272,7 +1389,7 @@ final class RadioSystemSchema
         throws SQLException
     {
         return ensureRadioSystemInternal(connection, channelId, observedAt, observationDomain, p25Wacn,
-            p25SystemId, null, radioSystemKey, null);
+            p25SystemId, null, radioSystemKey, null, null);
     }
 
     /** Resolves the complete P25 site identity whose decoded source was verified as an advertised control. */
@@ -1285,7 +1402,7 @@ final class RadioSystemSchema
         }
 
         return ensureRadioSystemInternal(connection, channelId, observedAt, TrunkedIdentityDomain.STANDARD,
-            siteIdentity.wacn(), siteIdentity.system(), null, null, siteIdentity);
+            siteIdentity.wacn(), siteIdentity.system(), null, null, siteIdentity, null);
     }
 
     private static RadioSystem ensureRadioSystemInternal(Connection connection, int channelId, long observedAt,
@@ -1294,7 +1411,8 @@ final class RadioSystemSchema
                                                          Integer observedP25SystemId,
                                                          SiteSystemEvidence siteEvidence,
                                                          String capturedSystemKey,
-                                                         P25SiteIdentity verifiedP25SiteIdentity)
+                                                         P25SiteIdentity verifiedP25SiteIdentity,
+                                                         ActivityBatch batch)
         throws SQLException
     {
         ReceiverChannel channel = receiverChannel(connection, channelId);
@@ -1397,8 +1515,21 @@ final class RadioSystemSchema
                 return null;
             }
 
+            //Partial evidence advances only last_seen; lowering first_seen would admit delayed signaling.
+            RadioSystem cached = batch != null ?
+                batch.observeSystem(channel.currentSystemKey(), observedAt, false) : null;
+            if(cached != null)
+            {
+                return cached;
+            }
+
             touchRadioSystem(connection, channel.radioSystemId(), observedAt);
-            return selectRadioSystem(connection, channel.radioSystemId());
+            RadioSystem touched = selectRadioSystem(connection, channel.radioSystemId());
+            if(batch != null)
+            {
+                batch.rememberSystem(touched);
+            }
+            return touched;
         }
 
         String systemKey = capturedSystemKey != null ? capturedSystemKey :
@@ -1425,36 +1556,44 @@ final class RadioSystemSchema
         {
             return null;
         }
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO radio_system (
-                system_key, configuration_id, protocol_code, address_domain_code, p25_wacn, p25_system_id,
-                dmr_model_code, dmr_network_id,
-                nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(system_key) DO UPDATE SET
-                first_seen_ms = min(radio_system.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms)
-            """))
-        {
-            statement.setString(1, systemKey);
-            statement.setString(2, RadioSystemKey.isChannelScoped(systemKey) ? channel.configurationId() : null);
-            statement.setInt(3, protocol);
-            statement.setInt(4, addressDomainCode);
-            setInteger(statement, 5, p25Wacn);
-            setInteger(statement, 6, p25SystemId);
-            setInteger(statement, 7, nativeIdentity != null ? nativeIdentity.dmrModelCode() : null);
-            setInteger(statement, 8, nativeIdentity != null ? nativeIdentity.dmrNetworkId() : null);
-            setInteger(statement, 9, nativeIdentity != null ? nativeIdentity.nxdnLocationCategoryCode() : null);
-            setInteger(statement, 10, nativeIdentity != null ? nativeIdentity.nxdnSystemId() : null);
-            statement.setLong(11, observedAt);
-            statement.setLong(12, observedAt);
-            statement.executeUpdate();
-        }
-
-        RadioSystem radioSystem = selectRadioSystem(connection, systemKey);
+        RadioSystem radioSystem = batch != null ? batch.observeSystem(systemKey, observedAt, true) : null;
         if(radioSystem == null)
         {
-            throw new SQLException("Missing radio system [" + systemKey + "]");
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO radio_system (
+                    system_key, configuration_id, protocol_code, address_domain_code, p25_wacn, p25_system_id,
+                    dmr_model_code, dmr_network_id,
+                    nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(system_key) DO UPDATE SET
+                    first_seen_ms = min(radio_system.first_seen_ms, excluded.first_seen_ms),
+                    last_seen_ms = max(radio_system.last_seen_ms, excluded.last_seen_ms)
+                """))
+            {
+                statement.setString(1, systemKey);
+                statement.setString(2, RadioSystemKey.isChannelScoped(systemKey) ? channel.configurationId() : null);
+                statement.setInt(3, protocol);
+                statement.setInt(4, addressDomainCode);
+                setInteger(statement, 5, p25Wacn);
+                setInteger(statement, 6, p25SystemId);
+                setInteger(statement, 7, nativeIdentity != null ? nativeIdentity.dmrModelCode() : null);
+                setInteger(statement, 8, nativeIdentity != null ? nativeIdentity.dmrNetworkId() : null);
+                setInteger(statement, 9, nativeIdentity != null ? nativeIdentity.nxdnLocationCategoryCode() : null);
+                setInteger(statement, 10, nativeIdentity != null ? nativeIdentity.nxdnSystemId() : null);
+                statement.setLong(11, observedAt);
+                statement.setLong(12, observedAt);
+                statement.executeUpdate();
+            }
+
+            radioSystem = selectRadioSystem(connection, systemKey);
+            if(radioSystem == null)
+            {
+                throw new SQLException("Missing radio system [" + systemKey + "]");
+            }
+            if(batch != null)
+            {
+                batch.rememberSystem(radioSystem);
+            }
         }
 
         boolean assignmentChanged = channel.radioSystemId() == null ||
@@ -1833,13 +1972,28 @@ final class RadioSystemSchema
 
     private static boolean upsertIdentity(Connection connection, int radioSystemId, Identity identity, long observedAt,
                                           ReceiverActivityRecords.Action action, IdentityCounts counts,
-                                          Identity counterpart, Integer encryptionAlgorithm,
-                                          Integer encryptionKey, String talkerAlias, Long talkerAliasSeen)
+                                          Integer encryptionAlgorithm, Integer encryptionKey, String talkerAlias,
+                                          Long talkerAliasSeen, ActivityBatch batch)
         throws SQLException
     {
+        if(batch != null && counts.equals(IdentityCounts.NONE) && encryptionAlgorithm == null &&
+            encryptionKey == null && talkerAlias == null)
+        {
+            IdentityDelta delta = batch.identity(radioSystemId, identity);
+            if(delta != null)
+            {
+                delta.observe(observedAt, action);
+                return delta.mSummaryId > 0;
+            }
+        }
+
         if(!identityExists(connection, radioSystemId, identity) &&
             !hasSystemCapacity(connection, "radio_system_identity_summary", radioSystemId, MAX_IDENTITIES_PER_SYSTEM))
         {
+            if(batch != null)
+            {
+                batch.rememberIdentity(radioSystemId, identity, 0);
+            }
             return false;
         }
 
@@ -1919,6 +2073,12 @@ final class RadioSystemSchema
             statement.executeUpdate();
         }
 
+        if(batch != null)
+        {
+            batch.rememberIdentity(radioSystemId, identity,
+                identitySummaryId(connection, radioSystemId, identity));
+        }
+
         return true;
     }
 
@@ -1966,7 +2126,7 @@ final class RadioSystemSchema
                     THEN excluded.last_encryption_key_id
                     ELSE trunked_radio_group_summary.last_encryption_key_id
                 END
-            """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
+        """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("trunked_radio_group_summary"))))
         {
             int radioIdentityId = identitySummaryId(connection, radioSystemId, radio);
@@ -2869,6 +3029,82 @@ final class RadioSystemSchema
 
     record IdentityReference(int summaryId, int kindCode, Integer observedLocalId, String identityKey)
     {
+    }
+
+    private static final class SystemDelta
+    {
+        private final RadioSystem mRadioSystem;
+        private Long mFirstSeen;
+        private long mLastSeen;
+
+        private SystemDelta(RadioSystem radioSystem)
+        {
+            mRadioSystem = radioSystem;
+        }
+
+        private RadioSystem observe(long observedAt, boolean updateFirstSeen)
+        {
+            mLastSeen = Math.max(mLastSeen, observedAt);
+            if(updateFirstSeen)
+            {
+                mFirstSeen = mFirstSeen == null ? observedAt : Math.min(mFirstSeen, observedAt);
+            }
+
+            long firstSeen = mFirstSeen != null ?
+                Math.min(mRadioSystem.firstSeenEpochMilliseconds(), mFirstSeen) :
+                mRadioSystem.firstSeenEpochMilliseconds();
+            return new RadioSystem(mRadioSystem.radioSystemId(), mRadioSystem.protocolCode(),
+                mRadioSystem.identityDomain(), mRadioSystem.systemKey(), mRadioSystem.p25Wacn(),
+                mRadioSystem.p25SystemId(), mRadioSystem.dmrModelCode(), mRadioSystem.dmrNetworkId(),
+                mRadioSystem.nxdnLocationCategoryCode(), mRadioSystem.nxdnSystemId(), firstSeen);
+        }
+    }
+
+    private record IdentityKey(int radioSystemId, int kindCode, int homeWacn, int homeSystemId, int identityId)
+    {
+        private static IdentityKey from(int radioSystemId, Identity identity)
+        {
+            return new IdentityKey(radioSystemId, identity.kindCode(), identity.homeWacn(), identity.homeSystemId(),
+                identity.id());
+        }
+    }
+
+    private static final class IdentityDelta
+    {
+        private final int mSummaryId;
+        private final int[] mActionCounts = new int[ACTIONS.size()];
+        private long mFirstSeen;
+        private long mLastSeen;
+
+        private IdentityDelta(int summaryId)
+        {
+            mSummaryId = summaryId;
+        }
+
+        private void observe(long observedAt, ReceiverActivityRecords.Action action)
+        {
+            if(mSummaryId <= 0)
+            {
+                return;
+            }
+
+            if(mLastSeen <= 0)
+            {
+                mFirstSeen = observedAt;
+                mLastSeen = observedAt;
+            }
+            else
+            {
+                mFirstSeen = Math.min(mFirstSeen, observedAt);
+                mLastSeen = Math.max(mLastSeen, observedAt);
+            }
+
+            int actionIndex = action != ReceiverActivityRecords.Action.UNKNOWN ? ACTIONS.indexOf(action) : -1;
+            if(actionIndex >= 0)
+            {
+                mActionCounts[actionIndex]++;
+            }
+        }
     }
 
     /** Names the only counters a directory upsert may own; metadata-only observations use {@link #NONE}. */

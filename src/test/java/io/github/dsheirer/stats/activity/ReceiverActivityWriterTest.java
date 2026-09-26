@@ -128,6 +128,10 @@ class ReceiverActivityWriterTest
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection,
                 "SELECT grant_count + denial_count FROM trunked_signaling_activity_bucket"));
+            assertEquals(4, scalar(connection,
+                "SELECT sum(grant_count + denial_count) FROM radio_system_identity_summary"));
+            assertEquals(2, scalar(connection,
+                "SELECT grant_count + denial_count FROM trunked_radio_group_summary"));
             assertEquals(1, scalar(connection,
                 "SELECT value FROM statistics_status WHERE key='records_dropped'"));
         }
@@ -184,6 +188,112 @@ class ReceiverActivityWriterTest
         awaitWritten(writer, 3);
         assertEquals(3, writer.getWrittenRecords());
         writer.close();
+    }
+
+    @Test
+    void coalescesHotSummaryUpdatesWithoutLosingHistoryOrCounts() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("coalesced-writes.sqlite"));
+        insertConfiguredChannel(database);
+        long first = System.currentTimeMillis();
+        first -= Math.floorMod(first, TimeUnit.HOURS.toMillis(1));
+        first += TimeUnit.MINUTES.toMillis(1);
+        long primedAt = first + 1_000;
+        long last = first + 2_000;
+        int batchSize = 32;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(ReceiverActivityRecords.Action.GRANT, primedAt), true);
+        }
+
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 64, batchSize,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        awaitState(writer, ReceiverActivityStatus.State.RUNNING);
+        installWriteAudit(database);
+
+        for(int index = 0; index < batchSize; index++)
+        {
+            long observedAt = index == 0 ? last : index == 1 ? first : primedAt + index;
+            ReceiverActivityRecords.Action action = index % 2 == 0 ?
+                ReceiverActivityRecords.Action.GRANT : ReceiverActivityRecords.Action.DENIAL;
+            writer.enqueue(activity(action, observedAt));
+        }
+
+        awaitWritten(writer, batchSize);
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(batchSize + 1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(batchSize / 2 + 1, scalar(connection,
+                "SELECT sum(grant_count) FROM trunked_signaling_activity_bucket"));
+            assertEquals(batchSize / 2, scalar(connection,
+                "SELECT sum(denial_count) FROM trunked_signaling_activity_bucket"));
+            assertEquals(2L * (batchSize / 2 + 1), scalar(connection,
+                "SELECT sum(grant_count) FROM radio_system_identity_summary"));
+            assertEquals(batchSize, scalar(connection,
+                "SELECT sum(denial_count) FROM radio_system_identity_summary"));
+            assertEquals(batchSize / 2 + 1, scalar(connection,
+                "SELECT grant_count FROM trunked_radio_group_summary"));
+            assertEquals(batchSize / 2, scalar(connection,
+                "SELECT denial_count FROM trunked_radio_group_summary"));
+            assertEquals(first, scalar(connection, "SELECT first_seen_ms FROM receiver_channel"));
+            assertEquals(last, scalar(connection, "SELECT last_seen_ms FROM receiver_channel"));
+            assertEquals(first, scalar(connection, "SELECT first_seen_ms FROM radio_system"));
+            assertEquals(last, scalar(connection, "SELECT last_seen_ms FROM radio_system"));
+            assertEquals(2, scalar(connection, """
+                SELECT count(*) FROM radio_system_identity_summary
+                WHERE first_seen_ms=%d AND last_seen_ms=%d
+                """.formatted(first, last)));
+            assertEquals(1, scalar(connection,
+                "SELECT count(*) FROM test_update_audit WHERE table_name='receiver_channel'"));
+            assertEquals(2, scalar(connection,
+                "SELECT count(*) FROM test_update_audit WHERE table_name='radio_system'"));
+            assertEquals(4, scalar(connection,
+                "SELECT count(*) FROM test_update_audit WHERE table_name='radio_system_identity_summary'"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    @Test
+    void flushesIdentityBoundsBeforeApplyingStaleEncryptionMetadata() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("identity-metadata-order.sqlite"));
+        insertConfiguredChannel(database);
+        long first = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            ReceiverActivitySchema.recordActivity(connection,
+                activity(ReceiverActivityRecords.Action.GRANT, first), true);
+        }
+
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 3,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, first + 100));
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, first + 300));
+        writer.enqueue(activityWithEncryptionAlgorithm(first + 200, 7));
+        awaitWritten(writer, 3);
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(2, scalar(connection, """
+                SELECT count(*) FROM radio_system_identity_summary
+                WHERE last_seen_ms=%d AND last_encryption_algorithm_id IS NULL
+                  AND last_encryption_key_id IS NULL
+                """.formatted(first + 300)));
+            assertEquals(1, scalar(connection, """
+                SELECT count(*) FROM trunked_radio_group_summary
+                WHERE last_seen_ms=%d AND last_encryption_algorithm_id IS NULL
+                  AND last_encryption_key_id IS NULL
+                """.formatted(first + 300)));
+            assertEquals(4, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+        }
     }
 
     @Test
@@ -644,6 +754,24 @@ class ReceiverActivityWriterTest
                 SELECT id, alias_list_id, 1, 'observed', 7, 9, 1000, 2000, 2000
                 FROM alias WHERE name='Observed Alias'
                 """);
+        }
+    }
+
+    private static void installWriteAudit(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("CREATE TABLE test_update_audit(table_name TEXT NOT NULL)");
+            for(String table: List.of("receiver_channel", "radio_system", "radio_system_identity_summary"))
+            {
+                statement.executeUpdate("""
+                    CREATE TRIGGER test_%s_update AFTER UPDATE ON %s
+                    BEGIN
+                        INSERT INTO test_update_audit(table_name) VALUES ('%s');
+                    END
+                    """.formatted(table, table, table));
+            }
         }
     }
 
