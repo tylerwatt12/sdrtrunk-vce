@@ -642,6 +642,12 @@ async function main() {
     const systemObject = graphState.nodeObjects.get('system');
     assert.equal(systemObject.scale.value, 300);
     assert.equal(system.material.side, library.BackSide);
+    assert.deepEqual(system.geometry.args, [1, 24, 16],
+      'the interior enclosure should use a dense enough cage to remain visible from inside');
+    assert(system.material.opacity >= 0.28,
+      'the interior enclosure should remain visible without obscuring foreground entities');
+    assert.equal(system.material.depthTest, true);
+    assert.equal(system.material.depthWrite, false);
     assert.equal(system.material.fog, false);
     assert.equal(systemObject.children[1].visible, false,
       'the selected outline must not duplicate the full interior shell');

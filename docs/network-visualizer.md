@@ -9,8 +9,9 @@ conventional channels, triangular pyramids are observed source radios, and facet
 activity. The overview keeps those system spheres compact. Entering a system moves the camera inside its enclosing
 wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
 relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
-The enclosing system wireframe remains a stable structural boundary; Grant color and motion stay on talkgroups,
-radios, and their links instead of flashing the entire sphere.
+The enclosing system wireframe remains a persistent structural boundary. Its denser interior cage stays readable
+from inside without drawing over foreground entities; Grant color and motion stay on talkgroups, radios, and their
+links instead of flashing the entire sphere.
 
 Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities,
 active talkgroups, and their observed source radios remain sharp even at a distance, and label stacking follows camera

@@ -397,7 +397,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (materials.has(key)) return materials.get(key).material;
     const settings = { color: materialColor(state), transparent: true,
       opacity: interior ? (state === 'selected' ? 0.42 :
-        ['active', 'denial', 'check', 'emergency', 'page', 'busy'].includes(state) ? 0.32 : 0.2) :
+        ['active', 'denial', 'check', 'emergency', 'page', 'busy'].includes(state) ? 0.32 : 0.3) :
         materialOpacity(state),
       wireframe: true, depthTest: true, depthWrite: false, alphaToCoverage: true, fog: !depthClear };
     if (interior) settings.side = library.BackSide;
@@ -425,7 +425,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function geometry(kind) {
     if (geometries.has(kind)) return geometries.get(kind);
     let value;
-    if (kind === 'universe') value = new library.SphereGeometry(1, 12, 8);
+    if (kind === 'universeInterior') value = new library.SphereGeometry(1, 24, 16);
+    else if (kind === 'universe') value = new library.SphereGeometry(1, 12, 8);
     else if (kind === 'group') value = new library.BoxGeometry(1.55, 1.55, 1.55);
     else if (kind === 'aggregate') value = new library.IcosahedronGeometry(1, 0);
     else value = new library.CylinderGeometry(0, 1, 1.7, 3, 1, false);
@@ -463,7 +464,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const base = object.userData.visualizerBase;
     const selected = object.userData.visualizerSelected;
     const encrypted = object.userData.visualizerEncrypted;
-    base.geometry = geometry(kind);
+    base.geometry = geometry(interior ? 'universeInterior' : kind);
     base.material = meshMaterial(state, interior, depthClear);
     selected.geometry = base.geometry;
     selected.material = meshMaterial('selected', interior, true);
