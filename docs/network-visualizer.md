@@ -1,113 +1,83 @@
-# Network Visualizer
+# P25 Visualizer
 
-Network Visualizer is a live, session-scoped view of observed radio activity. Open it from **Listen > Network
-Visualizer**. Every visit starts empty and builds one shared canvas only from activity observed at that visit's live
-edge. It does not load saved systems, historical calls, idle Live rows, or subscriber catalogs.
+P25 Visualizer is a three-dimensional view of noteworthy P25 activity retained by VCE. Open it from **Listen > P25
+Visualizer**. The existing `?view=network-visualizer` URL remains valid.
 
-The 3D canvas uses a deliberately small wireframe vocabulary: spheres are radio systems, cubes are talkgroups or
-conventional channels, triangular pyramids are observed source radios, and faceted aggregate nodes account for hidden
-activity. The overview keeps those system spheres compact. Entering a system moves the camera inside its enclosing
-wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
-relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
-The enclosing system wireframe remains a persistent structural boundary. Its denser interior cage stays readable
-from inside without drawing over foreground entities; Grant color and motion stay on talkgroups, radios, and their
-links instead of flashing the entire sphere.
+The visualizer reads the same stored Activity history as the Activity page. It does not subscribe to live decoder
+messages, channel snapshots, call audio, or the completed-call queue. Newly recorded events normally appear after the
+next history poll, so this view intentionally trails over-the-air signaling by the normal storage and polling delay.
 
-Distance is deliberately visible: shapes and labels soften and fade into scene fog as they recede. Selected entities,
-active talkgroups, and their observed source radios remain sharp even at a distance, and label stacking follows camera
-depth so that nearer labels stay in front of farther ones.
+Detailed P25 activity history must be enabled, and the browser session must be allowed to view Radio activity. An
+empty view can mean that history is disabled, outside the selected time range, or contains no supported P25 records.
 
-## Reading the view
+## Reading the scene
 
-- A solid line is successful affiliation evidence currently retained for that observation scope.
-- A dashed line is transmission activity without an inferred affiliation.
-- Green **Grant** state means the shared Live feed has confirmed current RF transmission activity. It identifies an
-  observed active source and its target; an unknown source lights only the target hub. A one-second visual release
-  hold prevents short update boundaries from flashing. A control-channel grant by itself is not shown.
-- Amber introduces a newly observed successful affiliation. A comparable, ordered change moves the same node and is
-  recorded as **Observed affiliation change**. Conflicting site evidence is shown as ambiguous instead of inventing a
-  sequence.
-- Fading and removal are presentation aging only. They do not mean over-the-air de-affiliation, power-off, or listener
-  departure. Only a supported explicit presence-clear event removes authoritative evidence.
-- The lock treatment is encryption metadata, not a receiver error and not a fabricated audio waveform.
+- A wireframe sphere is one canonical P25 radio system.
+- A cube inside the sphere is a talkgroup observed in retained history.
+- A triangular node is a canonical subscriber radio. Numeric IDs from different systems remain separate.
+- A solid relationship records the latest accepted affiliation observed for a radio.
+- A faint relationship records an earlier accepted talkgroup relationship within the selected window.
 
-A large six-second affiliation alert appears only for an unambiguous, ordered change between comparable successful
-observations for the same radio and observation scope. First sightings, repeated or older observations, requests,
-denials, grants, transmissions, conflicting multi-site evidence, identity reconciliation, and post-gap recovery do not
-trigger it. The alert is cleared rather than replayed across a live gap, map clear, or hidden-tab backlog.
+Positions express logical relationships, not subscriber location, geography, RF coverage, or proof that a radio is
+currently listening. A radio never moves between system spheres.
 
-P25 accepted or confirmed structured affiliation evidence is supported. An accepted location registration with a
-real group is retained as distinct registration evidence; a group-less registration is presence only and does not
-create a radio node. Requests, denials, grants, generic decoder events, and alias matches do not create affiliations.
-DMR and NXDN calls retain the backend's canonical identity scope, but affiliation movement for those protocols is
-currently reported as unsupported rather than inferred. Analog AM/NBFM activity lights its configured channel
-without creating a synthetic radio or talkgroup.
+Accepted P25 affiliation history establishes a radio's relationship to a talkgroup. The first accepted observation in
+the selected window establishes its initial placement. A later comparable accepted observation for another talkgroup
+is shown as an **Observed affiliation change**. Requests and denials never move a radio, and an affiliation inferred
+only from ordinary voice traffic is not presented as proven.
 
-The existing demand-driven `network_activity` multiplex subscription also carries bounded P25 `signaling_observed`
-events for **Denial**, **Check**, **Emergency**, **Page**, and **Busy**. These are classified from structured decoder
-semantics on the existing observer worker and do not imply affiliation or transmission. **Join** and **Logout** are the
-existing accepted affiliation and explicit presence-clear events. Confirmed RF activity still comes only from the
-shared `channel_activity` coordinator; the visualizer opens no per-entity connections and consumes no raw decoder
-message stream.
+The activity drawer is deliberately limited to grouped noteworthy history:
 
-## Controls
+- observed affiliation changes and explicit logout;
+- emergency observations;
+- denials associated with a canonical radio identity;
+- busy or queued responses;
+- pages/call alerts and radio checks; and
+- explicit patch activity when the stored record establishes it.
 
-The 3D overview begins with observed systems only. Select a system to enter its live network, then select a talkgroup
-to focus its retained radios. The breadcrumb back button returns through those levels without replacing the canvas.
-The view remains three-dimensional at every level. Camera moves are animated unless reduced motion is enabled.
-Left-dragging the canvas orbits the current level, right-dragging pans it, and the mouse wheel zooms toward the pointer.
-Selecting a system or talkgroup also opens its inspector while the shared canvas drills into that level.
+Repeated denials for the same system-scoped radio are combined into one current entry. The view omits ordinary grants,
+calls, active-channel updates, generic acknowledgements, registration noise, and unresolved events.
 
-**Auto** is the default camera mode. The opening view keeps every observed universe in focus for four seconds, then enters the
-system with the most current confirmed calls, falling back to the most active system retained in this viewing session.
-Depth fog begins only inside a system.
+Stored history does not currently retain enough detail to distinguish inhibit/uninhibit commands, remote-monitor
+commands, call-preemption reasons, or individual denial reasons. P25 Visualizer does not guess at those meanings.
+Emergency records also do not establish a reliable emergency-clear time, so an emergency is presented as an observed
+event rather than persistent state.
 
-The automatic camera has one bounded cycle: a centered wide idle orbit, an activity shot, a six-second hang, then a
-centered zoom-out before idle orbit resumes. One confirmed Grant gets a close shot; concurrent Grants are framed
-together from their talkgroups and known source radios. The camera moves its viewpoint and aim together on one eased
-path, and both remain inside the enclosing system sphere. Recent Join, Logout, Denial, Check, Emergency, Page, Busy, and
-confirmed affiliation-change events rank above routine Grants and can preempt a routine hang. New routine Grants wait
-for the current hang to finish instead of making the camera chase each update. An unchanged active set extends the
-same shot rather than restarting its animation. Mouse orbit, pan, or zoom temporarily overrides Auto for ten seconds.
-Reduced motion disables automatic moves.
+## Time range and updates
 
-**Manual** disables automatic framing and rotation. With the canvas focused, W/S move forward and backward, A/D
-strafe, and the arrow keys turn the camera; drag still orbits and the wheel still zooms. An on-canvas guide appears
-only in Manual mode. Explicit system, talkgroup, and breadcrumb navigation remains animated because it is directly
-requested by the operator.
+Choose **1 hour** or **24 hours**. One hour is the default. Changing the range rebuilds the scene from a bounded,
+filtered history query.
 
-The compact toolbar switches Auto/Manual mode, opens the bounded **Observed activity** drawer, clears the live map,
-enters fullscreen, and changes display density.
-Graph objects are not draggable, so pointer gestures remain dedicated to predictable orbit, pan, and zoom controls.
+Initial history is reduced chronologically into the current scene without replaying animations or interrupting the
+camera. After that initial load, the browser polls forward from its stored high-water mark. Overlapping records are
+deduplicated, and every accepted record updates the graph even when it does not qualify for camera attention.
 
-Observed activity follows the newest event by default. Short bursts of routine Grant, Join, Logout, Denial, Check,
-Page, and Busy observations are grouped while emergencies and affiliation changes remain individual. Scrolling away
-from the newest event pauses following and keeps the reading position stable; the new-event control returns the drawer
-to the latest activity.
+After loading, the view automatically enters the system with the most supported noteworthy activity. It never creates
+spheres for saved systems that had no qualifying history in the selected window.
 
-**Clear map** clears this browser session's retained entities, activity history, selection, transitions, active effects,
-and comparison state and establishes a new live edge. It does not stop receivers, delete receiver history, change
-Hold/Avoid, or alter scan lists. Display settings remain separate.
+## Camera controls
 
-The canvas omits retained-count, offscreen-entity, and persistent gap banners so they do not cover the network.
-Transport loss changes the toolbar status badge to
-**Live gap**; active indicators become uncertain and stop, and the view never animates across the missing interval.
-Rendering pauses while the tab is hidden, while bounded live-state ingestion continues without an animation backlog.
+**Auto** is the default. Inside a system it slowly orbits while idle. A qualifying newly stored event produces one
+deliberate pan and zoom, a five-second hold, and a smooth return to the centered orbit. Automatic attention stays in
+the currently viewed system and uses this priority:
 
-## Balanced safety limits
+1. emergency;
+2. observed affiliation change;
+3. denial;
+4. other supported noteworthy activity.
 
-The default profile renders at most 1,000 total nodes, 900 links, 80 labels, 150 effect particles, and 50 migration
-trails. It softly targets 100 radios per talkgroup, 1,000 radios overall, 80 expanded talkgroups, and 8 expanded
-systems. Suppressed entities are represented by explicit `+N` aggregates: known sources use retained-radio counts,
-while excess unknown or duplicate active legs are identified as call legs. Retained session state is separately bounded
-to 20,000 radios, 5,000 hubs, 64 regions, 5,000 semantic events, and 40,000 deduplication entries. Inactive,
-unselected state is eligible for removal after 30 minutes and can be evicted sooner at capacity.
+At most one equal-priority focus begins during the eight-second cooldown. A strictly higher-priority event may
+interrupt; equal- or lower-priority requests are discarded rather than queued. Camera throttling never suppresses the
+underlying graph or activity-drawer update.
 
-These are guardrails, not a claim about the receiver's whole subscriber population and not a guaranteed frame rate.
-The current transport schema and loss semantics are documented in [Web API v1](api-v1.md#live-data).
+**Manual** disables all automatic camera movement. With the canvas focused, W/S move forward and backward, A/D
+strafe, the arrow keys turn the view, mouse drag orbits, and the wheel zooms. Nodes are not draggable.
 
-## Deterministic development fixture
+Selecting a system enters its sphere. The back control returns to the shared system overview without replacing the
+canvas. Renderer resources, polling, timers, and input listeners are released when leaving the page.
 
-On a loopback host only, append `network_fixture=1` while opening the view to run the bounded deterministic fixture.
-The page labels fixture mode explicitly and does not connect it to receiver activity. Without that exact local opt-in,
-the view never substitutes demo events for a disconnected production feed.
+## Data scope
+
+This view intentionally supports canonical P25 trunked-system history only. Conventional channels, DMR, and NXDN are
+not projected into P25 system spheres. The stored Activity rows remain the source of truth; P25 Visualizer does not
+change receiver decoding, Hold/Avoid state, scan lists, aliases, or persisted activity.

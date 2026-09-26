@@ -35,11 +35,9 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
-import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
-import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -153,12 +151,11 @@ public class StatsWebServerService implements AutoCloseable
     private static final int TOPIC_CHANNEL_DIAGNOSTICS = 4;
     private static final int TOPIC_TUNER_DIAGNOSTICS = 5;
     private static final int TOPIC_FREQUENCY_AUDIO = 6;
-    private static final int TOPIC_NETWORK_ACTIVITY = 7;
-    private static final int TOPIC_MAXIMUM = TOPIC_NETWORK_ACTIVITY;
+    private static final int TOPIC_MAXIMUM = TOPIC_FREQUENCY_AUDIO;
     private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "decode_events",
-        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio", "network_activity");
+        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "frequency_audio");
     static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
         WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN);
 
@@ -178,10 +175,6 @@ public class StatsWebServerService implements AutoCloseable
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
-    private final StatsLiveEventHub mNetworkActivityHub = new StatsLiveEventHub(32, 256);
-    private final Object mNetworkActivitySubscriptionLock = new Object();
-    private final Listener<DecodeEventViewService.NetworkEventView> mNetworkActivityViewListener =
-        event -> mNetworkActivityHub.publish("network_event", networkActivityEvent(event));
     private final StatsWebCallService mWebCallService;
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
@@ -894,10 +887,6 @@ public class StatsWebServerService implements AutoCloseable
                 mDecodeEventViewService.removeListener(mDecodeEventViewListener);
             }
 
-            synchronized(mNetworkActivitySubscriptionLock)
-            {
-                mDecodeEventViewService.removeNetworkListener(mNetworkActivityViewListener);
-            }
         }
 
         if(mChannelDiagnosticService != null)
@@ -1460,7 +1449,6 @@ public class StatsWebServerService implements AutoCloseable
                 }
             }
             case "decode_events" -> decodeEventScope(uri);
-            case "network_activity" -> networkActivityRequest(uri);
             case "decode_messages" -> decodeMessageScope(uri);
             case "channel_diagnostics" -> channelDiagnosticScope(uri);
             case "tuner_diagnostics" -> tunerDiagnosticRequest(uri);
@@ -1689,31 +1677,6 @@ public class StatsWebServerService implements AutoCloseable
             subscriptionId);
     }
 
-    private static NetworkActivityRequest networkActivityRequest(URI uri)
-    {
-        StatsRequest request = StatsRequest.from(uri);
-        String subscriptionId = request.text("subscription_id");
-
-        if(subscriptionId != null)
-        {
-            try
-            {
-                subscriptionId = UUID.fromString(subscriptionId).toString();
-            }
-            catch(IllegalArgumentException exception)
-            {
-                throw new StatsApiException(400, "subscription_id is invalid");
-            }
-        }
-
-        request.requireFullyConsumed();
-        return new NetworkActivityRequest(subscriptionId);
-    }
-
-    static String networkActivitySubscriptionId(URI uri)
-    {
-        return networkActivityRequest(uri).subscriptionId();
-    }
 
     static DecodeMessageViewService.Scope decodeMessageScope(URI uri)
     {
@@ -2396,7 +2359,6 @@ public class StatsWebServerService implements AutoCloseable
 
         mLiveService.close();
         mDecodeEventHub.close();
-        mNetworkActivityHub.close();
         if(mDecodeMessageViewService != null)
         {
             mDecodeMessageViewService.close();
@@ -3015,7 +2977,6 @@ public class StatsWebServerService implements AutoCloseable
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
         private StatsLiveEventHub.Subscription mDecodeEvents;
-        private StatsLiveEventHub.Subscription mNetworkActivity;
         private DecodeMessageViewService.Session mDecodeMessages;
         private ChannelDiagnosticService.Session mChannelDiagnostics;
         private TunerDiagnosticService.Session mTunerDiagnostics;
@@ -3030,8 +2991,6 @@ public class StatsWebServerService implements AutoCloseable
         private long mChannelActivityIngressDrops;
         private long mDecodeEventDrops;
         private long mDecodeEventIngressDrops;
-        private long mNetworkActivityDrops;
-        private long mNetworkActivityIngressDrops;
         private long mDecodeMessageDrops;
         private boolean mMessagePermit;
         private boolean mChannelDiagnosticPermit;
@@ -3091,7 +3050,6 @@ public class StatsWebServerService implements AutoCloseable
             boolean wrote = reconcile(output);
             wrote |= pumpEvents(output, TOPIC_CHANNEL_ACTIVITY, mChannelActivity);
             wrote |= pumpEvents(output, TOPIC_DECODE_EVENTS, mDecodeEvents);
-            wrote |= pumpEvents(output, TOPIC_NETWORK_ACTIVITY, mNetworkActivity);
 
             long now = System.nanoTime();
 
@@ -3233,26 +3191,6 @@ public class StatsWebServerService implements AutoCloseable
                 if(dropped > 0)
                 {
                     writeMultiplexJson(output, TOPIC_DECODE_EVENTS, "live_gap", Map.of("dropped", dropped));
-                    wrote = true;
-                }
-            }
-
-            if(mNetworkActivity != null)
-            {
-                long eventDrops = mNetworkActivity.droppedCount();
-                long ingressDrops = mDecodeEventViewService != null ?
-                    mDecodeEventViewService.getDroppedNetworkObservationCount() : mNetworkActivityIngressDrops;
-                long outputDrops = output.eventDrops(TOPIC_NETWORK_ACTIVITY);
-                long dropped = positiveDelta(eventDrops, mNetworkActivityDrops) +
-                    positiveDelta(ingressDrops, mNetworkActivityIngressDrops) +
-                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_NETWORK_ACTIVITY]);
-                mNetworkActivityDrops = eventDrops;
-                mNetworkActivityIngressDrops = ingressDrops;
-                mObservedOutputDrops[TOPIC_NETWORK_ACTIVITY] = outputDrops;
-
-                if(dropped > 0)
-                {
-                    writeMultiplexJson(output, TOPIC_NETWORK_ACTIVITY, "live_gap", Map.of("dropped", dropped));
                     wrote = true;
                 }
             }
@@ -3435,46 +3373,6 @@ public class StatsWebServerService implements AutoCloseable
                             request.subscriptionId(), filterCatalog));
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
-                case "network_activity" -> {
-                    if(mDecodeEventViewService == null)
-                    {
-                        throw new IllegalStateException("Network activity viewer is unavailable");
-                    }
-
-                    NetworkActivityRequest request = networkActivityRequest(uri);
-                    long ingressDropBaseline = mDecodeEventViewService.getDroppedNetworkObservationCount();
-                    AtomicLong liveEdge = new AtomicLong(Long.MAX_VALUE);
-                    long sourceGeneration;
-                    long liveEdgeEpoch;
-
-                    synchronized(mNetworkActivitySubscriptionLock)
-                    {
-                        mNetworkActivity = mNetworkActivityHub.subscribe(event ->
-                            event.data() instanceof NetworkActivityEvent view &&
-                                view.observationEpoch() >= liveEdge.get());
-
-                        if(mNetworkActivity != null)
-                        {
-                            mDecodeEventViewService.addNetworkListener(mNetworkActivityViewListener);
-                            liveEdgeEpoch = mDecodeEventViewService.advanceLiveEdge(liveEdge);
-                            sourceGeneration = mDecodeEventViewService.getSourceGeneration();
-                        }
-                        else
-                        {
-                            liveEdgeEpoch = -1;
-                            sourceGeneration = -1;
-                        }
-                    }
-
-                    requiredSubscription(mNetworkActivity, topic);
-                    mNetworkActivityDrops = 0;
-                    mNetworkActivityIngressDrops = ingressDropBaseline;
-                    writeMultiplexRecoveryJson(output, TOPIC_NETWORK_ACTIVITY, "source_change",
-                        new NetworkActivitySourceState(request.subscriptionId() != null ? request.subscriptionId() :
-                            UUID.randomUUID().toString(), sourceGeneration,
-                            liveEdgeEpoch));
-                    observeOutputDrops(output, TOPIC_NETWORK_ACTIVITY);
-                }
                 case "decode_messages" -> {
                     if(mDecodeMessageViewService == null || !mDecodeMessageClients.tryAcquire())
                     {
@@ -3612,7 +3510,6 @@ public class StatsWebServerService implements AutoCloseable
                     mChannelActivityIngressDrops = 0;
                 }
                 case "decode_events" -> closeDecodeEvents();
-                case "network_activity" -> closeNetworkActivity();
                 case "decode_messages" -> closeDecodeMessages();
                 case "channel_diagnostics" -> closeChannelDiagnostics();
                 case "tuner_diagnostics" -> closeTunerDiagnostics();
@@ -3644,22 +3541,6 @@ public class StatsWebServerService implements AutoCloseable
 
                 mDecodeEventDrops = 0;
                 mDecodeEventIngressDrops = 0;
-            }
-        }
-
-        private void closeNetworkActivity()
-        {
-            synchronized(mNetworkActivitySubscriptionLock)
-            {
-                mNetworkActivity = closeSubscription(mNetworkActivity);
-
-                if(mDecodeEventViewService != null && !mNetworkActivityHub.hasSubscribers())
-                {
-                    mDecodeEventViewService.removeNetworkListener(mNetworkActivityViewListener);
-                }
-
-                mNetworkActivityDrops = 0;
-                mNetworkActivityIngressDrops = 0;
             }
         }
 
@@ -3839,110 +3720,6 @@ public class StatsWebServerService implements AutoCloseable
         return DiagnosticStreamFrame.jsonState(generation, revision, ApiHttpResponse.encodePayload(presented));
     }
 
-    /** Enriches one typed semantic event from the immutable navigation snapshot on the observer worker. */
-    private NetworkActivityEvent networkActivityEvent(DecodeEventViewService.NetworkEventView event)
-    {
-        WebEntityNavigationCatalog.Channel channel =
-            mEntityCatalog.snapshot().channel(event.configurationId());
-        WebEntityNavigationCatalog.Channel canonicalChannel =
-            canUseCanonicalP25NetworkScope(channel, event.site()) ? channel : null;
-        WebEntityRef.KeyRef systemReference = canonicalChannel != null ? canonicalChannel.radioSystemRef() : null;
-        WebEntityRef.KeyRef channelReference = channel != null ? channel.entityRef() : null;
-        WebEntityRef radioReference = networkIdentityReference(canonicalChannel, Form.RADIO, event.radio());
-        WebEntityRef groupReference = networkIdentityReference(canonicalChannel, Form.TALKGROUP, event.group());
-        String radioSystemKey = systemReference != null ? systemReference.key() : null;
-
-        return new NetworkActivityEvent(event.eventId(), event.sequence(), event.sourceGeneration(),
-            event.observationEpoch(), event.observedAtMs(), event.kind(), event.evidenceType(), event.outcome(),
-            event.action(), event.eventType(), event.detail(),
-            radioSystemKey != null ? "radio_system" : "channel", event.configurationId(), event.channelName(),
-            event.systemName(), event.siteName(), event.protocol(), event.frequencyHz(), event.timeslot(), event.site(),
-            radioSystemKey, systemReference != null ? systemReference.toMap() : null,
-            channelReference != null ? channelReference.toMap() : null,
-            networkIdentity(event.configurationId(), Form.RADIO, event.radio(), radioReference),
-            networkIdentity(event.configurationId(), Form.TALKGROUP, event.group(), groupReference));
-    }
-
-    /**
-     * Uses a cached canonical P25 mapping only while it remains compatible with current structured site evidence.
-     * A stale catalog refresh must not place an event from one system into another system's namespace.
-     */
-    static boolean canUseCanonicalP25NetworkScope(WebEntityNavigationCatalog.Channel channel,
-                                                  DecodeEventViewService.NetworkSiteView site)
-    {
-        if(channel == null)
-        {
-            return false;
-        }
-
-        return channel.hasCompatibleP25SystemScope(site != null ? site.wacn() : null,
-            site != null ? site.systemId() : null);
-    }
-
-    private static WebEntityRef networkIdentityReference(WebEntityNavigationCatalog.Channel channel, Form form,
-                                                         DecodeEventViewService.NetworkIdentityView identity)
-    {
-        if(channel == null || identity == null || channel.radioSystemRef() == null)
-        {
-            return null;
-        }
-
-        if(identity.homeWacn() != null && identity.homeSystemId() != null && identity.homeIdentityId() != null)
-        {
-            return channel.identity(form, Protocol.APCO25, identity.homeIdentityId(), identity.homeWacn(),
-                identity.homeSystemId());
-        }
-
-        return channel.identity(form, Protocol.APCO25, identity.nativeId());
-    }
-
-    static Map<String,Object> networkIdentity(String configurationId, Form form,
-                                              DecodeEventViewService.NetworkIdentityView identity,
-                                              WebEntityRef reference)
-    {
-        if(identity == null)
-        {
-            return null;
-        }
-
-        LinkedHashMap<String,Object> value = new LinkedHashMap<>();
-        value.put("native_id", identity.nativeId());
-        value.put("observed_local_id", identity.observedLocalId());
-
-        if(identity.homeWacn() != null)
-        {
-            value.put("home_wacn", identity.homeWacn());
-        }
-        if(identity.homeSystemId() != null)
-        {
-            value.put("home_system_id", identity.homeSystemId());
-        }
-        if(identity.homeIdentityId() != null)
-        {
-            value.put("home_identity_id", identity.homeIdentityId());
-        }
-
-        String identityKey;
-        if(reference instanceof WebEntityRef.ScopedIdentityRef scoped)
-        {
-            identityKey = scoped.identityKey();
-            value.put("entity_ref", scoped.toMap());
-        }
-        else
-        {
-            identityKey = WebIdentityKey.channelScoped(configurationId, "p25", form,
-                identity.observedLocalId(), identity.homeWacn(), identity.homeSystemId(),
-                identity.homeIdentityId());
-        }
-
-        if(identityKey != null)
-        {
-            value.put("identity_key", identityKey);
-        }
-
-        return Map.copyOf(value);
-    }
-
     static WebCapability capabilityForTopic(String topic)
     {
         return switch(topic)
@@ -3963,7 +3740,6 @@ public class StatsWebServerService implements AutoCloseable
             case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;
             case "tuner_diagnostics" -> TOPIC_TUNER_DIAGNOSTICS;
             case "frequency_audio" -> TOPIC_FREQUENCY_AUDIO;
-            case "network_activity" -> TOPIC_NETWORK_ACTIVITY;
             default -> TOPIC_CONTROL;
         };
     }
@@ -3978,26 +3754,6 @@ public class StatsWebServerService implements AutoCloseable
 
     private record DecodeEventSourceState(String configurationId, Long frequencyHz, Integer timeslot,
                                           String subscriptionId, FilterCatalog filterCatalog)
-    {
-    }
-
-    private record NetworkActivitySourceState(String subscriptionId, long sourceGeneration, long liveEdgeEpoch)
-    {
-    }
-
-    private record NetworkActivityRequest(String subscriptionId)
-    {
-    }
-
-    private record NetworkActivityEvent(String eventId, long sequence, long sourceGeneration,
-                                        long observationEpoch, long observedAtMs, String kind,
-                                        String evidenceType, String outcome, String action, String eventType,
-                                        String detail, String scopeKind,
-                                        String configurationId, String channelName, String systemName,
-                                        String siteName, String protocol, Long frequencyHz, Integer timeslot,
-                                        DecodeEventViewService.NetworkSiteView site, String radioSystemKey,
-                                        Map<String,Object> systemEntityRef, Map<String,Object> channelEntityRef,
-                                        Map<String,Object> radio, Map<String,Object> group)
     {
     }
 

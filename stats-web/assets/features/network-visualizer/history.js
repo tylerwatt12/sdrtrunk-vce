@@ -1,0 +1,480 @@
+'use strict';
+
+const P25_HISTORY_ACTIONS = Object.freeze([
+  'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
+  'PATCH', 'PATCH_CREATE', 'PATCH_CANCEL'
+]);
+
+const ACTIONS = new Set(P25_HISTORY_ACTIONS);
+const MAX_EVENTS = 120;
+const MAX_SEEN_IDS = 30_000;
+const MAX_PRIOR_GROUPS = 3;
+const REPEAT_FOCUS_MS = 60_000;
+const SYSTEM_RADIUS = 260;
+
+const CAMERA_PRIORITY = Object.freeze({
+  emergency: 4,
+  movement: 3,
+  denial: 3,
+  patch: 2,
+  busy: 2,
+  queued: 2,
+  check: 1,
+  page: 1,
+  logout: 1
+});
+
+function finite(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function text(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function actionOf(row) {
+  return text(row?.action).toUpperCase();
+}
+
+function keyKind(key) {
+  const value = text(key).toLowerCase();
+  if (value.startsWith('v1-r-')) return 'radio';
+  if (value.startsWith('v1-g-')) return 'talkgroup';
+  if (value.startsWith('v1-p-')) return 'patch_group';
+  return '';
+}
+
+function isP25Trunked(row) {
+  return Number(row?.protocol_code) === 1 && text(row?.channel_kind).toUpperCase() === 'TRUNKED' &&
+    Boolean(text(row?.radio_system_key));
+}
+
+function nativeId(key, explicit) {
+  const value = Number(explicit);
+  if (Number.isSafeInteger(value) && value >= 0) return value;
+  const tail = text(key).split('-').at(-1);
+  return /^\d+$/.test(tail) ? Number(tail) : null;
+}
+
+function hex(value, width) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number.toString(16).toUpperCase().padStart(width, '0') : '';
+}
+
+function sourceRadioKey(row) {
+  const key = text(row?.source_identity_key);
+  return Number(row?.source_identity_kind_code) === 2 || keyKind(key) === 'radio' ? key : '';
+}
+
+function targetRadioKey(row) {
+  const key = text(row?.target_identity_key);
+  const kind = text(row?.target_kind).toLowerCase();
+  return kind === 'radio' || Number(row?.target_identity_kind_code) === 2 || keyKind(key) === 'radio' ? key : '';
+}
+
+function targetGroupKey(row, allowPatch = true) {
+  const key = text(row?.target_identity_key);
+  const kind = keyKind(key);
+  if (kind === 'talkgroup' || allowPatch && kind === 'patch_group') return key;
+  const targetKind = text(row?.target_kind).toLowerCase();
+  return targetKind === 'talkgroup' || allowPatch && targetKind === 'patch_group' ? key : '';
+}
+
+function systemLabel(row) {
+  const supplied = text(row?.system_name);
+  const wacn = hex(row?.wacn, 5);
+  const system = hex(row?.system_id, 3);
+  const identity = wacn && system ? `${wacn}:${system}` : wacn || system;
+  return supplied ? `${supplied}${identity ? ` · ${identity}` : ''}` : identity ? `P25 ${identity}` : 'P25 radio system';
+}
+
+function groupLabel(row, key) {
+  return text(row?.target_alias_name) || text(row?.target_name) ||
+    String(nativeId(key, row?.target_native_id ?? row?.target_id) ?? 'Talkgroup');
+}
+
+function radioLabel(row, key, role = 'source') {
+  const source = role === 'source';
+  return text(row?.[source ? 'source_alias_name' : 'target_alias_name']) ||
+    text(row?.[source ? 'source_talker_alias' : 'target_talker_alias']) ||
+    String(nativeId(key, source ? row?.source_native_id ?? row?.source_radio_id :
+      row?.target_native_id ?? row?.target_id) ?? 'Radio');
+}
+
+function entityKey(systemKey, identityKey) {
+  return `${systemKey}:${identityKey}`;
+}
+
+function stableHash(value) {
+  let hash = 2166136261;
+  for (const character of String(value || '')) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function unit(value) {
+  return (stableHash(value) & 0xffff) / 0xffff;
+}
+
+function systemPosition(ordinal) {
+  if (!ordinal) return { x: 0, y: 0, z: 0 };
+  const angle = ordinal * Math.PI * (3 - Math.sqrt(5));
+  const radius = 720 * Math.sqrt(ordinal);
+  return { x: Math.cos(angle) * radius, y: ((ordinal % 5) - 2) * 105, z: Math.sin(angle) * radius };
+}
+
+function localPosition(key, minimum, maximum) {
+  const vertical = unit(`${key}:y`) * 2 - 1;
+  const angle = unit(`${key}:a`) * Math.PI * 2;
+  const radius = minimum + unit(`${key}:r`) * (maximum - minimum);
+  const horizontal = Math.sqrt(Math.max(0, 1 - vertical * vertical));
+  return { x: Math.cos(angle) * horizontal * radius, y: vertical * radius,
+    z: Math.sin(angle) * horizontal * radius };
+}
+
+function createP25HistoryState(options = {}) {
+  return {
+    systems: new Map(),
+    groups: new Map(),
+    radios: new Map(),
+    events: new Map(),
+    seenIds: new Set(),
+    seenOrder: [],
+    latestId: 0,
+    truncated: false,
+    maximumRadios: Math.max(100, Number(options.maximumRadios) || 20_000),
+    maximumGroups: Math.max(50, Number(options.maximumGroups) || 5_000)
+  };
+}
+
+function rememberId(state, id) {
+  if (!Number.isSafeInteger(id) || id < 1 || state.seenIds.has(id)) return false;
+  state.seenIds.add(id);
+  state.seenOrder.push(id);
+  state.latestId = Math.max(state.latestId, id);
+  while (state.seenOrder.length > MAX_SEEN_IDS) state.seenIds.delete(state.seenOrder.shift());
+  return true;
+}
+
+function ensureSystem(state, row) {
+  const key = text(row.radio_system_key);
+  let system = state.systems.get(key);
+  if (!system) {
+    const position = systemPosition(state.systems.size);
+    system = { key, label: systemLabel(row), wacn: row.wacn ?? null, systemId: row.system_id ?? null,
+      ordinal: state.systems.size, x: position.x, y: position.y, z: position.z, radius: SYSTEM_RADIUS,
+      score: 0, lastAtMs: 0, groupKeys: new Set(), radioKeys: new Set() };
+    state.systems.set(key, system);
+  } else if (!system.label || system.label.startsWith('P25 ')) {
+    system.label = systemLabel(row);
+  }
+  system.lastAtMs = Math.max(system.lastAtMs, finite(row.observed_at_ms));
+  return system;
+}
+
+function ensureGroup(state, system, row, identityKey) {
+  if (!identityKey) return null;
+  const key = entityKey(system.key, identityKey);
+  let group = state.groups.get(key);
+  if (!group) {
+    if (state.groups.size >= state.maximumGroups) {
+      state.truncated = true;
+      return null;
+    }
+    const local = localPosition(key, 72, 160);
+    group = { key, identityKey, systemKey: system.key, label: groupLabel(row, identityKey),
+      nativeId: nativeId(identityKey, row.target_native_id ?? row.target_id), x: system.x + local.x,
+      y: system.y + local.y, z: system.z + local.z, lastAtMs: 0, radioKeys: new Set(),
+      signalAction: '', highlightUntilMs: 0 };
+    state.groups.set(key, group);
+    system.groupKeys.add(key);
+  } else {
+    const label = groupLabel(row, identityKey);
+    if (label && /^\d+$/.test(group.label)) group.label = label;
+  }
+  group.lastAtMs = Math.max(group.lastAtMs, finite(row.observed_at_ms));
+  return group;
+}
+
+function ensureRadio(state, system, row, identityKey, role) {
+  if (!identityKey) return null;
+  const key = entityKey(system.key, identityKey);
+  let radio = state.radios.get(key);
+  if (!radio) {
+    if (state.radios.size >= state.maximumRadios) {
+      state.truncated = true;
+      return null;
+    }
+    const local = localPosition(key, 52, 145);
+    radio = { key, identityKey, systemKey: system.key, label: radioLabel(row, identityKey, role),
+      nativeId: nativeId(identityKey, role === 'source' ? row.source_native_id ?? row.source_radio_id :
+        row.target_native_id ?? row.target_id), x: system.x + local.x, y: system.y + local.y,
+      z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', affiliations: new Map(),
+      priorGroupKeys: [], signalAction: '', highlightUntilMs: 0 };
+    state.radios.set(key, radio);
+    system.radioKeys.add(key);
+  } else {
+    const label = radioLabel(row, identityKey, role);
+    if (label && /^\d+$/.test(radio.label)) radio.label = label;
+  }
+  radio.lastAtMs = Math.max(radio.lastAtMs, finite(row.observed_at_ms));
+  return radio;
+}
+
+function highlight(entity, action, untilMs) {
+  if (!entity) return;
+  entity.signalAction = action.toLowerCase();
+  entity.highlightUntilMs = Math.max(entity.highlightUntilMs, untilMs);
+}
+
+function trimEvents(state) {
+  if (state.events.size <= MAX_EVENTS) return;
+  const oldest = [...state.events.values()].sort((left, right) => left.observedAtMs - right.observedAtMs)
+    .slice(0, state.events.size - MAX_EVENTS);
+  oldest.forEach((event) => state.events.delete(event.key));
+}
+
+function upsertEvent(state, value) {
+  const previous = state.events.get(value.key);
+  state.events.set(value.key, { ...previous, ...value,
+    firstObservedAtMs: previous?.firstObservedAtMs || value.observedAtMs });
+  trimEvents(state);
+  return !previous || value.observedAtMs - previous.observedAtMs >= REPEAT_FOCUS_MS;
+}
+
+function relationScope(row) {
+  const configuration = text(row.configuration_id);
+  if (configuration) return `configuration:${configuration}`;
+  const channel = Number(row.channel_id);
+  return Number.isSafeInteger(channel) && channel > 0 ? `channel:${channel}` : '';
+}
+
+function eventDetail(action, radio, group, previousGroup) {
+  if (action === 'movement') return `${radio.label} · ${previousGroup.label} → ${group.label}`;
+  if (action === 'logout') return `${radio.label} deregistered`;
+  if (radio && group) return `${radio.label} · ${group.label}`;
+  return radio?.label || group?.label || 'P25 system activity';
+}
+
+function applyJoin(state, system, row, result, initial, ingestedAtMs) {
+  const radioIdentity = sourceRadioKey(row);
+  const groupIdentity = targetGroupKey(row, false);
+  if (!radioIdentity || !groupIdentity) return;
+  const radio = ensureRadio(state, system, row, radioIdentity, 'source');
+  const group = ensureGroup(state, system, row, groupIdentity);
+  if (!radio || !group) return;
+  const atMs = finite(row.observed_at_ms);
+  const id = Number(row.id) || 0;
+  const scope = relationScope(row);
+  const previous = scope ? radio.affiliations.get(scope) : null;
+  if (previous && (atMs < previous.atMs || atMs === previous.atMs && id <= previous.id)) return;
+  const firstPlacement = radio.affiliations.size === 0 && !radio.visualGroupKey;
+  const previousGroup = previous && previous.groupKey !== group.key ? state.groups.get(previous.groupKey) : null;
+  if (scope) radio.affiliations.set(scope, { groupKey: group.key, atMs, id });
+  const latestEvidence = [...radio.affiliations.values()].sort((left, right) => right.atMs - left.atMs ||
+    right.id - left.id)[0];
+  if (!scope || latestEvidence?.groupKey === group.key) radio.visualGroupKey = group.key;
+  group.radioKeys.add(radio.key);
+  if (firstPlacement) system.score += 1;
+
+  if (!previousGroup) return;
+  previousGroup.radioKeys.delete(radio.key);
+  radio.priorGroupKeys = [previousGroup.key, ...radio.priorGroupKeys.filter((key) => key !== previousGroup.key)]
+    .slice(0, MAX_PRIOR_GROUPS);
+  if (!initial) {
+    highlight(radio, 'movement', ingestedAtMs + 8_000);
+    highlight(group, 'movement', ingestedAtMs + 8_000);
+  }
+  const event = { key: `movement:${radio.key}`, category: 'movement', title: 'Observed affiliation change',
+    detail: eventDetail('movement', radio, group, previousGroup), observedAtMs: atMs, systemKey: system.key,
+    focusKeys: [radio.key, group.key], priority: CAMERA_PRIORITY.movement };
+  const firstGroupedEvent = !state.events.has(event.key);
+  upsertEvent(state, event);
+  if (firstGroupedEvent) system.score += 4;
+  if (!initial) result.focusCandidates.push(event);
+}
+
+function applySignal(state, system, row, result, initial, action, ingestedAtMs) {
+  const atMs = finite(row.observed_at_ms);
+  let radioIdentity = '';
+  let role = 'source';
+  if (action === 'DENIAL') {
+    radioIdentity = targetRadioKey(row);
+    role = radioIdentity ? 'target' : 'source';
+    if (!radioIdentity) radioIdentity = sourceRadioKey(row);
+    if (!radioIdentity) return;
+  } else if (action === 'CHECK' || action === 'PAGE') {
+    radioIdentity = targetRadioKey(row);
+    role = 'target';
+    if (!radioIdentity) radioIdentity = sourceRadioKey(row);
+  } else {
+    radioIdentity = sourceRadioKey(row) || targetRadioKey(row);
+    role = sourceRadioKey(row) ? 'source' : 'target';
+  }
+  const groupIdentity = targetGroupKey(row);
+  const group = groupIdentity ? ensureGroup(state, system, row, groupIdentity) : null;
+  const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, role) : null;
+  if (!radio && !group) return;
+
+  const category = action.toLowerCase();
+  const priority = CAMERA_PRIORITY[category] || CAMERA_PRIORITY.patch;
+  const entity = radio || group;
+  const eventKey = `${category}:${entity.key}`;
+  const title = ({ EMERGENCY: 'Emergency observed', DENIAL: 'Denied', CHECK: 'Radio check', PAGE: 'Page',
+    BUSY: 'Busy response', QUEUED: 'Queued response', PATCH: 'Patch observed',
+    PATCH_CREATE: 'Patch created', PATCH_CANCEL: 'Patch removed' })[action] || action;
+  const eventCategory = action.startsWith('PATCH') ? 'patch' : category;
+  const event = { key: eventKey, category: eventCategory, title,
+    detail: eventDetail(category, radio, group), observedAtMs: atMs, systemKey: system.key,
+    focusKeys: [radio?.key, group?.key].filter(Boolean), priority };
+  const firstGroupedEvent = !state.events.has(eventKey);
+  const focusEligible = upsertEvent(state, event);
+  if (!initial) {
+    const untilMs = ingestedAtMs + (action === 'EMERGENCY' ? 12_000 : 7_000);
+    highlight(radio, eventCategory, untilMs);
+    highlight(group, eventCategory, untilMs);
+  }
+  if (firstGroupedEvent) {
+    system.score += action === 'EMERGENCY' ? 8 : action === 'DENIAL' ? 3 : 2;
+  }
+  if (!initial && focusEligible) result.focusCandidates.push(event);
+}
+
+function applyLogout(state, system, row, result, initial, ingestedAtMs) {
+  const identity = sourceRadioKey(row) || targetRadioKey(row);
+  if (!identity) return;
+  const role = sourceRadioKey(row) ? 'source' : 'target';
+  const radio = ensureRadio(state, system, row, identity, role);
+  if (!radio) return;
+  const atMs = finite(row.observed_at_ms);
+  const previousVisualGroupKey = radio.visualGroupKey;
+  const scope = relationScope(row);
+  if (scope) radio.affiliations.delete(scope);
+  const remaining = [...radio.affiliations.values()].sort((left, right) => right.atMs - left.atMs ||
+    right.id - left.id)[0];
+  radio.visualGroupKey = remaining?.groupKey || '';
+  if (!radio.visualGroupKey && previousVisualGroupKey) {
+    radio.priorGroupKeys = [previousVisualGroupKey,
+      ...radio.priorGroupKeys.filter((key) => key !== previousVisualGroupKey)].slice(0, MAX_PRIOR_GROUPS);
+  }
+  const group = state.groups.get(previousVisualGroupKey);
+  if (!initial) highlight(radio, 'logout', ingestedAtMs + 7_000);
+  const event = { key: `logout:${radio.key}`, category: 'logout', title: 'Logout observed',
+    detail: eventDetail('logout', radio, group), observedAtMs: atMs, systemKey: system.key,
+    focusKeys: [radio.key], priority: CAMERA_PRIORITY.logout };
+  const firstGroupedEvent = !state.events.has(event.key);
+  const focusEligible = upsertEvent(state, event);
+  if (firstGroupedEvent) system.score += 1;
+  if (!initial && focusEligible) result.focusCandidates.push(event);
+}
+
+function applyP25ActivityRows(state, rows, options = {}) {
+  if (!state?.systems || !state?.groups || !state?.radios) throw new TypeError('P25 history state is required.');
+  const initial = options.initial === true;
+  const ingestedAtMs = finite(options.atMs, Date.now());
+  const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [] };
+  const ordered = (Array.isArray(rows) ? rows : []).slice().sort((left, right) =>
+    finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
+  for (const row of ordered) {
+    const id = Number(row?.id);
+    const action = actionOf(row);
+    if (!isP25Trunked(row) || !ACTIONS.has(action) || !rememberId(state, id)) {
+      result.ignored += 1;
+      continue;
+    }
+    if (action === 'DENIAL' && !targetRadioKey(row) && !sourceRadioKey(row)) {
+      result.accepted += 1;
+      result.changed = true;
+      continue;
+    }
+    const system = ensureSystem(state, row);
+    if (action === 'JOIN') applyJoin(state, system, row, result, initial, ingestedAtMs);
+    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, ingestedAtMs);
+    else applySignal(state, system, row, result, initial, action, ingestedAtMs);
+    result.accepted += 1;
+    result.changed = true;
+  }
+  result.focusCandidates.sort((left, right) => right.priority - left.priority ||
+    right.observedAtMs - left.observedAtMs);
+  return result;
+}
+
+function visibleSignal(entity, atMs) {
+  return entity?.highlightUntilMs > atMs ? entity.signalAction : '';
+}
+
+function buildP25Graph(state, systemKey = '', atMs = Date.now()) {
+  if (!systemKey) {
+    const nodes = [...state.systems.values()].map((system) => ({ id: system.key, type: 'system',
+      label: system.label, x: system.x, y: system.y, z: system.z, radius: 58, systemKey: system.key,
+      activityScore: system.score }));
+    return { nodes, links: [], labels: nodes.map((node) => node.id), truncated: state.truncated };
+  }
+  const system = state.systems.get(systemKey);
+  if (!system) return { nodes: [], links: [], labels: [], truncated: state.truncated };
+  const groups = [...system.groupKeys].map((key) => state.groups.get(key)).filter(Boolean)
+    .sort((left, right) => right.lastAtMs - left.lastAtMs).slice(0, 220);
+  const groupKeys = new Set(groups.map((group) => group.key));
+  const radios = [...system.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
+    .sort((left, right) => right.lastAtMs - left.lastAtMs).slice(0, 900);
+  const radioKeys = new Set(radios.map((radio) => radio.key));
+  const nodes = [{ id: system.key, type: 'system', label: system.label, x: system.x, y: system.y, z: system.z,
+    radius: system.radius, systemKey: system.key }];
+  groups.forEach((group) => nodes.push({ id: group.key, type: 'talkgroup', label: group.label,
+    x: group.x, y: group.y, z: group.z, radius: 13, systemKey, signalAction: visibleSignal(group, atMs) }));
+
+  const groupedRadios = new Map();
+  radios.forEach((radio) => {
+    const parentKey = groupKeys.has(radio.visualGroupKey) ? radio.visualGroupKey : '';
+    if (!groupedRadios.has(parentKey)) groupedRadios.set(parentKey, []);
+    groupedRadios.get(parentKey).push(radio);
+  });
+  groupedRadios.forEach((members, parentKey) => {
+    const parent = state.groups.get(parentKey) || system;
+    members.forEach((radio) => {
+      const offset = localPosition(`${radio.key}:${parentKey || 'unaffiliated'}`,
+        parentKey ? 24 : 48, parentKey ? 64 : 215);
+      radio.x = parent.x + offset.x;
+      radio.y = parent.y + offset.y;
+      radio.z = parent.z + offset.z;
+      nodes.push({ id: radio.key, type: 'radio', label: radio.label, x: radio.x, y: radio.y, z: radio.z,
+        radius: 6.5, systemKey, groupKey: parentKey, signalAction: visibleSignal(radio, atMs) });
+    });
+  });
+
+  const links = [];
+  radios.forEach((radio) => {
+    if (!radioKeys.has(radio.key)) return;
+    if (groupKeys.has(radio.visualGroupKey)) links.push({ id: `current:${radio.key}:${radio.visualGroupKey}`,
+      source: radio.key, target: radio.visualGroupKey, kind: 'current' });
+    const earlierGroups = new Set([...radio.priorGroupKeys,
+      ...[...radio.affiliations.values()].map((evidence) => evidence.groupKey)]);
+    [...earlierGroups].filter((key) => groupKeys.has(key) && key !== radio.visualGroupKey).forEach((groupKey) =>
+      links.push({ id: `history:${radio.key}:${groupKey}`, source: radio.key, target: groupKey, kind: 'history' }));
+  });
+  return { nodes, links, labels: nodes.map((node) => node.id), truncated: state.truncated ||
+    groups.length < system.groupKeys.size || radios.length < system.radioKeys.size };
+}
+
+function groupedP25Events(state, systemKey = '') {
+  return [...state.events.values()].filter((event) => !systemKey || event.systemKey === systemKey)
+    .sort((left, right) => right.observedAtMs - left.observedAtMs).slice(0, MAX_EVENTS);
+}
+
+function mostActiveP25System(state) {
+  return [...state.systems.values()].sort((left, right) => right.score - left.score ||
+    right.lastAtMs - left.lastAtMs || left.ordinal - right.ordinal)[0] || null;
+}
+
+export {
+  P25_HISTORY_ACTIONS,
+  CAMERA_PRIORITY,
+  createP25HistoryState,
+  applyP25ActivityRows,
+  buildP25Graph,
+  groupedP25Events,
+  mostActiveP25System
+};

@@ -83,8 +83,6 @@ class StatsWebTunerSpectrumAccessTest
                 StatsWebServerService.capabilityForTopic("tuner_diagnostics"));
             assertEquals(WebCapability.LIVE_VIEW,
                 StatsWebServerService.capabilityForTopic("channel_activity"));
-            assertEquals(WebCapability.LIVE_VIEW,
-                StatsWebServerService.capabilityForTopic("network_activity"));
         }
         finally
         {

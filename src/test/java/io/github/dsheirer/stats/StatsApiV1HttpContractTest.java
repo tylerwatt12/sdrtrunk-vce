@@ -426,6 +426,28 @@ class StatsApiV1HttpContractTest
         assertEquals(1, OBJECT_MAPPER.readTree(filteredActivity.body()).path("data").size(),
             filteredActivity.body());
 
+        HttpResponse<String> forwardActivity = get(StatsApiV1.ACTIVITY +
+            "?from_ms=1&to_ms=86400001&actions=join,denial&after_id=0&limit=5000");
+        assertEquals(200, forwardActivity.statusCode(), forwardActivity.body());
+        JsonNode forward = OBJECT_MAPPER.readTree(forwardActivity.body());
+        assertTrue(forward.at("/meta/has_more").isBoolean(), forwardActivity.body());
+        assertTrue(forward.at("/meta/next_after_id").isIntegralNumber(), forwardActivity.body());
+        assertTrue(forward.at("/meta/watermark_id").isIntegralNumber(), forwardActivity.body());
+        assertFalse(forward.at("/meta/reset_required").booleanValue(), forwardActivity.body());
+
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?from_ms=1&to_ms=86400002&actions=JOIN&after_id=0"),
+            400, "invalid_parameter", "radio_system_key");
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?from_ms=1&to_ms=1000&actions=JOIN,join&after_id=0"),
+            400, "invalid_parameter", "actions");
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?radio_system_key=p25%3Abee00%3A49f&before_id=1&after_id=0"),
+            400, "invalid_parameter", "after_id");
+        assertStructuredError(get(StatsApiV1.ACTIVITY +
+                "?radio_system_key=p25%3Abee00%3A49f&watermark_id=1"),
+            400, "invalid_parameter", "watermark_id");
+
         assertEquals(401, get(StatsApiV1.ALIASES + "?family=P25").statusCode());
         assertEquals(401, get(StatsApiV1.ALIASES + "?matcher=TALKGROUP").statusCode());
 

@@ -1711,6 +1711,117 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityGlobalActionWindowUsesStableForwardWatermark() throws Exception
+    {
+        seedActivityFilterRows();
+        String query = "/?from_ms=9000&to_ms=15001&actions=call,denial&after_id=0&limit=2";
+        StatsWebDatabase.ActivityQuery[] observedQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> first = mDatabase.activity(request(query), activityQuery ->
+            observedQuery[0] = activityQuery);
+        assertEquals(List.of(10_000L, 12_000L), activityTimes(first));
+        assertEquals(List.of("CALL", "DENIAL"), rows(first).stream().map(row ->
+            String.valueOf(row.get("action"))).toList());
+        assertEquals("Shared P25", rows(first).getFirst().get("system_name"));
+        assertTrue((Boolean)first.get("has_more"));
+        long firstCursor = number(first.get("next_after_id"));
+        long watermark = number(first.get("watermark_id"));
+        assertTrue(watermark > firstCursor);
+        assertEquals(false, first.get("reset_required"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> floorPlan = explain(connection, StatsWebDatabase.ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL,
+                9_000L, 15_001L);
+            assertTrue(floorPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_receiver_activity_event_retention")),
+                () -> "Expected the global history floor to seek its time window, plan was: " + floorPlan);
+            List<String> plan = explain(connection, observedQuery[0].sql(),
+                observedQuery[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("INTEGER PRIMARY KEY") || detail.contains("rowid>")),
+                () -> "Expected bounded forward history to seek by row id, plan was: " + plan);
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO receiver_activity_event (
+                    channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
+                    source_observed_local_id, target_observed_local_id, target_kind_code,
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id)
+                VALUES (71, 71, 12500, 9, 57, 303, 202, 2, 7105, 2, 7102)
+                """))
+        {
+            statement.executeUpdate();
+        }
+
+        Map<String,Object> second = mDatabase.activity(request("/?from_ms=9000&to_ms=15001" +
+            "&actions=CALL,DENIAL&after_id=" + firstCursor + "&watermark_id=" + watermark + "&limit=2"));
+        assertEquals(List.of(13_000L, 14_000L), activityTimes(second));
+        assertFalse((Boolean)second.get("has_more"));
+        assertEquals(watermark, number(second.get("next_after_id")),
+            "A completed snapshot advances over nonmatching rows through its watermark");
+
+        Map<String,Object> nextPoll = mDatabase.activity(request("/?from_ms=9000&to_ms=15001" +
+            "&actions=CALL,DENIAL&after_id=" + watermark + "&limit=2"));
+        assertEquals(List.of(12_500L), activityTimes(nextPoll));
+        assertFalse((Boolean)nextPoll.get("has_more"));
+        assertTrue(number(nextPoll.get("watermark_id")) > watermark);
+        assertEquals(nextPoll.get("watermark_id"), nextPoll.get("next_after_id"));
+    }
+
+    @Test
+    void activityGlobalForwardWindowShortCircuitsEmptyRangesAndSignalsDatabaseReset()
+    {
+        boolean[] queried = new boolean[1];
+        Map<String,Object> empty = mDatabase.activity(request(
+            "/?from_ms=1000000000000&to_ms=1000000001000&actions=JOIN,DENIAL&after_id=0"),
+            ignored -> queried[0] = true);
+        assertFalse(queried[0], "an empty indexed time window must not scan Activity candidates");
+        assertTrue(rows(empty).isEmpty());
+        assertFalse((Boolean)empty.get("has_more"));
+        assertFalse((Boolean)empty.get("reset_required"));
+        long currentMaximum = number(empty.get("watermark_id"));
+        assertEquals(currentMaximum, number(empty.get("next_after_id")));
+
+        Map<String,Object> reset = mDatabase.activity(request(
+            "/?from_ms=1&to_ms=1000&actions=JOIN&after_id=" + (currentMaximum + 1)));
+        assertTrue(rows(reset).isEmpty());
+        assertFalse((Boolean)reset.get("has_more"));
+        assertTrue((Boolean)reset.get("reset_required"));
+        assertEquals(currentMaximum, number(reset.get("watermark_id")));
+        assertEquals(currentMaximum, number(reset.get("next_after_id")));
+    }
+
+    @Test
+    void activityGlobalWindowAndForwardParametersStayBounded()
+    {
+        Map<String,Object> extendedPage = mDatabase.activity(request(
+            "/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=501"));
+        assertEquals(501, number(extendedPage.get("limit")));
+        StatsApiException missingActions = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?from_ms=1&to_ms=1000&after_id=0")));
+        assertEquals("radio_system_key", missingActions.field());
+        StatsApiException oversizedWindow = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?from_ms=1&to_ms=86400002&actions=JOIN&after_id=0")));
+        assertEquals("radio_system_key", oversizedWindow.field());
+        StatsApiException duplicateAction = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?from_ms=1&to_ms=1000&actions=JOIN,join&after_id=0")));
+        assertEquals("actions", duplicateAction.field());
+        StatsApiException conflictingAction = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&action=JOIN&actions=DENIAL")));
+        assertEquals("actions", conflictingAction.field());
+        StatsApiException conflictingCursor = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&before_id=1&after_id=0")));
+        assertEquals("after_id", conflictingCursor.field());
+        StatsApiException orphanedWatermark = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&watermark_id=1")));
+        assertEquals("watermark_id", orphanedWatermark.field());
+        StatsApiException oversizedPage = assertThrows(StatsApiException.class, () -> mDatabase.activity(
+            request("/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=5001")));
+        assertEquals("limit", oversizedPage.field());
+    }
+
+    @Test
     void activityUnionCursorIsStableAndScopedActionEventQueriesUseFormat24Indexes() throws Exception
     {
         seedActivityFilterRows();

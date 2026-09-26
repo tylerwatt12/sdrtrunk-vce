@@ -13,18 +13,10 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.filter.FilterCatalog;
-import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
-import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
-import io.github.dsheirer.module.decode.p25.P25AffiliationSemantics;
-import io.github.dsheirer.module.decode.p25.P25SignalingSemantics;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
@@ -62,7 +54,6 @@ public class DecodeEventViewService implements AutoCloseable
     private final ChannelProcessingManager mChannelProcessingManager;
     private final AliasModel mAliasModel;
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
-    private final Broadcaster<NetworkEventView> mNetworkBroadcaster = new Broadcaster<>();
     private final Object mListenerLock = new Object();
     private final Object mLiveEdgeLock = new Object();
     private volatile BoundedMpscPairQueue<Channel,IDecodeEvent> mIngress =
@@ -71,14 +62,11 @@ public class DecodeEventViewService implements AutoCloseable
         new ObserverThreadFactory("sdrtrunk decode event views"));
     private final Semaphore mWakeup = new Semaphore(0);
     private final AtomicLong mDroppedObservations = new AtomicLong();
-    private final AtomicLong mDroppedNetworkObservations = new AtomicLong();
     private final AtomicLong mDemandGeneration = new AtomicLong();
     private final AtomicLong mLiveEdgeEpoch = new AtomicLong();
-    private final AtomicLong mNetworkSequence = new AtomicLong();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final AtomicBoolean mActive = new AtomicBoolean();
     private final AtomicBoolean mEventActive = new AtomicBoolean();
-    private final AtomicBoolean mNetworkActive = new AtomicBoolean();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receive;
     private final long mCloseTimeoutMilliseconds;
 
@@ -227,55 +215,9 @@ public class DecodeEventViewService implements AutoCloseable
         }
     }
 
-    /** Adds a typed network-semantic consumer while sharing this service's one receiver listener and worker. */
-    public void addNetworkListener(Listener<NetworkEventView> listener)
-    {
-        if(listener == null || mClosed.get())
-        {
-            return;
-        }
-
-        synchronized(mListenerLock)
-        {
-            if(mClosed.get())
-            {
-                return;
-            }
-
-            boolean firstListener = !hasListeners();
-            mNetworkBroadcaster.addListener(listener);
-            mNetworkActive.set(mNetworkBroadcaster.hasListeners());
-
-            if(firstListener && hasListeners())
-            {
-                mIngress = new BoundedMpscPairQueue<>(UPDATE_QUEUE_SIZE);
-                mDemandGeneration.incrementAndGet();
-            }
-
-            mActive.set(hasListeners());
-            mWakeup.release();
-        }
-    }
-
-    public void removeNetworkListener(Listener<NetworkEventView> listener)
-    {
-        synchronized(mListenerLock)
-        {
-            mNetworkBroadcaster.removeListener(listener);
-            mNetworkActive.set(mNetworkBroadcaster.hasListeners());
-
-            if(!hasListeners())
-            {
-                mActive.set(false);
-                mDemandGeneration.incrementAndGet();
-                mWakeup.release();
-            }
-        }
-    }
-
     private boolean hasListeners()
     {
-        return mBroadcaster.hasListeners() || mNetworkBroadcaster.hasListeners();
+        return mBroadcaster.hasListeners();
     }
 
     void receive(Channel channel, IDecodeEvent event)
@@ -285,10 +227,7 @@ public class DecodeEventViewService implements AutoCloseable
             return;
         }
 
-        boolean eventActive = mEventActive.get();
-        boolean networkCandidate = mNetworkActive.get() && mayProduceNetworkObservation(event);
-
-        if(!eventActive && !networkCandidate)
+        if(!mEventActive.get())
         {
             return;
         }
@@ -304,15 +243,7 @@ public class DecodeEventViewService implements AutoCloseable
 
         if(!ingress.offer(channel, event, liveEdgeEpoch))
         {
-            if(eventActive)
-            {
-                mDroppedObservations.incrementAndGet();
-            }
-
-            if(networkCandidate)
-            {
-                mDroppedNetworkObservations.incrementAndGet();
-            }
+            mDroppedObservations.incrementAndGet();
         }
     }
 
@@ -341,7 +272,6 @@ public class DecodeEventViewService implements AutoCloseable
         }
 
         List<EventView> batch = new ArrayList<>();
-        List<NetworkEventView> networkBatch = new ArrayList<>();
 
         for(int count = 0; count < MAXIMUM_DRAIN_PER_RUN; count++)
         {
@@ -364,17 +294,6 @@ public class DecodeEventViewService implements AutoCloseable
                 batch.add(view(configurationId, event, sourceFrequency, observation.stamp()));
             }
 
-            if(mNetworkActive.get())
-            {
-                NetworkEventView projected = networkView(channel, configurationId, event,
-                    sourceFrequency, generation, observation.stamp());
-
-                if(projected != null)
-                {
-                    networkBatch.add(projected);
-                }
-            }
-
             if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
             {
                 break;
@@ -391,31 +310,12 @@ public class DecodeEventViewService implements AutoCloseable
                     break;
                 }
             }
-
-            for(NetworkEventView projected: networkBatch)
-            {
-                if(mNetworkBroadcaster.broadcastIf(projected, () -> !mClosed.get() && mNetworkActive.get() &&
-                    mDemandGeneration.get() == generation && mIngress == ingress) < 0)
-                {
-                    break;
-                }
-            }
         }
     }
 
     public long getDroppedObservationCount()
     {
         return mDroppedObservations.get();
-    }
-
-    public long getDroppedNetworkObservationCount()
-    {
-        return mDroppedNetworkObservations.get();
-    }
-
-    public long getSourceGeneration()
-    {
-        return mDemandGeneration.get();
     }
 
     /** Stable Java-style filter choices for each live-only browser subscription. */
@@ -548,186 +448,6 @@ public class DecodeEventViewService implements AutoCloseable
             Integer.toUnsignedString(System.identityHashCode(event), 36);
     }
 
-    private static boolean mayProduceNetworkObservation(IDecodeEvent event)
-    {
-        if(event instanceof P25AffiliationEvent affiliationEvent)
-        {
-            return P25AffiliationSemantics.mayProduceObservation(affiliationEvent) ||
-                affiliationEvent.getOutcome() == P25AffiliationEvent.Outcome.REJECTED;
-        }
-
-        return P25SignalingSemantics.mayProduceObservation(event);
-    }
-
-    private NetworkEventView networkView(Channel channel, String configurationId,
-                                         IDecodeEvent event, Long sourceFrequency,
-                                         long sourceGeneration, long observationEpoch)
-    {
-        if(event instanceof P25AffiliationEvent affiliationEvent)
-        {
-            P25AffiliationSemantics.Observation affiliation = P25AffiliationSemantics.evaluate(affiliationEvent);
-
-            if(affiliation.isObserved())
-            {
-                NetworkIdentityView radio = networkIdentity(affiliationEvent.getRadioIdentifier(), true);
-                NetworkIdentityView group = networkIdentity(affiliationEvent.getTalkgroupIdentifier(), false);
-
-                if(radio == null || affiliation.kind() == P25AffiliationSemantics.Kind.AFFILIATION_OBSERVED &&
-                    group == null)
-                {
-                    return null;
-                }
-
-                return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration,
-                    observationEpoch, wireName(affiliation.kind()), wireName(affiliation.evidence()),
-                    wireName(affiliationEvent.getOutcome()), null, null, null, radio, group);
-            }
-
-            if(affiliationEvent.getOutcome() == P25AffiliationEvent.Outcome.REJECTED)
-            {
-                return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration,
-                    observationEpoch, "signaling_observed", null, null,
-                    wireName(P25SignalingSemantics.Action.DENIAL), wireName(event.getEventType()),
-                    bounded(event.getDetails()),
-                    validSignalingIdentity(networkIdentity(affiliationEvent.getRadioIdentifier(), true)),
-                    validSignalingIdentity(networkIdentity(affiliationEvent.getTalkgroupIdentifier(), false)));
-            }
-
-            return null;
-        }
-
-        P25SignalingSemantics.Action action = P25SignalingSemantics.action(event);
-
-        if(action == null)
-        {
-            return null;
-        }
-
-        IdentifierCollection identifiers = event.getIdentifierCollection();
-        NetworkIdentityView radio = signalingIdentity(identifiers, Form.RADIO);
-        NetworkIdentityView group = signalingIdentity(identifiers, Form.TALKGROUP);
-
-        return networkView(channel, configurationId, event, sourceFrequency, sourceGeneration, observationEpoch,
-            "signaling_observed", null, null, wireName(action), wireName(event.getEventType()),
-            bounded(event.getDetails()), radio, group);
-    }
-
-    private NetworkEventView networkView(Channel channel, String configurationId, IDecodeEvent event,
-                                         Long sourceFrequency, long sourceGeneration, long observationEpoch,
-                                         String kind, String evidenceType, String outcome, String action,
-                                         String eventType, String detail, NetworkIdentityView radio,
-                                         NetworkIdentityView group)
-    {
-        if(event == null)
-        {
-            return null;
-        }
-
-        IChannelDescriptor descriptor = event.getChannelDescriptor();
-        Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
-            descriptor.getDownlinkFrequency() : sourceFrequency;
-        long observedAt = event.getTimeStart() > 0 ? event.getTimeStart() : System.currentTimeMillis();
-        long sequence = mNetworkSequence.incrementAndGet();
-        String eventId = "p25-" + Long.toUnsignedString(sourceGeneration, 36) + "-" +
-            Long.toUnsignedString(sequence, 36);
-        IdentifierCollection identifiers = event.getIdentifierCollection();
-        P25SiteIdentity siteIdentity = channel != null ? channel.getP25SiteIdentity() : null;
-        NetworkSiteView site = networkSite(siteIdentity, identifiers);
-
-        return new NetworkEventView(eventId, sequence, sourceGeneration, observationEpoch, observedAt,
-            kind, evidenceType, outcome, action, eventType, detail,
-            bounded(configurationId), bounded(channel != null ? channel.getName() : null),
-            bounded(channel != null ? channel.getSystem() : null), bounded(channel != null ? channel.getSite() : null),
-            event.getProtocol() != null ? event.getProtocol().name() : null, frequency,
-            event.hasTimeslot() ? event.getTimeslot() : null, site, radio, group);
-    }
-
-    private static NetworkIdentityView signalingIdentity(IdentifierCollection identifiers, Form form)
-    {
-        if(identifiers == null || form == null)
-        {
-            return null;
-        }
-
-        Identifier<?> preferred = form == Form.RADIO ? identifiers.getFromIdentifier() : identifiers.getToIdentifier();
-
-        if(preferred != null && preferred.getForm() == form)
-        {
-            return validSignalingIdentity(networkIdentity(preferred, form == Form.RADIO));
-        }
-
-        int examined = 0;
-
-        for(Identifier<?> identifier: identifiers.getIdentifiers())
-        {
-            if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
-            {
-                break;
-            }
-
-            if(identifier != null && identifier.getForm() == form)
-            {
-                return validSignalingIdentity(networkIdentity(identifier, form == Form.RADIO));
-            }
-        }
-
-        return null;
-    }
-
-    private static NetworkIdentityView validSignalingIdentity(NetworkIdentityView identity)
-    {
-        return identity != null && identity.nativeId() > 0 ? identity : null;
-    }
-
-    private static NetworkIdentityView networkIdentity(Identifier<?> identifier, boolean radio)
-    {
-        if(identifier == null || !(identifier.getValue() instanceof Number observed))
-        {
-            return null;
-        }
-
-        int observedLocalId = observed.intValue();
-
-        if(radio && identifier instanceof FullyQualifiedRadioIdentifier fullyQualified)
-        {
-            return new NetworkIdentityView(fullyQualified.getRadio(), observedLocalId, fullyQualified.getWacn(),
-                fullyQualified.getSystem(), fullyQualified.getRadio());
-        }
-
-        if(!radio && identifier instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            return new NetworkIdentityView(fullyQualified.getTalkgroup(), observedLocalId, fullyQualified.getWacn(),
-                fullyQualified.getSystem(), fullyQualified.getTalkgroup());
-        }
-
-        return new NetworkIdentityView(observedLocalId, observedLocalId, null, null, null);
-    }
-
-    private static NetworkSiteView networkSite(P25SiteIdentity siteIdentity, IdentifierCollection identifiers)
-    {
-        Integer wacn = siteIdentity != null ? siteIdentity.wacn() : networkIdentifier(identifiers, Form.WACN);
-        Integer system = siteIdentity != null ? siteIdentity.system() : networkIdentifier(identifiers, Form.SYSTEM);
-        Integer rfss = siteIdentity != null ? siteIdentity.rfss() :
-            networkIdentifier(identifiers, Form.RF_SUBSYSTEM);
-        Integer site = siteIdentity != null ? siteIdentity.site() : networkIdentifier(identifiers, Form.SITE);
-        Integer nac = networkIdentifier(identifiers, Form.NETWORK_ACCESS_CODE);
-
-        return wacn != null || system != null || rfss != null || site != null || nac != null ?
-            new NetworkSiteView(wacn, system, rfss, site, nac) : null;
-    }
-
-    private static Integer networkIdentifier(IdentifierCollection identifiers, Form form)
-    {
-        Identifier<?> identifier = identifiers != null ?
-            identifiers.getIdentifier(IdentifierClass.NETWORK, form, Role.ANY) : null;
-        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
-    }
-
-    private static String wireName(Enum<?> value)
-    {
-        return value != null ? value.name().toLowerCase(java.util.Locale.ROOT) : null;
-    }
-
     private static String category(DecodeEventType type)
     {
         if(type != null && DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type))
@@ -817,9 +537,7 @@ public class DecodeEventViewService implements AutoCloseable
 
             mActive.set(false);
             mEventActive.set(false);
-            mNetworkActive.set(false);
             mBroadcaster.clear();
-            mNetworkBroadcaster.clear();
         }
 
         // Only the observer worker consumes and clears ingress/history, including after a timed close returns.
@@ -881,25 +599,6 @@ public class DecodeEventViewService implements AutoCloseable
         {
             return observationEpoch;
         }
-    }
-
-    /** Typed, bounded semantic projection used by the global Network Visualizer topic. */
-    public record NetworkEventView(String eventId, long sequence, long sourceGeneration, long observationEpoch,
-                                   long observedAtMs, String kind, String evidenceType, String outcome,
-                                   String action, String eventType, String detail,
-                                   String configurationId, String channelName, String systemName, String siteName,
-                                   String protocol, Long frequencyHz, Integer timeslot, NetworkSiteView site,
-                                   NetworkIdentityView radio, NetworkIdentityView group)
-    {
-    }
-
-    public record NetworkIdentityView(int nativeId, int observedLocalId, Integer homeWacn,
-                                      Integer homeSystemId, Integer homeIdentityId)
-    {
-    }
-
-    public record NetworkSiteView(Integer wacn, Integer systemId, Integer rfss, Integer site, Integer nac)
-    {
     }
 
     private record Parties(String identifiers, String aliases)

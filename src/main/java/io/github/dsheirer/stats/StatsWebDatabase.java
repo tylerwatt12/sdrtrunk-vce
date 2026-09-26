@@ -41,6 +41,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -57,6 +58,8 @@ class StatsWebDatabase
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
+    private static final int MAX_ACTIVITY_ACTION_FILTERS = 23;
+    private static final int MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT = 5_000;
     private static final long CURRENT_STATE_WINDOW_MILLISECONDS = 6L * HOUR_MILLISECONDS;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int QUALITY_DEFAULT_POINTS = 240;
@@ -308,6 +311,7 @@ class StatsWebDatabase
             activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
             activity.encryption_algorithm_id, activity.encryption_key_id,
             activity.resolved_channel_name AS name,
+            nullif(trim(config.system_name), '') AS system_name,
             activity.resolved_alias_list_name AS alias_list_name,
             config.alias_list_id,
             activity.resolved_system_key AS radio_system_key, system.address_domain_code,
@@ -332,6 +336,12 @@ class StatsWebDatabase
         """;
     static final String ACTIVITY_ORDER_SQL =
         " ORDER BY activity.observed_at_ms DESC, activity.id DESC LIMIT ?";
+    private static final String ACTIVITY_FORWARD_ORDER_SQL = " ORDER BY activity.id ASC LIMIT ?";
+    static final String ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL = """
+        SELECT MIN(id) AS minimum_id
+        FROM receiver_activity_event INDEXED BY idx_receiver_activity_event_retention
+        WHERE observed_at_ms >= ? AND observed_at_ms < ?
+        """;
     private static final List<String> CALL_ACTIVITY_FIELDS = List.of(
         "logical_call_count", "recorded_logical_call_count", "stream_submitted_logical_call_count",
         "encrypted_logical_call_count"
@@ -4242,6 +4252,8 @@ class StatsWebDatabase
     Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver)
     {
         long beforeId = request.beforeId();
+        Long afterId = request.optionalLong("after_id");
+        Long requestedWatermarkId = request.optionalLong("watermark_id");
         String groupIdentityKey = request.text("group_identity_key");
         String radioIdentityKey = request.text("radio_identity_key");
         String sourceIdentityKey = request.text("source_identity_key");
@@ -4252,6 +4264,7 @@ class StatsWebDatabase
         Long fromMilliseconds = positiveActivityLong(request, "from_ms");
         Long toMilliseconds = positiveActivityLong(request, "to_ms");
         Integer actionCode = activityCode(request.text("action"), "action", true);
+        List<Integer> actionCodes = activityCodes(request.text("actions"));
         Integer eventTypeCode = activityCode(request.text("event_type"), "event_type", false);
         String encryptionValue = request.text("encryption");
         Integer encryption = activityEncryption(encryptionValue);
@@ -4265,6 +4278,37 @@ class StatsWebDatabase
         Long frequencyHertz = positiveActivityLong(request, "frequency_hz");
         ActivityLcn lcn = activityLcn(request.text("lcn"));
         Integer timeslot = activityTimeslot(request.optionalInt("timeslot"));
+
+        if(afterId != null && afterId < 0)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "after_id must be a non-negative integer",
+                "after_id");
+        }
+        if(requestedWatermarkId != null && requestedWatermarkId < 0)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "watermark_id must be a non-negative integer",
+                "watermark_id");
+        }
+        if(afterId != null && beforeId != Long.MAX_VALUE)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "after_id cannot be combined with before_id",
+                "after_id");
+        }
+        if(requestedWatermarkId != null && afterId == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "watermark_id requires after_id",
+                "watermark_id");
+        }
+        if(requestedWatermarkId != null && requestedWatermarkId < afterId)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "watermark_id must not be less than after_id",
+                "watermark_id");
+        }
+        if(actionCode != null && actionCodes != null)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "action cannot be combined with actions",
+                "actions");
+        }
 
         if(fromMilliseconds != null && toMilliseconds != null && fromMilliseconds >= toMilliseconds)
         {
@@ -4285,7 +4329,8 @@ class StatsWebDatabase
             throw new StatsApiException(400, "invalid_parameter",
                 "configuration_id is required with an observed source or target ID", "configuration_id");
         }
-        if(hideGrants && Integer.valueOf(12).equals(actionCode))
+        if(hideGrants && (Integer.valueOf(12).equals(actionCode) ||
+            actionCodes != null && actionCodes.contains(12)))
         {
             throw new StatsApiException(400, "invalid_parameter",
                 "action GRANT cannot be combined with hide_grants=true", "hide_grants");
@@ -4321,17 +4366,22 @@ class StatsWebDatabase
                 "target_kind must match target_identity_key", "target_kind");
         }
         boolean hasNewFilter = fromMilliseconds != null || toMilliseconds != null || actionCode != null ||
+            actionCodes != null || afterId != null || requestedWatermarkId != null ||
             eventTypeCode != null || encryptionValue != null || radioRoleValue != null || groupMatchValue != null ||
             sourceIdentityKey != null || targetIdentityKey != null || sourceId != null || targetId != null ||
             targetKind != null || frequencyHertz != null || lcn.band() != null || timeslot != null;
 
-        if(hasNewFilter && systemKey == null && configurationId == null)
+        boolean globalActivityWindow = systemKey == null && configurationId == null &&
+            fromMilliseconds != null && toMilliseconds != null &&
+            toMilliseconds - fromMilliseconds <= DAY_MILLISECONDS && actionCodes != null;
+
+        if(hasNewFilter && systemKey == null && configurationId == null && !globalActivityWindow)
         {
             throw new StatsApiException(400, "invalid_parameter",
-                "radio_system_key or configuration_id is required with Activity filters", "radio_system_key");
+                "Global Activity filters require from_ms, to_ms within 24 hours, and actions", "radio_system_key");
         }
 
-        int limit = request.limit();
+        int limit = activityLimit(request, globalActivityWindow && afterId != null);
 
         return read(connection -> {
             WebConfiguredEntityRepository.ConfiguredChannel configured = configurationId != null ?
@@ -4379,9 +4429,37 @@ class StatsWebDatabase
                     "configuration_id does not belong to radio_system_key", "configuration_id");
             }
 
+            long currentMaximumId = afterId != null ?
+                scalarLong(connection, "SELECT COALESCE(MAX(id), 0) FROM receiver_activity_event") : 0;
+            long watermarkId = afterId != null ?
+                (requestedWatermarkId != null ? requestedWatermarkId : currentMaximumId) : 0;
+
+            if(afterId != null && (afterId > currentMaximumId || watermarkId > currentMaximumId))
+            {
+                return forwardCursorPage(List.of(), limit, currentMaximumId, true);
+            }
+
             if(configured != null && configured.channelId() == null)
             {
-                return cursorPage(List.of(), limit);
+                return afterId != null ? forwardCursorPage(List.of(), limit, watermarkId) :
+                    cursorPage(List.of(), limit);
+            }
+
+            Long forwardFloorId = null;
+
+            if(globalActivityWindow && afterId != null &&
+                activityCursorNeedsWindowFloor(connection, afterId, fromMilliseconds))
+            {
+                List<Map<String,Object>> floor = queryRows(connection, ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL,
+                    fromMilliseconds, toMilliseconds);
+                Object minimumId = floor.isEmpty() ? null : floor.getFirst().get("minimum_id");
+
+                if(minimumId == null)
+                {
+                    return forwardCursorPage(List.of(), limit, watermarkId);
+                }
+
+                forwardFloorId = ((Number)minimumId).longValue();
             }
 
             Long beforeTimestamp = null;
@@ -4402,16 +4480,16 @@ class StatsWebDatabase
             ActivityFilters filters = new ActivityFilters(radioSystemId,
                 configured != null ? configured.channelId() : null, groupIdentitySummaryId, groupMatch,
                 radioIdentitySummaryId, radioRole, sourceIdentitySummaryId, targetIdentitySummaryId,
-                fromMilliseconds, toMilliseconds, actionCode, eventTypeCode, encryption, sourceId, targetId,
+                fromMilliseconds, toMilliseconds, actionCode, actionCodes, eventTypeCode, encryption, sourceId, targetId,
                 targetKind, frequencyHertz, lcn.band(), lcn.number(), timeslot, hideGrants, beforeTimestamp,
-                beforeId, limit);
+                beforeId, afterId, watermarkId, forwardFloorId, limit);
             ActivityQuery query = buildActivityQuery(filters);
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
             enrichActivityEncryption(rows);
             enrichActivityEntityReferences(rows);
-            return cursorPage(rows, limit);
+            return afterId != null ? forwardCursorPage(rows, limit, watermarkId) : cursorPage(rows, limit);
         });
     }
 
@@ -4483,7 +4561,7 @@ class StatsWebDatabase
             .append("FROM activity_candidates candidate_match\n")
             .append("JOIN receiver_activity_event_resolved activity ON activity.id = candidate_match.id\n")
             .append(ACTIVITY_RELATED_JOINS_SQL)
-            .append(ACTIVITY_ORDER_SQL);
+            .append(filters.afterId() != null ? ACTIVITY_FORWARD_ORDER_SQL : ACTIVITY_ORDER_SQL);
         parameters.add(filters.limit() + 1);
         return new ActivityQuery(sql.toString(), List.copyOf(parameters));
     }
@@ -4500,6 +4578,7 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.radio_system_id = ?", filters.radioSystemId());
         appendActivityPredicate(sql, parameters, "candidate.channel_id = ?", filters.channelId());
         appendActivityPredicate(sql, parameters, "candidate.action_code = ?", filters.actionCode());
+        appendActivityInPredicate(sql, parameters, "candidate.action_code", filters.actionCodes());
         appendActivityPredicate(sql, parameters, "candidate.event_type_code = ?", filters.eventTypeCode());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());
@@ -4546,6 +4625,7 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.lcn_band = ?", filters.lcnBand());
         appendActivityPredicate(sql, parameters, "candidate.lcn_number = ?", filters.lcnNumber());
         appendActivityPredicate(sql, parameters, "candidate.timeslot = ?", filters.timeslot());
+        appendActivityPredicate(sql, parameters, "candidate.id >= ?", filters.forwardFloorId());
 
         if(filters.beforeTimestamp() != null)
         {
@@ -4556,7 +4636,15 @@ class StatsWebDatabase
             parameters.add(filters.beforeId());
         }
 
-        sql.append("\nORDER BY candidate.observed_at_ms DESC, candidate.id DESC\nLIMIT ?");
+        if(filters.afterId() != null)
+        {
+            sql.append("\n  AND candidate.id > ? AND candidate.id <= ?");
+            parameters.add(filters.afterId());
+            parameters.add(filters.watermarkId());
+        }
+
+        sql.append(filters.afterId() != null ? "\nORDER BY candidate.id ASC\nLIMIT ?" :
+            "\nORDER BY candidate.observed_at_ms DESC, candidate.id DESC\nLIMIT ?");
         parameters.add(filters.limit() + 1);
         return new ActivityCandidateBranch(sql.toString(), List.copyOf(parameters));
     }
@@ -4569,6 +4657,30 @@ class StatsWebDatabase
             sql.append("\n  AND ").append(predicate);
             parameters.add(value);
         }
+    }
+
+    private static void appendActivityInPredicate(StringBuilder sql, List<Object> parameters, String column,
+                                                  List<Integer> values)
+    {
+        if(values != null && !values.isEmpty())
+        {
+            sql.append("\n  AND ").append(column).append(" IN (")
+                .append(String.join(",", java.util.Collections.nCopies(values.size(), "?"))).append(')');
+            parameters.addAll(values);
+        }
+    }
+
+    private static boolean activityCursorNeedsWindowFloor(Connection connection, long afterId,
+                                                          long fromMilliseconds) throws SQLException
+    {
+        if(afterId == 0)
+        {
+            return true;
+        }
+
+        List<Map<String,Object>> cursor = queryRows(connection,
+            "SELECT observed_at_ms FROM receiver_activity_event WHERE id = ?", afterId);
+        return cursor.isEmpty() || number(cursor.getFirst().get("observed_at_ms")) < fromMilliseconds;
     }
 
     private static Long positiveActivityLong(StatsRequest request, String field)
@@ -4600,6 +4712,53 @@ class StatsWebDatabase
         }
 
         return code;
+    }
+
+    private static List<Integer> activityCodes(String names)
+    {
+        if(names == null)
+        {
+            return null;
+        }
+
+        LinkedHashSet<Integer> codes = new LinkedHashSet<>();
+
+        for(String name: names.split(",", -1))
+        {
+            Integer code = activityCode(name, "actions", true);
+
+            if(!codes.add(code))
+            {
+                throw new StatsApiException(400, "invalid_parameter", "actions must not contain duplicates",
+                    "actions");
+            }
+            if(codes.size() > MAX_ACTIVITY_ACTION_FILTERS)
+            {
+                throw new StatsApiException(400, "invalid_parameter",
+                    "actions contains too many Activity actions", "actions");
+            }
+        }
+
+        return List.copyOf(codes);
+    }
+
+    private static int activityLimit(StatsRequest request, boolean globalForward)
+    {
+        if(!globalForward)
+        {
+            return request.limit();
+        }
+
+        Integer requested = request.optionalInt("limit");
+        int value = requested != null ? requested : StatsRequest.DEFAULT_LIMIT;
+
+        if(value < 1 || value > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "limit must be between 1 and " + MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT, "limit");
+        }
+
+        return value;
     }
 
     private static Integer activityEncryption(String value)
@@ -7093,6 +7252,28 @@ class StatsWebDatabase
         return page;
     }
 
+    private static Map<String,Object> forwardCursorPage(List<Map<String,Object>> queriedRows, int limit,
+                                                        long watermarkId)
+    {
+        return forwardCursorPage(queriedRows, limit, watermarkId, false);
+    }
+
+    private static Map<String,Object> forwardCursorPage(List<Map<String,Object>> queriedRows, int limit,
+                                                        long watermarkId, boolean resetRequired)
+    {
+        boolean hasMore = queriedRows.size() > limit;
+        List<Map<String,Object>> rows = hasMore ? new ArrayList<>(queriedRows.subList(0, limit)) : queriedRows;
+        Object nextAfterId = hasMore && !rows.isEmpty() ? rows.getLast().get("id") : watermarkId;
+        Map<String,Object> page = new LinkedHashMap<>();
+        page.put("rows", rows);
+        page.put("limit", limit);
+        page.put("has_more", hasMore);
+        page.put("next_after_id", nextAfterId);
+        page.put("watermark_id", watermarkId);
+        page.put("reset_required", resetRequired);
+        return page;
+    }
+
     private static Map<String,Object> first(List<Map<String,Object>> rows, String notFoundMessage)
     {
         if(rows.isEmpty())
@@ -7163,10 +7344,11 @@ class StatsWebDatabase
                                    ActivityGroupMatch groupMatch, Long radioIdentitySummaryId,
                                    ActivityRadioRole radioRole, Long sourceIdentitySummaryId,
                                    Long targetIdentitySummaryId, Long fromMilliseconds, Long toMilliseconds,
-                                   Integer actionCode, Integer eventTypeCode, Integer encryption, Integer sourceId,
+                                   Integer actionCode, List<Integer> actionCodes, Integer eventTypeCode,
+                                   Integer encryption, Integer sourceId,
                                    Integer targetId, Integer targetKind, Long frequencyHertz, Integer lcnBand,
                                    Integer lcnNumber, Integer timeslot, boolean hideGrants, Long beforeTimestamp,
-                                   long beforeId, int limit)
+                                   long beforeId, Long afterId, long watermarkId, Long forwardFloorId, int limit)
     {
     }
 

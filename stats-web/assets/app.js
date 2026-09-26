@@ -8401,8 +8401,7 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   3: 'decode_messages',
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
-  6: 'frequency_audio',
-  7: 'network_activity'
+  6: 'frequency_audio'
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -15724,23 +15723,19 @@ async function renderLive() {
   beginPage(renderContext, split);
 }
 
-let networkVisualizerModulePromise = null;
+let p25VisualizerModulePromise = null;
 
-async function renderNetworkVisualizer() {
+async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  networkVisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=17');
-  const visualizerModule = await networkVisualizerModulePromise;
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=18');
+  const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
-  const visualizer = await visualizerModule.createNetworkVisualizer({
+  const visualizer = visualizerModule.createP25Visualizer({
     node,
     iconGlyph,
     iconButton,
-    pageHeader,
-    liveConnection,
-    subscribeLiveChannelActivity,
-    navigateTo,
-    entityRefHref,
-    profileKey: accessSession.authenticated && accessSession.username ? accessSession.username : 'anonymous',
+    requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
+    historyStatus: statsLoggingState(),
     signal: renderContext.signal
   });
   if (!renderIsCurrent(renderContext)) {
@@ -23528,7 +23523,7 @@ async function loadStatus(refreshCurrentView = false) {
 applicationRoutes = routeFoundation.createRegistry({
   dashboard: renderDashboard,
   live: renderLive,
-  'network-visualizer': renderNetworkVisualizer,
+  'network-visualizer': renderP25Visualizer,
   scanner: renderScanner,
   'tuner-spectrum': renderTunerSpectrum,
   'radio-systems': renderRadioSystems,
