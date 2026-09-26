@@ -32,11 +32,11 @@ body[data-view="network-visualizer"] .content > .network-visualizer-layout {
 }
 
 .network-visualizer-layout {
-  --network-denial: #ff6f6f;
-  --network-check: #65d7e8;
-  --network-emergency: #ff3f68;
-  --network-page: #b897ff;
-  --network-busy: #ffb34d;
+  --network-denial: var(--chart-denial);
+  --network-check: var(--chart-check);
+  --network-emergency: var(--chart-emergency);
+  --network-page: var(--chart-page);
+  --network-busy: var(--chart-busy);
   position: relative;
   min-width: 0;
   min-height: 0;

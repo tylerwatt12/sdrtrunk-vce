@@ -650,7 +650,8 @@ function createNetworkVisualizerUi(dependencies = {}) {
 
   function setEvents(items = []) {
     const scrollAnchor = captureEventScrollAnchor();
-    const source = Array.isArray(items) ? items.slice(-100) : [];
+    const retainedLimit = Math.max(100, Number(config?.state?.hardSemanticEvents) || 5_000);
+    const source = Array.isArray(items) ? items.slice(-retainedLimit) : [];
     const nextKnownEventIds = new Set(source.map((event, index) => activityEventId(event, index)));
     const introduced = [...nextKnownEventIds].filter((id) => !knownEventIds.has(id)).length;
     if (!events.hidden && !eventsFollowing && knownEventIds.size && introduced) {
@@ -658,7 +659,7 @@ function createNetworkVisualizerUi(dependencies = {}) {
       updateEventsLatestControl();
     }
     knownEventIds = nextKnownEventIds;
-    const values = coalesceActivityEvents(source);
+    const values = coalesceActivityEvents(source, { maximumSourceEvents: retainedLimit }).slice(-100);
     if (!values.length) {
       eventRows.clear();
       const emptyRow = node('li', 'network-visualizer-event', 'No observed activity yet.');
