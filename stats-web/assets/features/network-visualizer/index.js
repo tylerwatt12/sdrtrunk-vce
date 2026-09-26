@@ -811,12 +811,12 @@ function createNetworkVisualizer(dependencies = {}) {
   function decorateGraphForScope(graph) {
     const resolved = normalizeScope(graph?.scope || navigationScope);
     const radii = resolved.level === 'overview' ? { universe: 32, aggregate: 10, group: 11, radio: 5 } :
-      resolved.level === 'system' ? { universe: 18, group: 13, aggregate: 9, radio: 5.25 } :
+      resolved.level === 'system' ? { universe: config.layout.systemRadius, group: 13, aggregate: 9, radio: 5.25 } :
         { universe: 14, group: 15, aggregate: 8, radio: 5.75 };
     const nodes = (graph?.nodes || []).map((value) => ({ ...value,
       renderRadius: radii[value.type] || 5,
       scopeLevel: resolved.level,
-      labelVisible: true
+      labelVisible: !(resolved.level === 'system' && value.type === 'universe')
     }));
     return { ...graph, scope: resolved, nodes };
   }

@@ -554,7 +554,8 @@ async function main() {
     assert.equal(controls.mouseButtons.LEFT, library.MOUSE.ROTATE);
 
     const document = { generation: 1, nodes: [
-      { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0 },
+      { key: 'system', type: 'universe', label: 'System', x: 0, y: 0, z: 0,
+        renderRadius: 300, scopeLevel: 'system', labelVisible: false },
       { key: 'group', type: 'group', label: 'Group', x: 30, y: 0, z: 8 },
       { key: 'radio', type: 'radio', label: 'Radio', x: 48, y: 5, z: 15 },
       { key: 'aggregate', type: 'aggregate', label: '+20', x: 50, y: -8, z: -12 }
@@ -579,8 +580,20 @@ async function main() {
     assert([system, group, radio, aggregate].every((mesh) => mesh.material.wireframe === true));
     assert.equal(graphState.linkObjects.get('tx') instanceof library.Line2, true);
     assert.equal(graphState.linkObjects.get('tx').material.dashed, true);
-    assert.equal(renderer.diagnostics().labels, 4);
+    assert.equal(renderer.diagnostics().labels, 3);
     assert.equal(renderer.diagnostics().autoRotateEffective, true);
+
+    renderer.setNavigationScope({ level: 'system', universeKey: 'system' });
+    assert.equal(renderer.frameScope({ duration: 0 }), true);
+    const systemObject = graphState.nodeObjects.get('system');
+    assert.equal(systemObject.scale.value, 300);
+    assert.equal(system.material.side, library.BackSide);
+    const insidePose = renderer.diagnostics().camera;
+    assert.deepEqual(insidePose.target, { x: 0, y: 0, z: 0 });
+    const insideDistance = Math.hypot(insidePose.position.x, insidePose.position.y, insidePose.position.z);
+    assert(insideDistance > 0 && insideDistance < 300, 'system focus should place the camera inside its sphere');
+    assert(controls.maxDistance > insideDistance && controls.maxDistance < 300,
+      'system orbit and zoom should remain inside the sphere');
 
     const graphDataCalls = graphState.graphDataCalls;
     document.nodes[2].x = 64;

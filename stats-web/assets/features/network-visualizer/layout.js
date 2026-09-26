@@ -37,6 +37,21 @@ function copyPosition(position = {}) {
   };
 }
 
+function containedGroupPosition(layout, record, position) {
+  const next = copyPosition(position);
+  if (record?.type !== 'group') return next;
+  const parent = layout.positions.get(record.universeKey);
+  if (!parent) return next;
+  const dx = next.x - parent.x;
+  const dy = next.y - parent.y;
+  const dz = next.z - parent.z;
+  const distance = Math.hypot(dx, dy, dz);
+  const maximum = layout.config.layout.groupOrbitRadius;
+  if (distance <= maximum || distance <= 0) return next;
+  const scale = maximum / distance;
+  return { x: parent.x + dx * scale, y: parent.y + dy * scale, z: parent.z + dz * scale };
+}
+
 function createLayoutState(config = BALANCED_CONFIG, options = {}) {
   const validated = config === BALANCED_CONFIG ? config : validateConfig(config);
   return {
@@ -75,8 +90,7 @@ function universeAnchor(layout, key) {
   }
   const index = layout.universeOrder.get(key);
   if (index === 0) return { x: 0, y: 0, z: 0 };
-  const spacing = Math.max(layout.config.layout.universeSpacing,
-    layout.config.layout.groupOrbitRadius * 2.6);
+  const spacing = layout.config.layout.universeSpacing;
   const angle = index * Math.PI * (3 - Math.sqrt(5));
   const radius = spacing * Math.sqrt(index);
   return {
@@ -181,11 +195,11 @@ function initialRecord(layout, node, atMs) {
     const parent = layout.positions.get(parentKey(record));
     const origin = parent ? { x: parent.targetX, y: parent.targetY, z: parent.targetZ } :
       universeAnchor(layout, universeKey || key);
-    const position = saved ? copyPosition(saved) : {
+    const position = containedGroupPosition(layout, record, saved || {
       x: origin.x + record.localX,
       y: origin.y + record.localY,
       z: origin.z + record.localZ
-    };
+    });
     record.x = boundedCoordinate(position.x);
     record.y = boundedCoordinate(position.y);
     record.z = boundedCoordinate(position.z);
@@ -376,7 +390,13 @@ function updateSaved(layout, record, atMs = Date.now()) {
 function translateEntity(layout, key, delta = {}, atMs = Date.now()) {
   const root = layout.positions.get(String(key || ''));
   if (!root || layout.disposed) return false;
-  const offset = copyPosition(delta);
+  let offset = copyPosition(delta);
+  if (root.type === 'group') {
+    const next = containedGroupPosition(layout, root, {
+      x: root.x + offset.x, y: root.y + offset.y, z: root.z + offset.z
+    });
+    offset = { x: next.x - root.x, y: next.y - root.y, z: next.z - root.z };
+  }
   layout.positions.forEach((record) => {
     const included = record.key === root.key ||
       (root.type === 'universe' && record.universeKey === root.key && !record.pinned) ||
@@ -407,7 +427,7 @@ function translateEntity(layout, key, delta = {}, atMs = Date.now()) {
 function dragEntity(layout, key, position, atMs = Date.now()) {
   const record = layout.positions.get(String(key || ''));
   if (!record) return false;
-  const next = copyPosition(position);
+  const next = containedGroupPosition(layout, record, position);
   const translated = translateEntity(layout, record.key, {
     x: next.x - record.x,
     y: next.y - record.y,

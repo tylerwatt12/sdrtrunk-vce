@@ -6,8 +6,9 @@ edge. It does not load saved systems, historical calls, idle Live rows, or subsc
 
 The 3D canvas uses a deliberately small wireframe vocabulary: spheres are radio systems, cubes are talkgroups or
 conventional channels, triangular pyramids are observed source radios, and faceted aggregate nodes account for hidden
-activity. Positions show logical relationships—not geography, subscriber location, RF coverage, or proof that a radio
-is listening.
+activity. The overview keeps those system spheres compact. Entering a system moves the camera inside its enclosing
+wireframe sphere, where its talkgroups and their radios occupy the contained 3D volume. Positions show logical
+relationships—not geography, subscriber location, RF coverage, or proof that a radio is listening.
 
 ## Reading the view
 

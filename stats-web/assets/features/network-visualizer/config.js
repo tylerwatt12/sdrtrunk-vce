@@ -45,6 +45,7 @@ const BALANCED_DEFAULTS = {
   layout: {
     universeSpacing: 105,
     // Each level occupies a deterministic 3D shell around its visual parent.
+    systemRadius: 300,
     groupOrbitRadius: 220,
     radioOrbitRadius: 38,
     universeStrength: 0.025,
@@ -203,6 +204,7 @@ function validateConfig(candidate) {
 
   const layout = {
     universeSpacing: finite(candidate.layout.universeSpacing, 10, 10_000, 'universeSpacing'),
+    systemRadius: finite(candidate.layout.systemRadius, 20, 10_000, 'systemRadius'),
     groupOrbitRadius: finite(candidate.layout.groupOrbitRadius, 5, 5_000, 'groupOrbitRadius'),
     radioOrbitRadius: finite(candidate.layout.radioOrbitRadius, 2, 1_000, 'radioOrbitRadius'),
     universeStrength: finite(candidate.layout.universeStrength, 0, 1, 'universeStrength'),
@@ -210,6 +212,9 @@ function validateConfig(candidate) {
     radioStrength: finite(candidate.layout.radioStrength, 0, 1, 'radioStrength'),
     maximumDeltaMs: integer(candidate.layout.maximumDeltaMs, 1, 1_000, 'maximumDeltaMs')
   };
+  if (layout.systemRadius <= layout.groupOrbitRadius + layout.radioOrbitRadius * 1.35) {
+    throw new TypeError('systemRadius must contain the talkgroup and radio layout volumes.');
+  }
 
   const animation = {
     txReleaseMs: integer(candidate.animation.txReleaseMs, 0, 30_000, 'txReleaseMs'),

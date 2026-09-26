@@ -128,6 +128,7 @@ async function main() {
   assert.equal(config.BALANCED_CONFIG.state.hardPinnedEntities, 100);
   assert.equal(config.BALANCED_CONFIG.state.hardSavedLayoutRecords, 512);
   assert.equal(config.BALANCED_CONFIG.state.hardOverflowCallKeys, 4_096);
+  assert.equal(config.BALANCED_CONFIG.layout.systemRadius, 300);
   assert.deepEqual(config.BALANCED_CONFIG.animation, {
     txReleaseMs: 2_400,
     pulseDurationMs: 700,
@@ -149,6 +150,8 @@ async function main() {
     /migrationTrailTtlMs is invalid/);
   assert.throws(() => config.createConfig({ render: { migrationTrailTtlMs: 1_000 } }),
     /migrationMotionMs cannot exceed migrationTrailTtlMs/);
+  assert.throws(() => config.createConfig({ layout: { systemRadius: 250 } }),
+    /systemRadius must contain/);
 
   // Only confirmed response semantics normalize as affiliation evidence.
   const accepted = normalize.normalizeObservation(affiliation(), BASE_TIME);
@@ -1177,8 +1180,16 @@ async function main() {
   const systemVolumeRadii = systemVolumeGraph.nodes.slice(1).map((node) => Math.hypot(
     node.x - systemVolumeUniverse.x, node.y - systemVolumeUniverse.y, node.z - systemVolumeUniverse.z));
   assert(systemVolumeRadii.every((radius) => radius <= limitedConfig.layout.groupOrbitRadius + 0.001));
+  assert(systemVolumeRadii.every((radius) => radius + limitedConfig.layout.radioOrbitRadius * 1.35 <
+    limitedConfig.layout.systemRadius), 'the system shell must contain talkgroup and radio layout volumes');
   assert(new Set(systemVolumeRadii.map((radius) => radius.toFixed(3))).size > 1,
     'talkgroups fill the deterministic system volume instead of sharing one orbital ring');
+  layout.dragEntity(systemVolumeLayout, 'volume-g-a', { x: 10_000, y: 10_000, z: 10_000 }, BASE_TIME + 1);
+  layout.synchronizeLayout(systemVolumeLayout, systemVolumeGraph, BASE_TIME + 1);
+  const containedGroup = systemVolumeGraph.nodes.find((node) => node.key === 'volume-g-a');
+  assert(Math.hypot(containedGroup.x - systemVolumeUniverse.x, containedGroup.y - systemVolumeUniverse.y,
+    containedGroup.z - systemVolumeUniverse.z) <= limitedConfig.layout.groupOrbitRadius + 0.001,
+    'saved and dragged talkgroups remain inside their parent system volume');
   layout.setLayoutPinned(firstLayout, 'r2', true);
   const beforeGroupMove = Object.fromEntries(layoutGraph.nodes.map((node) => [node.key, { x: node.x, y: node.y }]));
   layout.translateEntity(firstLayout, 'g', { x: 25, y: -10, z: 4 }, BASE_TIME + 1);

@@ -165,7 +165,7 @@ function linkIsDashed(link) {
 
 function nodeRadius(node) {
   const specified = finite(node?.radius ?? node?.renderRadius, NaN);
-  if (Number.isFinite(specified) && specified > 0) return clamp(specified, 0.8, 32);
+  if (Number.isFinite(specified) && specified > 0) return clamp(specified, 0.8, 512);
   return ({ universe: 32, group: 13, aggregate: 8, radio: 5.25 })[nodeType(node)];
 }
 
@@ -355,11 +355,14 @@ async function createNetworkVisualizerRenderer(options = {}) {
     activity: 0.42, migration: 0.78, faded: 0.18, selected: 1, encrypted: 0.86 })[state] ?? 0.68;
   const materialColor = (state) => palette[state] || palette.radio;
 
-  function meshMaterial(state) {
-    const key = `mesh:${state}`;
+  function meshMaterial(state, interior = false) {
+    const key = `mesh:${state}:${interior ? 'interior' : 'exterior'}`;
     if (materials.has(key)) return materials.get(key).material;
-    const material = protectShared(new library.MeshBasicMaterial({ color: materialColor(state),
-      transparent: true, opacity: materialOpacity(state), wireframe: true, depthTest: true, depthWrite: false }));
+    const settings = { color: materialColor(state), transparent: true,
+      opacity: interior ? (state === 'selected' ? 0.42 : state === 'active' ? 0.32 : 0.2) : materialOpacity(state),
+      wireframe: true, depthTest: true, depthWrite: false };
+    if (interior) settings.side = library.BackSide;
+    const material = protectShared(new library.MeshBasicMaterial(settings));
     materials.set(key, { material, state, category: 'mesh' });
     return material;
   }
@@ -411,22 +414,27 @@ async function createNetworkVisualizerRenderer(options = {}) {
   function applyNodeVisual(node, object = nodeObjects.get(nodeKey(node))) {
     if (!object) return;
     const kind = nodeGeometryKind(node);
+    const interior = kind === 'universe' && node.scopeLevel === 'system';
     const state = nodeVisualState(node, activeNodeEffect(nodeKey(node)));
     const signature = `${kind}:${state}:${Boolean(node.selected)}:${Boolean(node.encrypted)}:` +
-      `${node.visible !== false}:${nodeRadius(node)}`;
+      `${node.visible !== false}:${nodeRadius(node)}:${interior}`;
     if (object.userData.visualizerStyleSignature === signature) return;
     object.userData.visualizerStyleSignature = signature;
     const base = object.userData.visualizerBase;
     const selected = object.userData.visualizerSelected;
     const encrypted = object.userData.visualizerEncrypted;
     base.geometry = geometry(kind);
-    base.material = meshMaterial(state);
+    base.material = meshMaterial(state, interior);
     selected.geometry = base.geometry;
-    selected.material = meshMaterial('selected');
+    selected.material = meshMaterial('selected', interior);
     selected.visible = Boolean(node.selected);
+    selected.scale.setScalar(interior ? 1.01 : 1.18);
     encrypted.geometry = base.geometry;
-    encrypted.material = meshMaterial('encrypted');
+    encrypted.material = meshMaterial('encrypted', interior);
     encrypted.visible = Boolean(node.encrypted || node.entity?.encrypted);
+    encrypted.scale.setScalar(interior ? 0.99 : 0.78);
+    base.raycast = interior ? object.userData.visualizerNoRaycast : object.userData.visualizerBaseRaycast;
+    base.renderOrder = interior ? -10 : 0;
     object.scale.setScalar(nodeRadius(node));
     object.visible = node.visible !== false;
   }
@@ -448,6 +456,8 @@ async function createNetworkVisualizerRenderer(options = {}) {
     object.add(base, selected, encrypted);
     object.userData.visualizerKey = key;
     object.userData.visualizerBase = base;
+    object.userData.visualizerBaseRaycast = base.raycast;
+    object.userData.visualizerNoRaycast = () => {};
     object.userData.visualizerSelected = selected;
     object.userData.visualizerEncrypted = encrypted;
     nodeObjects.set(key, object);
@@ -914,6 +924,12 @@ async function createNetworkVisualizerRenderer(options = {}) {
       y: finite(controls.target.y), z: finite(controls.target.z) }) });
   }
 
+  function applyScopeCameraLimit() {
+    if (!controls) return;
+    const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
+    controls.maxDistance = system ? nodeRadius(system) * 0.94 : Infinity;
+  }
+
   function tweenCamera(position, target, requestedDuration = animation.cameraTransitionMs) {
     if (!graph || disposed || !controls) return false;
     stopCameraTween({ resume: false });
@@ -942,6 +958,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
     if (!duration) {
       apply(1);
       programmaticCamera = false;
+      applyScopeCameraLimit();
       scheduleAutoRotateResume();
       return true;
     }
@@ -958,6 +975,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       if (progress < 1) cameraTweenFrame = requestAnimationFrame(frame);
       else {
         programmaticCamera = false;
+        applyScopeCameraLimit();
         scheduleAutoRotateResume();
       }
     };
@@ -989,6 +1007,21 @@ async function createNetworkVisualizerRenderer(options = {}) {
     const keys = Array.isArray(optionsValue.keys) ? new Set(optionsValue.keys.map(String)) : null;
     const nodes = [...renderNodes.values()].filter((node) => node.visible !== false &&
       (!keys || keys.has(nodeKey(node))));
+    const system = navigationScope.level === 'system' ? renderNodes.get(navigationScope.universeKey) : null;
+    const frameSystemInterior = system && (!keys || keys.size === 1 && keys.has(nodeKey(system)));
+    if (frameSystemInterior) {
+      const center = renderedPosition(system);
+      const radius = nodeRadius(system);
+      const camera = graph.camera();
+      const direction = new library.Vector3().copy(camera.position).sub(controls.target).normalize();
+      if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001 || optionsValue.hero === true) {
+        direction.set(0.72, 0.48, 1).normalize();
+      }
+      const distance = clamp(radius * 0.4, Math.min(72, radius * 0.3), radius * 0.7);
+      return tweenCamera({ x: center.x + direction.x * distance,
+        y: center.y + direction.y * distance, z: center.z + direction.z * distance },
+      center, optionsValue.duration ?? animation.cameraTransitionMs);
+    }
     const bounds = scopeBounds(nodes);
     if (!bounds) return false;
     const camera = graph.camera();
@@ -1022,6 +1055,7 @@ async function createNetworkVisualizerRenderer(options = {}) {
       value.level === 'system' ? 'system' : 'overview';
     navigationScope = { level, universeKey: level === 'overview' ? '' : String(value.universeKey || ''),
       groupKey: level === 'group' ? String(value.groupKey || '') : '' };
+    if (controls) controls.maxDistance = Infinity;
     return { ...navigationScope };
   }
   function setAutoRotate(value) {
