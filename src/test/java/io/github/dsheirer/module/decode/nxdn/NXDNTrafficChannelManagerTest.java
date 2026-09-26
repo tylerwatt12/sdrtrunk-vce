@@ -56,10 +56,53 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class NXDNTrafficChannelManagerTest
 {
+    @Test
+    void encryptedGrantSkipsAllocationUntilVoiceDecryptionModuleLoads()
+    {
+        Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicBoolean moduleLoaded = new AtomicBoolean();
+        AtomicInteger moduleStateReads = new AtomicInteger();
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent, () ->
+        {
+            moduleStateReads.incrementAndGet();
+            return moduleLoaded.get();
+        });
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        EncryptionKeyIdentifier encryption = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0x03, 0x2A));
+        NXDNChannel channel = channel(452_012_500L);
+
+        manager.processVoiceCall(identifiers(101, 91, encryption), channel, CallType.GROUP_BROADCAST, encryption,
+            1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+        assertTrue(subscriber.requests.isEmpty());
+        assertEquals(1, moduleStateReads.get());
+
+        moduleLoaded.set(true);
+        manager.processVoiceCall(identifiers(101, 91, encryption), channel, CallType.GROUP_BROADCAST, encryption,
+            1_100L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+        assertEquals(1, subscriber.requests.size());
+
+        manager.processVoiceCall(identifiers(101, 91, encryption), channel, CallType.GROUP_BROADCAST, encryption,
+            1_200L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+        assertEquals(2, moduleStateReads.get(), "already-allocated grants must not read the module state");
+    }
+
     @Test
     void trafficStartPreloadsNativeSystemBeforeChannelInformation()
     {

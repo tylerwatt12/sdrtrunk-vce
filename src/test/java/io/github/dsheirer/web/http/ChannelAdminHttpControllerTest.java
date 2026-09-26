@@ -60,7 +60,7 @@ class ChannelAdminHttpControllerTest
             long aliasListId = aliases.createAliasList("County P25", AliasListFamily.P25,
                 aliases.currentRevision()).aliasListId();
             ChannelAdministrationService channels = ChannelAdministrationServiceTestSupport.create(manager);
-            ChannelAdminHttpController controller = new ChannelAdminHttpController(channels);
+            ChannelAdminHttpController controller = new ChannelAdminHttpController(channels, () -> true);
             server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
             server.setExecutor(executor);
             server.createContext(ChannelAdminHttpController.PATH, controller::handle);
@@ -74,6 +74,8 @@ class ChannelAdminHttpControllerTest
                 HttpResponse.BodyHandlers.ofString());
             assertEquals(200, protocols.statusCode());
             assertTrue(protocols.body().contains("\"value\":\"CQPSK\",\"label\":\"CQPSK\""));
+            assertTrue(MAPPER.readTree(protocols.body()).path("data")
+                .path("voice_decryption_module_loaded").booleanValue());
 
             long revision = channels.currentRevision();
             String create = """

@@ -418,6 +418,38 @@ public final class ApplicationDatabaseMigrator
                                                                                 DataRootRelocation relocation)
         throws IOException, SQLException
     {
+        return updatePortableDirectoryPreferences(connection, relocation, true);
+    }
+
+    /** Read-only count used by the semantic format-24-to-25 step before the strict current-format stamp. */
+    static int inspectCurrentPortablePreferenceRepairs(Connection connection) throws SQLException
+    {
+        return currentPortablePreferenceRepairs(connection, false);
+    }
+
+    /** Repairs only unusable current-layout portable preference components without relocating stored paths. */
+    static int repairCurrentPortablePreferences(Connection connection) throws SQLException
+    {
+        return currentPortablePreferenceRepairs(connection, true);
+    }
+
+    private static int currentPortablePreferenceRepairs(Connection connection, boolean apply) throws SQLException
+    {
+        try
+        {
+            return updatePortableDirectoryPreferences(connection, null, apply).resetEntries();
+        }
+        catch(IOException exception)
+        {
+            throw new SQLException("Portable preferences could not be repaired safely.", exception);
+        }
+    }
+
+    private static PortablePreferenceResult updatePortableDirectoryPreferences(Connection connection,
+                                                                                DataRootRelocation relocation,
+                                                                                boolean apply)
+        throws IOException, SQLException
+    {
         String json;
 
         boolean sourceRowStorageValid;
@@ -630,7 +662,7 @@ public final class ApplicationDatabaseMigrator
             }
         }
 
-        if(rebased > 0 || reset > 0)
+        if(apply && (rebased > 0 || reset > 0))
         {
             try(PreparedStatement statement = connection.prepareStatement("""
                 UPDATE application_settings SET settings_json=?, updated_at_ms=? WHERE key=?

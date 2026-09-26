@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -294,6 +294,16 @@ sort into a temporary B-tree. Two additional saved-channel indexes serve exact c
 IDs in the same newest-first order. Radio-system indexes exclude channel-only events, event-type indexes exclude rows
 whose decoder event type is unknown, and raw-ID indexes exclude rows without that role. Existing retention, pruning,
 identity, encryption, and administrator-owned configuration are unchanged.
+
+The format 24-to-25 step introduces per-channel opt-in suppression of encrypted P25, DMR, and NXDN traffic-channel
+allocation without rewriting usable existing configuration. Every usable database row and saved channel JSON document
+is preserved unchanged. Because formats 24 and 25 share the current row layout, when format 24 is the selected source
+the step also applies the same bounded component repair policy that a damaged format-24 database received while it was
+current; every repair, default, reset, or skipped row is reported exactly before the strict format-25 stamp. An absent
+`ignoreEncryptedCalls` decoder setting means disabled, so existing P25 and DMR channels retain their prior behavior. An
+explicit existing NXDN selection is preserved. Loading a voice-decryption module may temporarily override the effective
+setting at runtime, but does not rewrite the administrator's saved preference. Formats 24 and 25 share one DDL
+fingerprint and row layout, so a markerless file is ambiguous and requires its authoritative global format marker.
 
 ## Schema-Change Rule
 

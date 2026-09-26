@@ -1,7 +1,7 @@
 /*
  * *****************************************************************************
  * Copyright (C) 2026 Dennis Sheirer
- * *****************************************************************************
+ * ****************************************************************************
  */
 package io.github.dsheirer.database.upgrade;
 
@@ -10,21 +10,21 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 
-/** Exact populated format-24 fixture produced only by the adjacent format-23 migration. */
-public final class Format24TestDatabase
+/** Exact populated format-25 fixture produced only by the adjacent format-24 migration. */
+public final class Format25TestDatabase
 {
-    private Format24TestDatabase() {}
+    private Format25TestDatabase() {}
 
     public static Path create(Path database) throws Exception
     {
-        Format23TestDatabase.create(database);
+        Format24TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             connection.setAutoCommit(false);
             try
             {
-                new Format23To24DatabaseMigration().migrate(connection);
-                DatabaseFormatCatalog.stamp(connection, 24);
+                new Format24To25DatabaseMigration().migrate(connection);
+                DatabaseFormatCatalog.stamp(connection, 25);
                 connection.commit();
             }
             catch(Exception exception)
@@ -38,13 +38,13 @@ public final class Format24TestDatabase
             }
 
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
-            if(!DatabaseFormatCatalog.requireVersion(24).fingerprint().equals(fingerprint))
+            if(!DatabaseFormatCatalog.requireVersion(25).fingerprint().equals(fingerprint))
             {
-                throw new IllegalStateException("Global format 24 fixture fingerprint mismatch: " + fingerprint);
+                throw new IllegalStateException("Global format 25 fixture fingerprint mismatch: " + fingerprint);
             }
-            if(DatabaseFormatCatalog.inspect(connection).version() != 24)
+            if(DatabaseFormatCatalog.requireCurrent(connection).version() != 25)
             {
-                throw new IllegalStateException("Global format 24 fixture marker mismatch");
+                throw new IllegalStateException("Global format 25 fixture marker mismatch");
             }
         }
         return database;

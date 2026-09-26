@@ -814,7 +814,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void markerlessCurrentLayoutPlansCurrentAliasForeignKeyRepair() throws Exception
+    void markerlessFormat24And25LayoutIsRefusedBeforeCurrentRepairPlanning() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("markerless-current-foreign-key-source"));
@@ -831,13 +831,9 @@ class ApplicationMigrationServiceTest
                 """);
         }
 
-        DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
-
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, plan.source().version());
-        assertFalse(plan.source().markerPresent());
-        assertTrue(plan.steps().stream().anyMatch(step ->
-            CurrentDatabaseBestEffortRepair.STEP_ID.equals(step.id())));
-        assertTrue(plan.steps().stream().anyMatch(step -> "adopt-global-format-marker".equals(step.id())));
+        SQLException exception = assertThrows(SQLException.class,
+            () -> ApplicationMigrationService.readMigrationPlan(database));
+        assertTrue(exception.getMessage().contains("ambiguous across formats [24, 25]"), exception::getMessage);
         assertEquals("1", scalar(database,
             "SELECT COUNT(*) FROM alias WHERE name='Markerless Current Orphan'"));
     }
@@ -992,8 +988,12 @@ class ApplicationMigrationServiceTest
         {
             statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
         }
-        assertEquals(ApplicationMigrationService.readMigrationPlan(markerless),
-            ApplicationMigrationService.readStartupPlan(markerless));
+        SQLException migration = assertThrows(SQLException.class,
+            () -> ApplicationMigrationService.readMigrationPlan(markerless));
+        assertTrue(migration.getMessage().contains("ambiguous across formats [24, 25]"), migration::getMessage);
+        SQLException startup = assertThrows(SQLException.class,
+            () -> ApplicationMigrationService.readStartupPlan(markerless));
+        assertTrue(startup.getMessage().contains("ambiguous across formats [24, 25]"), startup::getMessage);
     }
 
     @Test

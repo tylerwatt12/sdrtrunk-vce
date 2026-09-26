@@ -94,10 +94,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,6 +134,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
+    public static final String ENCRYPTED_CALL_IGNORED = "ENCRYPTED CALL IGNORED";
+    private static final String PHASE_1_ENCRYPTED_CALL_IGNORED =
+        ENCRYPTED_CALL_IGNORED + " - PHASE 1 CHANNEL GRANT";
+    private static final String PHASE_2_ENCRYPTED_CALL_IGNORED =
+        ENCRYPTED_CALL_IGNORED + " - PHASE 2 CHANNEL GRANT";
     private static final String PHASE_1_CALL_DETAILS = "PHASE 1 CALL ";
 
     private Queue<Channel> mAvailablePhase1TrafficChannelQueue = new LinkedTransferQueue<>();
@@ -155,6 +162,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
+    private boolean mIgnoreEncryptedCalls;
+    private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private ChannelActivityModel mChannelActivityModel;
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
@@ -166,7 +175,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public P25TrafficChannelManager(Channel parentChannel)
     {
-        this(parentChannel, P25BandplanOverrideRegistry.empty());
+        this(parentChannel, P25BandplanOverrideRegistry.empty(), () -> false);
     }
 
     /**
@@ -176,7 +185,17 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry)
     {
+        this(parentChannel, bandplanOverrideRegistry, () -> false);
+    }
+
+    /**
+     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
+     */
+    public P25TrafficChannelManager(Channel parentChannel, P25BandplanOverrideRegistry bandplanOverrideRegistry,
+                                    BooleanSupplier voiceDecryptionModuleLoaded)
+    {
         mParentChannel = parentChannel;
+        mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
             P25BandplanOverrideRegistry.empty();
         mUseBandplanOverride = parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25 p25 &&
@@ -185,13 +204,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 phase1)
         {
             mIgnoreDataCalls = phase1.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = phase1.getIgnoreEncryptedCalls();
             createPhase1TrafficChannels(phase1.getTrafficChannelPoolSize(), phase1);
-            createPhase2TrafficChannels(phase1.getTrafficChannelPoolSize(), new DecodeConfigP25Phase2());
+            DecodeConfigP25Phase2 phase2TrafficConfig = new DecodeConfigP25Phase2();
+            phase2TrafficConfig.setIgnoreDataCalls(mIgnoreDataCalls);
+            phase2TrafficConfig.setIgnoreEncryptedCalls(mIgnoreEncryptedCalls);
+            createPhase2TrafficChannels(phase1.getTrafficChannelPoolSize(), phase2TrafficConfig);
         }
         else if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
         {
             mIgnoreDataCalls = phase2.getIgnoreDataCalls();
-            createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), new DecodeConfigP25Phase1());
+            mIgnoreEncryptedCalls = phase2.getIgnoreEncryptedCalls();
+            DecodeConfigP25Phase1 phase1TrafficConfig = new DecodeConfigP25Phase1();
+            phase1TrafficConfig.setIgnoreDataCalls(mIgnoreDataCalls);
+            phase1TrafficConfig.setIgnoreEncryptedCalls(mIgnoreEncryptedCalls);
+            createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), phase1TrafficConfig);
             createPhase2TrafficChannels(phase2.getTrafficChannelPoolSize(), phase2);
         }
     }
@@ -2059,11 +2086,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //update the ending timestamp so that the duration value is correctly calculated
             tracker.updateDurationControl(timestamp);
 
+            boolean needsAllocation = !mAllocatedTrafficChannelMap.containsKey(frequency);
+            boolean skipEncryptedAllocation = needsAllocation &&
+                shouldIgnoreEncryptedVoiceCall(serviceOptions, decodeEventType);
+
+            if(skipEncryptedAllocation &&
+                !PHASE_1_ENCRYPTED_CALL_IGNORED.equals(tracker.getEvent().getDetails()))
+            {
+                tracker.setDetails(PHASE_1_ENCRYPTED_CALL_IGNORED);
+            }
+
             broadcast(tracker);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant))
+            if(needsAllocation && !skipEncryptedAllocation && !(mIgnoreDataCalls && isDataChannelGrant))
             {
                 Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -2107,7 +2144,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        String details = isDataChannelGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT " +
+        boolean needsAllocation = !mAllocatedTrafficChannelMap.containsKey(frequency);
+        boolean skipEncryptedAllocation = needsAllocation &&
+            shouldIgnoreEncryptedVoiceCall(serviceOptions, decodeEventType);
+        String details = skipEncryptedAllocation ? PHASE_1_ENCRYPTED_CALL_IGNORED :
+            isDataChannelGrant ? "PHASE 1 DATA CHANNEL GRANT " : "PHASE 1 CHANNEL GRANT " +
                 (serviceOptions != null ? serviceOptions : "");
 
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
@@ -2118,7 +2159,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
-        if(!mAllocatedTrafficChannelMap.containsKey(frequency))
+        if(needsAllocation && !skipEncryptedAllocation)
         {
             Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -2187,12 +2228,23 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //update the ending timestamp so that the duration value is correctly calculated
             tracker.updateDurationControl(timestamp);
+
+            boolean needsAllocation = !mAllocatedTrafficChannelMap.containsKey(frequency) &&
+                getCurrentControlFrequency() != frequency;
+            boolean skipEncryptedAllocation = needsAllocation &&
+                shouldIgnoreEncryptedVoiceCall(serviceOptions, decodeEventType);
+
+            if(skipEncryptedAllocation &&
+                !PHASE_2_ENCRYPTED_CALL_IGNORED.equals(tracker.getEvent().getDetails()))
+            {
+                tracker.setDetails(PHASE_2_ENCRYPTED_CALL_IGNORED);
+            }
+
             broadcast(tracker);
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant) &&
-                (getCurrentControlFrequency() != frequency))
+            if(needsAllocation && !skipEncryptedAllocation && !(mIgnoreDataCalls && isDataChannelGrant))
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -2226,9 +2278,16 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        boolean needsAllocation = !mAllocatedTrafficChannelMap.containsKey(frequency) &&
+            frequency != getCurrentControlFrequency();
+        boolean skipEncryptedAllocation = needsAllocation &&
+            shouldIgnoreEncryptedVoiceCall(serviceOptions, decodeEventType);
+        String details = skipEncryptedAllocation ? PHASE_2_ENCRYPTED_CALL_IGNORED :
+            "PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : "");
+
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
             .channelDescriptor(apco25Channel)
-            .details("PHASE 2 CHANNEL GRANT " + (serviceOptions != null ? serviceOptions : ""))
+            .details(details)
             .identifiers(ic)
             .timeslot(apco25Channel.getTimeslot())
             .build();
@@ -2236,7 +2295,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         tracker = createControlTracker(event, frequency, timeslot);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
-        if(!mAllocatedTrafficChannelMap.containsKey(frequency) && frequency != getCurrentControlFrequency())
+        if(needsAllocation && !skipEncryptedAllocation)
         {
             Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -2251,6 +2310,16 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         }
 
         broadcast(tracker);
+    }
+
+    /**
+     * Only skips a new carrier allocation when control signaling explicitly marks a voice call encrypted.  A loaded
+     * decryption module always keeps encrypted traffic eligible for allocation.
+     */
+    private boolean shouldIgnoreEncryptedVoiceCall(ServiceOptions serviceOptions, DecodeEventType eventType)
+    {
+        return mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted() && eventType != null &&
+            eventType.isVoiceCallEvent() && !mVoiceDecryptionModuleLoaded.getAsBoolean();
     }
 
     /**

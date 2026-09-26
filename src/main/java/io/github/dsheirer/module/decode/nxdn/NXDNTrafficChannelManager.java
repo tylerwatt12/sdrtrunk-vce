@@ -79,6 +79,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.LinkedTransferQueue;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
@@ -102,6 +103,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private final Map<Long, NXDNChannelEventTracker> mEventTrackerMap = new HashMap<>();
     private final Map<Long, Long> mLastActivityProgressMap = new HashMap<>();
     private final TrunkedCallStartTracker mCallStartTracker = new TrunkedCallStartTracker(3000);
+    private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private final Queue<Channel> mAvailableTrafficChannelQueue = new LinkedTransferQueue<>();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private final TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -123,7 +125,16 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public NXDNTrafficChannelManager(Channel parentChannel)
     {
+        this(parentChannel, () -> false);
+    }
+
+    /**
+     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
+     */
+    public NXDNTrafficChannelManager(Channel parentChannel, BooleanSupplier voiceDecryptionModuleLoaded)
+    {
         mParentChannel = parentChannel;
+        mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mTrunkingEnabled = parentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN &&
             configNXDN.isTrunked();
 
@@ -742,15 +753,17 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 }
             }
 
-            boolean ignoreEncrypted = mIgnoreEncryptedCalls && encryption.isEncrypted();
+            boolean needsAllocation = !tracker.isTrafficChannelAllocated() && channel != null && channel.isValid() &&
+                channel.getDownlinkFrequency() != getCurrentControlFrequency() &&
+                !mAllocatedTrafficChannelMap.containsKey(frequency);
+            boolean ignoreEncrypted = needsAllocation && mIgnoreEncryptedCalls && encryption.isEncrypted() &&
+                !mVoiceDecryptionModuleLoaded.getAsBoolean();
 
             if(ignoreEncrypted)
             {
                 tracker.prefixDetails("IGNORED ENCRYPTED");
             }
-            else if(!tracker.isTrafficChannelAllocated() && channel != null && channel.isValid() &&
-                    channel.getDownlinkFrequency() != getCurrentControlFrequency() &&
-                    !mAllocatedTrafficChannelMap.containsKey(frequency))
+            else if(needsAllocation)
             {
                 //Retrieve a channel from the traffic channel queue
                 Channel traffic = mAvailableTrafficChannelQueue.poll();

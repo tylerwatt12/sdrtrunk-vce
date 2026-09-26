@@ -36,6 +36,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
     private static final Logger mLog = LoggerFactory.getLogger(VoiceDecryptionModuleManager.class);
     private final ReadOnlyBooleanWrapper mLoaded = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyStringWrapper mStatus = new ReadOnlyStringWrapper("No module selected");
+    private volatile boolean mRuntimeLoaded;
     private volatile List<VoiceFrameDecryptorProvider> mProviders = List.of();
     private volatile EnumSet<VoiceEncryptionAlgorithm> mSupportedAlgorithms =
         EnumSet.noneOf(VoiceEncryptionAlgorithm.class);
@@ -105,7 +106,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
             mModuleVersion = module.getVersion();
             mProviders = providers;
             mSupportedAlgorithms = algorithms;
-            mLoaded.set(true);
+            setLoaded(true);
             mStatus.set(displayName() + " loaded");
             mLog.info("Loaded optional module {} from {}", displayName(), mPath);
             candidate = null;
@@ -131,7 +132,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
 
     public boolean isLoaded()
     {
-        return mLoaded.get();
+        return mRuntimeLoaded;
     }
 
     public ReadOnlyBooleanProperty loadedProperty()
@@ -242,6 +243,7 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
 
     private void unloadCurrent()
     {
+        setLoaded(false);
         close(mClassLoader);
         mClassLoader = null;
         mPath = null;
@@ -249,7 +251,15 @@ public class VoiceDecryptionModuleManager implements AutoCloseable
         mModuleVersion = null;
         mProviders = List.of();
         mSupportedAlgorithms = EnumSet.noneOf(VoiceEncryptionAlgorithm.class);
-        mLoaded.set(false);
+    }
+
+    /**
+     * Updates the non-blocking cross-thread runtime state before notifying JavaFX observers.
+     */
+    private void setLoaded(boolean loaded)
+    {
+        mRuntimeLoaded = loaded;
+        mLoaded.set(loaded);
     }
 
     private void close(URLClassLoader classLoader)

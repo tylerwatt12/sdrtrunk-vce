@@ -47,7 +47,8 @@ class ChannelDefinitionCodecTest
     void p25PhaseOneRoundTripsThroughUiNeutralDefinition()
     {
         AliasListDefinition list = aliasList(19, AliasListFamily.P25);
-        Map<String,Object> settings = mRegistry.require("p25-phase1").defaultSettings();
+        Map<String,Object> settings = new LinkedHashMap<>(mRegistry.require("p25-phase1").defaultSettings());
+        settings.put("ignore_encrypted_calls", true);
         ChannelDefinition definition = definition("p25-phase1", list.getId(), settings,
             List.of(851_012_500L, 852_112_500L), true);
 
@@ -57,6 +58,7 @@ class ChannelDefinitionCodecTest
         assertEquals("p25-phase1", read.protocolId());
         assertEquals(List.of(851_012_500L, 852_112_500L), read.source().frequenciesHz());
         assertEquals(Boolean.TRUE, read.settings().get("learn_announced_control_channels"));
+        assertEquals(Boolean.TRUE, read.settings().get("ignore_encrypted_calls"));
         assertEquals(list.getId(), read.aliasListId());
     }
 
@@ -112,6 +114,7 @@ class ChannelDefinitionCodecTest
         Map<String,Object> dmr = new LinkedHashMap<>(mRegistry.require("dmr").defaultSettings());
         dmr.put("channel_mode", "TRUNKED");
         dmr.put("traffic_channel_pool_size", 12L);
+        dmr.put("ignore_encrypted_calls", true);
         dmr.put("ignore_crc_checksums", true);
         ChannelDefinition dmrDefinition = new ChannelDefinition(null, "dmr", "County", "Central", "DMR", null,
             dmrAliases.getId(), new ChannelDefinition.Source(List.of(451_012_500L), null, null, 451_012_500L,
@@ -120,6 +123,7 @@ class ChannelDefinitionCodecTest
             ChannelDefinition.Observed.EMPTY);
         ChannelDefinition dmrRead = mCodec.fromChannel(mCodec.toChannel(dmrDefinition, dmrAliases, null));
         assertEquals("TRUNKED", dmrRead.settings().get("channel_mode"));
+        assertEquals(true, dmrRead.settings().get("ignore_encrypted_calls"));
         assertEquals(dmrDefinition.frequencyMap(), dmrRead.frequencyMap());
         assertEquals(dmrDefinition.eventLogs(), dmrRead.eventLogs());
         assertEquals(dmrDefinition.recorders(), dmrRead.recorders());
@@ -128,6 +132,7 @@ class ChannelDefinitionCodecTest
         Map<String,Object> nxdn = new LinkedHashMap<>(mRegistry.require("nxdn").defaultSettings());
         nxdn.put("transmission_mode", "TYPE_D");
         nxdn.put("talker_alias_encoding", "BIG5");
+        nxdn.put("ignore_encrypted_calls", true);
         ChannelDefinition nxdnDefinition = new ChannelDefinition(null, "nxdn", "County", "Central", "NXDN", null,
             nxdnAliases.getId(), new ChannelDefinition.Source(List.of(155_012_500L), null, null, null, null, null),
             nxdn, List.of(new ChannelDefinition.FrequencyMapEntry(2048, 155_012_500L, 0)), List.of(), List.of(),
@@ -135,10 +140,12 @@ class ChannelDefinitionCodecTest
         ChannelDefinition nxdnRead = mCodec.fromChannel(mCodec.toChannel(nxdnDefinition, nxdnAliases, null));
         assertEquals("TYPE_D", nxdnRead.settings().get("transmission_mode"));
         assertEquals("BIG5", nxdnRead.settings().get("talker_alias_encoding"));
+        assertEquals(true, nxdnRead.settings().get("ignore_encrypted_calls"));
         assertEquals(nxdnDefinition.frequencyMap(), nxdnRead.frequencyMap());
 
         AliasListDefinition p25Aliases = aliasList(4, AliasListFamily.P25);
         Map<String,Object> p25 = new LinkedHashMap<>(mRegistry.require("p25-phase2").defaultSettings());
+        p25.put("ignore_encrypted_calls", true);
         p25.put("auto_detect_scramble_parameters", false);
         p25.put("scramble_wacn", 0xBEE00L);
         p25.put("scramble_system", 0x49FL);
@@ -148,6 +155,7 @@ class ChannelDefinitionCodecTest
         assertEquals(0xBEE00, p25Read.settings().get("scramble_wacn"));
         assertEquals(0x49F, p25Read.settings().get("scramble_system"));
         assertEquals(0x293, p25Read.settings().get("scramble_nac"));
+        assertEquals(true, p25Read.settings().get("ignore_encrypted_calls"));
         assertTrue(p25Read.source().frequenciesHz().contains(851_012_500L));
     }
 

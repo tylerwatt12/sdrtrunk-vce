@@ -101,6 +101,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -230,7 +231,7 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry());
+                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
         }
         else if(trafficChannelManager instanceof P25TrafficChannelManager p25)
         {
@@ -239,7 +240,7 @@ public class DecoderFactory
         else
         {
             p25TrafficChannelManager = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry());
+                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
         }
 
         p25TrafficChannelManager.setChannelActivityModel(channelActivityModel);
@@ -317,7 +318,7 @@ public class DecoderFactory
         if(channel.getChannelType() == ChannelType.STANDARD)
         {
             P25TrafficChannelManager primaryTCM = new P25TrafficChannelManager(channel,
-                userPreferences.getP25BandplanOverrideRegistry());
+                userPreferences.getP25BandplanOverrideRegistry(), voiceDecryptionModuleLoaded(userPreferences));
             primaryTCM.setChannelActivityModel(channelActivityModel);
             modules.add(primaryTCM);
             modules.add(new P25P1DecoderState(channel, primaryTCM));
@@ -416,7 +417,8 @@ public class DecoderFactory
 
             if(channel.getChannelType() == ChannelType.STANDARD)
             {
-                NXDNTrafficChannelManager primaryTCM = new NXDNTrafficChannelManager(channel);
+                NXDNTrafficChannelManager primaryTCM = new NXDNTrafficChannelManager(channel,
+                    voiceDecryptionModuleLoaded(userPreferences));
                 primaryTCM.setChannelActivityModel(channelActivityModel);
                 modules.add(primaryTCM);
                 modules.add(new NXDNDecoderState(channel, primaryTCM));
@@ -498,7 +500,8 @@ public class DecoderFactory
         }
         else
         {
-            dmrTrafficChannelManager = new DMRTrafficChannelManager(channel);
+            dmrTrafficChannelManager = new DMRTrafficChannelManager(channel,
+                voiceDecryptionModuleLoaded(userPreferences));
         }
 
         dmrTrafficChannelManager.setChannelActivityModel(channelActivityModel);
@@ -704,6 +707,15 @@ public class DecoderFactory
     }
 
     /**
+     * Supplies the current module state to traffic managers without performing preference lookup on the decode path.
+     * VoiceDecryptionModuleManager.isLoaded() is a non-blocking in-memory read.
+     */
+    private static BooleanSupplier voiceDecryptionModuleLoaded(UserPreferences userPreferences)
+    {
+        return userPreferences.getVoiceDecryptionModulePreference().getModuleManager()::isLoaded;
+    }
+
+    /**
      * Creates a copy of the configuration
      */
     public static DecodeConfiguration copy(DecodeConfiguration config)
@@ -719,6 +731,7 @@ public class DecoderFactory
                     DecodeConfigDMR copyDMR = new DecodeConfigDMR();
                     copyDMR.setChannelMode(originalDMR.getChannelMode());
                     copyDMR.setIgnoreDataCalls(originalDMR.getIgnoreDataCalls());
+                    copyDMR.setIgnoreEncryptedCalls(originalDMR.getIgnoreEncryptedCalls());
                     copyDMR.setIgnoreCRCChecksums(originalDMR.getIgnoreCRCChecksums());
                     copyDMR.setUseCompressedTalkgroups(originalDMR.isUseCompressedTalkgroups());
                     copyDMR.setTrafficChannelPoolSize(originalDMR.getTrafficChannelPoolSize());
@@ -743,6 +756,7 @@ public class DecoderFactory
                     DecodeConfigP25Phase1 originalP25 = (DecodeConfigP25Phase1)config;
                     DecodeConfigP25Phase1 copyP25 = new DecodeConfigP25Phase1();
                     copyP25.setIgnoreDataCalls(originalP25.getIgnoreDataCalls());
+                    copyP25.setIgnoreEncryptedCalls(originalP25.getIgnoreEncryptedCalls());
                     copyP25.setLearnAnnouncedControlChannels(originalP25.getLearnAnnouncedControlChannels());
                     copyP25.setLearnedControlFrequencies(originalP25.getLearnedControlFrequencies());
                     copyP25.setModulation(originalP25.getModulation());
@@ -758,6 +772,7 @@ public class DecoderFactory
                     DecodeConfigP25Phase2 originalP25P2 = (DecodeConfigP25Phase2)config;
                     DecodeConfigP25Phase2 copyP25P2 = new DecodeConfigP25Phase2();
                     copyP25P2.setIgnoreDataCalls(originalP25P2.getIgnoreDataCalls());
+                    copyP25P2.setIgnoreEncryptedCalls(originalP25P2.getIgnoreEncryptedCalls());
                     copyP25P2.setLearnAnnouncedControlChannels(
                         originalP25P2.getLearnAnnouncedControlChannels());
                     copyP25P2.setLearnedControlFrequencies(originalP25P2.getLearnedControlFrequencies());

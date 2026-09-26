@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
@@ -62,6 +63,66 @@ import org.junit.jupiter.api.Test;
 
 class DMRTrafficChannelManagerTest
 {
+    @Test
+    void encryptedGrantSkipsOnlyNewSharedCarrierAllocation()
+    {
+        long frequency = 451_012_500L;
+        Channel parent = new Channel("Tier III", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicInteger moduleStateReads = new AtomicInteger();
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent, () ->
+        {
+            moduleStateReads.incrementAndGet();
+            return false;
+        });
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+
+        manager.processChannelGrant(channel(1, 1, frequency), identifiers(101, 91),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, true);
+
+        assertTrue(subscriber.requests.isEmpty());
+        assertEquals(1, moduleStateReads.get());
+
+        manager.processChannelGrant(channel(1, 2, frequency), identifiers(102, 92),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_100L, false);
+        manager.processChannelGrant(channel(1, 1, frequency), identifiers(101, 91),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_200L, true);
+
+        assertEquals(1, subscriber.requests.size(),
+            "a clear sister slot should start the carrier and later encrypted grants must not replace it");
+        assertEquals(1, moduleStateReads.get(),
+            "clear and already-allocated grants must not read the module state");
+    }
+
+    @Test
+    void loadedVoiceDecryptionModuleOverridesEncryptedGrantSkip()
+    {
+        Channel parent = new Channel("Tier III", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicBoolean moduleLoaded = new AtomicBoolean(true);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent, moduleLoaded::get);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+
+        manager.processChannelGrant(channel(1, 1, 451_012_500L), identifiers(101, 91),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, true);
+
+        assertEquals(1, subscriber.requests.size());
+    }
+
     @Test
     void nativeIdentityIsGenerationBoundAndIncompleteEvidenceFailsClosed()
     {

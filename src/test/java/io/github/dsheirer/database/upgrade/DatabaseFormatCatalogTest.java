@@ -81,8 +81,10 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("exact saved channel")));
         assertTrue(DatabaseFormatCatalog.requireVersion(23).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("collapsed row-group")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(24).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("action/time indexes")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -495,7 +497,7 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactUnmarkedCurrentLayoutRequiresOnlyGlobalMarkerAdoption() throws Exception
+    void markerlessFormat24And25LayoutIsRefusedAsAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -507,18 +509,20 @@ class DatabaseFormatCatalogTest
             statement.setString(1, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
             assertEquals(1, statement.executeUpdate());
 
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
-            assertFalse(detected.markerPresent());
-            assertTrue(detected.requiresMigration());
-            SQLException exception = assertThrows(SQLException.class,
-                () -> DatabaseFormatCatalog.requireCurrent(connection));
-            assertTrue(exception.getMessage().contains("missing authoritative metadata"), exception::getMessage);
+            SQLException strict = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [24, 25]"), strict::getMessage);
+            assertTrue(strict.getMessage().contains("authoritative database_format_version marker is required"),
+                strict::getMessage);
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(migration.getMessage().contains("ambiguous across formats [24, 25]"),
+                migration::getMessage);
         }
     }
 
     @Test
-    void migrationInspectionAdmitsRetiredMetadataInAnExactUnmarkedCurrentLayout() throws Exception
+    void repairableMetadataDoesNotDisambiguateMarkerlessFormat24And25() throws Exception
     {
         Path database = mTemporaryFolder.resolve("unmarked-current-with-retired-metadata.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -534,11 +538,13 @@ class DatabaseFormatCatalogTest
                 VALUES ('alias_schema_version', '6', 1)
                 """));
 
-            assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspectForMigration(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, detected.version());
-            assertFalse(detected.markerPresent());
-            assertTrue(detected.requiresMigration());
+            SQLException strict = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [24, 25]"), strict::getMessage);
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(migration.getMessage().contains("ambiguous across formats [24, 25]"),
+                migration::getMessage);
         }
     }
 

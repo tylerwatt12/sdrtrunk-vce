@@ -148,7 +148,8 @@ class StatsWebChannelsUiContractTest
     void exposesReusableControlsAndProtocolDrivenEditorBehavior() throws Exception
     {
         String source = source();
-        String editor = function(source, "function channelEditorControl(field, profile, options, channel)");
+        String editor = function(source,
+            "function channelEditorControl(field, profile, options, channel, protocolCatalog)");
         String dependencies = function(source, "function channelEditorDependencies(form)");
         String modal = function(source,
             "async function openChannelEditorModal(mode = 'create', configurationId = null, prefetched = null)");
@@ -160,10 +161,15 @@ class StatsWebChannelsUiContractTest
             assertTrue(source.contains("function " + helper + "("), () -> "Missing reusable " + helper);
         }
         assertTrue(editor.contains("uiToggle(Boolean(value ?? field.default), field.label)"));
+        assertTrue(editor.contains("dataControl.dataset.channelPreservedValue"));
+        assertTrue(editor.contains("setUiToggle(dataControl, false)"));
+        assertTrue(editor.contains("dataControl.disabled = true"));
         assertTrue(editor.contains("channelListEditor(field, value)"));
         assertTrue(editor.contains("channelMapEditor(field, value)"));
         assertTrue(dependencies.contains("frequency_select"));
         assertTrue(dependencies.contains("channelEditorVisibility(form)"));
+        assertTrue(modal.contains("requestJson('/api/v1/admin/channels/protocols'"));
+        assertFalse(modal.contains("prefetched?.protocols"));
         assertTrue(modal.contains("channelRestoreProtocolDefaults(form, profile)"));
         assertTrue(modal.contains("Save & restart"));
         assertFalse(modal.contains("action: 'STOP'"));

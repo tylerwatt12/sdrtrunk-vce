@@ -72,6 +72,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,6 +99,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private static final Logger mLog = LoggerFactory.getLogger(DMRTrafficChannelManager.class);
     public static final String CHANNEL_START_REJECTED = " REJECTED - NO TUNER";
     public static final String DATA_CALL_IGNORED = "DATA CALL IGNORED";
+    public static final String ENCRYPTED_CALL_IGNORED = "ENCRYPTED CALL IGNORED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
     public static final String NO_FREQUENCY = "NO FREQUENCY - CHECK CONFIGURATION CHANNEL CONFIG LSN CHANNEL MAP";
     public static final long EVENT_TIME_STALE_THRESHOLD = 5000; //5 seconds
@@ -117,6 +119,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
     private boolean mIgnoreDataCalls;
+    private boolean mIgnoreEncryptedCalls;
+    private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private final boolean mTrunkingEnabled;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
@@ -141,7 +145,16 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public DMRTrafficChannelManager(Channel parentChannel)
     {
+        this(parentChannel, () -> false);
+    }
+
+    /**
+     * Constructs an instance with a live, non-blocking view of optional voice-decryption module state.
+     */
+    public DMRTrafficChannelManager(Channel parentChannel, BooleanSupplier voiceDecryptionModuleLoaded)
+    {
         mParentChannel = parentChannel;
+        mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mTrunkingEnabled = parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config &&
             config.isTrunked();
         mTrunkedActivityObserved = mTrunkingEnabled;
@@ -149,6 +162,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
         {
             mIgnoreDataCalls = config.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = config.getIgnoreEncryptedCalls();
         }
 
         createTrafficChannels();
@@ -1163,6 +1177,21 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     return;
                 }
 
+                if(shouldIgnoreEncryptedVoiceCall(encrypted, decodeEventType))
+                {
+                    if(event.getDetails() == null)
+                    {
+                        event.setDetails(ENCRYPTED_CALL_IGNORED);
+                    }
+                    else if(!event.getDetails().endsWith(ENCRYPTED_CALL_IGNORED))
+                    {
+                        event.setDetails(event.getDetails() + " - " + ENCRYPTED_CALL_IGNORED);
+                    }
+
+                    broadcast(event);
+                    return;
+                }
+
                 Channel trafficChannel = mAvailableTrafficChannels.poll();
 
                 if(trafficChannel != null)
@@ -1354,6 +1383,16 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         }
 
         return type;
+    }
+
+    /**
+     * Only skips a new carrier allocation when control signaling explicitly marks a voice call encrypted.  A loaded
+     * decryption module always keeps encrypted traffic eligible for allocation.
+     */
+    private boolean shouldIgnoreEncryptedVoiceCall(boolean encrypted, DecodeEventType eventType)
+    {
+        return mIgnoreEncryptedCalls && encrypted && eventType != null && eventType.isVoiceCallEvent() &&
+            !mVoiceDecryptionModuleLoaded.getAsBoolean();
     }
 
     /**

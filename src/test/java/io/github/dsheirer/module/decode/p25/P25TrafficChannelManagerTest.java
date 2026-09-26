@@ -11,8 +11,10 @@
 
 package io.github.dsheirer.module.decode.p25;
 
+import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
@@ -21,6 +23,7 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
@@ -34,6 +37,9 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
+import io.github.dsheirer.module.decode.p25.bandplan.P25BandplanOverrideRegistry;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
@@ -42,8 +48,10 @@ import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -56,6 +64,119 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficChannelManagerTest
 {
+    @Test
+    void encryptedPhaseOneGrantSkipsAllocationButClearGrantStillStarts()
+    {
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicInteger moduleStateReads = new AtomicInteger();
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent,
+            P25BandplanOverrideRegistry.empty(), () ->
+            {
+                moduleStateReads.incrementAndGet();
+                return false;
+            });
+        P25FrequencyBand band = new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        APCO25Channel channel = APCO25Channel.create(0, 1);
+        MutableIdentifierCollection identifiers = identifiers(1201, null);
+        identifiers.update(APCO25Nac.create(0x491));
+
+        manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createEncrypted(), identifiers,
+            Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_000L);
+        assertTrue(subscriber.requests.isEmpty());
+        assertEquals(1, moduleStateReads.get());
+
+        manager.processP1ControlDirectedChannelGrant(channel, VoiceServiceOptions.createUnencrypted(), identifiers,
+            Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, 1_100L);
+
+        assertEquals(1, subscriber.requests.size());
+        assertEquals(1, moduleStateReads.get(), "clear grants must not read the module state");
+    }
+
+    @Test
+    void encryptedPhaseTwoGrantSkipsOnlyNewSharedCarrierAllocation()
+    {
+        long frequency = 851_012_500L;
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicInteger moduleStateReads = new AtomicInteger();
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent,
+            P25BandplanOverrideRegistry.empty(), () ->
+            {
+                moduleStateReads.incrementAndGet();
+                return false;
+            });
+        P25FrequencyBand band = new P25FrequencyBand(0, frequency, -45_000_000L, 12_500L, 12_500, 2);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        APCO25Channel encryptedTimeslot = APCO25Channel.create(0, 0);
+        APCO25Channel clearTimeslot = APCO25Channel.create(0, 1);
+
+        manager.processP2ChannelGrant(encryptedTimeslot, VoiceServiceOptions.createEncrypted(),
+            identifiers(1201, null), MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_000L);
+
+        assertTrue(subscriber.requests.isEmpty());
+        assertEquals(1, moduleStateReads.get());
+
+        manager.processP2ChannelGrant(clearTimeslot, VoiceServiceOptions.createUnencrypted(),
+            identifiers(1202, null), MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_100L);
+        manager.processP2ChannelGrant(encryptedTimeslot, VoiceServiceOptions.createEncrypted(),
+            identifiers(1201, null), MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_200L);
+
+        assertEquals(1, subscriber.requests.size(),
+            "a clear sister slot should start the carrier and later encrypted grants must not replace it");
+        assertEquals(1, moduleStateReads.get(),
+            "clear and already-allocated grants must not read the module state");
+    }
+
+    @Test
+    void loadedVoiceDecryptionModuleOverridesEncryptedPhaseTwoGrantSkip()
+    {
+        long frequency = 851_012_500L;
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+        config.setTrafficChannelPoolSize(1);
+        config.setIgnoreEncryptedCalls(true);
+        parent.setDecodeConfiguration(config);
+        AtomicBoolean moduleLoaded = new AtomicBoolean();
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent,
+            P25BandplanOverrideRegistry.empty(), moduleLoaded::get);
+        P25FrequencyBand band = new P25FrequencyBand(0, frequency, -45_000_000L, 12_500L, 12_500, 2);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        APCO25Channel channel = APCO25Channel.create(0, 0);
+
+        manager.processP2ChannelGrant(channel, VoiceServiceOptions.createEncrypted(), identifiers(1201, null),
+            MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_000L);
+        assertTrue(subscriber.requests.isEmpty());
+
+        moduleLoaded.set(true);
+        manager.processP2ChannelGrant(channel, VoiceServiceOptions.createEncrypted(), identifiers(1201, null),
+            MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_100L);
+
+        assertEquals(1, subscriber.requests.size());
+    }
+
     @Test
     void copiesLateLearnedSiteIdentityToTrafficChannel() throws Exception
     {
@@ -512,6 +633,17 @@ class P25TrafficChannelManagerTest
         public void receive(TrunkedTalkerAliasEvent talkerAliasEvent)
         {
             event.set(talkerAliasEvent);
+        }
+    }
+
+    private static class StartRequestSubscriber
+    {
+        private final List<ChannelStartProcessingRequest> requests = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(ChannelStartProcessingRequest request)
+        {
+            requests.add(request);
         }
     }
 

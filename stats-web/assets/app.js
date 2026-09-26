@@ -18952,7 +18952,15 @@ function channelMapEditor(field, values) {
   return editor;
 }
 
-function channelEditorControl(field, profile, options, channel) {
+const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
+const CHANNEL_ENCRYPTED_SKIP_LOCK_HELP =
+  'Encrypted calls are processed while voice decryption is loaded. Your saved performance preference is preserved.';
+
+function channelEncryptedCallSkipLocked(field, protocolCatalog) {
+  return field?.path === CHANNEL_ENCRYPTED_SKIP_PATH && protocolCatalog?.voice_decryption_module_loaded === true;
+}
+
+function channelEditorControl(field, profile, options, channel, protocolCatalog) {
   const value = channelValueAt(channel, field.path);
   let control;
   if (field.type === 'boolean') {
@@ -19015,6 +19023,12 @@ function channelEditorControl(field, profile, options, channel) {
     dataControl.dataset.channelPath = field.path;
     dataControl.dataset.channelType = field.type;
     if (field.required === true && 'required' in dataControl) dataControl.required = true;
+    if (field.type === 'boolean' && channelEncryptedCallSkipLocked(field, protocolCatalog)) {
+      dataControl.dataset.channelPreservedValue = String(Boolean(value ?? field.default));
+      setUiToggle(dataControl, false);
+      dataControl.disabled = true;
+      dataControl.title = CHANNEL_ENCRYPTED_SKIP_LOCK_HELP;
+    }
   }
   return control;
 }
@@ -19102,7 +19116,8 @@ function channelParseFrequency(value, label, nullable = false) {
 }
 
 function channelEditorFieldValue(control, field) {
-  if (field.type === 'boolean') return control.checked;
+  if (field.type === 'boolean') return control.dataset.channelPreservedValue == null ? control.checked :
+    control.dataset.channelPreservedValue === 'true';
   if (field.type === 'multi_select') return [...control.querySelectorAll('input:checked')]
     .map((input) => input.value);
   if (field.type === 'frequency_list') {
@@ -19468,8 +19483,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
   if (!modal) return;
   try {
     const [protocols, options, loadedEntry] = await Promise.all([
-      prefetched?.protocols ? Promise.resolve(prefetched.protocols) :
-        requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
+      requestJson('/api/v1/admin/channels/protocols', { csrf: false }),
       prefetched?.options ? Promise.resolve(prefetched.options) :
         requestJson('/api/v1/admin/channels/options', { csrf: false }),
       editing ? requestJson(`/api/v1/admin/channels/${encodeURIComponent(configurationId)}`, { csrf: false }) :
@@ -19556,7 +19570,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
         const grid = node('div', 'channel-editor-grid');
         const squelchFields = [];
         sectionDefinition.fields.forEach((field) => {
-          const control = channelEditorControl(field, profile, options, channel);
+          const control = channelEditorControl(field, profile, options, channel, protocols);
           let presentedControl = control instanceof HTMLSelectElement ? uiSelectFrame(control) : control;
           if (field.unit && control instanceof HTMLInputElement) {
             const unit = node('span', 'channel-input-with-unit');
@@ -19583,6 +19597,9 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           if (!wrapper.contains(control)) {
             wrapper.append(node('span', 'ui-field-label', field.label), presentedControl);
             if (field.help) wrapper.append(node('small', 'ui-field-detail', field.help));
+          }
+          if (channelEncryptedCallSkipLocked(field, protocols)) {
+            wrapper.append(node('small', 'ui-field-detail', CHANNEL_ENCRYPTED_SKIP_LOCK_HELP));
           }
           if (inlineAliasList) {
             wrapper.append(inlineAliasListCreator({

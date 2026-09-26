@@ -85,6 +85,7 @@ public final class ChannelDefinitionCodec
                 settings.put("channel_mode", dmr.getChannelMode().name());
                 settings.put("traffic_channel_pool_size", dmr.getTrafficChannelPoolSize());
                 settings.put("ignore_data_calls", dmr.getIgnoreDataCalls());
+                settings.put("ignore_encrypted_calls", dmr.getIgnoreEncryptedCalls());
                 settings.put("ignore_crc_checksums", dmr.getIgnoreCRCChecksums());
                 settings.put("use_compressed_talkgroups", dmr.isUseCompressedTalkgroups());
                 dmr.getTimeslotMap().forEach(entry -> frequencyMap.add(new ChannelDefinition.FrequencyMapEntry(
@@ -225,6 +226,7 @@ public final class ChannelDefinitionCodec
     {
         settings.put("traffic_channel_pool_size", p25.getTrafficChannelPoolSize());
         settings.put("ignore_data_calls", p25.getIgnoreDataCalls());
+        settings.put("ignore_encrypted_calls", p25.getIgnoreEncryptedCalls());
         settings.put("learn_announced_control_channels", p25.getLearnAnnouncedControlChannels());
         settings.put("use_bandplan_override", p25.getUseP25BandplanOverride());
     }
@@ -306,6 +308,7 @@ public final class ChannelDefinitionCodec
         dmr.setChannelMode(enumValue(DMRChannelMode.class, text(settings, "channel_mode"), "Channel mode"));
         dmr.setTrafficChannelPoolSize(integer(settings, "traffic_channel_pool_size"));
         dmr.setIgnoreDataCalls(bool(settings, "ignore_data_calls"));
+        dmr.setIgnoreEncryptedCalls(bool(settings, "ignore_encrypted_calls"));
         dmr.setIgnoreCRCChecksums(bool(settings, "ignore_crc_checksums"));
         dmr.setUseCompressedTalkgroups(bool(settings, "use_compressed_talkgroups"));
         List<TimeslotFrequency> result = new ArrayList<>();
@@ -372,6 +375,7 @@ public final class ChannelDefinitionCodec
     {
         target.setTrafficChannelPoolSize(integer(settings, "traffic_channel_pool_size"));
         target.setIgnoreDataCalls(bool(settings, "ignore_data_calls"));
+        target.setIgnoreEncryptedCalls(bool(settings, "ignore_encrypted_calls"));
         target.setLearnAnnouncedControlChannels(bool(settings, "learn_announced_control_channels"));
         target.setUseP25BandplanOverride(bool(settings, "use_bandplan_override"));
         if(existing != null && existing.getDecodeConfiguration() instanceof DecodeConfigP25 current)

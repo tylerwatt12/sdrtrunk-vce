@@ -43,6 +43,10 @@ vm.runInContext(`
   ${functionSource('function channelCreationProtocolLabel(profile)')}
   ${functionSource('function channelDefaultAliasListName(aliasFamily)')}
   ${functionSource('function channelCreationDefaults(channel, profile, options)')}
+  ${functionSource('function setUiToggle(input, checked)')}
+  const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
+  ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
+  ${functionSource('function channelEditorFieldValue(control, field)')}
   ${functionSource('function channelEditorSectionId(value)')}
   ${functionSource('function channelEditorSectionPlan(sections)')}
   ${functionSource('function channelSquelchQuality(noise)')}
@@ -73,6 +77,28 @@ const unchangedDefaults = JSON.parse(vm.runInContext(`JSON.stringify(channelCrea
 ))`, context));
 assert.equal(unchangedDefaults.alias_list_id, 10,
   'The template choice should remain when the selected protocol has no Default alias list');
+
+assert.equal(vm.runInContext(`channelEncryptedCallSkipLocked(
+  { path: 'settings.ignore_encrypted_calls' }, { voice_decryption_module_loaded: true })`, context), true);
+assert.equal(vm.runInContext(`channelEncryptedCallSkipLocked(
+  { path: 'settings.ignore_encrypted_calls' }, { voice_decryption_module_loaded: false })`, context), false);
+assert.equal(vm.runInContext(`channelEditorFieldValue(
+  { checked: false, dataset: { channelPreservedValue: 'true' } }, { type: 'boolean' })`, context), true,
+  'A forced-off encrypted-call control must submit its preserved saved preference');
+assert.equal(vm.runInContext(`channelEditorFieldValue(
+  { checked: false, dataset: {} }, { type: 'boolean' })`, context), false,
+  'An ordinary boolean control must submit its displayed value');
+const lockedToggle = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+  const state = { textContent: 'On' };
+  const input = { checked: true, closest: () => ({ querySelector: () => state }) };
+  setUiToggle(input, false);
+  return { checked: input.checked, state: state.textContent };
+})())`, context));
+assert.deepEqual(lockedToggle, { checked: false, state: 'Off' },
+  'Forcing the effective setting off must update both the checkbox and its rendered state label');
+assert.match(application, /Encrypted calls are processed while voice decryption is loaded/);
+assert.match(application, /setUiToggle\(dataControl, false\)/);
+assert.match(application, /dataControl\.disabled = true/);
 
 assert.equal(vm.runInContext('channelSquelchQuality(0.1)', context), 100);
 assert.equal(vm.runInContext('channelSquelchQuality(0.5)', context), 0);
@@ -193,6 +219,10 @@ assert.deepEqual(conventionalGroups[0].children.map((row) => row.name), ['Dispat
 assert.equal(conventionalGroups[0].running_count, 1);
 assert.deepEqual(conventionalGroups[0].alias_lists, [{ id: 7, name: 'Default Analog' }]);
 const channelModal = functionSource('async function openChannelEditorModal(');
+assert.match(channelModal, /requestJson\('\/api\/v1\/admin\/channels\/protocols'/,
+  'Each editor open must refresh the current voice-decryption module state');
+assert.doesNotMatch(channelModal, /prefetched\?\.protocols/,
+  'The editor must not reuse a stale module-state snapshot from the channel catalog page');
 assert.match(channelModal, /if \(!editing\) channel = channelCreationDefaults\(channel, profile, options\)/,
   'Creation defaults must not alter an existing channel');
 assert.match(channelModal, /label: channelCreationProtocolLabel\(candidate\)/,

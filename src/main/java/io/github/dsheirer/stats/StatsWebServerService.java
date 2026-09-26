@@ -766,7 +766,8 @@ public class StatsWebServerService implements AutoCloseable
         if(mChannelAdministrationService != null)
         {
             ChannelAdminHttpController channelController =
-                new ChannelAdminHttpController(mChannelAdministrationService);
+                new ChannelAdminHttpController(mChannelAdministrationService, () -> mUserPreferences
+                    .getVoiceDecryptionModulePreference().getModuleManager().isLoaded());
             server.createContext(ChannelAdminHttpController.READ_PATH, mWebRequestSecurity.protectApi(
                 WebCapability.RADIO_VIEW, channelController::handleCatalog));
             server.createContext(ChannelAdminHttpController.PATH, mWebRequestSecurity.protectApi(

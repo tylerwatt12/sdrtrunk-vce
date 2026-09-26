@@ -63,11 +63,17 @@ class ChannelProtocolRegistryTest
         assertEquals("BW_15_0", registry.require("am").defaultSettings().get("bandwidth"));
         assertEquals("BW_12_5", registry.require("nbfm").defaultSettings().get("bandwidth"));
         assertEquals(true, registry.require("dmr").defaultSettings().get("ignore_data_calls"));
+        assertEquals(false, registry.require("dmr").defaultSettings().get("ignore_encrypted_calls"));
         assertEquals("TRUNKED", registry.require("nxdn").defaultSettings().get("channel_mode"));
+        assertEquals(false, registry.require("nxdn").defaultSettings().get("ignore_encrypted_calls"));
+        assertEquals(false, registry.require("p25-phase1").defaultSettings().get("ignore_encrypted_calls"));
+        assertEquals(false, registry.require("p25-phase2").defaultSettings().get("ignore_encrypted_calls"));
 
         String catalog = registry.catalog().toString();
         assertTrue(catalog.contains("\"visible_when\":{\"path\":\"settings.low_pass_enabled\""));
         assertTrue(catalog.contains("\"number_maximum\":2048"));
         assertTrue(catalog.contains("\"options_source\":\"alias_lists\""));
+        assertTrue(catalog.contains("Skip encrypted traffic channels (performance)"));
+        assertTrue(catalog.contains("raw encrypted recordings are unavailable"));
     }
 }

@@ -51,6 +51,7 @@ class DecoderFactoryTest
         DecodeConfigDMR original = new DecodeConfigDMR();
         original.setChannelMode(DMRChannelMode.TRUNKED);
         original.setIgnoreDataCalls(false);
+        original.setIgnoreEncryptedCalls(true);
         original.setIgnoreCRCChecksums(true);
         original.setUseCompressedTalkgroups(true);
         original.setTrafficChannelPoolSize(31);
@@ -65,6 +66,7 @@ class DecoderFactoryTest
         assertNotSame(original, copy);
         assertEquals(DMRChannelMode.TRUNKED, copy.getChannelMode());
         assertFalse(copy.getIgnoreDataCalls());
+        assertTrue(copy.getIgnoreEncryptedCalls());
         assertTrue(copy.getIgnoreCRCChecksums());
         assertTrue(copy.isUseCompressedTalkgroups());
         assertEquals(31, copy.getTrafficChannelPoolSize());
@@ -113,6 +115,21 @@ class DecoderFactoryTest
 
         assertEquals(phase1.getLearnedControlFrequencies(), phase1Copy.getLearnedControlFrequencies());
         assertEquals(phase2.getLearnedControlFrequencies(), phase2Copy.getLearnedControlFrequencies());
+    }
+
+    @Test
+    void copiesP25EncryptedCallAllocationPreference()
+    {
+        DecodeConfigP25Phase1 phase1 = new DecodeConfigP25Phase1();
+        DecodeConfigP25Phase2 phase2 = new DecodeConfigP25Phase2();
+        phase1.setIgnoreEncryptedCalls(true);
+        phase2.setIgnoreEncryptedCalls(true);
+
+        DecodeConfigP25Phase1 phase1Copy = (DecodeConfigP25Phase1)DecoderFactory.copy(phase1);
+        DecodeConfigP25Phase2 phase2Copy = (DecodeConfigP25Phase2)DecoderFactory.copy(phase2);
+
+        assertTrue(phase1Copy.getIgnoreEncryptedCalls());
+        assertTrue(phase2Copy.getIgnoreEncryptedCalls());
     }
 
     @Test

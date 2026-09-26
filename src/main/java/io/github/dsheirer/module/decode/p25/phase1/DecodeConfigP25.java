@@ -22,6 +22,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
 {
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
+    private boolean mIgnoreEncryptedCalls = false;
     private boolean mLearnAnnouncedControlChannels = false;
     private boolean mUseP25BandplanOverride = false;
     private List<Long> mLearnedControlFrequencies = new CopyOnWriteArrayList<>();
@@ -54,6 +56,23 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     public void setIgnoreDataCalls(boolean ignore)
     {
         mIgnoreDataCalls = ignore;
+    }
+
+    /**
+     * Indicates if explicitly encrypted voice call traffic channel grants should be ignored.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "ignore_encrypted_calls")
+    public boolean getIgnoreEncryptedCalls()
+    {
+        return mIgnoreEncryptedCalls;
+    }
+
+    /**
+     * Sets whether explicitly encrypted voice call traffic channel grants should be ignored.
+     */
+    public void setIgnoreEncryptedCalls(boolean ignore)
+    {
+        mIgnoreEncryptedCalls = ignore;
     }
 
     public boolean getLearnAnnouncedControlChannels()

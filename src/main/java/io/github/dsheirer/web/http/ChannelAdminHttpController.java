@@ -10,6 +10,7 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,10 +42,19 @@ public final class ChannelAdminHttpController
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     private final ChannelAdministrationService mService;
+    private final BooleanSupplier mVoiceDecryptionModuleLoaded;
 
     public ChannelAdminHttpController(ChannelAdministrationService service)
     {
+        this(service, () -> false);
+    }
+
+    public ChannelAdminHttpController(ChannelAdministrationService service,
+                                      BooleanSupplier voiceDecryptionModuleLoaded)
+    {
         mService = Objects.requireNonNull(service, "Channel administration service cannot be null");
+        mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded,
+            "Voice decryption module status cannot be null");
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -148,7 +159,9 @@ public final class ChannelAdminHttpController
     private void handleProtocols(HttpExchange exchange) throws IOException, RequestException
     {
         requireGet(exchange);
-        sendData(exchange, 200, mService.protocolRegistry().catalog());
+        ObjectNode catalog = (ObjectNode)mService.protocolRegistry().catalog();
+        catalog.put("voice_decryption_module_loaded", mVoiceDecryptionModuleLoaded.getAsBoolean());
+        sendData(exchange, 200, catalog);
     }
 
     private void handleTemplate(HttpExchange exchange, String path) throws IOException, RequestException

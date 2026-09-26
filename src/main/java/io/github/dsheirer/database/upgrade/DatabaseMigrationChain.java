@@ -35,7 +35,8 @@ public final class DatabaseMigrationChain
         new Format16To17DatabaseMigration(), new Format17To18DatabaseMigration(),
         new Format18To19DatabaseMigration(), new Format19To20DatabaseMigration(),
         new Format20To21DatabaseMigration(), new Format21To22DatabaseMigration(),
-        new Format22To23DatabaseMigration(), new Format23To24DatabaseMigration());
+        new Format22To23DatabaseMigration(), new Format23To24DatabaseMigration(),
+        new Format24To25DatabaseMigration());
     private static final Map<Integer,DatabaseMigrationStep> STEPS = ORDERED_STEPS.stream().collect(
         Collectors.toUnmodifiableMap(DatabaseMigrationStep::sourceVersion, Function.identity()));
 
@@ -71,7 +72,7 @@ public final class DatabaseMigrationChain
             DatabaseMigrationStep step = requireStep(version);
             requireAdjacent(step);
             steps.add(new StepPreflight(step.id(), step.description(), step.sourceVersion(), step.targetVersion(),
-                List.copyOf(step.declaredEffects())));
+                List.copyOf(step.declaredEffects(step.sourceVersion() == source.version()))));
             version = step.targetVersion();
         }
 
@@ -201,7 +202,8 @@ public final class DatabaseMigrationChain
         {
             DatabaseMigrationStep step = requireStep(detected.version());
             requireAdjacent(step);
-            List<DatabaseMigrationEffect> effects = List.copyOf(step.migrateAndReport(connection));
+            List<DatabaseMigrationEffect> effects = List.copyOf(
+                step.migrateAndReport(connection, step.sourceVersion() == source.version()));
             requireObservedCounts(step, effects);
             DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
             DatabaseFormatCatalog.DetectedFormat target = DatabaseFormatCatalog.inspectForMigration(connection);

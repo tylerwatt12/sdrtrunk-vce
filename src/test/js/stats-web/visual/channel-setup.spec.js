@@ -52,6 +52,103 @@ function channelFixture(index) {
   };
 }
 
+test('channel editor refreshes the voice-module override and renders the effective toggle state', async ({ page }) => {
+  let moduleLoaded = true;
+  let protocolRequests = 0;
+  const profile = {
+    id: 'dmr',
+    label: 'DMR',
+    channel_kind: 'TRUNKED',
+    alias_family: 'DMR',
+    sections: [{
+      id: 'protocol',
+      label: 'Decoder',
+      fields: [{
+        path: 'settings.ignore_encrypted_calls',
+        label: 'Skip encrypted traffic channels (performance)',
+        type: 'boolean',
+        default: false
+      }]
+    }]
+  };
+  const template = {
+    protocol_id: 'dmr',
+    name: 'DMR Channel',
+    alias_list_id: 1,
+    source: { frequencies_hz: [451012500] },
+    settings: { ignore_encrypted_calls: true },
+    frequency_map: [],
+    event_logs: [],
+    recorders: [],
+    auxiliary_decoders: []
+  };
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const respond = (data) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(apiData(data))
+    });
+    if(path === '/api/v1/auth/session') {
+      await respond({
+        configured: true,
+        authenticated: true,
+        username: 'channel-admin',
+        tier: 'admin',
+        primary: true,
+        csrf_token: 'test-token',
+        capabilities: { 'admin-channels': true }
+      });
+      return;
+    }
+    if(path === '/api/v1/admin/channels' && request.method() === 'GET') {
+      await respond({ revision: 1, channels: [] });
+      return;
+    }
+    if(path === '/api/v1/admin/channels/options') {
+      await respond({ revision: 1, alias_lists: [{ id: 1, name: 'Default DMR', family: 'DMR' }], tuners: [] });
+      return;
+    }
+    if(path === '/api/v1/admin/channels/protocols') {
+      protocolRequests += 1;
+      await respond({ voice_decryption_module_loaded: moduleLoaded, profiles: [profile] });
+      return;
+    }
+    if(path === '/api/v1/admin/channels/protocols/dmr/template') {
+      await respond(template);
+      return;
+    }
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'Not available in this browser contract' } })
+    });
+  });
+
+  await page.goto('/app.html?view=channel-setup');
+  await expect(page.locator('.channel-admin-catalog')).toBeVisible();
+  expect(protocolRequests).toBe(1);
+
+  await page.getByRole('button', { name: 'New channel' }).click();
+  const encryptedSkip = page.getByRole('checkbox', {
+    name: 'Skip encrypted traffic channels (performance)'
+  });
+  await expect(encryptedSkip).toBeDisabled();
+  await expect(encryptedSkip).not.toBeChecked();
+  await expect(encryptedSkip.locator('xpath=..').locator('.ui-toggle-state')).toHaveText('Off');
+  expect(protocolRequests).toBe(2);
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  moduleLoaded = false;
+  await page.getByRole('button', { name: 'New channel' }).click();
+  await expect(encryptedSkip).toBeEnabled();
+  await expect(encryptedSkip).toBeChecked();
+  await expect(encryptedSkip.locator('xpath=..').locator('.ui-toggle-state')).toHaveText('On');
+  expect(protocolRequests).toBe(3);
+});
+
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
   let revision = 40;

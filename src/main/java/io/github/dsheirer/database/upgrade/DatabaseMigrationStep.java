@@ -29,6 +29,16 @@ interface DatabaseMigrationStep
     /** Static policy visible even when an earlier step has not yet produced this step's source layout. */
     List<DatabaseMigrationEffect> declaredEffects();
 
+    /**
+     * Static policy for this step in one migration plan.  Most steps are path-independent.  A semantic-only step may
+     * additionally recover damage from its directly selected historical source without repeating that recovery on
+     * an intermediate layout produced by earlier steps in the same transaction.
+     */
+    default List<DatabaseMigrationEffect> declaredEffects(boolean selectedSourceStep)
+    {
+        return declaredEffects();
+    }
+
     /** Inspects the staged source without mutation and returns exact effects for this step. */
     List<DatabaseMigrationEffect> validateSource(Connection connection) throws SQLException;
 
@@ -45,5 +55,12 @@ interface DatabaseMigrationStep
         List<DatabaseMigrationEffect> effects = List.copyOf(validateSource(connection));
         migrate(connection);
         return effects;
+    }
+
+    /** Runs this step with the same direct-source context shown during preflight. */
+    default List<DatabaseMigrationEffect> migrateAndReport(Connection connection, boolean selectedSourceStep)
+        throws SQLException
+    {
+        return migrateAndReport(connection);
     }
 }
