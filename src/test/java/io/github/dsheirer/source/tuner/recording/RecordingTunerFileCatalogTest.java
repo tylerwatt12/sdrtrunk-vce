@@ -113,6 +113,38 @@ class RecordingTunerFileCatalogTest
     }
 
     @Test
+    void rechecksManagedRecordingAtPlaybackWithoutRestrictingLegacyExternalPaths() throws Exception
+    {
+        Path folder = mTemporaryDirectory.resolve("recording_tuners");
+        Files.createDirectory(folder);
+        Path managed = folder.resolve("managed.wav");
+        Path legacy = mTemporaryDirectory.resolve("legacy.wav");
+        createWave(managed, 48, 2_400_000);
+        createWave(legacy, 48, 2_400_000);
+
+        RecordingTunerFileCatalog.requireManagedPlaybackFile(managed.toString(), folder);
+        RecordingTunerFileCatalog.requireManagedPlaybackFile(legacy.toString(), folder);
+
+        Files.delete(managed);
+        Files.createSymbolicLink(managed, legacy);
+        assertThrows(IOException.class,
+            () -> RecordingTunerFileCatalog.requireManagedPlaybackFile(managed.toString(), folder));
+
+        Files.delete(managed);
+        Files.createDirectory(managed);
+        assertThrows(IOException.class,
+            () -> RecordingTunerFileCatalog.requireManagedPlaybackFile(managed.toString(), folder));
+
+        Path nested = folder.resolve("nested").resolve("capture.wav");
+        assertThrows(IOException.class,
+            () -> RecordingTunerFileCatalog.requireManagedPlaybackFile(nested.toString(), folder));
+
+        Path escaped = folder.resolve("..").resolve("legacy.wav");
+        assertThrows(IOException.class,
+            () -> RecordingTunerFileCatalog.requireManagedPlaybackFile(escaped.toString(), folder));
+    }
+
+    @Test
     void boundsTheInMemoryIndexWhenTheDirectoryContainsManyRecordings() throws Exception
     {
         Path folder = mTemporaryDirectory.resolve("recording_tuners");

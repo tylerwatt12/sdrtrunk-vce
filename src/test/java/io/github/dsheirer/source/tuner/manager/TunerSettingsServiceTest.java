@@ -32,6 +32,8 @@ import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -107,10 +109,24 @@ class TunerSettingsServiceTest
         configuration.setGain(Gain.CUSTOM);
         int originalIfGain = configuration.getIFGain();
         tuner.setTunerConfiguration(configuration);
+        CountDownLatch persistenceStarted = new CountDownLatch(1);
+        CountDownLatch releasePersistence = new CountDownLatch(1);
 
-        try(TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null))
+        try(TunerSettingsService service = new TunerSettingsService(() ->
         {
-            assertTrue(tuner.tryAcquireForAllocation());
+            persistenceStarted.countDown();
+            try
+            {
+                releasePersistence.await(3, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }, ignored -> true, ignored -> null))
+        {
+            service.set(tuner, "automatic_ppm", false);
+            assertTrue(persistenceStarted.await(3, TimeUnit.SECONDS));
             try
             {
                 service.set(tuner, "if_gain", 7);
@@ -118,10 +134,10 @@ class TunerSettingsServiceTest
             }
             finally
             {
-                tuner.releaseAfterAllocation();
+                releasePersistence.countDown();
             }
 
-            await(Duration.ofSeconds(3), () -> service.error(tuner) != null);
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null && !service.hasPending(tuner));
             assertEquals(originalIfGain, configuration.getIFGain());
             assertFalse(service.hasPending(tuner));
         }
@@ -148,8 +164,16 @@ class TunerSettingsServiceTest
             assertTrue(service.describe(tuner).stream().filter(setting ->
                 setting.id().equals("frequency_correction_ppm")).findFirst().orElseThrow().requiresIdle());
 
-            service.set(tuner, "if_gain", 7);
-            await(Duration.ofSeconds(3), () -> controller.mIfGainCalls.get() == 1);
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                service.set(tuner, "if_gain", 7);
+                await(Duration.ofSeconds(3), () -> controller.mIfGainCalls.get() == 1);
+            }
+            finally
+            {
+                tuner.releaseAfterAllocation();
+            }
             assertEquals(7, configuration.getIFGain());
             assertEquals(0, controller.mApplyCalls.get());
 
@@ -169,7 +193,68 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void rspLnaAppliesLiveAndRateUpdatesControllerOnlyWhenIdle() throws Exception
+    void slowPersistenceDoesNotHoldAllocationReservationOrControllerLock() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setGain(Gain.CUSTOM);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        CountDownLatch persistenceStarted = new CountDownLatch(1);
+        CountDownLatch releasePersistence = new CountDownLatch(1);
+        CountDownLatch persistenceCompleted = new CountDownLatch(1);
+
+        try(TunerSettingsService service = new TunerSettingsService(() ->
+        {
+            persistenceStarted.countDown();
+            try
+            {
+                if(!releasePersistence.await(3, TimeUnit.SECONDS))
+                {
+                    throw new IllegalStateException("persistence wait timed out");
+                }
+            }
+            catch(InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("persistence interrupted", e);
+            }
+            finally
+            {
+                persistenceCompleted.countDown();
+            }
+        }, ignored -> true, ignored -> null))
+        {
+            service.set(tuner, "if_gain", 7);
+            try
+            {
+                assertTrue(persistenceStarted.await(3, TimeUnit.SECONDS));
+                assertTrue(tuner.tryAcquireForAllocation(), "a slow save must not reject channel allocation");
+                try
+                {
+                    assertTrue(controller.getLock().tryLock(), "a slow save must not hold the tuner controller");
+                    controller.getLock().unlock();
+                }
+                finally
+                {
+                    tuner.releaseAfterAllocation();
+                }
+            }
+            finally
+            {
+                releasePersistence.countDown();
+            }
+
+            assertEquals(7, configuration.getIFGain());
+            assertTrue(persistenceCompleted.await(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void rspBasebandGainAppliesLiveWhileLnaAndRateWaitForIdle() throws Exception
     {
         AtomicInteger gainCalls = new AtomicInteger();
         AtomicInteger sampleRateCalls = new AtomicInteger();
@@ -193,10 +278,20 @@ class TunerSettingsServiceTest
         {
             assertEquals(5, service.describe(tuner).stream().filter(setting -> setting.id().equals("lna"))
                 .findFirst().orElseThrow().maximum());
-            service.set(tuner, "lna", 2);
+            assertTrue(service.describe(tuner).stream().filter(setting -> setting.id().equals("lna"))
+                .findFirst().orElseThrow().requiresIdle());
+            service.set(tuner, "baseband_gain_reduction", 42);
             await(Duration.ofSeconds(3), () -> gainCalls.get() == 1);
+            assertEquals(42, configuration.getBasebandGainReduction());
+
+            service.set(tuner, "lna", 2);
+            Thread.sleep(100);
+            assertEquals(1, gainCalls.get());
+            channels.mCount.set(0);
+            await(Duration.ofSeconds(3), () -> gainCalls.get() == 2);
             assertEquals(2, configuration.getLNA());
 
+            channels.mCount.set(1);
             service.set(tuner, "sample_rate", RspSampleRate.RATE_1_000.name());
             Thread.sleep(100);
             assertEquals(0, sampleRateCalls.get());
@@ -204,6 +299,51 @@ class TunerSettingsServiceTest
             await(Duration.ofSeconds(3), () -> sampleRateCalls.get() == 1);
             assertEquals(RspSampleRate.RATE_1_000, configuration.getSampleRate());
             assertEquals(RspSampleRate.RATE_1_000.getEffectiveSampleRate(), controller.getSampleRate());
+        }
+    }
+
+    @Test
+    void queuedRspLnaIsRejectedIfRetuneNarrowsItsValidRange() throws Exception
+    {
+        AtomicInteger maximumLna = new AtomicInteger(9);
+        AtomicInteger gainCalls = new AtomicInteger();
+        IControlRsp1 control = (IControlRsp1)Proxy.newProxyInstance(IControlRsp1.class.getClassLoader(),
+            new Class<?>[]{IControlRsp1.class}, (proxy, method, arguments) -> switch(method.getName())
+            {
+                case "getMaximumLNASetting" -> maximumLna.get();
+                case "setGain" -> { gainCalls.incrementAndGet(); yield null; }
+                default -> defaultValue(method.getReturnType());
+            });
+        Rsp1TunerController controller = new Rsp1TunerController(control, null);
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        Rsp1TunerConfiguration configuration = new Rsp1TunerConfiguration(tuner.getId());
+        configuration.setLNA(2);
+        tuner.setTunerConfiguration(configuration);
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(0);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                service.set(tuner, "lna", 8);
+                maximumLna.set(6); // A retune changed the device's frequency-dependent LNA range.
+            }
+            finally
+            {
+                tuner.releaseAfterAllocation();
+            }
+
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null);
+            assertEquals(2, configuration.getLNA());
+            assertEquals(0, gainCalls.get());
+            assertEquals(0, saves.get());
+            assertFalse(service.hasPending(tuner));
+            assertTrue(service.error(tuner).contains("maximum 6"));
         }
     }
 

@@ -71,6 +71,7 @@ public class RecordingTunerController extends TunerController
         {
             try
             {
+                RecordingTunerFileCatalog.requireManagedPlaybackFile(mPath);
                 mComplexWaveSource = new ComplexWaveSource(new File(mPath), true);
             }
             catch(IOException ioe)

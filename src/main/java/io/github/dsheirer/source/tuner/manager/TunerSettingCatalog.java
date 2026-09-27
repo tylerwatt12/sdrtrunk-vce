@@ -224,7 +224,9 @@ public final class TunerSettingCatalog
         }
         if(configuration instanceof RspTunerConfiguration)
         {
-            return !Set.of("lna", "baseband_gain_reduction", "agc_mode").contains(settingId);
+            // LNA limits change with frequency (and RSPduo AM port).  Applying it without the retune lock can
+            // silently clamp the hardware to a different value, so it waits for the idle maintenance path.
+            return !Set.of("baseband_gain_reduction", "agc_mode").contains(settingId);
         }
         return true;
     }

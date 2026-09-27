@@ -17,6 +17,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -58,6 +59,58 @@ public final class RecordingTunerFileCatalog
     public static Path defaultDirectory()
     {
         return PortableApplicationPaths.getDataRoot().resolve("recording_tuners").toAbsolutePath().normalize();
+    }
+
+    /**
+     * Rechecks a managed recording when playback starts, including after a receiver restart. Legacy recording paths
+     * outside the managed folder retain their existing behavior.
+     */
+    public static void requireManagedPlaybackFile(String recordingPath) throws IOException
+    {
+        requireManagedPlaybackFile(recordingPath, defaultDirectory());
+    }
+
+    static void requireManagedPlaybackFile(String recordingPath, Path managedDirectory) throws IOException
+    {
+        if(recordingPath == null || recordingPath.isBlank())
+        {
+            throw new IOException("Recording path is unavailable");
+        }
+
+        Path suppliedFile;
+        try
+        {
+            suppliedFile = Path.of(recordingPath).toAbsolutePath();
+        }
+        catch(InvalidPathException exception)
+        {
+            throw new IOException("Recording path is invalid", exception);
+        }
+
+        Path directory = managedDirectory.toAbsolutePath().normalize();
+        Path file = suppliedFile.normalize();
+        if(!suppliedFile.startsWith(directory) && !file.startsWith(directory))
+        {
+            return;
+        }
+
+        if(!file.startsWith(directory) || !directory.equals(file.getParent()) ||
+            Files.isSymbolicLink(directory) ||
+            !file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".wav"))
+        {
+            throw new IOException("Managed recording is outside its directory or uses a symbolic link");
+        }
+
+        BasicFileAttributes directoryAttributes = Files.readAttributes(directory, BasicFileAttributes.class,
+            LinkOption.NOFOLLOW_LINKS);
+        BasicFileAttributes fileAttributes = Files.readAttributes(file, BasicFileAttributes.class,
+            LinkOption.NOFOLLOW_LINKS);
+        if(!directoryAttributes.isDirectory() || directoryAttributes.isSymbolicLink() ||
+            !fileAttributes.isRegularFile() || fileAttributes.isSymbolicLink() ||
+            !file.toRealPath().getParent().equals(directory.toRealPath()))
+        {
+            throw new IOException("Managed recording is not a regular file inside its directory");
+        }
     }
 
     public ScanResult snapshot()
