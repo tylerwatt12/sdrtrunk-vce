@@ -136,6 +136,11 @@ const TABLE_DEFAULTS = Object.freeze({
   'admin-access': { widths: {
     capability: 310, 'required-tier': 170, 'default-tier': 120, 'policy-status': 130
   } },
+  'call-matching-duplicates': {
+    widths: { time: 160, talkgroup: 165, radio: 125, site: 160, copies: 82,
+      match: 185, outputs: 130, action: 115 },
+    grow: ['talkgroup', 'site', 'match']
+  },
   'radioreference-sites': {
     widths: { site: 340, system: 200, frequencies: 150 }, grow: ['site'], stretchSaved: true
   },

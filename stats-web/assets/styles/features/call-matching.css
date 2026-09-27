@@ -1,0 +1,141 @@
+.call-matching-workspace {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.call-matching-workspace-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.call-matching-live-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.call-matching-status-content {
+  min-width: 0;
+}
+
+.call-matching-health-state {
+  margin: var(--space-3) var(--space-3) 0;
+}
+
+.call-matching-technical {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.call-matching-technical h3,
+.call-matching-comparison-heading {
+  margin: var(--space-2) 0;
+  font-size: var(--font-size-body);
+}
+
+.call-matching-history-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-meta);
+}
+
+.call-matching-stacked-cell {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.call-matching-stacked-cell strong,
+.call-matching-copy-site {
+  overflow-wrap: anywhere;
+}
+
+.call-matching-stacked-cell small {
+  color: var(--muted);
+}
+
+.call-matching-output-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.call-matching-compare {
+  white-space: nowrap;
+}
+
+.call-matching-comparison {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.call-matching-comparison-intro {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.call-matching-comparison-intro > strong {
+  font-size: var(--font-size-section-title);
+}
+
+.call-matching-comparison-scroll {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.call-matching-comparison-table {
+  min-width: 650px;
+}
+
+.call-matching-comparison-table th:first-child {
+  min-width: 155px;
+}
+
+.call-matching-comparison-table thead th:not(:first-child) {
+  min-width: 235px;
+}
+
+.call-matching-comparison-table thead th:not(:first-child) > :where(strong, small) {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.call-matching-comparison-table tbody th {
+  color: var(--muted);
+  font-weight: var(--font-weight-medium);
+}
+
+.call-matching-winning-value {
+  font-weight: var(--font-weight-heading);
+}
+
+.call-matching-readonly-note {
+  margin: 0;
+  font-size: var(--font-size-meta);
+}
+
+.call-matching-comparison-hint {
+  display: none;
+  margin: 0;
+  font-size: var(--font-size-meta);
+}
+
+@media (max-width: 760px) {
+  .call-matching-workspace-header,
+  .call-matching-live-status {
+    justify-content: flex-start;
+  }
+
+  .call-matching-comparison-hint {
+    display: block;
+  }
+}

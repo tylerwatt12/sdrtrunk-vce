@@ -2,7 +2,7 @@ import * as routeFoundation from './core/routes.js?v=5';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
-import * as tableDefaults from './core/table-defaults.js?v=8';
+import * as tableDefaults from './core/table-defaults.js?v=9';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -23244,11 +23244,404 @@ function renderAdminSupportReport() {
   content.append(section('Report a problem', form));
 }
 
+const CALL_MATCHING_HISTORY_LIMIT = 100;
+
+function callMatchingCount(value) {
+  return value !== null && value !== undefined && value !== '' &&
+    Number.isFinite(Number(value)) && Number(value) >= 0 ? number(value) : '—';
+}
+
+function callMatchingDuration(value) {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
+  return milliseconds < 1000 ? `${number(milliseconds)} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
+}
+
+function callMatchingPercent(value, digits = 1) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${numeric.toFixed(digits)}%` : '—';
+}
+
+function callMatchingLabel(value) {
+  return String(value || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function callMatchingIdentity(alias, value, fallback) {
+  const name = String(alias || '').trim();
+  const identifier = String(value || '').trim();
+  return name || identifier || fallback;
+}
+
+function callMatchingCopySite(leg) {
+  const name = String(leg?.channel_name || '').trim();
+  const site = [leg?.rfss !== null && leg?.rfss !== undefined ? `RFSS ${leg.rfss}` : '',
+    leg?.site !== null && leg?.site !== undefined ? `Site ${leg.site}` : ''].filter(Boolean).join(' · ');
+  return [name, site].filter(Boolean).join(' · ') || String(leg?.decoder || 'Unknown site');
+}
+
+function callMatchingWinner(decision) {
+  const copies = Array.isArray(decision?.legs) ? decision.legs : [];
+  return copies.find((leg) => leg.copy_index === decision?.winner?.selected_copy_index) ||
+    copies.find((leg) => leg.selected) || null;
+}
+
+function callMatchingCopies(decision) {
+  const copies = Array.isArray(decision?.legs) ? decision.legs : [];
+  const selected = callMatchingWinner(decision);
+  const runnerUp = copies.find((leg) => leg.copy_index === decision?.winner?.runner_up_copy_index);
+  return [selected, runnerUp, ...copies].filter((leg, index, values) => leg &&
+    values.findIndex((candidate) => candidate?.copy_index === leg.copy_index) === index);
+}
+
+function callMatchingProof(decision) {
+  const labels = {
+    shared_voice_content: 'Matching voice frames',
+    matching_source_identity_fallback: 'Shared source identity',
+    matching_encryption_message_indicator: 'Matching encryption identity'
+  };
+  const proofs = Object.entries(decision?.evidence?.merge_proof_counts || {})
+    .filter(([, count]) => Number(count) > 0).map(([proof]) => labels[proof] || callMatchingLabel(proof));
+  return proofs.length ? proofs.join(', ') : 'Confirmed duplicate';
+}
+
+function callMatchingCriterion(value) {
+  const labels = {
+    MISSING_AND_CONCEALED_RATE: 'Less missing or concealed audio',
+    USABLE_FRAME_COUNT: 'More usable voice frames',
+    REPEATED_FRAME_RATE: 'Fewer repeated frames',
+    NORMALIZED_FEC_ERROR_RATE: 'Lower FEC error rate',
+    INGRESS_LOSS_OR_AUDIO_TRUNCATION: 'Less damaged audio',
+    RETAINED_AUDIO_SAMPLE_COUNT: 'More retained audio',
+    CHANNEL_CONFIGURATION_ID: 'Stable channel order',
+    CALL_LEG_ID: 'Stable copy order'
+  };
+  return labels[value] || callMatchingLabel(value) || 'Best-quality copy';
+}
+
+function callMatchingOutputTags(policy) {
+  const tags = node('span', 'call-matching-output-tags');
+  if (policy?.record_requested) tags.append(uiPill('Record'));
+  if (Number(policy?.stream_routing_key_count) > 0) tags.append(uiPill('Stream'));
+  if (policy?.browser_offered) tags.append(uiPill('Browser'));
+  if (!tags.childElementCount) tags.append(node('span', 'muted', 'None'));
+  return tags;
+}
+
+function callMatchingHealth(snapshot) {
+  const resolver = snapshot.resolver || {};
+  const published = {
+    HEALTHY: ['Healthy', 'success'], WARNING: ['Warning', 'warning'],
+    DRAINING: ['Draining', 'warning'], STOPPED: ['Stopped', 'danger'],
+    UNRESPONSIVE: ['Unresponsive', 'danger']
+  }[resolver.health_state];
+  if (published) return published;
+  const queue = snapshot.queue || {};
+  const counters = resolver.counters || {};
+  const age = Math.max(0, Date.now() - Number(resolver.generated_at_ms || 0));
+  const capacity = Number(queue.total_ingress_capacity || 0);
+  const pressure = capacity > 0 && Number(queue.ingress_depth || 0) * 4 >= capacity * 3;
+  const loss = Number(queue.dropped_operations || 0) > 0 || Number(queue.aborted_calls || 0) > 0 ||
+    Number(counters.diagnostic_decisions_rejected || 0) > 0;
+  if (resolver.disposed) return ['Stopped', 'danger'];
+  if (resolver.accepting && age > 3000) return ['Unresponsive', 'danger'];
+  if (!resolver.accepting) return ['Draining', 'warning'];
+  if (loss || pressure) return ['Warning', 'warning'];
+  return ['Healthy', 'success'];
+}
+
+function callMatchingFileHealth(status) {
+  const drops = Number(status.records_dropped_at_queue || 0) + Number(status.records_rejected_after_close || 0) +
+    Number(status.file_records_dropped || 0) + Number(status.oversized_records_dropped || 0);
+  const published = {
+    ACTIVE: ['Active', 'success'], WARNING: ['Warning', 'warning'], ERROR: ['Error', 'danger']
+  }[status.file_health_state];
+  if (published) return [...published, drops];
+  if (status.file_state === 'DISABLED' || Number(status.file_write_failures || 0) > 0) return ['Error', 'danger', drops];
+  if (drops || Number(status.queued_records || 0) * 4 >= Math.max(1, Number(status.queue_capacity || 0)) * 3) {
+    return ['Warning', 'warning', drops];
+  }
+  if (status.file_state === 'ACTIVE') return ['Active', 'success', drops];
+  return [callMatchingLabel(status.file_state) || 'Unavailable', 'neutral', drops];
+}
+
+function callMatchingSnapshot(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.duplicates) ||
+      !value.resolver || !value.queue || !value.diagnostic_status || !value.history) {
+    throw new Error('The call matching snapshot is incomplete.');
+  }
+  const duplicates = value.duplicates.filter((decision) => decision?.outcome === 'MERGED' &&
+    Number.isSafeInteger(Number(decision.decision_sequence)) && Number(decision.decision_sequence) > 0)
+    .sort((left, right) => Number(right.decision_sequence) - Number(left.decision_sequence))
+    .slice(0, CALL_MATCHING_HISTORY_LIMIT);
+  return { ...value, duplicates };
+}
+
+function callMatchingComparison(decision) {
+  const identity = decision.call_identity || {};
+  const winner = callMatchingWinner(decision);
+  const copies = callMatchingCopies(decision);
+  const runnerUp = copies.find((copy) => copy.copy_index === decision.winner?.runner_up_copy_index);
+  const body = node('div', 'call-matching-comparison');
+  const intro = node('div', 'call-matching-comparison-intro');
+  intro.append(node('strong', '', callMatchingIdentity(identity.destination_alias,
+    identity.destination_value, 'Unknown destination')),
+    node('span', 'muted', `Radio ${callMatchingIdentity(identity.source_alias, identity.source_value, 'unknown')} · ` +
+      `${callMatchingDuration(Number(identity.end_timestamp || 0) - Number(identity.start_timestamp || 0))} · ` +
+      `${copies.length} receiver copies`));
+  body.append(intro);
+
+  const summary = keyValues([
+    ['Decision', callMatchingProof(decision)],
+    ['Selected by', callMatchingCriterion(decision.winner?.criterion)],
+    ['Selected site', winner ? callMatchingCopySite(winner) : 'Unavailable'],
+    ['Runner-up site', runnerUp ? callMatchingCopySite(runnerUp) : 'Unavailable'],
+    ['Selected value', decision.winner?.winner_value?.display || '—'],
+    ['Runner-up value', decision.winner?.runner_up_value?.display || '—'],
+    ['Output', callMatchingOutputTags(decision.output_policy)]
+  ]);
+  body.append(summary);
+  const heading = node('h3', 'call-matching-comparison-heading', 'Receiver copy comparison');
+  body.append(heading);
+  if (!copies.length) {
+    body.append(node('div', 'empty', 'No receiver-copy details were retained for this decision.'));
+    return body;
+  }
+  const wrap = node('div', 'call-matching-comparison-scroll ui-table-wrap');
+  const matrix = node('table', 'ui-data-table call-matching-comparison-table');
+  const thead = node('thead');
+  const header = node('tr');
+  header.append(node('th', '', 'Metric'));
+  copies.forEach((copy, index) => {
+    const label = copy.selected ? 'Selected copy' :
+      (copy.copy_index === decision.winner?.runner_up_copy_index ? 'Runner-up' : `Other copy ${index + 1}`);
+    const cell = node('th');
+    cell.append(uiPill(label, copy.selected ? 'success' : 'neutral'),
+      node('strong', 'call-matching-copy-site', callMatchingCopySite(copy)),
+      node('small', 'muted', `${callMatchingDuration(copy.duration_milliseconds)} · ` +
+        `${copy.decoder || 'Unknown decoder'}`));
+    header.append(cell);
+  });
+  thead.append(header);
+  const tbody = node('tbody');
+  const rows = [
+    ['Match', (copy) => copy.selected ? 'Overlap reference' :
+      (copy.overlap ? `${callMatchingDuration(copy.overlap.overlap_milliseconds)} shared · ` +
+        `${callMatchingPercent(copy.overlap.shorter_copy_overlap_percent)} of shorter copy · ` +
+        `${callMatchingPercent(copy.overlap.selected_copy_coverage_percent)} of selected copy` :
+        callMatchingProof(decision))],
+    ['Usable frames', (copy) => `${callMatchingCount(copy.usable_frame_count)} / ` +
+      `${callMatchingCount(copy.expected_frame_count)} (${callMatchingPercent(copy.quality_percent)})`],
+    ['Observed / decoded', (copy) => `${callMatchingCount(copy.observed_frame_count)} / ` +
+      callMatchingCount(copy.decoded_frame_count)],
+    ['Missing + concealed', (copy) => `${callMatchingCount(Number(copy.missing_frame_count || 0) +
+      Number(copy.concealed_frame_count || 0))} / ${callMatchingCount(copy.expected_frame_count)} ` +
+      `(${callMatchingPercent(Number(copy.missing_and_concealed_rate || 0) * 100)})`],
+    ['Repeated', (copy) => `${callMatchingCount(copy.repeated_frame_count)} / ` +
+      `${callMatchingCount(copy.expected_frame_count)} ` +
+      `(${callMatchingPercent(Number(copy.repeated_frame_rate || 0) * 100)})`],
+    ['FEC errors', (copy) => Number(copy.fec_protected_bit_count) > 0 ?
+      `${callMatchingCount(copy.fec_error_count)} / ${callMatchingCount(copy.fec_protected_bit_count)} ` +
+      `(${callMatchingPercent(Number(copy.normalized_fec_error_rate || 0) * 100, 2)})` : 'Not measured'],
+    ['Retained audio', (copy) => `${callMatchingCount(copy.retained_audio_sample_count)} samples`],
+    ['Damage', (copy) => [copy.ingress_loss ? 'Receiver input loss' : '',
+      copy.audio_truncated ? 'Audio truncated' : ''].filter(Boolean).join(' · ') || 'None'],
+    ['Timing', (copy) => `${callMatchingDuration(copy.duration_milliseconds)} · ` +
+      `${copy.overlap && !copy.selected ? `starts ${callMatchingCount(Math.abs(copy.overlap.start_offset_from_selected_milliseconds))} ms ` +
+      `${Number(copy.overlap.start_offset_from_selected_milliseconds) < 0 ? 'earlier' : 'later'}` : 'selected reference'}`]
+  ];
+  rows.forEach(([label, render]) => {
+    const row = node('tr');
+    row.append(node('th', '', label), ...copies.map((copy) => node('td', copy.selected ? 'call-matching-winning-value' : '',
+      render(copy))));
+    tbody.append(row);
+  });
+  matrix.append(thead, tbody);
+  wrap.append(matrix);
+  body.append(wrap, node('p', 'muted call-matching-comparison-hint',
+    'Swipe left or right to compare every receiver copy.'),
+    node('p', 'muted call-matching-readonly-note',
+    'Read-only diagnostic data from the bounded in-memory snapshot.'));
+  return body;
+}
+
+async function renderAdminCallMatching(renderContext = captureRenderContext()) {
+  pageTitleController.update({ pageTitle: 'Call matching monitor' });
+  const workspace = node('div', 'call-matching-workspace');
+  const status = node('div', 'call-matching-live-status');
+  status.setAttribute('role', 'status');
+  status.append(uiStatus('Connecting'), node('span', '', 'Updates every second'));
+  const heading = node('div', 'call-matching-workspace-header');
+  heading.append(status);
+  workspace.append(heading);
+  const statusContent = node('div', 'call-matching-status-content');
+  statusContent.append(node('div', 'loading', 'Loading call matching status…'));
+  workspace.append(section('Matching status', statusContent));
+  const tableActions = sectionActionHost();
+  const tableController = {};
+  let selectedSequence = null;
+  let selectedModal = null;
+  let latest = null;
+  let sessionKey = null;
+  const columns = [
+    { id: 'time', label: 'Decision', render: (row) => dateTime(row.decided_at_ms) || '—' },
+    { id: 'talkgroup', label: 'Talkgroup', render: (row) => {
+      const identity = row.call_identity || {};
+      const cell = node('span', 'call-matching-stacked-cell');
+      cell.append(node('strong', '', callMatchingIdentity(identity.destination_alias,
+        identity.destination_value, 'Unknown destination')),
+        node('small', '', identity.destination_value || ''));
+      return cell;
+    } },
+    { id: 'radio', label: 'Radio', render: (row) => {
+      const identity = row.call_identity || {};
+      const cell = node('span', 'call-matching-stacked-cell');
+      cell.append(node('strong', '', callMatchingIdentity(identity.source_alias,
+        identity.source_value, 'Unknown radio')), node('small', '', identity.source_value || ''));
+      return cell;
+    } },
+    { id: 'site', label: 'Selected site', render: (row) => callMatchingCopySite(callMatchingWinner(row)) },
+    { id: 'copies', label: 'Copies', render: (row) => callMatchingCount(row.legs?.length) },
+    { id: 'match', label: 'Match / winner', render: (row) => {
+      const cell = node('span', 'call-matching-stacked-cell');
+      cell.append(node('strong', '', callMatchingProof(row)),
+        node('small', '', callMatchingCriterion(row.winner?.criterion)));
+      return cell;
+    } },
+    { id: 'outputs', label: 'Outputs', render: (row) => callMatchingOutputTags(row.output_policy) },
+    { id: 'action', label: '', fullLabel: 'Compare receiver copies', essential: true, render: (row) => {
+      const button = node('button', 'ui-button ui-button-secondary call-matching-compare', 'Compare');
+      button.type = 'button';
+      button.dataset.decisionSequence = String(row.decision_sequence);
+      button.setAttribute('aria-label', `Compare duplicate decision ${row.decision_sequence}`);
+      button.addEventListener('click', () => {
+        selectedSequence = Number(row.decision_sequence);
+        tableWrap.querySelectorAll('tbody tr.selected').forEach((candidate) =>
+          candidate.classList.remove('selected'));
+        button.closest('tr')?.classList.add('selected');
+        selectedModal = openReadOnlyModal('Duplicate call details', callMatchingComparison(row), {
+          id: 'call-matching-details', className: 'call-matching-modal',
+          returnFocusSelector: `.call-matching-compare[data-decision-sequence="${row.decision_sequence}"]`,
+          onClose: () => { selectedModal = null; }
+        });
+      });
+      return button;
+    } }
+  ];
+  const tableWrap = table([], columns, 'No confirmed duplicate calls are in recent history.', {
+    type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
+    sortable: false, mobileCards: true, rowKey: (row) => row.decision_sequence,
+    rowClass: (row) => Number(row.decision_sequence) === selectedSequence ? 'selected' : ''
+  });
+  const footer = node('div', 'call-matching-history-footer muted',
+    'Only confirmed duplicate decisions are shown.');
+  const historySection = section('Confirmed duplicates', fragment(tableWrap, footer), tableActions);
+  workspace.append(historySection);
+  content.append(workspace);
+
+  const update = (value) => {
+    latest = callMatchingSnapshot(value);
+    const nextSessionKey = `${latest.session_id || ''}:${latest.resolver.session_id || ''}`;
+    if (sessionKey !== null && sessionKey !== nextSessionKey) {
+      selectedSequence = null;
+      selectedModal?.close();
+      selectedModal = null;
+    }
+    sessionKey = nextSessionKey;
+    const resolver = latest.resolver;
+    const counters = resolver.counters || {};
+    const queue = latest.queue;
+    const file = latest.diagnostic_status;
+    const [health, healthTone] = callMatchingHealth(latest);
+    const [fileHealth, fileTone, drops] = callMatchingFileHealth(file);
+    status.replaceChildren(uiStatus('Live', 'success'), node('span', '', 'Updated just now · every 1 s'));
+    const summary = node('div', 'call-matching-health-summary');
+    const state = node('div', 'call-matching-health-state');
+    state.append(uiStatus(health, healthTone));
+    summary.append(state, metrics([
+      ['Call matching', 0, health], ['Receiving now', resolver.active_leg_count],
+      ['Waiting to match', resolver.active_cohort_count],
+      ['Duplicates combined', counters.merged_logical_calls],
+      ['Extra copies suppressed', counters.merged_receiver_copies],
+      ['Diagnostic file', 0, fileHealth]
+    ], true));
+    const facts = keyValues([
+      ['Resolver queue', `${callMatchingCount(queue.ingress_depth)} / ${callMatchingCount(queue.total_ingress_capacity)}`],
+      ['Diagnostic queue', `${callMatchingCount(file.queued_records)} / ${callMatchingCount(file.queue_capacity)}`],
+      ['Uncertain kept separate', callMatchingCount(counters.fail_open_logical_calls)],
+      ['Recorded confirmations', callMatchingCount(file.recorded_confirmations_observed)],
+      ['Stream confirmations', callMatchingCount(file.stream_submitted_confirmations_observed)],
+      ['Current file', `${adminStatusBytes(file.active_file_bytes)} / ${adminStatusBytes(file.maximum_file_bytes)}`],
+      ['Files retained', `${callMatchingCount(file.retained_file_count)} / ${callMatchingCount(file.maximum_files)}`],
+      ['Total drops', callMatchingCount(drops)]
+    ]);
+    const technical = node('div', 'call-matching-technical');
+    technical.append(node('h3', '', 'Queues & diagnostic file'), facts);
+    statusContent.replaceChildren(summary, technical);
+    statusContent.setAttribute('aria-busy', 'false');
+    const retained = new Set(latest.duplicates.map((item) => Number(item.decision_sequence)));
+    if (selectedSequence !== null && !retained.has(selectedSequence)) {
+      selectedSequence = null;
+      selectedModal?.close();
+      selectedModal = null;
+    }
+    tableController.reconcileRows(latest.duplicates);
+    footer.textContent = `Only confirmed duplicate decisions are shown. Showing ${number(latest.duplicates.length)} ` +
+      `from ${callMatchingCount(latest.history.recent_decisions_retained)} retained decisions · ` +
+      `${callMatchingCount(latest.history.recent_decisions_evicted)} older decisions evicted.`;
+  };
+  let inFlight = false;
+  let stopped = false;
+  let pollingTimer = null;
+  const refresh = async () => {
+    if (inFlight || stopped || !renderIsCurrent(renderContext) || !workspace.isConnected) return;
+    inFlight = true;
+    try {
+      const value = await api('/api/v1/admin/call-matching', {}, { signal: renderContext.signal });
+      if (renderIsCurrent(renderContext) && workspace.isConnected) update(value);
+    } catch (error) {
+      if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
+      if (error?.status === 401 || error?.status === 403) {
+        stopped = true;
+        if (pollingTimer !== null) {
+          window.clearInterval(pollingTimer);
+          pageTimers.delete(pollingTimer);
+          pollingTimer = null;
+        }
+        selectedModal?.close();
+        selectedModal = null;
+        selectedSequence = null;
+        latest = null;
+        tableController.replaceRows([]);
+        if (workspace.isConnected) {
+          status.replaceChildren(uiStatus('Access denied', 'danger'));
+          statusContent.replaceChildren(node('div', 'error',
+            'Administrator access to call matching is no longer available.'));
+          footer.textContent = 'Call matching details are unavailable.';
+        }
+        if (initialRequest) throw error;
+        return;
+      }
+      status.replaceChildren(uiStatus('Unavailable', 'danger'), node('span', '', 'Retrying every second'));
+      if (!latest) statusContent.replaceChildren(node('div', 'error', error.message ||
+        'Call matching status is unavailable.'));
+    } finally {
+      inFlight = false;
+    }
+  };
+  let initialRequest = true;
+  await refresh();
+  initialRequest = false;
+  if (renderIsCurrent(renderContext) && workspace.isConnected && !stopped) {
+    pollingTimer = pageInterval(refresh, 1_000);
+  }
+}
+
 function adminSettingsGroups() {
   const allowed = (capability) => capabilityAllowed(capability);
   return [
     { label: 'Receiver status', open: true, items: [
       { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+      { id: 'call-matching', label: 'Call matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
       { id: 'support', label: 'Report a problem', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
     ] },
     { label: 'Accounts & access', items: [
@@ -23306,13 +23699,16 @@ async function renderAdmin() {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
-  if (!beginPage(renderContext, pageHeader('Administration',
-    'Receiver-wide settings, access, storage, and protocol behavior'))) return;
+  if (!beginPage(renderContext, pageHeader(active === 'call-matching' ? 'Call matching monitor' : 'Administration',
+    active === 'call-matching' ?
+      'Confirmed duplicate calls and the receiver copies used to choose each winner.' :
+      'Receiver-wide settings, access, storage, and protocol behavior'))) return;
   const shell = node('div', 'admin-settings-shell');
   const body = node('div', 'admin-settings-content');
   shell.append(adminSettingsTree(groups, active), body);
   content.append(shell);
   if (active === 'health') await renderAdminHealth();
+  else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'live-timing') {
     pageTitleController.update({ pageTitle: 'Receiver-wide Live timing' });
