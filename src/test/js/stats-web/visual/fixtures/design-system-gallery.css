@@ -571,6 +571,7 @@ body:not([data-gallery-view="radioreference-results"]) .visual-radioreference-re
 body:not([data-gallery-view="radio-directory-coverage"]):not([data-gallery-view="radio-directory-panel"]) .visual-radio-directory-coverage-example,
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
+body:not([data-gallery-view="tuners"]) .visual-tuners-example,
 body:not([data-gallery-view="aliases"]) .visual-aliases-example,
 body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
 body:not([data-gallery-view="alias-export"]) .visual-alias-export-example,
@@ -643,6 +644,10 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
   }
 
   .visual-tuner-spectrum-example {
+    width: min(100% - 20px, 1180px);
+  }
+
+  .visual-tuners-example {
     width: min(100% - 20px, 1180px);
   }
 

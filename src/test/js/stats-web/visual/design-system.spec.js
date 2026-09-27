@@ -500,6 +500,17 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('tuner-spectrum-light-mobile.png', { fullPage: true });
 });
 
+for (const [name, theme, viewport] of [
+  ['tuners-operator-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['tuners-operator-dark-mobile', 'dark', { width: 390, height: 844 }]
+]) {
+  test(name, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=tuners`);
+    await expect(page.locator('body')).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
+
 for(const [name, theme, viewport] of [
   ['tuner-more-measurements-light-desktop', 'light', { width: 1280, height: 900 }],
   ['tuner-more-measurements-dark-mobile', 'dark', { width: 390, height: 844 }],
@@ -507,7 +518,7 @@ for(const [name, theme, viewport] of [
   test(name, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto(`/design-system.html?theme=${theme}&view=tuner-spectrum`);
-    await page.locator('.tuner-spectrum-options > summary').click();
+    await page.locator('.visual-tuner-spectrum-example .tuner-spectrum-options > summary').click();
     await page.locator('.tuner-spectrum-more-measurements > summary').click();
     await expect(page.locator('.tuner-spectrum-more-measurements')).toHaveAttribute('open', '');
     await expect(page.locator('.tuner-spectrum-more-readouts')).toBeVisible();

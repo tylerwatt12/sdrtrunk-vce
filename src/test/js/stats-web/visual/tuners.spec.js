@@ -17,6 +17,32 @@ function tuner(overrides = {}) {
   };
 }
 
+function operatorTuner(overrides = {}) {
+  return tuner({ settings: [
+    ...tuner().settings,
+    { id: 'frequency_correction_ppm', label: 'Frequency correction', group: 'calibration',
+      kind: 'decimal', value: 0.1, minimum: -200, maximum: 200, step: 0.1,
+      unit: 'ppm', pending_value: null, requires_idle: false, editable: true },
+    { id: 'minimum_frequency_mhz', label: 'Minimum frequency', group: 'frequency',
+      kind: 'decimal', value: 767.6, minimum: 24, maximum: 1800, step: 0.000001,
+      unit: 'MHz', pending_value: null, requires_idle: false, editable: true },
+    { id: 'maximum_frequency_mhz', label: 'Maximum frequency', group: 'frequency',
+      kind: 'decimal', value: 777.6, minimum: 24, maximum: 1800, step: 0.000001,
+      unit: 'MHz', pending_value: null, requires_idle: false, editable: true },
+    { id: 'reset_frequency_extents', label: 'Reset frequency limits', group: 'frequency',
+      kind: 'action', value: null, pending_value: null, requires_idle: false, editable: true },
+    { id: 'frequency_mhz', label: 'Center frequency', group: 'frequency',
+      kind: 'decimal', value: 771.80625, minimum: 767.6, maximum: 777.6, step: 0.000001,
+      unit: 'MHz', pending_value: null, requires_idle: true, editable: true },
+    { id: 'center_frequency_locked', label: 'Lock center frequency', group: 'frequency',
+      kind: 'boolean', value: false, pending_value: null, requires_idle: false, editable: true },
+    { id: 'sample_rate', label: 'Sample rate', group: 'frequency',
+      kind: 'choice', value: '10 MHz', options: [{ value: '10 MHz', label: '10.00 MHz' },
+        { value: '2.5 MHz', label: '2.50 MHz' }],
+      pending_value: null, requires_idle: true, editable: true }
+  ], ...overrides });
+}
+
 async function mockTuners(page, mutations, state = {}) {
   const preferenceModule = await import(pathToFileURL(resolve(__dirname,
     '../../../../..', 'stats-web/assets/core/preference-schema.js')).href);
@@ -70,6 +96,14 @@ async function mockTuners(page, mutations, state = {}) {
       return;
     }
     if (path === '/api/v1/admin/tuners/recordings' && request.method() === 'GET') {
+      state.recordingReads = (state.recordingReads || 0) + 1;
+      await respond({ entries: [{ id: 'file-a', name: 'debug-851.wav', size_bytes: 4_000_000_000,
+        sample_rate_hz: 2_400_000, suggested_center_frequency_hz: 851_012_500 }],
+      rejected_count: 0, truncated: false });
+      return;
+    }
+    if (path === '/api/v1/admin/tuners/recordings/rescan' && request.method() === 'POST') {
+      state.recordingReads = (state.recordingReads || 0) + 1;
       await respond({ entries: [{ id: 'file-a', name: 'debug-851.wav', size_bytes: 4_000_000_000,
         sample_rate_hz: 2_400_000, suggested_center_frequency_hz: 851_012_500 }],
       rejected_count: 0, truncated: false });
@@ -95,18 +129,24 @@ async function mockTuners(page, mutations, state = {}) {
   });
 }
 
-test('admin tuner workspace renders generic controls and directory recordings', async ({ page }) => {
+test('admin tuner workspace renders generic controls and add-tuner dialog', async ({ page }) => {
   const mutations = [];
-  await mockTuners(page, mutations);
+  const state = { currentTuner: operatorTuner() };
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockTuners(page, mutations, state);
   await page.goto('/app.html?view=tuners');
   await expect(page.getByRole('heading', { name: 'Tuners', exact: true })).toBeVisible();
   await expect(page.locator('#preference-status')).toBeHidden();
   await expect(page.getByRole('button', { name: /Airspy R2/ })).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
   await expect(page.getByText('No live samples—the tuner is idle.').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add tuner' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply' })).toHaveCount(0);
+  expect(state.recordingReads || 0).toBe(0);
   await page.waitForLoadState('networkidle');
   await expect(page.locator('#preference-status')).toBeHidden();
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
+  await expect(page.getByText('Frequency & allocation', { exact: true })).toBeInViewport();
   await expect(page.locator('main')).toHaveScreenshot('tuners-idle-light-desktop.png');
 
   await page.getByLabel('LNA gain (dB)').fill('10');
@@ -114,21 +154,73 @@ test('admin tuner workspace renders generic controls and directory recordings', 
   await expect.poll(() => mutations.length).toBe(1);
   expect(mutations[0]).toEqual({ value: 10 });
 
-  await page.getByText('Recording tuner files · debugging').click();
-  await expect(page.getByRole('option', { name: 'debug-851.wav' })).toHaveCount(1);
-  await expect(page.getByLabel('Center frequency (MHz)')).toHaveValue('851.0125');
-  await page.getByRole('button', { name: 'Add recording tuner' }).click();
+  await page.getByRole('button', { name: 'Add tuner' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add recording tuner' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /debug-851.wav/ })).toBeChecked();
+  await expect(page.getByText('3.73 GiB')).toBeVisible();
+  expect(state.recordingReads).toBe(1);
+  await expect(page.getByRole('dialog').getByLabel('Center frequency (MHz)')).toHaveValue('851.0125');
+  await page.getByRole('button', { name: 'Rescan files' }).click();
+  await expect.poll(() => state.recordingReads).toBe(2);
+  await expect(page.getByRole('dialog').getByLabel('Center frequency (MHz)')).toHaveValue('851.0125');
+  await page.getByRole('button', { name: 'Add recording tuner', exact: true }).click();
   await expect.poll(() => mutations.length).toBe(2);
   expect(mutations[1]).toEqual({ file_id: 'file-a', center_frequency_hz: 851_012_500 });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
   const analyze = page.getByRole('button', { name: 'Analyze all tuners at RadioResolve' });
   await expect(analyze).toBeInViewport();
   const analyzeBounds = await analyze.boundingBox();
   expect(analyzeBounds.x).toBeGreaterThanOrEqual(0);
   expect(analyzeBounds.x + analyzeBounds.width).toBeLessThanOrEqual(390);
-  await expect(page.locator('main')).toHaveScreenshot('tuners-recordings-light-mobile.png');
+  await page.getByRole('button', { name: 'Add tuner' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add recording tuner' }))
+    .toHaveScreenshot('tuners-recordings-light-mobile.png');
+});
+
+test('tuner display controls expand in-flow without clipping the plot', async ({ page }) => {
+  await mockTuners(page, []);
+  await page.goto('/app.html?view=tuners');
+  await expect(page.locator('.tuners-spectrum .tuner-spectrum-options-panel')).toBeHidden();
+  await page.getByRole('button', { name: 'Display options' }).click();
+  const options = page.locator('.tuners-spectrum .tuner-spectrum-options-panel');
+  await expect(options).toBeVisible();
+  const panel = await options.boundingBox();
+  const chart = await page.locator('.tuners-spectrum .tuner-spectrum-visual-window').boundingBox();
+  const spectrum = await page.locator('.tuners-spectrum').boundingBox();
+  expect(panel.x).toBeGreaterThanOrEqual(spectrum.x);
+  expect(panel.x + panel.width).toBeLessThanOrEqual(spectrum.x + spectrum.width + 1);
+  expect(chart.y).toBeGreaterThanOrEqual(panel.y + panel.height);
+  await expect(page.locator('.tuners-spectrum')).toHaveScreenshot('tuners-display-options-light-desktop.png');
+});
+
+test('operator workspace remains readable on a narrow screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockTuners(page, [], { currentTuner: operatorTuner() });
+  await page.goto('/app.html?view=tuners');
+  await expect(page.getByText('Frequency & allocation', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add tuner' })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
+  await expect(page.locator('main')).toHaveScreenshot('tuners-operator-light-mobile.png');
+  await page.getByRole('button', { name: 'Display options' }).click();
+  const panel = await page.locator('.tuners-spectrum .tuner-spectrum-options-panel').boundingBox();
+  expect(panel.x).toBeGreaterThanOrEqual(0);
+  expect(panel.x + panel.width).toBeLessThanOrEqual(391);
+});
+
+test('active tuner keeps a large live signal view', async ({ page }) => {
+  const currentTuner = operatorTuner({ channel_count: 2, spectrum_available: true,
+    spectrum_target_id: 'diagnostic-a' });
+  await mockTuners(page, [], { currentTuner,
+    targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2' }] });
+  await page.goto('/app.html?view=tuners');
+  await expect(page.locator('.tuners-spectrum .tuner-spectrum-visual-window')).toBeVisible();
+  const plot = await page.locator('.tuners-spectrum .tuner-spectrum-visual-window').boundingBox();
+  expect(plot.height).toBeGreaterThanOrEqual(400);
+  await expect(page.locator('.tuners-main')).toHaveScreenshot('tuners-active-light-desktop.png');
 });
 
 test('an idle tuner gains spectrum when a channel starts', async ({ page }) => {
@@ -177,6 +269,45 @@ test('setting groups come from descriptors and queued values show current versus
   await expect(page.getByText('Calibration', { exact: true })).toBeVisible();
   await expect(page.getByText('Current: 2.4 MHz → Queued: 1.2 MHz')).toBeVisible();
   await expect(page.getByRole('button', { name: /Airspy R2/ })).toContainText('Queued');
+});
+
+test('common frequency lanes follow descriptors and only busy idle-required changes queue', async ({ page }) => {
+  const currentTuner = tuner({ channel_count: 2, settings: [
+    { id: 'minimum_frequency_mhz', label: 'Minimum frequency', group: 'frequency', kind: 'decimal',
+      value: 150, minimum: 100, maximum: 200, step: 0.000001, unit: 'MHz',
+      pending_value: null, requires_idle: false, editable: true },
+    { id: 'maximum_frequency_mhz', label: 'Maximum frequency', group: 'frequency', kind: 'decimal',
+      value: 160, minimum: 100, maximum: 200, step: 0.000001, unit: 'MHz',
+      pending_value: null, requires_idle: false, editable: true },
+    { id: 'center_frequency_locked', label: 'Lock center frequency', group: 'frequency', kind: 'boolean',
+      value: false, pending_value: null, requires_idle: false, editable: true },
+    { id: 'frequency_mhz', label: 'Center frequency', group: 'frequency', kind: 'decimal',
+      value: 155, minimum: 150, maximum: 160, step: 0.000001, unit: 'MHz',
+      pending_value: null, requires_idle: true, editable: true },
+    { id: 'sample_rate', label: 'Sample rate', group: 'frequency', kind: 'choice',
+      value: '2.4 MHz', options: [{ value: '2.4 MHz', label: '2.4 MHz' },
+        { value: '1.2 MHz', label: '1.2 MHz' }], pending_value: null, requires_idle: true, editable: true },
+    { id: 'frequency_correction_ppm', label: 'Frequency correction', group: 'calibration',
+      kind: 'decimal', value: 0.1, pending_value: null, unit: 'ppm', requires_idle: false, editable: true }
+  ] });
+  await mockTuners(page, [], { currentTuner });
+  await page.goto('/app.html?view=tuners');
+  await expect(page.getByRole('heading', { name: 'Channel eligibility' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Center tuning' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Receive span' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply' })).toHaveCount(0);
+  await page.getByLabel('Minimum frequency (MHz)').fill('151');
+  await expect(page.locator('.tuners-eligibility-lane').getByRole('button', { name: 'Apply' })).toBeVisible();
+  await page.getByLabel('Frequency correction (ppm)').fill('0.2');
+  await expect(page.locator('.tuners-signal-controls').getByRole('button', { name: 'Apply' })).toBeVisible();
+  await page.getByLabel('Lock center frequency').locator('..').click();
+  await expect(page.locator('.tuners-tuning-lane').getByRole('button', { name: 'Apply' })).toBeVisible();
+  await page.getByLabel('Center frequency (MHz)').fill('155.1');
+  await expect(page.locator('.tuners-tuning-lane').getByRole('button', { name: 'Queue change' }))
+    .toBeVisible();
+  await page.getByLabel('Sample rate').selectOption('1.2 MHz');
+  await expect(page.locator('.tuners-span-lane').getByRole('button', { name: 'Queue change' }))
+    .toBeVisible();
 });
 
 test('RF analysis sends all eligible tuners and current running frequencies', async ({ page }) => {
