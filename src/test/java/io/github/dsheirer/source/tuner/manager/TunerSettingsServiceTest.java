@@ -3,6 +3,7 @@ package io.github.dsheirer.source.tuner.manager;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,7 +54,7 @@ class TunerSettingsServiceTest
             assertEquals(7, configuration.getIFGain());
             assertEquals(1, ((TrackingAirspyController)tuner.getTuner().getTunerController()).mIfGainCalls.get());
             assertEquals(1, saves.get());
-            assertFalse(service.hasPending(tuner));
+            assertNull(service.transition(tuner));
         }
     }
 
@@ -428,7 +429,7 @@ class TunerSettingsServiceTest
             assertEquals(DiscoveredTuner.OperatorState.LIVE, tuner.getOperatorState());
             assertNotNull(service.restoreResult(tuner));
             assertTrue(service.restoreResult(tuner).failed().isEmpty());
-            assertFalse(service.hasPending(tuner));
+            assertNull(service.transition(tuner));
         }
     }
 

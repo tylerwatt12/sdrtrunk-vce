@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"218\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"220\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -660,7 +660,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=190"));
+        assertTrue(html.contains("/assets/app.css?v=192"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1069,7 +1069,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("function renderTuners()"));
         assertFalse(source.contains("function renderRfPlanner()"));
         assertTrue(source.contains("const actionSetting = setting.kind === 'action'"));
-        assertTrue(source.contains("body: { value: actionSetting ? true : control.read(control.input) }"));
+        assertTrue(source.contains("saveTunerSetting(tuner, setting, actionSetting ? true : control.read(control.input)"));
         assertTrue(source.contains("if (setting.minimum != null"));
         assertTrue(source.contains("if (setting.maximum != null"));
         assertFalse(source.contains("href('configuration', { tab: 'scan-lists' })"));
@@ -1619,7 +1619,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("TUNER_SPECTRUM_STORAGE_KEY"));
         assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile'"));
         assertFalse(source.contains("function tunerPersistentSpectrumProfile(value)"));
-        assertTrue(tuner.contains("profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE"));
+        assertTrue(tuner.contains("profileSelect.value = basicOperator ? 'efficient' : tunerStoredChoice(" +
+            "TUNER_SPECTRUM_PROFILE_PREFERENCE"));
         assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
         assertTrue(tuner.contains("profileSelect.addEventListener('change', applySelectedProfile)"));
         assertTrue(tuner.contains("window.addEventListener('blur', onBlur)"));
@@ -1678,7 +1679,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
-        assertTrue(tuner.contains("if (!liveActivityAllowed || !shouldRun() || activeChannelSource) return"));
+        assertTrue(tuner.contains("if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return"));
         assertTrue(tuner.contains("flagLegend.hidden = !liveActivityAllowed"));
         assertTrue(tuner.contains("'Channel markers require Live access.'"));
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
@@ -1720,7 +1721,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
-        assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl)"));
+        assertTrue(tuner.contains("fftOptions.append(node('legend', '', 'FFT'), smoothControl)"));
+        assertTrue(tuner.contains("if (!basicOperator) fftOptions.append(idleChannelsControl)"));
         assertTrue(tuner.contains("waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl)"));
         assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));

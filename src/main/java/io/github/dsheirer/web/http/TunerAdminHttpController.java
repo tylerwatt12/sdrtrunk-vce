@@ -31,7 +31,6 @@ public final class TunerAdminHttpController
     public static final String RESCAN_PATH = PATH + "/rescan";
     public static final String RF_ANALYSIS_PATH = PATH + "/rf-analysis";
     private static final Pattern TUNER_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})$");
-    private static final Pattern ENABLED_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/enabled$");
     private static final Pattern STATE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/state$");
     private static final Pattern RESTORE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/restore$");
     private static final Pattern SETTING_PATH = Pattern.compile("^" + PATH +
@@ -82,12 +81,6 @@ public final class TunerAdminHttpController
         if(tuner.matches())
         {
             removeRecording(exchange, tuner.group(1));
-            return;
-        }
-        Matcher enabled = ENABLED_PATH.matcher(path);
-        if(enabled.matches())
-        {
-            setEnabled(exchange, enabled.group(1));
             return;
         }
         Matcher state = STATE_PATH.matcher(path);
@@ -204,47 +197,6 @@ public final class TunerAdminHttpController
                 "Tuner maintenance is in progress; try again");
             case FAILED -> ApiHttpResponse.sendError(exchange, 503, "tuner_remove_failed",
                 "Recording tuner could not be removed");
-        }
-    }
-
-    private void setEnabled(HttpExchange exchange, String tunerId) throws IOException
-    {
-        if(!"PUT".equals(exchange.getRequestMethod()))
-        {
-            WebHttpSupport.methodNotAllowed(exchange, "PUT");
-            return;
-        }
-        DiscoveredTuner tuner = find(exchange, tunerId);
-        if(tuner == null)
-        {
-            return;
-        }
-        try
-        {
-            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("enabled"));
-            JsonNode enabled = request.get("enabled");
-            if(enabled == null || !enabled.isBoolean())
-            {
-                ApiHttpResponse.sendError(exchange, 400, "invalid_request", "enabled must be a boolean");
-                return;
-            }
-            ApiHttpResponse.sendData(exchange, 202, mSettings.requestEnabled(tuner, enabled.booleanValue()));
-        }
-        catch(WebHttpSupport.RequestException exception)
-        {
-            ApiHttpResponse.sendError(exchange, exception.status(), exception.code(), exception.getMessage());
-        }
-        catch(TunerSettingsService.SettingUnavailableException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 409, "tuner_busy", exception.getMessage());
-        }
-        catch(IllegalArgumentException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 404, "tuner_not_found", "Tuner is no longer available");
-        }
-        catch(IllegalStateException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner maintenance is unavailable");
         }
     }
 

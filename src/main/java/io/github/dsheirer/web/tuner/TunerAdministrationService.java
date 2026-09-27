@@ -171,13 +171,12 @@ public final class TunerAdministrationService
         }
         return new Item(opaqueId(discovered), deviceGroup(discovered), displayName(discovered, tuner),
             discovered.getTunerClass().name().toLowerCase(Locale.ROOT), tunerType.name().toLowerCase(Locale.ROOT),
-            discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), discovered.isEnabled(), available,
-            channelCount, frequency, sampleRate, configuration != null ? configuration.getFrequency() : null,
+            discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), available, channelCount, frequency,
+            sampleRate, configuration != null ? configuration.getFrequency() : null,
             configuration != null && configuration.getConfiguredSampleRate() > 0 ?
                 (long)configuration.getConfiguredSampleRate() : null,
             measuredError,
             spectrumTargetId, spectrumTargetId != null, planner, settings,
-            mSettings != null && mSettings.hasPending(discovered),
             maintenanceError, discovered.getOperatorState().name().toLowerCase(Locale.ROOT),
             mSettings != null ? mSettings.transition(discovered) : null,
             mSettings != null ? mSettings.stoppedChannels(discovered) : List.of(),
@@ -248,11 +247,10 @@ public final class TunerAdministrationService
     public record PlannerTarget(String id, String model, long rateHz) { }
     public record MeasuredError(int hertz, double ppm) { }
     public record Item(String id, DeviceGroup deviceGroup, String name, String tunerClass, String tunerType,
-                       String status, boolean enabled, boolean available, int channelCount, Long frequencyHz,
-                       Long sampleRateHz, Long configuredFrequencyHz, Long configuredSampleRateHz,
+                       String status, boolean available, int channelCount, Long frequencyHz, Long sampleRateHz,
+                       Long configuredFrequencyHz, Long configuredSampleRateHz,
                        MeasuredError measuredError,
-                       String spectrumTargetId,
-                       boolean spectrumAvailable, Planner planner, Object settings, boolean pending,
+                       String spectrumTargetId, boolean spectrumAvailable, Planner planner, Object settings,
                        String maintenanceError, String operatorState, String transition,
                        List<TunerSettingsService.ChannelInfo> stoppedChannels,
                        TunerSettingsService.RestoreResult restoreResult, String errorMessage) { }

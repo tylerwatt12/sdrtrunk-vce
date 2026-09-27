@@ -167,6 +167,8 @@ class TunerAdminHttpControllerTest
             assertEquals(422, fixture.send(tunerPath + "/state", "PUT", "{\"state\":\"unknown\"}")
                 .statusCode());
             assertEquals(405, fixture.send(tunerPath + "/state", "POST", null).statusCode());
+            assertEquals(404, fixture.send(tunerPath + "/enabled", "PUT", "{\"enabled\":true}")
+                .statusCode());
             assertEquals(409, fixture.send(tunerPath + "/restore", "POST", null).statusCode());
             assertEquals(400, fixture.send(tunerPath + "/restore", "POST", "{}").statusCode());
         }

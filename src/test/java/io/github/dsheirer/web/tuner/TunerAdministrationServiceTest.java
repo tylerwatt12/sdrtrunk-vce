@@ -53,6 +53,8 @@ class TunerAdministrationServiceTest
         String json = ApiHttpResponse.normalizePayload(snapshot).toString();
         assertFalse(json.contains("/private/"));
         assertFalse(json.contains("Sensitive"));
+        assertFalse(json.contains("\"enabled\""));
+        assertFalse(json.contains("\"pending\""));
     }
 
     @Test

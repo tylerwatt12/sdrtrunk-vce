@@ -77,10 +77,9 @@ public final class TunerSettingCatalog
     }
 
     public record SettingDescriptor(String id, String label, String group, String kind, Object value,
-                                    @JsonProperty("pending_value") Object pendingValue, List<Option> options,
-                                    Number minimum, Number maximum, Number step, String unit, String scope,
-                                    @JsonProperty("requires_idle") boolean requiresIdle, boolean editable,
-                                    String availability, @JsonProperty("unavailable_reason") String unavailableReason,
+                                    List<Option> options, Number minimum, Number maximum, Number step, String unit,
+                                    String scope, boolean editable, String availability,
+                                    @JsonProperty("unavailable_reason") String unavailableReason,
                                     List<Dependency> dependencies)
     {
     }
@@ -108,11 +107,6 @@ public final class TunerSettingCatalog
     }
 
     public static List<SettingDescriptor> describe(DiscoveredTuner discovered)
-    {
-        return describe(discovered, Map.of());
-    }
-
-    public static List<SettingDescriptor> describe(DiscoveredTuner discovered, Map<String,Object> pending)
     {
         TunerConfiguration configuration = discovered.getTunerConfiguration();
 
@@ -142,13 +136,11 @@ public final class TunerSettingCatalog
                     configuration instanceof AirspyHfTunerConfiguration && "sample_rate".equals(spec.id()) ?
                     "read_only" : requiresSetup(configuration, spec.id()) ? "setup" : "live";
                 descriptors.add(new SettingDescriptor(spec.id(), spec.label(), group(spec.id()),
-                    kind(spec, configuration), read(configuration, spec),
-                    publicValue(spec, pending.get(spec.id())), options,
-                    publicBound(spec, spec.minimum()),
+                    kind(spec, configuration), read(configuration, spec), options, publicBound(spec, spec.minimum()),
                     "lna".equals(spec.id()) && controller instanceof RspTunerController<?> rsp ?
                         rsp.getControlRsp().getMaximumLNASetting() : publicBound(spec, spec.maximum()),
-                    spec.step(), spec.unit(), spec.scope(), requiresSetup(configuration, spec.id()), editable,
-                    availability, editable ? null : unavailableReason(discovered, configuration, spec, options,
+                    spec.step(), spec.unit(), spec.scope(), editable, availability,
+                    editable ? null : unavailableReason(discovered, configuration, spec, options,
                         setupAllowed, modeEditable, dependencyEditable), dependencies(spec.id())));
             }
             catch(ReflectiveOperationException e)
@@ -160,8 +152,7 @@ public final class TunerSettingCatalog
         if(hasFrequencyExtents(configuration))
         {
             descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "frequency",
-                "action", null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null,
-                null, null, null, "tuner", false, true, "live", null, List.of()));
+                "action", null, List.of(), null, null, null, null, "tuner", true, "live", null, List.of()));
         }
 
         return List.copyOf(descriptors);
@@ -285,12 +276,6 @@ public final class TunerSettingCatalog
     static boolean requiresSetup(TunerConfiguration configuration, String settingId)
     {
         return "sample_rate".equals(settingId);
-    }
-
-    /** Deprecated descriptor compatibility; there is no idle queue. */
-    static boolean requiresIdle(TunerConfiguration configuration, String settingId)
-    {
-        return requiresSetup(configuration, settingId);
     }
 
     private static boolean dependencyEditable(TunerConfiguration configuration, String settingId)

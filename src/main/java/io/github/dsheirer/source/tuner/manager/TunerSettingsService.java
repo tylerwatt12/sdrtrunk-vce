@@ -146,10 +146,9 @@ public final class TunerSettingsService implements AutoCloseable
             }
             return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(),
                 descriptor.group(), descriptor.kind(),
-                masterDescriptor.value(), null, descriptor.options(), descriptor.minimum(),
-                descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(),
-                descriptor.requiresIdle(), false, descriptor.availability(), "Tuner 1",
-                descriptor.dependencies());
+                masterDescriptor.value(), descriptor.options(), descriptor.minimum(), descriptor.maximum(),
+                descriptor.step(), descriptor.unit(), descriptor.scope(), false, descriptor.availability(),
+                "Tuner 1", descriptor.dependencies());
         }).toList();
     }
 
@@ -157,9 +156,9 @@ public final class TunerSettingsService implements AutoCloseable
         TunerSettingCatalog.SettingDescriptor descriptor, String reason)
     {
         return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(), descriptor.group(),
-            descriptor.kind(), descriptor.value(), null, descriptor.options(), descriptor.minimum(),
-            descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(), descriptor.requiresIdle(),
-            false, descriptor.availability(), reason, descriptor.dependencies());
+            descriptor.kind(), descriptor.value(), descriptor.options(), descriptor.minimum(), descriptor.maximum(),
+            descriptor.step(), descriptor.unit(), descriptor.scope(), false, descriptor.availability(), reason,
+            descriptor.dependencies());
     }
 
     /**
@@ -215,16 +214,6 @@ public final class TunerSettingsService implements AutoCloseable
         return new MutationResult("applied", null);
     }
 
-    /**
-     * Enable/disable runs on the hardware worker.  Disabling is intentionally disruptive and does not attempt to
-     * restart channels; callers must confirm the action with the administrator before invoking it.
-     */
-    public MutationResult requestEnabled(DiscoveredTuner tuner, boolean enabled)
-    {
-        return requestState(tuner, enabled ? DiscoveredTuner.OperatorState.SETUP :
-            DiscoveredTuner.OperatorState.DISABLED);
-    }
-
     public MutationResult requestState(DiscoveredTuner tuner, DiscoveredTuner.OperatorState state)
     {
         synchronized(mLifecycleLock)
@@ -269,11 +258,6 @@ public final class TunerSettingsService implements AutoCloseable
     public String error(DiscoveredTuner tuner)
     {
         return mErrors.get(tuner);
-    }
-
-    public boolean hasPending(DiscoveredTuner tuner)
-    {
-        return mTransitions.containsKey(tuner);
     }
 
     public String transition(DiscoveredTuner tuner)

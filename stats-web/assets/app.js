@@ -13067,6 +13067,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function renderFrequencyBands() {
+    if (basicOperator) return;
     const segments = tunerResolvedScopeSegments(viewport, frequencyScopes);
     const signature = JSON.stringify([viewport?.startHz, viewport?.endHz,
       segments.map((segment) => [segment.startHz, segment.endHz,
@@ -13252,7 +13253,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   };
 
   const setReadouts = (immediate = false) => {
-    if (disposed) return;
+    if (disposed || basicOperator) return;
     const now = performance.now();
     const remaining = Math.max(0, 200 - (now - lastReadoutAt));
     if (immediate || remaining === 0) {
@@ -13673,6 +13674,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   function updateSpectrumPeak() {
     peak = null;
+    if (basicOperator) return;
     const values = visibleSpectrumValues();
     for (let index = 0; index < values.length; index += 1) {
       if (Number.isFinite(values[index]) && (!Number.isFinite(peak) || values[index] > peak)) {
@@ -14413,6 +14415,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function renderActiveChannels() {
+    if (basicOperator) return;
     if (!viewport) {
       if (hoverFlag) hideCursor();
       activeFlagSignature = '';
@@ -23380,14 +23383,6 @@ function tunerInventoryRows(response) {
     typeof tuner.id === 'string' && tuner.id && typeof tuner.name === 'string');
 }
 
-function tunerInventoryStatus(tuner) {
-  const status = String(tuner.status || 'Unknown');
-  if (!tuner.enabled) return { label: 'Disabled', tone: 'neutral' };
-  if (status.toUpperCase() === 'ERROR') return { label: 'Error', tone: 'danger' };
-  if (tuner.available) return { label: Number(tuner.channel_count) > 0 ? 'In use' : 'Ready', tone: 'success' };
-  return { label: status.replaceAll('_', ' '), tone: 'warning' };
-}
-
 function tunerInventoryFrequency(value) {
   const hz = Number(value);
   return Number.isFinite(hz) && hz > 0 ? `${frequency(hz)} MHz` : 'Unavailable';
@@ -23442,7 +23437,7 @@ function tunerSettingInput(setting, draft = null) {
 function tunerOperatorState(tuner) {
   const state = String(tuner?.operator_state || '').toLowerCase();
   if (['disabled', 'setup', 'live'].includes(state)) return state;
-  return tuner?.enabled ? 'live' : 'disabled';
+  return 'disabled';
 }
 
 function tunerOperatorStateLabel(tuner) {
@@ -23476,8 +23471,7 @@ function tunerSettingUsability(setting, tuner, settings) {
     return { enabled: false, reason: String(setting?.unavailable_reason || 'Not available') };
   }
   const state = tunerOperatorState(tuner);
-  const setupOnly = String(setting?.availability || '').toLowerCase() === 'setup' ||
-    (setting?.availability == null && setting?.requires_idle === true);
+  const setupOnly = String(setting?.availability || '').toLowerCase() === 'setup';
   if (setupOnly && state === 'live') {
     return { enabled: false, reason: String(setting?.unavailable_reason || 'Available in Setup') };
   }

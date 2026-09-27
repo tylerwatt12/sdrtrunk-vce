@@ -113,7 +113,7 @@ class TunerSettingCatalogTest
         assertTrue(setting(airspy, "if_gain").editable());
         assertTrue(setting(airspy, "mixer_gain").editable());
         TunerSettingCatalog.SettingDescriptor frequency = setting(airspy, "frequency_mhz");
-        assertFalse(frequency.requiresIdle());
+        assertEquals("live", frequency.availability());
         assertEquals("MHz", frequency.unit());
         assertEquals("decimal", frequency.kind());
         assertEquals("frequency", frequency.group());
@@ -141,18 +141,18 @@ class TunerSettingCatalogTest
         TunerSettingCatalog.SettingDescriptor reset = setting(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS);
         assertEquals("decimal", minimum.kind());
         assertEquals("MHz", minimum.unit());
-        assertFalse(minimum.requiresIdle());
-        assertFalse(maximum.requiresIdle());
-        assertFalse(setting(tuner, "frequency_correction_ppm").requiresIdle());
-        assertFalse(setting(tuner, "center_frequency_locked").requiresIdle());
-        assertTrue(setting(tuner, "sample_rate").requiresIdle());
+        assertEquals("live", minimum.availability());
+        assertEquals("live", maximum.availability());
+        assertEquals("live", setting(tuner, "frequency_correction_ppm").availability());
+        assertEquals("live", setting(tuner, "center_frequency_locked").availability());
+        assertEquals("setup", setting(tuner, "sample_rate").availability());
         assertTrue(minimum.editable());
         assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, minimum.value());
         assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, maximum.value());
         assertEquals("action", reset.kind());
         assertEquals("frequency", reset.group());
         assertEquals(null, reset.value());
-        assertFalse(reset.requiresIdle());
+        assertEquals("live", reset.availability());
         assertEquals(195_000_000L, TunerSettingCatalog.validate(tuner,
             TunerSettingCatalog.MINIMUM_FREQUENCY, 195.0));
         assertEquals(true, TunerSettingCatalog.validate(tuner,

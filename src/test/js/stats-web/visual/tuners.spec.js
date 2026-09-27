@@ -10,7 +10,7 @@ function setting(id, label, group, kind, value, overrides = {}) {
 function tuner(overrides = {}) {
   return {
     id: 'tuner-a', name: 'Airspy R2', tuner_class: 'AIRSPY', tuner_type: 'AIRSPY_R820T',
-    status: 'ENABLED', enabled: true, available: true, operator_state: 'live', transition: null,
+    status: 'ENABLED', available: true, operator_state: 'live', transition: null,
     channel_count: 0, frequency_hz: 851_012_500, configured_frequency_hz: 851_012_500,
     sample_rate_hz: 10_000_000, configured_sample_rate_hz: 10_000_000,
     stopped_channels: [], restore_result: null,
@@ -131,7 +131,6 @@ async function mockTuners(page, mutations, state = {}) {
           { id: 'channel-b', name: 'City Dispatch' }].slice(0, current.channel_count);
       }
       current.operator_state = target;
-      current.enabled = target !== 'disabled';
       current.available = target !== 'disabled';
       if (target !== 'live') current.channel_count = 0;
       current.spectrum_available = target === 'setup';
@@ -253,6 +252,8 @@ test('embedded signal view contains only status, FFT, and waterfall', async ({ p
   await expect(page.getByRole('button', { name: 'Zoom in' })).toHaveCount(0);
   await expect(page.locator('.tuners-spectrum').getByRole('button', { name: 'Pause' })).toHaveCount(0);
   await expect(page.locator('.tuners-spectrum .tuner-spectrum-band-rail')).toHaveCount(0);
+  await page.locator('.tuners-spectrum canvas').first().click({ position: { x: 40, y: 40 } });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   const plot = await page.locator('.tuners-spectrum .tuner-spectrum-visual-window').boundingBox();
   expect(plot.height).toBeGreaterThanOrEqual(400);
 });
@@ -365,7 +366,7 @@ test('leaving Live stops channels once and offers one restore attempt', async ({
 
 test('starting a disabled tuner enters Setup and prompts for stopped channels', async ({ page }) => {
   const mutations = [];
-  const current = operatorTuner({ operator_state: 'disabled', enabled: false, available: false,
+  const current = operatorTuner({ operator_state: 'disabled', available: false,
     stopped_channels: [{ id: 'channel-a', name: 'County Control' }], settings: operatorSettings() });
   await mockTuners(page, mutations, { currentTuner: current });
   await page.goto('/app.html?view=tuners');
