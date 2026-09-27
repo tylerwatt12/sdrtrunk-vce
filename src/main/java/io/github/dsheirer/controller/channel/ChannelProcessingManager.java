@@ -305,6 +305,43 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Best-effort current RF frequencies for a read-only administrator request.  The concurrent map is observed on
+     * the HTTP worker without acquiring the channel lifecycle lock or publishing any decoder-side observation.
+     * During a start, stop, or rotation, a frequency can briefly be absent or from the prior source.
+     */
+    public List<Long> getActiveSourceFrequencies()
+    {
+        return activeSourceFrequencies(mProcessingChainsMap.values());
+    }
+
+    static List<Long> activeSourceFrequencies(Iterable<ProcessingChain> chains)
+    {
+        List<Long> frequencies = new ArrayList<>();
+        for(ProcessingChain chain: chains)
+        {
+            if(chain == null || !chain.isProcessing())
+            {
+                continue;
+            }
+            try
+            {
+                Source source = chain.getSource();
+                long frequency = source != null ? source.getFrequency() : 0;
+                if(frequency > 0)
+                {
+                    frequencies.add(frequency);
+                }
+            }
+            catch(RuntimeException ignored)
+            {
+                // A source may disappear during stop or rotation.  Never delay receiver lifecycle for a link.
+            }
+        }
+        frequencies.sort(Long::compareTo);
+        return List.copyOf(frequencies);
+    }
+
+    /**
      * Returns the channel associated with the processing chain
      *
      * @param processingChain

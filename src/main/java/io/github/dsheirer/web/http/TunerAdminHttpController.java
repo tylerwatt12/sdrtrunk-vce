@@ -12,11 +12,13 @@ import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +27,7 @@ public final class TunerAdminHttpController
 {
     public static final String PATH = "/api/v1/admin/tuners";
     public static final String RESCAN_PATH = PATH + "/rescan";
+    public static final String RF_ANALYSIS_PATH = PATH + "/rf-analysis";
     private static final Pattern TUNER_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})$");
     private static final Pattern ENABLED_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/enabled$");
     private static final Pattern SETTING_PATH = Pattern.compile("^" + PATH +
@@ -32,13 +35,21 @@ public final class TunerAdminHttpController
     private final TunerAdministrationService mAdministration;
     private final TunerSettingsService mSettings;
     private final TunerManager mManager;
+    private final Supplier<List<Long>> mActiveFrequencies;
 
     public TunerAdminHttpController(TunerAdministrationService administration, TunerSettingsService settings,
                                     TunerManager manager)
     {
+        this(administration, settings, manager, List::of);
+    }
+
+    public TunerAdminHttpController(TunerAdministrationService administration, TunerSettingsService settings,
+                                    TunerManager manager, Supplier<List<Long>> activeFrequencies)
+    {
         mAdministration = Objects.requireNonNull(administration);
         mSettings = Objects.requireNonNull(settings);
         mManager = Objects.requireNonNull(manager);
+        mActiveFrequencies = Objects.requireNonNull(activeFrequencies);
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -56,6 +67,11 @@ public final class TunerAdminHttpController
         if(RESCAN_PATH.equals(path))
         {
             rescan(exchange);
+            return;
+        }
+        if(RF_ANALYSIS_PATH.equals(path))
+        {
+            readRfAnalysis(exchange);
             return;
         }
         Matcher tuner = TUNER_PATH.matcher(path);
@@ -93,6 +109,24 @@ public final class TunerAdminHttpController
         }
         ApiHttpResponse.sendData(exchange, 200, mAdministration.snapshot());
     }
+
+    private void readRfAnalysis(HttpExchange exchange) throws IOException
+    {
+        if(!"GET".equals(exchange.getRequestMethod()))
+        {
+            WebHttpSupport.methodNotAllowed(exchange, "GET");
+            return;
+        }
+        if(WebHttpSupport.hasRequestBody(exchange))
+        {
+            ApiHttpResponse.sendError(exchange, 400, "invalid_request", "GET requests cannot include a body");
+            return;
+        }
+        ApiHttpResponse.sendData(exchange, 200, new RfAnalysis(mAdministration.plannerTargets(),
+            mActiveFrequencies.get()));
+    }
+
+    private record RfAnalysis(List<TunerAdministrationService.PlannerTarget> tuners, List<Long> frequenciesHz) { }
 
     private void rescan(HttpExchange exchange) throws IOException
     {

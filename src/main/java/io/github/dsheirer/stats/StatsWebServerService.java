@@ -838,7 +838,9 @@ public class StatsWebServerService implements AutoCloseable
         if(mTunerAdministrationService != null)
         {
             TunerAdminHttpController tunerController = new TunerAdminHttpController(
-                mTunerAdministrationService, mTunerSettingsService, mTunerManager);
+                mTunerAdministrationService, mTunerSettingsService, mTunerManager,
+                mChannelProcessingManager != null ?
+                    mChannelProcessingManager::getActiveSourceFrequencies : List::of);
             server.createContext(TunerAdminHttpController.PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_TUNERS, tunerController::handle));
             RecordingTunerHttpController recordingController = new RecordingTunerHttpController(

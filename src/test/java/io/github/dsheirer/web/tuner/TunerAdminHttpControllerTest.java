@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -116,6 +117,10 @@ class TunerAdminHttpControllerTest
                 listener, false).statusCode());
             assertEquals(200, fixture.send(TunerAdminHttpController.PATH, "GET", null,
                 admin, false).statusCode());
+            assertEquals(403, fixture.send(TunerAdminHttpController.RF_ANALYSIS_PATH, "GET", null,
+                listener, false).statusCode());
+            assertEquals(200, fixture.send(TunerAdminHttpController.RF_ANALYSIS_PATH, "GET", null,
+                admin, false).statusCode());
             assertEquals(403, fixture.send(TunerAdminHttpController.RESCAN_PATH, "POST", null,
                 admin, false).statusCode());
             assertEquals(0, manager.mRescanRequests);
@@ -127,6 +132,25 @@ class TunerAdminHttpControllerTest
                 listener, true).statusCode());
             assertEquals(200, fixture.send(recordingPath, "DELETE", null,
                 admin, true).statusCode());
+        }
+    }
+
+    @Test
+    void rfAnalysisUsesCurrentFrequencySupplierOnlyOnGet() throws Exception
+    {
+        FakeManager manager = new FakeManager();
+        try(ServerFixture fixture = new ServerFixture(manager, null,
+            () -> List.of(155_085_000L, 159_030_000L)))
+        {
+            HttpResponse<String> response = fixture.send(TunerAdminHttpController.RF_ANALYSIS_PATH, "GET", null);
+            assertEquals(200, response.statusCode());
+            assertEquals(0, MAPPER.readTree(response.body()).at("/data/tuners").size());
+            assertEquals(155_085_000L, MAPPER.readTree(response.body())
+                .at("/data/frequencies_hz/0").longValue());
+            assertEquals(159_030_000L, MAPPER.readTree(response.body())
+                .at("/data/frequencies_hz/1").longValue());
+            assertEquals(400, fixture.send(TunerAdminHttpController.RF_ANALYSIS_PATH, "GET", "{}").statusCode());
+            assertEquals(405, fixture.send(TunerAdminHttpController.RF_ANALYSIS_PATH, "POST", null).statusCode());
         }
     }
 
@@ -145,6 +169,12 @@ class TunerAdminHttpControllerTest
 
         private ServerFixture(FakeManager manager, WebRequestSecurity security) throws Exception
         {
+            this(manager, security, List::of);
+        }
+
+        private ServerFixture(FakeManager manager, WebRequestSecurity security,
+                              Supplier<List<Long>> activeFrequencies) throws Exception
+        {
             RecordingTunerConfiguration configuration = RecordingTunerConfiguration.createWithUniqueId();
             configuration.setPath("/not-exposed/recording.wav");
             mRecording = new DiscoveredRecordingTuner(configuration);
@@ -157,7 +187,8 @@ class TunerAdminHttpControllerTest
             TunerAdministrationService administration = new TunerAdministrationService(
                 () -> List.of(mRecording, mPhysical), tuner -> null);
             mSettings = new TunerSettingsService(manager);
-            TunerAdminHttpController controller = new TunerAdminHttpController(administration, mSettings, manager);
+            TunerAdminHttpController controller = new TunerAdminHttpController(administration, mSettings, manager,
+                activeFrequencies);
             mServer = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             mServer.createContext(TunerAdminHttpController.PATH, security == null ? controller::handle :
                 security.protectApi(WebCapability.ADMIN_TUNERS, controller::handle));

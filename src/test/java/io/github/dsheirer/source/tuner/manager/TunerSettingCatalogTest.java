@@ -115,6 +115,9 @@ class TunerSettingCatalogTest
         assertTrue(frequency.requiresIdle());
         assertEquals("MHz", frequency.unit());
         assertEquals("decimal", frequency.kind());
+        assertEquals("frequency", frequency.group());
+        assertEquals("calibration", setting(airspy, "frequency_correction_ppm").group());
+        assertEquals("gain", setting(airspy, "if_gain").group());
         assertEquals(851_012_500L, TunerSettingCatalog.validate(airspy, "frequency_mhz", 851.0125));
         assertThrows(IllegalArgumentException.class, () ->
             TunerSettingCatalog.validate(airspy, "frequency_mhz", 7_000.0));
@@ -142,6 +145,7 @@ class TunerSettingCatalogTest
         assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, minimum.value());
         assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, maximum.value());
         assertEquals("action", reset.kind());
+        assertEquals("frequency", reset.group());
         assertEquals(null, reset.value());
         assertTrue(reset.requiresIdle());
         assertEquals(195_000_000L, TunerSettingCatalog.validate(tuner,

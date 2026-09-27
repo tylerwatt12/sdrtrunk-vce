@@ -52,6 +52,13 @@ public final class TunerSettingCatalog
     static final String MINIMUM_FREQUENCY = "minimum_frequency_mhz";
     static final String MAXIMUM_FREQUENCY = "maximum_frequency_mhz";
     static final String RESET_FREQUENCY_EXTENTS = "reset_frequency_extents";
+    private static final Set<String> FREQUENCY_GROUP_SETTINGS = Set.of("frequency_mhz", MINIMUM_FREQUENCY,
+        MAXIMUM_FREQUENCY, "sample_rate", "center_frequency_locked");
+    private static final Set<String> CALIBRATION_GROUP_SETTINGS = Set.of("frequency_correction_ppm",
+        "automatic_ppm");
+    private static final Set<String> GAIN_GROUP_SETTINGS = Set.of("gain", "if_gain", "mixer_gain", "lna_gain",
+        "mixer_agc", "lna_agc", "agc", "lna", "attenuation", "master_gain", "vga_gain", "amplifier",
+        "baseband_gain_reduction", "agc_mode");
 
     private TunerSettingCatalog()
     {
@@ -61,7 +68,7 @@ public final class TunerSettingCatalog
     {
     }
 
-    public record SettingDescriptor(String id, String label, String kind, Object value,
+    public record SettingDescriptor(String id, String label, String group, String kind, Object value,
                                     @JsonProperty("pending_value") Object pendingValue, List<Option> options,
                                     Number minimum, Number maximum, Number step, String unit, String scope,
                                     @JsonProperty("requires_idle") boolean requiresIdle, boolean editable)
@@ -117,8 +124,9 @@ public final class TunerSettingCatalog
                         !(controller instanceof RspTunerController<?>)) &&
                     editableForConfiguration(configuration, spec) &&
                     !("device".equals(spec.scope()) && isRspDuoSlave(discovered));
-                descriptors.add(new SettingDescriptor(spec.id(), spec.label(), kind(spec, configuration),
-                    read(configuration, spec), publicValue(spec, pending.get(spec.id())), options,
+                descriptors.add(new SettingDescriptor(spec.id(), spec.label(), group(spec.id()),
+                    kind(spec, configuration), read(configuration, spec),
+                    publicValue(spec, pending.get(spec.id())), options,
                     publicBound(spec, spec.minimum()),
                     "lna".equals(spec.id()) && controller instanceof RspTunerController<?> rsp ?
                         rsp.getControlRsp().getMaximumLNASetting() : publicBound(spec, spec.maximum()),
@@ -132,12 +140,30 @@ public final class TunerSettingCatalog
 
         if(hasFrequencyExtents(configuration))
         {
-            descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "action",
-                null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null, null,
-                null, null, "tuner", true, true));
+            descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "frequency",
+                "action", null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null,
+                null, null, null, "tuner", true, true));
         }
 
         return List.copyOf(descriptors);
+    }
+
+    /** UI grouping is owned by the setting catalog, never inferred from tuner models in the browser. */
+    private static String group(String settingId)
+    {
+        if(FREQUENCY_GROUP_SETTINGS.contains(settingId))
+        {
+            return "frequency";
+        }
+        if(CALIBRATION_GROUP_SETTINGS.contains(settingId))
+        {
+            return "calibration";
+        }
+        if(GAIN_GROUP_SETTINGS.contains(settingId))
+        {
+            return "gain";
+        }
+        return "hardware";
     }
 
     /** Validate and normalize a submitted value before queuing it for the hardware worker. */

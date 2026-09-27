@@ -8,9 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.r8x.r820t.R820TTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceType;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
@@ -98,6 +101,46 @@ class TunerAdministrationServiceTest
         TunerAdministrationService.MeasuredError error = service.snapshot().tuners().getFirst().measuredError();
         assertEquals(100, error.hertz());
         assertEquals(100 / (live.getTunerController().getFrequency() / 1_000_000.0), error.ppm());
+    }
+
+    @Test
+    void rfAnalysisIncludesDisabledRtlAndEveryEnabledAirspyButNotRemovedOrRecordingTuners()
+    {
+        FakeDiscoveredTuner first = new FakeDiscoveredTuner("first-airspy");
+        FakeDiscoveredTuner second = new FakeDiscoveredTuner("second-airspy");
+        FakeDiscoveredTuner disabled = new FakeDiscoveredTuner("disabled-rtl");
+        FakeDiscoveredTuner removed = new FakeDiscoveredTuner("removed-rtl");
+        FakeDiscoveredTuner unsupported = new FakeDiscoveredTuner("test-generator");
+        first.setTunerConfiguration(new AirspyTunerConfiguration(first.getId()));
+        second.setTunerConfiguration(new AirspyTunerConfiguration(second.getId()));
+        first.install(plannerTuner(first, TunerType.AIRSPY_R820T));
+        second.install(plannerTuner(second, TunerType.AIRSPY_R820T));
+        disabled.setTunerConfiguration(new R820TTunerConfiguration(disabled.getId()));
+        disabled.setEnabled(false);
+        removed.setTunerConfiguration(new R820TTunerConfiguration(removed.getId()));
+        removed.tunerRemoved();
+        unsupported.install(new TestTuner(unsupported));
+        RecordingTunerConfiguration recordingConfiguration = new RecordingTunerConfiguration("recording-test");
+        DiscoveredRecordingTuner recording = new DiscoveredRecordingTuner(recordingConfiguration);
+        TunerAdministrationService service = new TunerAdministrationService(
+            () -> List.of(first, second, disabled, removed, unsupported, recording), tuner -> null);
+
+        List<TunerAdministrationService.PlannerTarget> targets = service.plannerTargets();
+        assertEquals(3, targets.size(), "Distinct physical devices must not be collapsed by model or rate");
+        assertEquals("airspy", targets.get(0).model());
+        assertEquals("airspy", targets.get(1).model());
+        assertEquals(2_400_000L, targets.get(0).rateHz());
+        assertNotEquals(targets.get(0).id(), targets.get(1).id());
+        assertEquals("rtl-r8x", targets.get(2).model());
+        assertEquals(2_400_000L, targets.get(2).rateHz(), "Disabled RTL must use saved sample rate");
+    }
+
+    private static Tuner plannerTuner(FakeDiscoveredTuner discovered, TunerType type)
+    {
+        return new TestTuner(discovered)
+        {
+            @Override public TunerType getTunerType() { return type; }
+        };
     }
 
     private static final class FakeDiscoveredTuner extends DiscoveredTuner

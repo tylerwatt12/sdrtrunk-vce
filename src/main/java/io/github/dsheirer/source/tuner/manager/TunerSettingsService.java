@@ -116,7 +116,8 @@ public final class TunerSettingsService implements AutoCloseable
             {
                 return descriptor;
             }
-            return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(), descriptor.kind(),
+            return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(),
+                descriptor.group(), descriptor.kind(),
                 masterDescriptor.value(), masterDescriptor.pendingValue(), descriptor.options(), descriptor.minimum(),
                 descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(),
                 descriptor.requiresIdle(), false);

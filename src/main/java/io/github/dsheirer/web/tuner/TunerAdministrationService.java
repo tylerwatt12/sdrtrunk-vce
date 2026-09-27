@@ -6,6 +6,7 @@
 package io.github.dsheirer.web.tuner;
 
 import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
@@ -13,6 +14,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerSettingCatalog;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
+import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.stats.TunerDiagnosticService;
@@ -82,6 +84,47 @@ public final class TunerAdministrationService
             }
         }
         return new Snapshot(List.copyOf(items));
+    }
+
+    /**
+     * Discovered physical SDR profiles for an external RF planner.  Disabled devices use their saved sample rates;
+     * removed/error devices and recordings are not offered as working RF capacity.
+     */
+    public List<PlannerTarget> plannerTargets()
+    {
+        List<PlannerTarget> targets = new ArrayList<>();
+        for(DiscoveredTuner discovered: mInventory.get())
+        {
+            try
+            {
+                TunerStatus status = discovered.getTunerStatus();
+                if((status != TunerStatus.ENABLED && status != TunerStatus.DISABLED) ||
+                    discovered.getTunerClass() == TunerClass.RECORDING_TUNER)
+                {
+                    continue;
+                }
+                Tuner tuner = discovered.isAvailable() && discovered.hasTuner() ? discovered.getTuner() : null;
+                TunerConfiguration configuration = discovered.getTunerConfiguration();
+                TunerType type = tuner != null ? tuner.getTunerType() :
+                    configuration != null ? configuration.getTunerType() : TunerType.UNKNOWN;
+                String model = TunerSettingCatalog.plannerModel(type);
+                double sampleRate = tuner != null ? tuner.getTunerController().getSampleRate() : 0;
+                long rateHz = Double.isFinite(sampleRate) ? Math.round(sampleRate) : 0;
+                if(rateHz <= 0 && configuration != null)
+                {
+                    rateHz = configuration.getConfiguredSampleRate();
+                }
+                if(model != null && rateHz > 0)
+                {
+                    targets.add(new PlannerTarget(opaqueId(discovered), model, rateHz));
+                }
+            }
+            catch(RuntimeException ignored)
+            {
+                // A hot-unplugged tuner may disappear while the request projects its current profile.
+            }
+        }
+        return List.copyOf(targets);
     }
 
     /** Resolve a browser identifier only against the receiver's current registry snapshot. */
@@ -194,6 +237,7 @@ public final class TunerAdministrationService
     public record Snapshot(List<Item> tuners) { }
     public record DeviceGroup(String id, String kind, String role) { }
     public record Planner(String model, long rateHz) { }
+    public record PlannerTarget(String id, String model, long rateHz) { }
     public record MeasuredError(int hertz, double ppm) { }
     public record Item(String id, DeviceGroup deviceGroup, String name, String tunerClass, String tunerType,
                        String status, boolean enabled, boolean available, int channelCount, Long frequencyHz,
