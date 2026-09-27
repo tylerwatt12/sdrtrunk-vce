@@ -151,7 +151,9 @@ public final class TunerAdministrationService
         int measuredHz = available ? tuner.getTunerController().getMeasuredFrequencyError() : 0;
         MeasuredError measuredError = measuredHz != 0 && frequency != null && frequency > 0 ?
             new MeasuredError(measuredHz, measuredHz / (frequency / 1_000_000.0)) : null;
-        String spectrumTargetId = available && channelCount > 0 ? mSpectrumTargetId.apply(tuner) : null;
+        boolean diagnosticAvailable = available &&
+            (discovered.getOperatorState() == DiscoveredTuner.OperatorState.SETUP || channelCount > 0);
+        String spectrumTargetId = diagnosticAvailable ? mSpectrumTargetId.apply(tuner) : null;
         String plannerModel = TunerSettingCatalog.plannerModel(tunerType);
         Planner planner = plannerModel != null && sampleRate != null && sampleRate > 0 ?
             new Planner(plannerModel, sampleRate) : null;
@@ -171,10 +173,16 @@ public final class TunerAdministrationService
             discovered.getTunerClass().name().toLowerCase(Locale.ROOT), tunerType.name().toLowerCase(Locale.ROOT),
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), discovered.isEnabled(), available,
             channelCount, frequency, sampleRate, configuration != null ? configuration.getFrequency() : null,
+            configuration != null && configuration.getConfiguredSampleRate() > 0 ?
+                (long)configuration.getConfiguredSampleRate() : null,
             measuredError,
             spectrumTargetId, spectrumTargetId != null, planner, settings,
             mSettings != null && mSettings.hasPending(discovered),
-            maintenanceError);
+            maintenanceError, discovered.getOperatorState().name().toLowerCase(Locale.ROOT),
+            mSettings != null ? mSettings.transition(discovered) : null,
+            mSettings != null ? mSettings.stoppedChannels(discovered) : List.of(),
+            mSettings != null ? mSettings.restoreResult(discovered) : null,
+            discovered.hasErrorMessage() ? "Tuner error" : null);
     }
 
     private static String displayName(DiscoveredTuner discovered, Tuner tuner)
@@ -241,8 +249,11 @@ public final class TunerAdministrationService
     public record MeasuredError(int hertz, double ppm) { }
     public record Item(String id, DeviceGroup deviceGroup, String name, String tunerClass, String tunerType,
                        String status, boolean enabled, boolean available, int channelCount, Long frequencyHz,
-                       Long sampleRateHz, Long configuredFrequencyHz, MeasuredError measuredError,
+                       Long sampleRateHz, Long configuredFrequencyHz, Long configuredSampleRateHz,
+                       MeasuredError measuredError,
                        String spectrumTargetId,
                        boolean spectrumAvailable, Planner planner, Object settings, boolean pending,
-                       String maintenanceError) { }
+                       String maintenanceError, String operatorState, String transition,
+                       List<TunerSettingsService.ChannelInfo> stoppedChannels,
+                       TunerSettingsService.RestoreResult restoreResult, String errorMessage) { }
 }

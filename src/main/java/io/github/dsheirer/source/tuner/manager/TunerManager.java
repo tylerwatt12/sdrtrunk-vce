@@ -881,7 +881,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private List<DiscoveredTuner> getAllocationCandidates(String preferredTuner)
     {
-        List<DiscoveredTuner> availableTuners = mDiscoveredTunerRegistry.availableTuners();
+        List<DiscoveredTuner> availableTuners = mDiscoveredTunerRegistry.availableTuners().stream()
+            .filter(DiscoveredTuner::isAvailableForAllocation).toList();
         LinkedHashSet<DiscoveredTuner> candidates = new LinkedHashSet<>();
 
         if(preferredTuner != null)
@@ -933,7 +934,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
         try
         {
-            if(!discoveredTuner.isAvailable() || !discoveredTuner.hasTuner())
+            if(!discoveredTuner.isAvailableForAllocation() || !discoveredTuner.hasTuner())
             {
                 return null;
             }
@@ -961,6 +962,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                         currentCenterFrequency);
                 }
 
+                if(source != null)
+                {
+                    source.setTunerIdentity(discoveredTuner.getId());
+                }
                 return source;
             }
 
@@ -995,7 +1000,13 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     return null;
                 }
 
-                return channelSourceManager.getSource(tunerChannel, channelSpecification, threadName);
+                TunerChannelSource source = channelSourceManager.getSource(tunerChannel, channelSpecification,
+                    threadName);
+                if(source != null)
+                {
+                    source.setTunerIdentity(discoveredTuner.getId());
+                }
+                return source;
             }
             finally
             {

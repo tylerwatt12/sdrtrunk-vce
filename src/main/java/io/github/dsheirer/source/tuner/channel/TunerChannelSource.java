@@ -40,6 +40,7 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
     private Listener<SourceEvent> mConsumerSourceEventListener;
     private ChannelFrequencyErrorManager mChannelFrequencyErrorManager;
     protected String mThreadName;
+    private volatile String mTunerIdentity;
 
     /**
      * Tuner Channel Source is a Digital Drop Channel (DDC) abstract class that defines the minimum functionality
@@ -108,6 +109,17 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
     public TunerChannel getTunerChannel()
     {
         return mTunerChannel;
+    }
+
+    /** Native discovered-tuner identity for lifecycle ownership; never exposed directly to the browser. */
+    public String getTunerIdentity()
+    {
+        return mTunerIdentity;
+    }
+
+    public void setTunerIdentity(String tunerIdentity)
+    {
+        mTunerIdentity = tunerIdentity;
     }
 
     /**

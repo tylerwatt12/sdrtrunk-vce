@@ -38,10 +38,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 /**
  * Device-specific tuner settings described in Java.  The browser renders these descriptors without knowing tuner
@@ -59,6 +61,8 @@ public final class TunerSettingCatalog
     private static final Set<String> GAIN_GROUP_SETTINGS = Set.of("gain", "if_gain", "mixer_gain", "lna_gain",
         "mixer_agc", "lna_agc", "agc", "lna", "attenuation", "master_gain", "vga_gain", "amplifier",
         "baseband_gain_reduction", "agc_mode");
+    private static final Map<DiscoveredTuner,Map<String,List<Option>>> OPTION_CACHE =
+        Collections.synchronizedMap(new WeakHashMap<>());
 
     private TunerSettingCatalog()
     {
@@ -68,10 +72,16 @@ public final class TunerSettingCatalog
     {
     }
 
+    public record Dependency(@JsonProperty("setting_id") String settingId, Object equals)
+    {
+    }
+
     public record SettingDescriptor(String id, String label, String group, String kind, Object value,
                                     @JsonProperty("pending_value") Object pendingValue, List<Option> options,
                                     Number minimum, Number maximum, Number step, String unit, String scope,
-                                    @JsonProperty("requires_idle") boolean requiresIdle, boolean editable)
+                                    @JsonProperty("requires_idle") boolean requiresIdle, boolean editable,
+                                    String availability, @JsonProperty("unavailable_reason") String unavailableReason,
+                                    List<Dependency> dependencies)
     {
     }
 
@@ -119,18 +129,27 @@ public final class TunerSettingCatalog
             try
             {
                 List<Option> options = options(spec, configuration, controller, discovered);
-                boolean editable = (!spec.dynamicOptions() || !options.isEmpty()) &&
+                boolean modeEditable = editableForConfiguration(configuration, spec);
+                boolean dependencyEditable = dependencyEditable(configuration, spec.id());
+                boolean setupAllowed = !requiresSetup(configuration, spec.id()) ||
+                    discovered.getOperatorState() != DiscoveredTuner.OperatorState.LIVE;
+                boolean editable = (!spec.dynamicOptions() || !options.isEmpty()) && setupAllowed &&
                     !("lna".equals(spec.id()) && configuration instanceof RspTunerConfiguration &&
                         !(controller instanceof RspTunerController<?>)) &&
-                    editableForConfiguration(configuration, spec) &&
+                    modeEditable && dependencyEditable &&
                     !("device".equals(spec.scope()) && isRspDuoSlave(discovered));
+                String availability = !editableForConfiguration(configuration, spec) &&
+                    configuration instanceof AirspyHfTunerConfiguration && "sample_rate".equals(spec.id()) ?
+                    "read_only" : requiresSetup(configuration, spec.id()) ? "setup" : "live";
                 descriptors.add(new SettingDescriptor(spec.id(), spec.label(), group(spec.id()),
                     kind(spec, configuration), read(configuration, spec),
                     publicValue(spec, pending.get(spec.id())), options,
                     publicBound(spec, spec.minimum()),
                     "lna".equals(spec.id()) && controller instanceof RspTunerController<?> rsp ?
                         rsp.getControlRsp().getMaximumLNASetting() : publicBound(spec, spec.maximum()),
-                    spec.step(), spec.unit(), spec.scope(), requiresIdle(configuration, spec.id()), editable));
+                    spec.step(), spec.unit(), spec.scope(), requiresSetup(configuration, spec.id()), editable,
+                    availability, editable ? null : unavailableReason(discovered, configuration, spec, options,
+                        setupAllowed, modeEditable, dependencyEditable), dependencies(spec.id())));
             }
             catch(ReflectiveOperationException e)
             {
@@ -142,7 +161,7 @@ public final class TunerSettingCatalog
         {
             descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "frequency",
                 "action", null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null,
-                null, null, null, "tuner", false, true));
+                null, null, null, "tuner", false, true, "live", null, List.of()));
         }
 
         return List.copyOf(descriptors);
@@ -166,7 +185,7 @@ public final class TunerSettingCatalog
         return "hardware";
     }
 
-    /** Validate and normalize a submitted value before queuing it for the hardware worker. */
+    /** Validate and normalize a submitted value before a one-shot hardware write. */
     public static Object validate(DiscoveredTuner discovered, String settingId, Object rawValue)
     {
         TunerConfiguration configuration = discovered.getTunerConfiguration();
@@ -187,6 +206,12 @@ public final class TunerSettingCatalog
             if(!editableForConfiguration(configuration, spec))
             {
                 throw new IllegalArgumentException("Setting is not editable in the current tuner mode");
+            }
+
+            if(!dependencyEditable(configuration, settingId))
+            {
+                throw new IllegalArgumentException("frequency_correction_ppm".equals(settingId) ?
+                    "Turn off Auto PPM" : "Unlock center");
             }
 
             Class<?> type = getter(configuration, spec).getReturnType();
@@ -257,43 +282,59 @@ public final class TunerSettingCatalog
             .map(Spec::scope).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
     }
 
+    static boolean requiresSetup(TunerConfiguration configuration, String settingId)
+    {
+        return "sample_rate".equals(settingId);
+    }
+
+    /** Deprecated descriptor compatibility; there is no idle queue. */
     static boolean requiresIdle(TunerConfiguration configuration, String settingId)
     {
-        // These controls do not change the sample rate or perform allocator-managed center retuning.  Frequency
-        // limits may be applied to a busy tuner only when its active center and allocated channels remain in range.
-        // Manual PPM is a deliberate live retune, performed by the dedicated settings worker using only the
-        // frequency-correction setter; the browser must not promise an idle queue for it.
-        if(Set.of("frequency_correction_ppm", "center_frequency_locked", MINIMUM_FREQUENCY,
-            MAXIMUM_FREQUENCY, RESET_FREQUENCY_EXTENTS).contains(settingId))
-        {
-            return false;
-        }
+        return requiresSetup(configuration, settingId);
+    }
 
-        if(configuration instanceof AirspyTunerConfiguration || configuration instanceof HydraSdrTunerConfiguration)
+    private static boolean dependencyEditable(TunerConfiguration configuration, String settingId)
+    {
+        if("frequency_correction_ppm".equals(settingId))
         {
-            return !Set.of("gain", "if_gain", "mixer_gain", "lna_gain", "mixer_agc", "lna_agc")
-                .contains(settingId);
+            return !configuration.getAutoPPMCorrectionEnabled();
         }
-        if(configuration instanceof AirspyHfTunerConfiguration)
+        if("frequency_mhz".equals(settingId))
         {
-            return !Set.of("agc", "lna", "attenuation").contains(settingId);
-        }
-        if(configuration instanceof HackRFTunerConfiguration)
-        {
-            return !Set.of("lna_gain", "vga_gain", "amplifier").contains(settingId);
-        }
-        if(configuration instanceof RTL2832TunerConfiguration)
-        {
-            return !Set.of("master_gain", "mixer_gain", "lna_gain", "vga_gain", "if_gain", "agc")
-                .contains(settingId);
-        }
-        if(configuration instanceof RspTunerConfiguration)
-        {
-            // LNA limits change with frequency (and RSPduo AM port).  Applying it without the retune lock can
-            // silently clamp the hardware to a different value, so it waits for the idle maintenance path.
-            return !Set.of("baseband_gain_reduction", "agc_mode").contains(settingId);
+            return !configuration.isCenterFrequencyLocked();
         }
         return true;
+    }
+
+    private static List<Dependency> dependencies(String settingId)
+    {
+        if("frequency_correction_ppm".equals(settingId))
+        {
+            return List.of(new Dependency("automatic_ppm", false));
+        }
+        if("frequency_mhz".equals(settingId))
+        {
+            return List.of(new Dependency("center_frequency_locked", false));
+        }
+        return List.of();
+    }
+
+    private static String unavailableReason(DiscoveredTuner discovered, TunerConfiguration configuration, Spec spec,
+                                            List<Option> options, boolean setupAllowed, boolean modeEditable,
+                                            boolean dependencyEditable)
+    {
+        if(!setupAllowed) return "Use Setup";
+        if(!dependencyEditable) return "frequency_correction_ppm".equals(spec.id()) ?
+            "Turn off Auto PPM" : "Unlock center";
+        if("device".equals(spec.scope()) && isRspDuoSlave(discovered)) return "Tuner 1";
+        if(spec.dynamicOptions() && options.isEmpty()) return "Tuner unavailable";
+        if(!modeEditable)
+        {
+            if(configuration instanceof AirspyHfTunerConfiguration && "sample_rate".equals(spec.id())) return "Fixed";
+            if(Set.of("if_gain", "mixer_gain", "lna_gain", "vga_gain").contains(spec.id())) return "Use manual gain";
+            return "Unavailable";
+        }
+        return "Unavailable";
     }
 
     static boolean isEditableInCurrentMode(TunerConfiguration configuration, String settingId)
@@ -590,26 +631,47 @@ public final class TunerSettingCatalog
                 .map(option -> new Option(option.name(), option.toString())).toList();
         }
 
-        if(!spec.dynamicOptions() || controller == null)
+        if(!spec.dynamicOptions())
         {
             return List.of();
         }
 
+        List<Option> resolved = List.of();
         if(controller instanceof AirspyTunerController airspy)
         {
-            return airspy.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
+            resolved = airspy.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
         }
-        if(controller instanceof HydraSdrTunerController hydra)
+        else if(controller instanceof HydraSdrTunerController hydra)
         {
-            return hydra.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
+            resolved = hydra.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
         }
-        if(controller instanceof AirspyHfTunerController hf)
+        else if(controller instanceof AirspyHfTunerController hf)
         {
-            return hf.getAvailableSampleRates().stream().map(rate -> new Option(rate.getSampleRate(), rate.toString()))
+            resolved = hf.getAvailableSampleRates().stream().map(rate -> new Option(rate.getSampleRate(), rate.toString()))
                 .toList();
         }
 
-        return List.of();
+        synchronized(OPTION_CACHE)
+        {
+            if(!resolved.isEmpty())
+            {
+                Map<String,List<Option>> cached = new java.util.HashMap<>(OPTION_CACHE.getOrDefault(discovered,
+                    Map.of()));
+                cached.put(spec.id(), List.copyOf(resolved));
+                OPTION_CACHE.put(discovered, Map.copyOf(cached));
+                return resolved;
+            }
+
+            List<Option> cached = OPTION_CACHE.getOrDefault(discovered, Map.of()).get(spec.id());
+            if(cached != null && !cached.isEmpty())
+            {
+                return cached;
+            }
+        }
+
+        Object configured = read(configuration, spec);
+        return configured instanceof Number number && number.longValue() > 0 ?
+            List.of(new Option(number.longValue(), number.longValue() + " Hz")) : List.of();
     }
 
     private static List<Spec> specs(TunerConfiguration configuration)

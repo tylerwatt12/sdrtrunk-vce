@@ -104,6 +104,21 @@ class TunerAdministrationServiceTest
     }
 
     @Test
+    void setupExposesSpectrumAtZeroChannelsButIdleLiveDoesNot()
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner("setup-spectrum");
+        tuner.install(new TestTuner(tuner));
+        TunerAdministrationService service = new TunerAdministrationService(() -> List.of(tuner),
+            target -> "setup-target");
+
+        assertFalse(service.snapshot().tuners().getFirst().spectrumAvailable());
+        assertTrue(tuner.holdForSetup());
+        TunerAdministrationService.Item setup = service.snapshot().tuners().getFirst();
+        assertTrue(setup.spectrumAvailable());
+        assertEquals("setup-target", setup.spectrumTargetId());
+    }
+
+    @Test
     void rfAnalysisIncludesDisabledRtlAndEveryEnabledAirspyButNotRemovedOrRecordingTuners()
     {
         FakeDiscoveredTuner first = new FakeDiscoveredTuner("first-airspy");

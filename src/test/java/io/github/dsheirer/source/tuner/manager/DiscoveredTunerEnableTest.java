@@ -63,6 +63,10 @@ class DiscoveredTunerEnableTest
         assertFalse(discoveredTuner.isAvailable());
         assertEquals(TunerStatus.ERROR, discoveredTuner.getTunerStatus());
         assertFalse(discoveredTuner.hasTuner());
+
+        discoveredTuner.setEnabled(false);
+        assertEquals(TunerStatus.DISABLED, discoveredTuner.getTunerStatus());
+        assertEquals(DiscoveredTuner.OperatorState.DISABLED, discoveredTuner.getOperatorState());
     }
 
     private static AirspyTunerConfiguration configuration()

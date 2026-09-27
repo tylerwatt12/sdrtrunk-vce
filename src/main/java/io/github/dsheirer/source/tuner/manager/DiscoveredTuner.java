@@ -36,9 +36,19 @@ import org.slf4j.LoggerFactory;
  */
 public abstract class DiscoveredTuner implements ITunerErrorListener
 {
+    /** Operator-owned lifecycle. SETUP keeps hardware running but excludes it from channel allocation. */
+    public enum OperatorState
+    {
+        DISABLED,
+        SETUP,
+        LIVE
+    }
+
     private Logger mLog = LoggerFactory.getLogger(DiscoveredTuner.class);
     private volatile TunerStatus mTunerStatus = TunerStatus.ENABLED;
     private volatile boolean mEnabled = true;
+    private volatile OperatorState mOperatorState = OperatorState.LIVE;
+    private volatile Thread mRestoreAllocationThread;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
@@ -129,6 +139,153 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         return mEnabled;
     }
 
+    public OperatorState getOperatorState()
+    {
+        return mOperatorState;
+    }
+
+    /**
+     * Gates allocation before a related device starts.  RSPduo master mode can start tuner 2 from tuner 1's status
+     * listener, so both logical tuners must be placed in Setup before either status change is published.
+     */
+    void prepareForSetup()
+    {
+        mAllocationLifecycleLock.lock();
+
+        try
+        {
+            mRestoreAllocationThread = null;
+            mOperatorState = OperatorState.SETUP;
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    /** True only for normal allocation, or for the one worker currently restoring remembered channels. */
+    public boolean isAvailableForAllocation()
+    {
+        return isAvailable() && (mOperatorState == OperatorState.LIVE ||
+            (mOperatorState == OperatorState.SETUP && mRestoreAllocationThread == Thread.currentThread()));
+    }
+
+    /** Starts hardware without making it available to ordinary channel allocation. */
+    public boolean enterSetup()
+    {
+        mAllocationLifecycleLock.lock();
+
+        try
+        {
+            mRestoreAllocationThread = null;
+            mOperatorState = OperatorState.SETUP;
+            if(!mEnabled || !isAvailable() || !hasTuner())
+            {
+                mEnabled = true;
+                mErrorMessage = null;
+                if(getTunerStatus() == TunerStatus.ERROR)
+                {
+                    // Clear the failed runtime state without advertising availability. A successful start below
+                    // publishes ENABLED only after configuration has been restored.
+                    setTunerStatus(TunerStatus.DISABLED, false);
+                }
+                if(startAndApplyConfiguration())
+                {
+                    setTunerStatus(TunerStatus.ENABLED);
+                }
+                else
+                {
+                    mEnabled = false;
+                    mOperatorState = OperatorState.DISABLED;
+                    stop();
+                    setTunerStatus(TunerStatus.DISABLED);
+                    return false;
+                }
+            }
+            return isAvailable() && hasTuner();
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    /** Makes already-running setup hardware available to ordinary allocation. */
+    public boolean enterLive()
+    {
+        mAllocationLifecycleLock.lock();
+
+        try
+        {
+            if(!mEnabled || !isAvailable() || !hasTuner())
+            {
+                return false;
+            }
+            mRestoreAllocationThread = null;
+            mOperatorState = OperatorState.LIVE;
+            return true;
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    /** Blocks ordinary allocation before channels are stopped. Hardware may already be in an error state. */
+    public boolean holdForSetup()
+    {
+        mAllocationLifecycleLock.lock();
+
+        try
+        {
+            if(!mEnabled)
+            {
+                return false;
+            }
+            mRestoreAllocationThread = null;
+            mOperatorState = OperatorState.SETUP;
+            return true;
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    /** Allows only the calling lifecycle worker to allocate while remembered channels are restored once. */
+    public void beginRestoreAllocation()
+    {
+        mAllocationLifecycleLock.lock();
+        try
+        {
+            if(mOperatorState != OperatorState.SETUP || !isAvailable() || !hasTuner())
+            {
+                throw new IllegalStateException("Tuner is not in Setup");
+            }
+            mRestoreAllocationThread = Thread.currentThread();
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    public void endRestoreAllocation()
+    {
+        mAllocationLifecycleLock.lock();
+        try
+        {
+            if(mRestoreAllocationThread == Thread.currentThread())
+            {
+                mRestoreAllocationThread = null;
+            }
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
     /**
      * Sets the enabled state of this discovered tuner
      */
@@ -147,16 +304,33 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
                 if(mEnabled)
                 {
+                    boolean setup = mOperatorState == OperatorState.SETUP;
                     if(startAndApplyConfiguration())
                     {
                         setTunerStatus(TunerStatus.ENABLED);
+                        mOperatorState = setup ? OperatorState.SETUP : OperatorState.LIVE;
+                    }
+                    else
+                    {
+                        mEnabled = false;
+                        mOperatorState = OperatorState.DISABLED;
                     }
                 }
                 else
                 {
+                    mRestoreAllocationThread = null;
+                    mOperatorState = OperatorState.DISABLED;
                     setTunerStatus(TunerStatus.DISABLED);
                     stop();
                 }
+            }
+            else if(!enabled)
+            {
+                // Keep the explicit operator state coherent when a paired-device cascade already stopped hardware.
+                mRestoreAllocationThread = null;
+                mOperatorState = OperatorState.DISABLED;
+                setTunerStatus(TunerStatus.DISABLED);
+                stop();
             }
         }
         finally

@@ -8,11 +8,13 @@ package io.github.dsheirer.web.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import io.github.dsheirer.source.tuner.manager.DiscoveredTuner.OperatorState;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -30,6 +32,8 @@ public final class TunerAdminHttpController
     public static final String RF_ANALYSIS_PATH = PATH + "/rf-analysis";
     private static final Pattern TUNER_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})$");
     private static final Pattern ENABLED_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/enabled$");
+    private static final Pattern STATE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/state$");
+    private static final Pattern RESTORE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/restore$");
     private static final Pattern SETTING_PATH = Pattern.compile("^" + PATH +
         "/(tuner-[0-9a-f]{32})/settings/([a-z][a-z0-9_]*)$");
     private final TunerAdministrationService mAdministration;
@@ -84,6 +88,18 @@ public final class TunerAdminHttpController
         if(enabled.matches())
         {
             setEnabled(exchange, enabled.group(1));
+            return;
+        }
+        Matcher state = STATE_PATH.matcher(path);
+        if(state.matches())
+        {
+            setState(exchange, state.group(1));
+            return;
+        }
+        Matcher restore = RESTORE_PATH.matcher(path);
+        if(restore.matches())
+        {
+            restoreChannels(exchange, restore.group(1));
             return;
         }
         Matcher setting = SETTING_PATH.matcher(path);
@@ -218,6 +234,14 @@ public final class TunerAdminHttpController
         {
             ApiHttpResponse.sendError(exchange, exception.status(), exception.code(), exception.getMessage());
         }
+        catch(TunerSettingsService.SettingUnavailableException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "tuner_busy", exception.getMessage());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 404, "tuner_not_found", "Tuner is no longer available");
+        }
         catch(IllegalStateException exception)
         {
             ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner maintenance is unavailable");
@@ -227,9 +251,9 @@ public final class TunerAdminHttpController
     private void handleSetting(HttpExchange exchange, String tunerId, String settingId) throws IOException
     {
         String method = exchange.getRequestMethod();
-        if(!"PUT".equals(method) && !"DELETE".equals(method))
+        if(!"PUT".equals(method))
         {
-            WebHttpSupport.methodNotAllowed(exchange, "PUT, DELETE");
+            WebHttpSupport.methodNotAllowed(exchange, "PUT");
             return;
         }
         DiscoveredTuner tuner = find(exchange, tunerId);
@@ -239,16 +263,6 @@ public final class TunerAdminHttpController
         }
         try
         {
-            if("DELETE".equals(method))
-            {
-                if(WebHttpSupport.hasRequestBody(exchange))
-                {
-                    ApiHttpResponse.sendError(exchange, 400, "invalid_request", "DELETE does not accept a body");
-                    return;
-                }
-                ApiHttpResponse.sendData(exchange, 200, mSettings.cancel(tuner, settingId));
-                return;
-            }
             JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("value"));
             JsonNode raw = request.get("value");
             if(raw == null || !(raw.isTextual() || raw.isNumber() || raw.isBoolean()))
@@ -257,7 +271,7 @@ public final class TunerAdminHttpController
                 return;
             }
             Object value = raw.isTextual() ? raw.textValue() : raw.isBoolean() ? raw.booleanValue() : raw.numberValue();
-            ApiHttpResponse.sendData(exchange, 202, mSettings.set(tuner, settingId, value));
+            ApiHttpResponse.sendData(exchange, 200, mSettings.set(tuner, settingId, value));
         }
         catch(WebHttpSupport.RequestException exception)
         {
@@ -267,9 +281,93 @@ public final class TunerAdminHttpController
         {
             ApiHttpResponse.sendError(exchange, 422, "invalid_tuner_setting", exception.getMessage());
         }
+        catch(TunerSettingsService.SettingUnavailableException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "tuner_setting_unavailable", exception.getMessage());
+        }
         catch(IllegalStateException exception)
         {
             ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner maintenance is unavailable");
+        }
+    }
+
+    private void setState(HttpExchange exchange, String tunerId) throws IOException
+    {
+        if(!"PUT".equals(exchange.getRequestMethod()))
+        {
+            WebHttpSupport.methodNotAllowed(exchange, "PUT");
+            return;
+        }
+        DiscoveredTuner tuner = find(exchange, tunerId);
+        if(tuner == null) return;
+        try
+        {
+            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("state"));
+            JsonNode raw = request.get("state");
+            if(raw == null || !raw.isTextual())
+            {
+                ApiHttpResponse.sendError(exchange, 400, "invalid_request", "state is required");
+                return;
+            }
+            OperatorState state;
+            try
+            {
+                state = OperatorState.valueOf(raw.textValue().toUpperCase(Locale.ROOT));
+            }
+            catch(IllegalArgumentException exception)
+            {
+                ApiHttpResponse.sendError(exchange, 422, "invalid_tuner_state", "Unknown tuner state");
+                return;
+            }
+            ApiHttpResponse.sendData(exchange, 202, mSettings.requestState(tuner, state));
+        }
+        catch(WebHttpSupport.RequestException exception)
+        {
+            ApiHttpResponse.sendError(exchange, exception.status(), exception.code(), exception.getMessage());
+        }
+        catch(TunerSettingsService.SettingUnavailableException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "tuner_busy", exception.getMessage());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 404, "tuner_not_found", "Tuner is no longer available");
+        }
+        catch(IllegalStateException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner unavailable");
+        }
+    }
+
+    private void restoreChannels(HttpExchange exchange, String tunerId) throws IOException
+    {
+        if(!"POST".equals(exchange.getRequestMethod()))
+        {
+            WebHttpSupport.methodNotAllowed(exchange, "POST");
+            return;
+        }
+        if(WebHttpSupport.hasRequestBody(exchange))
+        {
+            ApiHttpResponse.sendError(exchange, 400, "invalid_request", "Restore does not accept a body");
+            return;
+        }
+        DiscoveredTuner tuner = find(exchange, tunerId);
+        if(tuner == null) return;
+        try
+        {
+            ApiHttpResponse.sendData(exchange, 202, mSettings.restoreStoppedChannels(tuner));
+        }
+        catch(TunerSettingsService.SettingUnavailableException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "tuner_restore_unavailable", exception.getMessage());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 404, "tuner_not_found", "Tuner is no longer available");
+        }
+        catch(IllegalStateException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner unavailable");
         }
     }
 

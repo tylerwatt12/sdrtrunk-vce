@@ -36,6 +36,7 @@ class TunerSettingCatalogTest
         masterInfo.setDeviceSelectionMode(DeviceSelectionMode.MASTER_TUNER_1);
         DiscoveredRspDuoTuner1 master = new DiscoveredRspDuoTuner1(masterInfo);
         master.setTunerConfiguration(new RspDuoTuner1Configuration(master.getId()));
+        master.setEnabled(false);
 
         TunerSettingCatalog.SettingDescriptor masterRate = setting(master, "sample_rate");
         assertEquals("device", masterRate.scope());
@@ -112,7 +113,7 @@ class TunerSettingCatalogTest
         assertTrue(setting(airspy, "if_gain").editable());
         assertTrue(setting(airspy, "mixer_gain").editable());
         TunerSettingCatalog.SettingDescriptor frequency = setting(airspy, "frequency_mhz");
-        assertTrue(frequency.requiresIdle());
+        assertFalse(frequency.requiresIdle());
         assertEquals("MHz", frequency.unit());
         assertEquals("decimal", frequency.kind());
         assertEquals("frequency", frequency.group());

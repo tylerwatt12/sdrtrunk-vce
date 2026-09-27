@@ -34,6 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -122,6 +123,27 @@ class TunerDiagnosticServiceTest
         assertEquals("unavailable", session.state().state());
         session.close();
         assertEquals(1, noChannels.removeCount.get());
+        service.close();
+    }
+
+    @Test
+    void setupTunerIsAViewableDiagnosticTargetWithNoChannels()
+    {
+        FakeController controller = new FakeController(155_000_000L, 10_000_000.0);
+        AtomicBoolean setup = new AtomicBoolean(true);
+        TunerDiagnosticService.AvailableTarget target = new TunerDiagnosticService.AvailableTarget(new Object(),
+            TunerClass.AIRSPY, TunerType.AIRSPY_R820T, "Setup tuner", "A1", controller, () -> 0,
+            setup::get, TunerDiagnosticService.ReceiverQueueControl.UNSUPPORTED);
+        TunerDiagnosticService service = service(List.of(target), new FakeProcessorFactory());
+
+        TunerDiagnosticService.Target listed = service.targets().getFirst();
+        assertEquals(0, listed.activeChannelCount());
+        TunerDiagnosticService.Session session = service.tryOpen(listed.targetId()).session();
+        assertNotNull(session);
+
+        setup.set(false);
+        assertEquals("unavailable", session.state().state());
+        session.close();
         service.close();
     }
 

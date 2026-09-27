@@ -94,7 +94,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         mProcessorFactory = Objects.requireNonNull(processorFactory, "Diagnostic processor factory cannot be null");
     }
 
-    /** Lists tuners already serving at least one channel, without starting sample transfer. */
+    /** Lists live tuners serving channels and tuners explicitly held in Setup. */
     public List<Target> targets()
     {
         synchronized(mLifecycleLock)
@@ -104,8 +104,8 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return List.of();
             }
 
-            return snapshotsLocked().stream().map(TargetSnapshot::target)
-                .filter(target -> target.activeChannelCount() > 0)
+            return snapshotsLocked().stream().filter(snapshot -> snapshot.diagnosticAvailable().get())
+                .map(TargetSnapshot::target)
                 .sorted(Comparator.comparing(Target::label, String.CASE_INSENSITIVE_ORDER)
                     .thenComparing(Target::targetId)).toList();
         }
@@ -121,7 +121,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return null;
             }
             return snapshotsLocked().stream()
-                .filter(snapshot -> snapshot.identity() == tuner && snapshot.target().activeChannelCount() > 0)
+                .filter(snapshot -> snapshot.identity() == tuner && snapshot.diagnosticAvailable().get())
                 .map(snapshot -> snapshot.target().targetId()).findFirst().orElse(null);
         }
     }
@@ -181,7 +181,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return new OpenResult(OpenStatus.NOT_FOUND, null);
             }
 
-            if(target.target().activeChannelCount() <= 0)
+            if(!target.diagnosticAvailable().get())
             {
                 return new OpenResult(OpenStatus.UNAVAILABLE, null);
             }
@@ -277,7 +277,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 .filter(candidate -> session.targetId().equals(candidate.target().targetId()))
                 .findFirst().orElse(null);
 
-            if(current == null || current.target().activeChannelCount() <= 0 || !session.matches(current))
+            if(current == null || !current.diagnosticAvailable().get() || !session.matches(current))
             {
                 mActiveSession = null;
                 session.markUnavailable("Tuner is no longer available.");
@@ -346,7 +346,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 Target target = new Target(identity.targetId(), label, name, serial, available.tunerType().name(),
                     centerFrequency, sampleRate, usableBandwidth, centerExclusionHalfBandwidth, activeChannelCount);
                 snapshots.add(new TargetSnapshot(available.identity(), controller, available.activeChannelCount(),
-                    available.receiverQueueControl(), target));
+                    available.diagnosticAvailable(), available.receiverQueueControl(), target));
             }
             catch(RuntimeException exception)
             {
@@ -392,7 +392,7 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     private static List<AvailableTarget> availableTargets(TunerManager tunerManager)
     {
-        List<DiscoveredTuner> discovered = tunerManager.getAvailableTuners();
+        List<DiscoveredTuner> discovered = tunerManager.getDiscoveredTunerRegistry().snapshot();
 
         if(discovered == null || discovered.isEmpty())
         {
@@ -423,7 +423,9 @@ public final class TunerDiagnosticService implements AutoCloseable
                         new PolyphaseReceiverQueueControl(manager) : ReceiverQueueControl.UNSUPPORTED;
                     available.add(new AvailableTarget(tuner, candidate.getTunerClass(), tunerType,
                         tuner.getPreferredName(), tuner.getUniqueID(), controller,
-                        channelManager::getTunerChannelCount, queueControl));
+                        channelManager::getTunerChannelCount,
+                        () -> candidate.getOperatorState() == DiscoveredTuner.OperatorState.SETUP ||
+                            channelManager.getTunerChannelCount() > 0, queueControl));
                 }
             }
             catch(RuntimeException exception)
@@ -1498,14 +1500,15 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     record AvailableTarget(Object identity, TunerClass tunerClass, TunerType tunerType, String name, String serial,
                            TunerController controller,
-                           ChannelCount activeChannelCount, ReceiverQueueControl receiverQueueControl)
+                           ChannelCount activeChannelCount, DiagnosticAvailability diagnosticAvailable,
+                           ReceiverQueueControl receiverQueueControl)
     {
         AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,
                         ChannelCount activeChannelCount)
         {
             this(identity, tunerClass, TunerType.UNKNOWN,
                 tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(), "Unknown", controller,
-                activeChannelCount, ReceiverQueueControl.UNSUPPORTED);
+                activeChannelCount, () -> activeChannelCount.get() > 0, ReceiverQueueControl.UNSUPPORTED);
         }
 
         AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,
@@ -1513,7 +1516,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         {
             this(identity, tunerClass, TunerType.UNKNOWN,
                 tunerClass != null ? tunerClass.toString() : TunerClass.UNKNOWN.toString(), "Unknown", controller,
-                activeChannelCount, receiverQueueControl);
+                activeChannelCount, () -> activeChannelCount.get() > 0, receiverQueueControl);
         }
 
         AvailableTarget(Object identity, TunerClass tunerClass, String name, String serial,
@@ -1521,7 +1524,15 @@ public final class TunerDiagnosticService implements AutoCloseable
                         ReceiverQueueControl receiverQueueControl)
         {
             this(identity, tunerClass, TunerType.UNKNOWN, name, serial, controller, activeChannelCount,
-                receiverQueueControl);
+                () -> activeChannelCount.get() > 0, receiverQueueControl);
+        }
+
+        AvailableTarget(Object identity, TunerClass tunerClass, TunerType tunerType, String name, String serial,
+                        TunerController controller, ChannelCount activeChannelCount,
+                        ReceiverQueueControl receiverQueueControl)
+        {
+            this(identity, tunerClass, tunerType, name, serial, controller, activeChannelCount,
+                () -> activeChannelCount.get() > 0, receiverQueueControl);
         }
 
         AvailableTarget
@@ -1530,6 +1541,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             Objects.requireNonNull(tunerType, "Tuner type cannot be null");
             Objects.requireNonNull(controller, "Tuner target controller cannot be null");
             Objects.requireNonNull(activeChannelCount, "Tuner channel count cannot be null");
+            Objects.requireNonNull(diagnosticAvailable, "Tuner diagnostic availability cannot be null");
             Objects.requireNonNull(receiverQueueControl, "Receiver IQ queue control cannot be null");
         }
     }
@@ -1577,8 +1589,15 @@ public final class TunerDiagnosticService implements AutoCloseable
         int get();
     }
 
+    @FunctionalInterface
+    interface DiagnosticAvailability
+    {
+        boolean get();
+    }
+
     record TargetSnapshot(Object identity, TunerController controller, ChannelCount activeChannelCount,
-                          ReceiverQueueControl receiverQueueControl, Target target)
+                          DiagnosticAvailability diagnosticAvailable, ReceiverQueueControl receiverQueueControl,
+                          Target target)
     {
     }
 

@@ -104,6 +104,31 @@ class TunerManagerAllocationTest
     }
 
     @Test
+    void setupTunerRemainsDiscoverableButIsExcludedFromOrdinaryAllocation() throws Exception
+    {
+        TrackingTunerController controller = createController(857_000_000);
+        PolyphaseChannelSourceManager sourceManager = new PolyphaseChannelSourceManager(controller);
+        TestDiscoveredTuner tuner = new TestDiscoveredTuner(controller, sourceManager, "setup-visible");
+        TunerManager manager = new TunerManager(null);
+        manager.getDiscoveredTunerRegistry().add(tuner);
+
+        try
+        {
+            assertTrue(tuner.holdForSetup());
+            assertTrue(manager.getAvailableTuners().contains(tuner),
+                "running Setup hardware remains available to diagnostics and debug recording");
+            assertTrue(manager.getPreferredTunerNames().contains(tuner.getTuner().getPreferredName()));
+            assertNull(manager.getSource(new TunerChannel(857_000_000, 12_500), CHANNEL_SPECIFICATION,
+                null, "setup-allocation-blocked"));
+            assertEquals(0, sourceManager.getTunerChannelCount());
+        }
+        finally
+        {
+            tuner.stop();
+        }
+    }
+
+    @Test
     void validRequestFallsBackWhenBroaderEnvelopeIsOutOfRange() throws Exception
     {
         TrackingTunerController controller = createController(857_000_000, WIDE_MAXIMUM_FREQUENCY);

@@ -314,6 +314,42 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         return activeSourceFrequencies(mProcessingChainsMap.values());
     }
 
+    /**
+     * Snapshot of every processing chain currently owned by one physical tuner. Synchronizing with startProcessing()
+     * makes this the lifecycle barrier after allocation has been gated. The caller stops each whole chain, including
+     * rotating-source wrappers that could otherwise request another tuner source.
+     */
+    public synchronized List<TunerChannelAssignment> getChannelsUsingTuner(String tunerIdentity)
+    {
+        if(tunerIdentity == null || tunerIdentity.isBlank())
+        {
+            return List.of();
+        }
+
+        List<TunerChannelAssignment> assignments = new ArrayList<>();
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            Channel channel = entry.getKey();
+            ProcessingChain chain = entry.getValue();
+            Source source = chain != null ? chain.getSource() : null;
+            if(channel == null || !(source instanceof TunerChannelSource tunerSource) ||
+                !tunerIdentity.equals(tunerSource.getTunerIdentity()))
+            {
+                continue;
+            }
+            String id = channel.isStandardChannel() ? channel.getConfigurationId() :
+                "traffic-" + channel.getChannelID();
+            String name = channel.getName() != null && !channel.getName().isBlank() ? channel.getName() : "Channel";
+            assignments.add(new TunerChannelAssignment(channel, id, name, channel.isStandardChannel()));
+        }
+        return List.copyOf(assignments);
+    }
+
+    /** Internal receiver object plus the stable, browser-safe identity used by the tuner workflow. */
+    public record TunerChannelAssignment(Channel channel, String id, String name, boolean restorable)
+    {
+    }
+
     static List<Long> activeSourceFrequencies(Iterable<ProcessingChain> chains)
     {
         List<Long> frequencies = new ArrayList<>();

@@ -1,5 +1,8 @@
 package io.github.dsheirer.source.tuner.manager;
 
+import io.github.dsheirer.controller.channel.ChannelException;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager.TunerChannelAssignment;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
@@ -23,69 +26,96 @@ import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.RspTunerController;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
-import java.util.HashMap;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Admin-initiated tuner settings and enable/disable actions.  Requests update a bounded latest-value map and return
- * immediately.  A single dedicated worker serializes hardware and persistence work.  Sample-rate and center-retune
- * settings wait until idle; designated gain, calibration, lock and safe frequency-limit controls can apply live.
+ * Admin tuner settings and operator lifecycle. Settings are one-shot: they apply now or fail now. A dedicated worker
+ * handles finite hardware state transitions, but never retains a setting until the tuner becomes idle.
  */
 public final class TunerSettingsService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerSettingsService.class);
     private static final long SHUTDOWN_WAIT_SECONDS = 8;
+    private static final int LIFECYCLE_WORKER_COUNT = 2;
+    private static final int LIFECYCLE_QUEUE_CAPACITY = 32;
+    private static final AtomicInteger LIFECYCLE_THREAD_SEQUENCE = new AtomicInteger();
     private final Runnable mPersist;
     private final Predicate<DiscoveredTuner> mContains;
     private final Function<String,DiscoveredTuner> mFind;
-    private final ScheduledThreadPoolExecutor mExecutor;
-    private final Map<DiscoveredTuner,Map<String,Object>> mPending = new ConcurrentHashMap<>();
-    private final Map<DiscoveredTuner,Boolean> mPendingEnabled = new ConcurrentHashMap<>();
+    private final ChannelProcessingManager mChannelProcessingManager;
+    private final ThreadPoolExecutor mExecutor;
+    private final Map<DiscoveredTuner,String> mTransitions = new ConcurrentHashMap<>();
+    private final Set<DiscoveredTuner> mLifecycleReservations = ConcurrentHashMap.newKeySet();
+    private final Map<DiscoveredTuner,List<RememberedChannel>> mStoppedChannels = new ConcurrentHashMap<>();
+    private final Map<DiscoveredTuner,RestoreResult> mRestoreResults = new ConcurrentHashMap<>();
     private final Map<DiscoveredTuner,String> mErrors = new ConcurrentHashMap<>();
-    private final AtomicBoolean mWorkerScheduled = new AtomicBoolean();
-    /** Serializes admin queue updates with close; decoder and channel allocation paths never take this lock. */
+    private static final int MAXIMUM_REMEMBERED_CHANNELS = 64;
+    /** Serializes one-shot setting writes with close; decoder and channel allocation paths never take this lock. */
     private final Object mLifecycleLock = new Object();
     private volatile boolean mClosed;
 
     public TunerSettingsService(TunerManager manager)
     {
+        this(manager, null);
+    }
+
+    public TunerSettingsService(TunerManager manager, ChannelProcessingManager channelProcessingManager)
+    {
         this(manager.getTunerConfigurationManager()::saveConfigurations,
-            manager.getDiscoveredTunerRegistry()::contains, manager.getDiscoveredTunerRegistry()::find);
+            manager.getDiscoveredTunerRegistry()::contains, manager.getDiscoveredTunerRegistry()::find,
+            channelProcessingManager);
     }
 
     TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
                          Function<String,DiscoveredTuner> find)
     {
+        this(persist, contains, find, null);
+    }
+
+    TunerSettingsService(Runnable persist, Predicate<DiscoveredTuner> contains,
+                         Function<String,DiscoveredTuner> find, ChannelProcessingManager channelProcessingManager)
+    {
         mPersist = Objects.requireNonNull(persist);
         mContains = Objects.requireNonNull(contains);
         mFind = Objects.requireNonNull(find);
-        mExecutor = new ScheduledThreadPoolExecutor(1, task ->
-        {
-            Thread thread = new Thread(task, "tuner-settings-worker");
-            thread.setDaemon(true);
-            return thread;
-        });
-        mExecutor.setRemoveOnCancelPolicy(true);
+        mChannelProcessingManager = channelProcessingManager;
+        mExecutor = new ThreadPoolExecutor(LIFECYCLE_WORKER_COUNT, LIFECYCLE_WORKER_COUNT, 0L,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(LIFECYCLE_QUEUE_CAPACITY), task ->
+            {
+                Thread thread = new Thread(task,
+                    "tuner-lifecycle-" + LIFECYCLE_THREAD_SEQUENCE.incrementAndGet());
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
     }
 
     public List<TunerSettingCatalog.SettingDescriptor> describe(DiscoveredTuner tuner)
     {
-        Map<String,Object> pending = mPending.get(tuner);
-        List<TunerSettingCatalog.SettingDescriptor> descriptors = TunerSettingCatalog.describe(tuner,
-            pending == null ? Map.of() : pending);
+        List<TunerSettingCatalog.SettingDescriptor> descriptors = TunerSettingCatalog.describe(tuner);
+
+        if(tuner instanceof DiscoveredRspDuoTuner1 && rspDuoSibling(tuner) instanceof DiscoveredTuner slave &&
+            !isFullyDisabled(slave))
+        {
+            descriptors = descriptors.stream().map(descriptor -> "sample_rate".equals(descriptor.id()) ?
+                unavailable(descriptor, "Disable tuner 2") : descriptor).toList();
+        }
 
         if(!TunerSettingCatalog.isRspDuoSlave(tuner))
         {
@@ -98,10 +128,8 @@ public final class TunerSettingsService implements AutoCloseable
             return descriptors;
         }
 
-        Map<String,Object> masterPending = mPending.get(master);
         Map<String,TunerSettingCatalog.SettingDescriptor> shared = new HashMap<>();
-        for(TunerSettingCatalog.SettingDescriptor descriptor: TunerSettingCatalog.describe(master,
-            masterPending == null ? Map.of() : masterPending))
+        for(TunerSettingCatalog.SettingDescriptor descriptor: TunerSettingCatalog.describe(master))
         {
             if("device".equals(descriptor.scope()))
             {
@@ -118,15 +146,24 @@ public final class TunerSettingsService implements AutoCloseable
             }
             return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(),
                 descriptor.group(), descriptor.kind(),
-                masterDescriptor.value(), masterDescriptor.pendingValue(), descriptor.options(), descriptor.minimum(),
+                masterDescriptor.value(), null, descriptor.options(), descriptor.minimum(),
                 descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(),
-                descriptor.requiresIdle(), false);
+                descriptor.requiresIdle(), false, descriptor.availability(), "Tuner 1",
+                descriptor.dependencies());
         }).toList();
     }
 
+    private static TunerSettingCatalog.SettingDescriptor unavailable(
+        TunerSettingCatalog.SettingDescriptor descriptor, String reason)
+    {
+        return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(), descriptor.group(),
+            descriptor.kind(), descriptor.value(), null, descriptor.options(), descriptor.minimum(),
+            descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(), descriptor.requiresIdle(),
+            false, descriptor.availability(), reason, descriptor.dependencies());
+    }
+
     /**
-     * Validates a setting using its hardware family provider and keeps only the latest requested value per field.
-     * The worker persists a value only after the applicable idle requirement and live controller have accepted it.
+     * Validates and applies one setting once. A busy or incompatible setting fails and is never retained for retry.
      */
     public MutationResult set(DiscoveredTuner tuner, String settingId, Object submittedValue)
     {
@@ -134,6 +171,10 @@ public final class TunerSettingsService implements AutoCloseable
         {
             ensureOpen();
             ensurePresent(tuner);
+            if(lifecycleGroup(tuner).stream().anyMatch(mLifecycleReservations::contains))
+            {
+                throw new SettingUnavailableException("Tuner busy");
+            }
             TunerConfiguration configuration = configuration(tuner);
             if("device".equals(TunerSettingCatalog.scope(configuration, settingId)) &&
                 TunerSettingCatalog.isRspDuoSlave(tuner))
@@ -141,43 +182,37 @@ public final class TunerSettingsService implements AutoCloseable
                 throw new IllegalArgumentException("Shared RSPduo settings are edited from tuner 1");
             }
             Object value = TunerSettingCatalog.validate(tuner, settingId, submittedValue);
-            mPending.compute(tuner, (ignored, existing) ->
+            if(TunerSettingCatalog.requiresSetup(configuration, settingId) &&
+                tuner.getOperatorState() == DiscoveredTuner.OperatorState.LIVE)
             {
-                Map<String,Object> updated = new HashMap<>(existing == null ? Map.of() : existing);
-                if(TunerSettingCatalog.RESET_FREQUENCY_EXTENTS.equals(settingId))
-                {
-                    updated.remove(TunerSettingCatalog.MINIMUM_FREQUENCY);
-                    updated.remove(TunerSettingCatalog.MAXIMUM_FREQUENCY);
-                }
-                else if(TunerSettingCatalog.isFrequencyExtent(settingId))
-                {
-                    updated.remove(TunerSettingCatalog.RESET_FREQUENCY_EXTENTS);
-                }
-                updated.put(settingId, value);
-                return Map.copyOf(updated);
-            });
-            mErrors.remove(tuner);
-            schedule(false);
-        }
-        return new MutationResult("queued", null);
-    }
-
-    public MutationResult cancel(DiscoveredTuner tuner, String settingId)
-    {
-        ensureOpen();
-        ensurePresent(tuner);
-        synchronized(mLifecycleLock)
-        {
-            ensureOpen();
-            mPending.computeIfPresent(tuner, (ignored, existing) ->
+                throw new SettingUnavailableException("Use Setup");
+            }
+            if("sample_rate".equals(settingId) && tuner instanceof DiscoveredRspDuoTuner1 &&
+                rspDuoSibling(tuner) instanceof DiscoveredTuner slave && !isFullyDisabled(slave))
             {
-                Map<String,Object> updated = new HashMap<>(existing);
-                updated.remove(settingId);
-                return updated.isEmpty() ? null : Map.copyOf(updated);
-            });
+                throw new SettingUnavailableException("Disable tuner 2");
+            }
+            ApplyResult result = TunerSettingCatalog.isFrequencyExtent(settingId) ?
+                applyFrequencyExtents(tuner, Map.of(settingId, value)) : apply(tuner, settingId, value);
+            if(result == ApplyResult.RETRY)
+            {
+                throw new SettingUnavailableException("Tuner busy");
+            }
+            if(result != ApplyResult.APPLIED)
+            {
+                throw new IllegalArgumentException(Objects.requireNonNullElse(mErrors.get(tuner), "Change failed"));
+            }
+            try
+            {
+                mPersist.run();
+            }
+            catch(Exception e)
+            {
+                mErrors.put(tuner, "Saved value unavailable");
+                mLog.warn("Unable to save tuner settings for [{}]", tuner.getId(), e);
+            }
         }
-
-        return new MutationResult("cancelled", null);
+        return new MutationResult("applied", null);
     }
 
     /**
@@ -186,16 +221,49 @@ public final class TunerSettingsService implements AutoCloseable
      */
     public MutationResult requestEnabled(DiscoveredTuner tuner, boolean enabled)
     {
-        ensureOpen();
-        ensurePresent(tuner);
+        return requestState(tuner, enabled ? DiscoveredTuner.OperatorState.SETUP :
+            DiscoveredTuner.OperatorState.DISABLED);
+    }
+
+    public MutationResult requestState(DiscoveredTuner tuner, DiscoveredTuner.OperatorState state)
+    {
         synchronized(mLifecycleLock)
         {
             ensureOpen();
-            mPendingEnabled.put(Objects.requireNonNull(tuner), enabled);
+            ensurePresent(tuner);
+            Objects.requireNonNull(state);
+            String transition = switch(state)
+            {
+                case DISABLED -> "disabling";
+                case SETUP -> "starting_setup";
+                case LIVE -> "going_live";
+            };
+            List<DiscoveredTuner> group = lifecycleGroup(tuner);
+            reserveTransition(tuner, group, transition);
             mErrors.remove(tuner);
-            schedule(false);
+            mRestoreResults.remove(tuner);
+            submitLifecycle(tuner, group, () -> changeState(tuner, state));
         }
-        return new MutationResult("queued", null);
+        return new MutationResult("accepted", null);
+    }
+
+    public MutationResult restoreStoppedChannels(DiscoveredTuner tuner)
+    {
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            ensurePresent(tuner);
+            if(tuner.getOperatorState() != DiscoveredTuner.OperatorState.SETUP)
+            {
+                throw new SettingUnavailableException("Use Setup");
+            }
+            List<DiscoveredTuner> group = lifecycleGroup(tuner);
+            reserveTransition(tuner, group, "restoring");
+            mErrors.remove(tuner);
+            mRestoreResults.remove(tuner);
+            submitLifecycle(tuner, group, () -> restoreOnce(tuner));
+        }
+        return new MutationResult("accepted", null);
     }
 
     public String error(DiscoveredTuner tuner)
@@ -205,8 +273,22 @@ public final class TunerSettingsService implements AutoCloseable
 
     public boolean hasPending(DiscoveredTuner tuner)
     {
-        Map<String,Object> settings = mPending.get(tuner);
-        return (settings != null && !settings.isEmpty()) || mPendingEnabled.containsKey(tuner);
+        return mTransitions.containsKey(tuner);
+    }
+
+    public String transition(DiscoveredTuner tuner)
+    {
+        return mTransitions.get(tuner);
+    }
+
+    public List<ChannelInfo> stoppedChannels(DiscoveredTuner tuner)
+    {
+        return mStoppedChannels.getOrDefault(tuner, List.of()).stream().map(RememberedChannel::info).toList();
+    }
+
+    public RestoreResult restoreResult(DiscoveredTuner tuner)
+    {
+        return mRestoreResults.get(tuner);
     }
 
     private TunerConfiguration configuration(DiscoveredTuner tuner)
@@ -222,278 +304,197 @@ public final class TunerSettingsService implements AutoCloseable
         return configuration;
     }
 
-    private void schedule(boolean delayed)
+    private void reserveTransition(DiscoveredTuner target, List<DiscoveredTuner> tuners, String transition)
     {
-        if(!mClosed && mWorkerScheduled.compareAndSet(false, true))
+        if(tuners.stream().anyMatch(mLifecycleReservations::contains))
         {
-            try
+            throw new SettingUnavailableException("Tuner busy");
+        }
+        mLifecycleReservations.addAll(tuners);
+        mTransitions.put(target, transition);
+    }
+
+    private void submitLifecycle(DiscoveredTuner tuner, List<DiscoveredTuner> group, Runnable operation)
+    {
+        try
+        {
+            mExecutor.execute(() ->
             {
-                if(delayed)
+                try
                 {
-                    mExecutor.schedule(this::drain, 1, TimeUnit.SECONDS);
+                    if(!mClosed && mContains.test(tuner))
+                    {
+                        operation.run();
+                    }
+                }
+                catch(Exception e)
+                {
+                    String message = e instanceof IllegalStateException &&
+                        ("Tuner unavailable".equals(e.getMessage()) || "Use Setup".equals(e.getMessage())) ?
+                        e.getMessage() : "Change failed";
+                    mErrors.put(tuner, message);
+                    mLog.warn("Unable to change tuner state for [{}]", tuner.getId(), e);
+                }
+                finally
+                {
+                    mTransitions.remove(tuner);
+                    mLifecycleReservations.removeAll(group);
+                }
+            });
+        }
+        catch(RejectedExecutionException e)
+        {
+            mTransitions.remove(tuner);
+            mLifecycleReservations.removeAll(group);
+            throw new IllegalStateException("Tuner maintenance is unavailable", e);
+        }
+    }
+
+    private void changeState(DiscoveredTuner tuner, DiscoveredTuner.OperatorState requested)
+    {
+        DiscoveredTuner.OperatorState current = tuner.getOperatorState();
+        DiscoveredTuner pairedSlave = tuner instanceof DiscoveredRspDuoTuner1 ? rspDuoSibling(tuner) : null;
+        switch(requested)
+        {
+            case DISABLED ->
+            {
+                leaveLiveGroup(pairedSlave == null ? List.of(tuner) : List.of(tuner, pairedSlave));
+                tuner.setEnabled(false);
+                if(pairedSlave != null)
+                {
+                    // The manager normally cascades this from tuner 1. Explicitly align it for error paths and tests.
+                    pairedSlave.setEnabled(false);
+                }
+            }
+            case SETUP ->
+            {
+                if(pairedSlave == null)
+                {
+                    if(current == DiscoveredTuner.OperatorState.LIVE)
+                    {
+                        leaveLive(tuner);
+                    }
+                    if(!tuner.enterSetup())
+                    {
+                        throw new IllegalStateException("Tuner unavailable");
+                    }
                 }
                 else
                 {
-                    mExecutor.execute(this::drain);
+                    List<DiscoveredTuner> group = List.of(tuner, pairedSlave);
+                    leaveLiveGroup(group);
+                    group.forEach(DiscoveredTuner::prepareForSetup);
+                    if(!tuner.enterSetup() || !pairedSlave.enterSetup())
+                    {
+                        tuner.setEnabled(false);
+                        pairedSlave.setEnabled(false);
+                        throw new IllegalStateException("Tuner unavailable");
+                    }
                 }
             }
-            catch(RejectedExecutionException e)
+            case LIVE ->
             {
-                mWorkerScheduled.set(false);
+                if(current == DiscoveredTuner.OperatorState.DISABLED)
+                {
+                    throw new IllegalStateException("Use Setup");
+                }
+                if(!tuner.enterLive())
+                {
+                    throw new IllegalStateException("Tuner unavailable");
+                }
+                mStoppedChannels.remove(tuner);
             }
         }
     }
 
-    private void drain()
+    private void leaveLive(DiscoveredTuner tuner)
     {
+        leaveLiveGroup(List.of(tuner));
+    }
+
+    /** Gate every member before the first channel snapshot or paired-device hardware cascade. */
+    private void leaveLiveGroup(List<DiscoveredTuner> tuners)
+    {
+        List<DiscoveredTuner> live = tuners.stream()
+            .filter(member -> member.getOperatorState() == DiscoveredTuner.OperatorState.LIVE).toList();
+        for(DiscoveredTuner member: live)
+        {
+            if(!member.holdForSetup())
+            {
+                throw new IllegalStateException("Tuner unavailable");
+            }
+        }
+        live.forEach(this::snapshotAndStopChannels);
+    }
+
+    private void snapshotAndStopChannels(DiscoveredTuner tuner)
+    {
+        if(mChannelProcessingManager == null)
+        {
+            mStoppedChannels.put(tuner, List.of());
+            return;
+        }
+        List<TunerChannelAssignment> assignments = new ArrayList<>(
+            mChannelProcessingManager.getChannelsUsingTuner(tuner.getId()));
+        assignments.sort((left, right) -> Boolean.compare(right.restorable(), left.restorable()));
+        List<RememberedChannel> remembered = new ArrayList<>();
+        for(TunerChannelAssignment assignment: assignments)
+        {
+            try
+            {
+                mChannelProcessingManager.stop(assignment.channel());
+                if(remembered.size() < MAXIMUM_REMEMBERED_CHANNELS)
+                {
+                    remembered.add(new RememberedChannel(new ChannelInfo(assignment.id(), assignment.name()),
+                        assignment.channel(), assignment.restorable()));
+                }
+            }
+            catch(ChannelException e)
+            {
+                mLog.warn("Unable to stop channel [{}] for tuner setup", assignment.id(), e);
+            }
+        }
+        mStoppedChannels.put(tuner, List.copyOf(remembered));
+    }
+
+    private void restoreOnce(DiscoveredTuner tuner)
+    {
+        List<RememberedChannel> remembered = mStoppedChannels.getOrDefault(tuner, List.of());
+        List<ChannelInfo> failed = new ArrayList<>();
+        tuner.beginRestoreAllocation();
         try
         {
-            if(mClosed)
+            for(RememberedChannel channel: remembered)
             {
-                return;
-            }
-            for(DiscoveredTuner tuner: List.copyOf(mPendingEnabled.keySet()))
-            {
-                if(mClosed) break;
-                process(tuner);
-            }
-
-            for(DiscoveredTuner tuner: List.copyOf(mPending.keySet()))
-            {
-                if(mClosed) break;
-                process(tuner);
+                if(!channel.restorable())
+                {
+                    continue;
+                }
+                if(mChannelProcessingManager == null)
+                {
+                    failed.add(channel.info());
+                    continue;
+                }
+                try
+                {
+                    mChannelProcessingManager.start(channel.channel());
+                }
+                catch(ChannelException | RuntimeException e)
+                {
+                    failed.add(channel.info());
+                }
             }
         }
         finally
         {
-            mWorkerScheduled.set(false);
-
-            if(!mPending.isEmpty() || !mPendingEnabled.isEmpty())
-            {
-                schedule(true);
-            }
+            tuner.endRestoreAllocation();
         }
-    }
-
-    private void process(DiscoveredTuner tuner)
-    {
-        if(!mContains.test(tuner) || tuner.getTunerStatus() == TunerStatus.REMOVED)
+        if(!tuner.enterLive())
         {
-            discardRemoved(tuner);
-            return;
+            throw new IllegalStateException("Tuner unavailable");
         }
-
-        boolean persistNeeded = false;
-        Map<String,Object> requested = mPending.get(tuner);
-        boolean pendingEnabledChange = mPendingEnabled.containsKey(tuner);
-        boolean needsReservation = pendingEnabledChange ||
-            (requested != null && requested.keySet().stream().anyMatch(settingId ->
-                TunerSettingCatalog.requiresIdle(configuration(tuner), settingId)));
-
-        // Only disruptive settings and enable/disable take the reservation shared with channel allocation.  Live
-        // gain controls follow the desktop editor's direct-setter path and do not make allocations fail fast.
-        // A queued setting for a busy tuner should not briefly reserve it on every retry. Recheck after acquiring
-        // the reservation below because channel allocation can begin between these two observations.
-        if(needsReservation && (pendingEnabledChange || isIdle(tuner)) && tuner.tryAcquireForAllocation())
-        {
-            try
-            {
-                if(!mContains.test(tuner) || tuner.getTunerStatus() == TunerStatus.REMOVED)
-                {
-                    discardRemoved(tuner);
-                    return;
-                }
-
-                Boolean enabled = mPendingEnabled.get(tuner);
-
-                if(Boolean.FALSE.equals(enabled))
-                {
-                    tuner.setEnabled(false);
-                    mPendingEnabled.remove(tuner, false);
-                }
-
-                Map<String,Object> settings = mPending.get(tuner);
-
-                if(settings != null && !settings.isEmpty())
-                {
-                    Map<String,Object> snapshot = new HashMap<>(settings);
-                    for(Map.Entry<String,Object> entry: snapshot.entrySet())
-                    {
-                        if(TunerSettingCatalog.isFrequencyExtent(entry.getKey()))
-                        {
-                            continue;
-                        }
-                        if(!TunerSettingCatalog.requiresIdle(configuration(tuner), entry.getKey()) || !isIdle(tuner) ||
-                            !stillPending(tuner, Map.of(entry.getKey(), entry.getValue())))
-                        {
-                            continue;
-                        }
-
-                        ApplyResult result = apply(tuner, entry.getKey(), entry.getValue());
-
-                        if(result == ApplyResult.APPLIED)
-                        {
-                            persistNeeded = true;
-                        }
-
-                        if(result != ApplyResult.RETRY)
-                        {
-                            consumePending(tuner, entry);
-                        }
-                    }
-                }
-
-                if(Boolean.TRUE.equals(mPendingEnabled.get(tuner)) && !hasPendingSettings(tuner))
-                {
-                    if(tuner.getTunerStatus() == TunerStatus.ERROR)
-                    {
-                        tuner.restart();
-                    }
-                    else
-                    {
-                        tuner.setEnabled(true);
-                    }
-
-                    mPendingEnabled.remove(tuner, true);
-                }
-            }
-            catch(Exception e)
-            {
-                mLog.warn("Unable to perform requested tuner maintenance for [{}]", tuner.getId(), e);
-                mErrors.put(tuner, "Unable to perform tuner maintenance");
-                mPendingEnabled.remove(tuner);
-            }
-            finally
-            {
-                tuner.releaseAfterAllocation();
-            }
-        }
-
-        if(!Boolean.FALSE.equals(mPendingEnabled.get(tuner)))
-        {
-            persistNeeded |= processLiveSettings(tuner);
-        }
-
-        if(persistNeeded)
-        {
-            // The settings worker may serialize to SQLite, but must never hold the reservation that makes channel
-            // allocation fail fast (or a controller lock) during that work.
-            try
-            {
-                mPersist.run();
-            }
-            catch(Exception e)
-            {
-                mErrors.put(tuner, "Applied tuner settings but could not save them");
-                mLog.warn("Unable to save tuner settings for [{}]", tuner.getId(), e);
-            }
-        }
-    }
-
-    private boolean processLiveSettings(DiscoveredTuner tuner)
-    {
-        if(!mContains.test(tuner) || tuner.getTunerStatus() == TunerStatus.REMOVED)
-        {
-            discardRemoved(tuner);
-            return false;
-        }
-
-        Map<String,Object> settings = mPending.get(tuner);
-
-        if(settings == null || settings.isEmpty())
-        {
-            return false;
-        }
-
-        boolean persistNeeded = false;
-        Map<String,Object> snapshot = new HashMap<>(settings);
-        Map<String,Object> extents = new HashMap<>();
-        snapshot.forEach((settingId, value) ->
-        {
-            if(TunerSettingCatalog.isFrequencyExtent(settingId))
-            {
-                extents.put(settingId, value);
-            }
-        });
-
-        for(Map.Entry<String,Object> entry: snapshot.entrySet())
-        {
-            if(TunerSettingCatalog.isFrequencyExtent(entry.getKey()) ||
-                TunerSettingCatalog.requiresIdle(configuration(tuner), entry.getKey()))
-            {
-                continue;
-            }
-
-            if(!stillPending(tuner, Map.of(entry.getKey(), entry.getValue())))
-            {
-                continue;
-            }
-
-            ApplyResult result = applyLive(tuner, entry.getKey(), entry.getValue());
-
-            if(result == ApplyResult.APPLIED)
-            {
-                persistNeeded = true;
-            }
-
-            if(result != ApplyResult.RETRY)
-            {
-                consumePending(tuner, entry);
-            }
-        }
-
-        // A paired min/max request is one transaction, never two independently visible intermediate ranges.  Run
-        // it last so a rejected active range remains visible even if another live field succeeded in this pass.
-        if(!extents.isEmpty() && stillPending(tuner, extents))
-        {
-            ApplyResult result = applyFrequencyExtents(tuner, extents);
-            if(result == ApplyResult.APPLIED)
-            {
-                persistNeeded = true;
-            }
-            if(result != ApplyResult.RETRY)
-            {
-                extents.entrySet().forEach(entry -> consumePending(tuner, entry));
-            }
-        }
-
-        return persistNeeded;
-    }
-
-    private void consumePending(DiscoveredTuner tuner, Map.Entry<String,Object> entry)
-    {
-        mPending.computeIfPresent(tuner, (ignored, current) ->
-        {
-            if(!Objects.equals(current.get(entry.getKey()), entry.getValue()))
-            {
-                return current;
-            }
-
-            Map<String,Object> updated = new HashMap<>(current);
-            updated.remove(entry.getKey());
-            return updated.isEmpty() ? null : Map.copyOf(updated);
-        });
-    }
-
-    private void discardRemoved(DiscoveredTuner tuner)
-    {
-        mPending.remove(tuner);
-        mPendingEnabled.remove(tuner);
-        mErrors.remove(tuner);
-    }
-
-    private boolean hasPendingSettings(DiscoveredTuner tuner)
-    {
-        Map<String,Object> settings = mPending.get(tuner);
-        return settings != null && !settings.isEmpty();
-    }
-
-    /** Do not apply a worker snapshot after an administrator has cancelled or superseded its queued value. */
-    private boolean stillPending(DiscoveredTuner tuner, Map<String,Object> expected)
-    {
-        Map<String,Object> current = mPending.get(tuner);
-        return current != null && expected.entrySet().stream()
-            .allMatch(entry -> Objects.equals(current.get(entry.getKey()), entry.getValue()));
+        mStoppedChannels.remove(tuner);
+        mRestoreResults.put(tuner, new RestoreResult(List.copyOf(failed)));
     }
 
     private static boolean isIdle(DiscoveredTuner tuner)
@@ -503,97 +504,12 @@ public final class TunerSettingsService implements AutoCloseable
             return true;
         }
 
-        // A channelizer can still hold the sample-rate lock after its last channel count reaches zero.  Hardware
-        // rate setters may update the USB device before FrequencyController silently rejects the locked new rate.
+        // A channelizer can still hold the sample-rate lock after its last channel count reaches zero. Hardware rate
+        // setters may update the USB device before FrequencyController silently rejects the locked new rate.
         TunerController controller = tuner.getTuner().getTunerController();
         return tuner.getTuner().getChannelSourceManager() != null &&
             tuner.getTuner().getChannelSourceManager().getTunerChannelCount() == 0 &&
             !controller.isLockedSampleRate();
-    }
-
-    private ApplyResult applyLive(DiscoveredTuner tuner, String settingId, Object value)
-    {
-        if(!mContains.test(tuner) || tuner.getTunerStatus() == TunerStatus.REMOVED)
-        {
-            discardRemoved(tuner);
-            return ApplyResult.CONSUMED;
-        }
-
-        TunerConfiguration configuration = configuration(tuner);
-
-        if(!TunerSettingCatalog.isEditableInCurrentMode(configuration, settingId))
-        {
-            mErrors.put(tuner, "Setting " + settingId + " is no longer editable in the current tuner mode");
-            return ApplyResult.CONSUMED;
-        }
-
-        // A stopped/disabled tuner has no hardware to touch; save the selected configuration for its next start.
-        // An enabled tuner in transition waits for the next worker pass instead of using a half-started controller.
-        if(tuner.isEnabled() && (tuner.getTunerStatus() != TunerStatus.ENABLED || !tuner.hasTuner()))
-        {
-            return ApplyResult.RETRY;
-        }
-
-        TunerController controller = tuner.hasTuner() && tuner.getTunerStatus() == TunerStatus.ENABLED ?
-            tuner.getTuner().getTunerController() : null;
-        Object previous = TunerSettingCatalog.readRaw(configuration, settingId);
-        boolean written = false;
-        boolean applied = false;
-        boolean locked = false;
-
-        try
-        {
-            if(controller != null && ("frequency_correction_ppm".equals(settingId) ||
-                "center_frequency_locked".equals(settingId)))
-            {
-                // Both controls share state with allocator retunes and automatic correction.  If that lock is
-                // currently held, retry from the worker instead of waiting on an HTTP or decoder thread.
-                locked = controller.getLock().tryLock();
-                if(!locked)
-                {
-                    return ApplyResult.RETRY;
-                }
-            }
-            TunerSettingCatalog.write(configuration, settingId, value);
-            written = true;
-
-            if(controller != null)
-            {
-                // Use field-specific setters only.  Do not reserve the lifecycle or reapply the entire hardware
-                // configuration; a manual PPM correction may briefly retune, but never changes sample rate/gain.
-                applyToHardware(controller, configuration, settingId);
-            }
-
-            applied = true;
-            mErrors.remove(tuner);
-            return ApplyResult.APPLIED;
-        }
-        catch(Exception e)
-        {
-            if(written && !applied)
-            {
-                // A decoder notification may fail after the hardware accepted PPM.  Keep the saved value aligned
-                // with the actual controller instead of claiming a rollback that never reached the device.
-                applied = controller != null && "frequency_correction_ppm".equals(settingId) &&
-                    Double.compare(controller.getFrequencyCorrection(), ((Number)value).doubleValue()) == 0;
-                if(!applied)
-                {
-                    TunerSettingCatalog.write(configuration, settingId, previous);
-                }
-            }
-
-            mErrors.put(tuner, applied ? "Applied " + settingId + " but a receiver notification failed" :
-                "Unable to apply " + settingId + "; tuner may have disconnected");
-            mLog.warn("Unable to apply live tuner setting [{}] for [{}]", settingId, tuner.getId(), e);
-            return applied ? ApplyResult.APPLIED : ApplyResult.CONSUMED;
-        }
-        finally
-        {
-            if(locked)
-            {
-                controller.getLock().unlock();
-            }
-        }
     }
 
     private ApplyResult apply(DiscoveredTuner tuner, String settingId, Object value)
@@ -601,34 +517,51 @@ public final class TunerSettingsService implements AutoCloseable
         TunerConfiguration configuration = configuration(tuner);
         DiscoveredTuner sibling = "device".equals(TunerSettingCatalog.scope(configuration, settingId)) ?
             rspDuoSibling(tuner) : null;
+        boolean tunerReserved = false;
 
-        if(sibling != null && !sibling.tryAcquireForAllocation())
+        if("frequency_mhz".equals(settingId))
         {
-            return ApplyResult.RETRY;
+            if(!tuner.tryAcquireForAllocation())
+            {
+                return ApplyResult.RETRY;
+            }
+            tunerReserved = true;
         }
 
         try
         {
-            if(sibling != null && (!mContains.test(sibling) || !isIdle(sibling)))
+            if(sibling != null && !sibling.tryAcquireForAllocation())
             {
                 return ApplyResult.RETRY;
             }
-
-            if(sibling != null && "sample_rate".equals(settingId) && sibling.isEnabled())
+            try
             {
-                // The RSPduo bridge swallows slave sample-rate errors.  Requiring the slave to be disabled avoids
-                // reporting success while its frequency controller or native buffer factory still uses the old rate.
-                mErrors.put(tuner, "Disable RSPduo tuner 2 before changing the shared sample rate");
-                return ApplyResult.RETRY;
-            }
+                if(sibling != null && (!mContains.test(sibling) || !isIdle(sibling)))
+                {
+                    return ApplyResult.RETRY;
+                }
 
-            return applyWithGroupReserved(tuner, settingId, value);
+                if(sibling != null && "sample_rate".equals(settingId) && !isFullyDisabled(sibling))
+                {
+                    mErrors.put(tuner, "Disable tuner 2");
+                    return ApplyResult.CONSUMED;
+                }
+
+                return applyWithGroupReserved(tuner, settingId, value);
+            }
+            finally
+            {
+                if(sibling != null)
+                {
+                    sibling.releaseAfterAllocation();
+                }
+            }
         }
         finally
         {
-            if(sibling != null)
+            if(tunerReserved)
             {
-                sibling.releaseAfterAllocation();
+                tuner.releaseAfterAllocation();
             }
         }
     }
@@ -693,26 +626,24 @@ public final class TunerSettingsService implements AutoCloseable
                 {
                     if(clampedFrequency != frequency)
                     {
-                        throw new IllegalArgumentException("Frequency limits exclude the current center; " +
-                            "stop its channels or choose limits containing the center");
+                        throw new IllegalArgumentException("Center is outside limits");
                     }
                     ChannelSourceManager channels = tuner.getTuner().getChannelSourceManager();
                     if(channels == null)
                     {
-                        throw new IllegalArgumentException("Active channels are unavailable for limit validation");
+                        throw new IllegalArgumentException("Channels unavailable");
                     }
                     var allocated = channels.getTunerChannels();
                     if(channels.getTunerChannelCount() > 0 && allocated.isEmpty())
                     {
-                        throw new IllegalArgumentException("Active channels are unavailable for limit validation");
+                        throw new IllegalArgumentException("Channels unavailable");
                     }
                     for(TunerChannel channel: allocated)
                     {
                         if(channel.getMinFrequency() < extents.minimumHz() ||
                             channel.getMaxFrequency() > extents.maximumHz())
                         {
-                            throw new IllegalArgumentException("Frequency limits exclude an active channel; " +
-                                "stop that channel or choose wider limits");
+                            throw new IllegalArgumentException("Channel is outside limits");
                         }
                     }
                 }
@@ -766,7 +697,7 @@ public final class TunerSettingsService implements AutoCloseable
             }
             else
             {
-                mErrors.put(tuner, "Unable to apply frequency limits; tuner may have disconnected");
+                mErrors.put(tuner, "Frequency limit change failed");
                 mLog.warn("Unable to apply tuner frequency limits for [{}]", tuner.getId(), e);
             }
             return ApplyResult.CONSUMED;
@@ -786,15 +717,36 @@ public final class TunerSettingsService implements AutoCloseable
 
     private DiscoveredTuner rspDuoSibling(DiscoveredTuner tuner)
     {
-        if(tuner instanceof DiscoveredRspDuoTuner1 master)
+        if(tuner instanceof DiscoveredRspDuoTuner1 master &&
+            master.getDeviceInfo().getDeviceSelectionMode().isMasterMode())
         {
-            return mFind.apply(master.getSlaveId());
+            DiscoveredTuner sibling = mFind.apply(master.getSlaveId());
+            return sibling instanceof DiscoveredRspDuoTuner2 slave &&
+                slave.getDeviceInfo().getDeviceSelectionMode().isSlaveMode() ? sibling : null;
         }
-        if(tuner instanceof DiscoveredRspDuoTuner2 slave)
+        if(tuner instanceof DiscoveredRspDuoTuner2 slave &&
+            slave.getDeviceInfo().getDeviceSelectionMode().isSlaveMode())
         {
-            return mFind.apply(slave.getMasterId());
+            DiscoveredTuner sibling = mFind.apply(slave.getMasterId());
+            return sibling instanceof DiscoveredRspDuoTuner1 master &&
+                master.getDeviceInfo().getDeviceSelectionMode().isMasterMode() ? sibling : null;
         }
         return null;
+    }
+
+    private List<DiscoveredTuner> lifecycleGroup(DiscoveredTuner tuner)
+    {
+        DiscoveredTuner sibling = rspDuoSibling(tuner);
+        if(sibling == null)
+        {
+            return List.of(tuner);
+        }
+        return tuner instanceof DiscoveredRspDuoTuner1 ? List.of(tuner, sibling) : List.of(sibling, tuner);
+    }
+
+    private static boolean isFullyDisabled(DiscoveredTuner tuner)
+    {
+        return tuner.getOperatorState() == DiscoveredTuner.OperatorState.DISABLED && !tuner.isEnabled();
     }
 
     private ApplyResult applyWithGroupReserved(DiscoveredTuner tuner, String settingId, Object value)
@@ -803,8 +755,7 @@ public final class TunerSettingsService implements AutoCloseable
 
         if(!TunerSettingCatalog.isEditableInCurrentMode(configuration, settingId))
         {
-            // Another queued setting or the local editor changed the gain mode since submission.
-            mErrors.put(tuner, "Setting " + settingId + " is no longer editable in the current tuner mode");
+            mErrors.put(tuner, "Setting unavailable");
             return ApplyResult.CONSUMED;
         }
 
@@ -831,7 +782,7 @@ public final class TunerSettingsService implements AutoCloseable
             {
                 TunerController controller = tuner.getTuner().getTunerController();
 
-                // Do not contend with an in-flight retune or sample-rate update.  This worker will retry later.
+                // A one-shot request never waits behind an in-flight hardware change.
                 if(!controller.getLock().tryLock())
                 {
                     return ApplyResult.RETRY;
@@ -839,7 +790,7 @@ public final class TunerSettingsService implements AutoCloseable
 
                 try
                 {
-                    if(TunerSettingCatalog.requiresIdle(configuration, settingId) && !isIdle(tuner))
+                    if(TunerSettingCatalog.requiresSetup(configuration, settingId) && !isIdle(tuner))
                     {
                         return ApplyResult.RETRY;
                     }
@@ -848,17 +799,20 @@ public final class TunerSettingsService implements AutoCloseable
                         controller instanceof RspTunerController<?> rsp)
                     {
                         // The valid RSP LNA range depends on the current tuned frequency (and for RSPduo, AM port).
-                        // It may have narrowed since this request was validated on the HTTP thread.  Check again
-                        // under the controller lock so ControlRsp.setGain cannot silently clamp the hardware value.
+                        // It may have narrowed since validation. Check again while holding the controller lock.
                         int requested = ((Number)value).intValue();
                         int maximum = rsp.getControlRsp().getMaximumLNASetting();
 
                         if(requested < 0 || requested > maximum)
                         {
-                            mErrors.put(tuner, "LNA state " + requested + " is no longer valid at this frequency " +
-                                "(maximum " + maximum + "); choose another value");
+                            mErrors.put(tuner, "LNA range is 0-" + maximum);
                             return ApplyResult.CONSUMED;
                         }
+                    }
+
+                    if("frequency_mhz".equals(settingId))
+                    {
+                        validateCenterFrequency(tuner, controller, ((Number)value).longValue());
                     }
 
                     TunerSettingCatalog.write(configuration, settingId, value);
@@ -884,18 +838,43 @@ public final class TunerSettingsService implements AutoCloseable
         }
         catch(Exception e)
         {
+            if(written && !applied && hardwareAccepted(tuner, configuration, settingId))
+            {
+                // The hardware write completed and only its observer notification failed. Keep the actual live value
+                // and persist it so a restart cannot silently restore the stale value.
+                mErrors.put(tuner, "Applied; notification failed");
+                mLog.warn("Tuner setting [{}] applied for [{}], but notification failed", settingId, tuner.getId(), e);
+                return ApplyResult.APPLIED;
+            }
             // Do not claim the old value after a successful hardware write.  Persistence/sibling synchronization
             // can still fail, in which case the live value must remain visible and the admin must see the error.
             if(written && !applied)
             {
                 TunerSettingCatalog.write(configuration, settingId, previous);
             }
-            mErrors.put(tuner, applied ?
-                "Applied " + settingId + " but could not synchronize it" :
-                "Unable to apply " + settingId);
+            String reason = e instanceof IllegalArgumentException && e.getMessage() != null ? e.getMessage() : null;
+            mErrors.put(tuner, applied ? "Applied; sync failed" :
+                Objects.requireNonNullElse(reason, "Change failed"));
             mLog.warn("Unable to apply tuner setting [{}] for [{}]", settingId, tuner.getId(), e);
             return applied ? ApplyResult.APPLIED : ApplyResult.CONSUMED;
         }
+    }
+
+    private static boolean hardwareAccepted(DiscoveredTuner tuner, TunerConfiguration configuration,
+                                             String settingId)
+    {
+        if(!tuner.hasTuner())
+        {
+            return false;
+        }
+        TunerController controller = tuner.getTuner().getTunerController();
+        return switch(settingId)
+        {
+            case "frequency_correction_ppm" ->
+                Double.compare(controller.getFrequencyCorrection(), configuration.getFrequencyCorrection()) == 0;
+            case "frequency_mhz" -> controller.getFrequency() == configuration.getFrequency();
+            default -> false;
+        };
     }
 
     private enum ApplyResult
@@ -903,6 +882,37 @@ public final class TunerSettingsService implements AutoCloseable
         RETRY,
         CONSUMED,
         APPLIED
+    }
+
+    private static void validateCenterFrequency(DiscoveredTuner tuner, TunerController controller, long center)
+    {
+        if(tuner.getTuner() == null || tuner.getTuner().getChannelSourceManager() == null)
+        {
+            return;
+        }
+        ChannelSourceManager manager = tuner.getTuner().getChannelSourceManager();
+        int count = manager.getTunerChannelCount();
+        if(count <= 0)
+        {
+            return;
+        }
+        var channels = manager.getTunerChannels();
+        if(channels.isEmpty())
+        {
+            throw new IllegalArgumentException("Channels unavailable");
+        }
+        long minimum = center - controller.getUsableHalfBandwidth();
+        long maximum = center + controller.getUsableHalfBandwidth();
+        long avoidMinimum = center - controller.getMiddleUnusableHalfBandwidth();
+        long avoidMaximum = center + controller.getMiddleUnusableHalfBandwidth();
+        for(TunerChannel channel: channels)
+        {
+            if(channel.getMinFrequency() < minimum || channel.getMaxFrequency() > maximum ||
+                (controller.hasMiddleUnusableBandwidth() && channel.overlaps(avoidMinimum, avoidMaximum)))
+            {
+                throw new IllegalArgumentException("Channels won't fit");
+            }
+        }
     }
 
     private void syncSharedRspDuoConfiguration(DiscoveredTuner tuner, String settingId)
@@ -948,8 +958,13 @@ public final class TunerSettingsService implements AutoCloseable
             controller.setCenterFrequencyLocked(configuration.isCenterFrequencyLocked());
             return;
         }
+        if("automatic_ppm".equals(settingId))
+        {
+            controller.getTunerFrequencyErrorManager().setEnabled(configuration.getAutoPPMCorrectionEnabled());
+            return;
+        }
 
-        if(!TunerSettingCatalog.requiresIdle(configuration, settingId))
+        if(!TunerSettingCatalog.requiresSetup(configuration, settingId))
         {
             if(controller instanceof AirspyTunerController airspy &&
                 configuration instanceof AirspyTunerConfiguration config)
@@ -977,6 +992,7 @@ public final class TunerSettingsService implements AutoCloseable
                     case "lna_gain" -> hydra.setLNAGain(config.getLNAGain());
                     case "mixer_agc" -> hydra.setMixerAGC(config.isMixerAGC());
                     case "lna_agc" -> hydra.setLNAAGC(config.isLNAAGC());
+                    case "bias_t" -> hydra.setBiasT(config.isBiasT());
                     default -> throw new IllegalArgumentException("Unsupported live HydraSDR setting");
                 }
                 return;
@@ -1008,6 +1024,11 @@ public final class TunerSettingsService implements AutoCloseable
             if(controller instanceof RTL2832TunerController rtl &&
                 configuration instanceof RTL2832TunerConfiguration)
             {
+                if("bias_t".equals(settingId))
+                {
+                    rtl.setBiasT(((RTL2832TunerConfiguration)configuration).isBiasT());
+                    return;
+                }
                 if(configuration instanceof E4KTunerConfiguration e4k &&
                     rtl.getEmbeddedTuner() instanceof E4KEmbeddedTuner embedded)
                 {
@@ -1040,6 +1061,7 @@ public final class TunerSettingsService implements AutoCloseable
                     }
                     return;
                 }
+                throw new IllegalArgumentException("Unsupported live RTL setting");
             }
         }
 
@@ -1134,8 +1156,10 @@ public final class TunerSettingsService implements AutoCloseable
             if(!mClosed)
             {
                 mClosed = true;
-                mPending.clear();
-                mPendingEnabled.clear();
+                mTransitions.clear();
+                mLifecycleReservations.clear();
+                mStoppedChannels.clear();
+                mRestoreResults.clear();
                 mExecutor.getQueue().clear();
                 // Do not interrupt a USB/native setter in progress. Its completion is awaited below.
                 mExecutor.shutdown();
@@ -1159,5 +1183,26 @@ public final class TunerSettingsService implements AutoCloseable
 
     public record MutationResult(String status, String message)
     {
+    }
+
+    public record ChannelInfo(String id, String name)
+    {
+    }
+
+    public record RestoreResult(List<ChannelInfo> failed)
+    {
+    }
+
+    private record RememberedChannel(ChannelInfo info, io.github.dsheirer.controller.channel.Channel channel,
+                                     boolean restorable)
+    {
+    }
+
+    public static final class SettingUnavailableException extends IllegalStateException
+    {
+        public SettingUnavailableException(String message)
+        {
+            super(message);
+        }
     }
 }

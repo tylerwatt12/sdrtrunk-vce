@@ -76,6 +76,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         super(null, tunerChannelSource.getTunerChannel(), threadName, null);
         mTunerManager = tunerManager;
         mTunerChannelSource = tunerChannelSource;
+        setTunerIdentity(tunerChannelSource.getTunerIdentity());
         mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
         mFrequencies = frequencies;
 
@@ -150,6 +151,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             if(source instanceof TunerChannelSource)
             {
                 mTunerChannelSource = (TunerChannelSource)source;
+                setTunerIdentity(mTunerChannelSource.getTunerIdentity());
                 mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
                 mTunerChannelSource.setListener(mComplexSamplesListener);
                 mTunerChannelSource.addHeartbeatListener(mHeartbeatListener);

@@ -329,7 +329,8 @@ public class StatsWebServerService implements AutoCloseable
             new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
         mTunerDiagnosticService = tunerManager != null ?
             new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
-        mTunerSettingsService = tunerManager != null ? new TunerSettingsService(tunerManager) : null;
+        mTunerSettingsService = tunerManager != null ? new TunerSettingsService(tunerManager,
+            channelProcessingManager) : null;
         mTunerAdministrationService = tunerManager != null ?
             new TunerAdministrationService(tunerManager, mTunerDiagnosticService, mTunerSettingsService) : null;
         mFrequencyListenService = mTunerDiagnosticService != null ?

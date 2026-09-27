@@ -154,6 +154,24 @@ class TunerAdminHttpControllerTest
         }
     }
 
+    @Test
+    void operatorStateAndRestoreRoutesUseTheFiniteLifecycleContract() throws Exception
+    {
+        FakeManager manager = new FakeManager();
+        try(ServerFixture fixture = new ServerFixture(manager))
+        {
+            String tunerPath = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical);
+            assertEquals(202, fixture.send(tunerPath + "/state", "PUT", "{\"state\":\"setup\"}")
+                .statusCode());
+            assertEquals(422, fixture.send(tunerPath + "/state", "PUT", "{\"state\":\"unknown\"}")
+                .statusCode());
+            assertEquals(405, fixture.send(tunerPath + "/state", "POST", null).statusCode());
+            assertEquals(409, fixture.send(tunerPath + "/restore", "POST", null).statusCode());
+            assertEquals(400, fixture.send(tunerPath + "/restore", "POST", "{}").statusCode());
+        }
+    }
+
     private static final class ServerFixture implements AutoCloseable
     {
         private final HttpServer mServer;
@@ -184,6 +202,7 @@ class TunerAdminHttpControllerTest
                 @Override public String getId() { return "physical"; }
                 @Override public void start() { }
             };
+            manager.getDiscoveredTunerRegistry().add(mPhysical);
             TunerAdministrationService administration = new TunerAdministrationService(
                 () -> List.of(mRecording, mPhysical), tuner -> null);
             mSettings = new TunerSettingsService(manager);
