@@ -863,7 +863,7 @@
   </main>
 
   <main class="visual-feature-example visual-tuners-example">
-    <header class="page-header ui-page-header visual-feature-header tuners-page-header"><div><h1 class="page-title">Tuners</h1><p class="page-subtitle">Tune and watch receiver signal</p></div><button class="ui-button ui-button-secondary tuners-analyze-button" type="button">Analyze all tuners at RadioResolve</button></header>
+    <header class="page-header ui-page-header visual-feature-header tuners-page-header"><div><h1 class="page-title">Tuners</h1><p class="page-subtitle">Tune and watch receiver signal</p></div><button class="ui-button ui-button-secondary tuners-analyze-button" type="button">Find Optimal Tuner Placement</button></header>
     <div class="tuners-workspace editor-workspace">
       <section class="section ui-section tuners-receivers">
         <div class="section-title ui-section-title">Receiver tuners <div class="section-title-actions ui-section-actions"><button class="ui-button ui-button-primary" type="button">Add tuner</button></div></div>
@@ -891,13 +891,14 @@
           <div class="section-title ui-section-title">Signal</div>
           <div class="tuners-signal-layout">
             <div class="tuners-spectrum">
-              <div class="tuner-spectrum-layout tuner-spectrum-layout-inline-options tuner-spectrum-layout-basic">
-                <p class="visually-hidden">Read-only FFT and waterfall.</p>
-                <div class="tuner-spectrum-toolbar"><div class="tuner-spectrum-selection"><span class="ui-pill ui-pill-success">Live</span></div></div>
+              <div class="tuner-spectrum-layout tuner-spectrum-layout-inline-options tuner-spectrum-layout-basic tuner-spectrum-layout-cursor tuner-spectrum-layout-viewport">
+                <p class="visually-hidden">Move over the FFT or waterfall to read frequency. Use the mouse wheel or plus and minus keys to zoom. Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.</p>
+                <div class="tuner-spectrum-toolbar"><div class="tuner-spectrum-selection"><span class="ui-pill ui-pill-success">Live</span></div><div class="tuner-spectrum-toolbar-actions"><label class="tuner-spectrum-display-control ui-field tuner-spectrum-toolbar-profile"><span>Quality</span><span class="ui-select-frame"><select class="ui-select"><option selected>Efficient · 2,048 bins / 5 FPS</option><option>Balanced · 8,192 bins / 10 FPS</option><option>High detail · 16,384 bins / 20 FPS</option><option>Maximum detail · 32,768 bins / 20 FPS</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label><div class="tuner-spectrum-zoom-actions ui-control-group" role="group" aria-label="Spectrum zoom"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom in">+</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Zoom out">−</button><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Reset zoom">↺</button></div></div></div>
                 <div class="tuner-spectrum-visual-window">
-                  <section class="tuner-spectrum-card tuner-spectrum-fft"><div class="tuner-spectrum-plot visual-spectrum-plot"><svg class="visual-spectrum-trace" viewBox="0 0 1000 180" preserveAspectRatio="none" aria-label="Tuner frequency spectrum"><path class="visual-spectrum-grid" d="M0 45H1000M0 90H1000M0 135H1000M200 0V180M400 0V180M600 0V180M800 0V180"></path><path class="visual-spectrum-line" d="M0 145L60 138L110 142L170 126L220 134L285 118L335 125L385 73L410 130L465 121L520 137L580 119L635 126L690 56L715 128L780 116L835 132L900 121L955 136L1000 125"></path></svg></div></section>
-                  <section class="tuner-spectrum-card tuner-spectrum-waterfall"><div class="tuner-spectrum-plot visual-waterfall"></div></section>
+                  <section class="tuner-spectrum-card tuner-spectrum-fft"><div class="tuner-spectrum-plot visual-spectrum-plot"><svg class="visual-spectrum-trace" viewBox="0 0 1000 180" preserveAspectRatio="none" aria-label="Tuner frequency spectrum"><path class="visual-spectrum-grid" d="M0 45H1000M0 90H1000M0 135H1000M200 0V180M400 0V180M600 0V180M800 0V180"></path><path class="visual-spectrum-line" d="M0 145L60 138L110 142L170 126L220 134L285 118L335 125L385 73L410 130L465 121L520 137L580 119L635 126L690 56L715 128L780 116L835 132L900 121L955 136L1000 125"></path></svg><span class="tuner-spectrum-cursor-guide" hidden></span></div></section>
+                  <section class="tuner-spectrum-card tuner-spectrum-waterfall"><div class="tuner-spectrum-plot visual-waterfall"><span class="tuner-spectrum-cursor-guide" hidden></span></div></section>
                 </div>
+                <div class="tuner-spectrum-cursor-popup" hidden><span class="tuner-spectrum-cursor-frequency">771.806250 MHz</span><span class="tuner-spectrum-cursor-power">-47.2 dB</span></div>
               </div>
             </div>
             <aside class="tuners-signal-controls"><div class="tuners-signal-control-group"><h3>Gain</h3><div class="tuners-setting-group-body"><form class="tuners-setting"><label class="ui-field tuners-gain-field"><span>LNA gain</span><input class="tuners-gain-slider" type="range" min="0" max="21" value="8"><output class="tuners-gain-value">8 dB</output></label></form></div></div></aside>

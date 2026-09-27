@@ -12125,6 +12125,7 @@ const TUNER_SPECTRUM_SMOOTH_PREFERENCE = 'smooth_fft';
 const TUNER_SPECTRUM_IDLE_PREFERENCE = 'show_idle_channels';
 const TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile';
 let tunerSpectrumSessionTarget = '';
+let tunerOperatorSpectrumProfile = 'efficient';
 const TUNER_SPECTRUM_PROFILES = Object.freeze({
   efficient: Object.freeze({ fftSize: 2048, fps: 5 }),
   balanced: Object.freeze({ fftSize: 8192, fps: 10 }),
@@ -12762,10 +12763,17 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
 function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const frequencyScopes = snapPresetDocument?.scopes || [];
   const basicOperator = panelOptions.basicOperator === true;
+  const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
+  const viewportControls = !basicOperator || panelOptions.viewportControls === true;
+  const profileSelection = !basicOperator || panelOptions.profileSelection === true;
+  const frequencyActions = !basicOperator && panelOptions.frequencyActions !== false;
+  const plotInteractions = frequencyCursor || viewportControls || frequencyActions;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
   const layout = node('div', `tuner-spectrum-layout${panelOptions.inlineDisplayOptions ?
-    ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}`);
+    ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}${
+    frequencyCursor ? ' tuner-spectrum-layout-cursor' : ''}${
+    viewportControls ? ' tuner-spectrum-layout-viewport' : ''}`);
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
   const targetSelect = node('select', 'ui-select');
@@ -12795,11 +12803,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   playbackActions.setAttribute('role', 'group');
   playbackActions.setAttribute('aria-label', 'Spectrum playback');
   playbackActions.append(pause);
-  if (!basicOperator) toolbarActions.append(zoomActions, playbackActions);
+  if (viewportControls) toolbarActions.append(zoomActions);
+  if (!basicOperator) toolbarActions.append(playbackActions);
   const tunerSelection = node('div', 'tuner-spectrum-selection');
   tunerSelection.append(targetLabel, status);
   toolbar.append(tunerSelection);
-  if (!basicOperator) toolbar.append(toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
   const options = node('details', 'tuner-spectrum-options');
@@ -12867,7 +12875,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     control.prepend(copy);
     return { control, input: control.querySelector('input') };
   };
-  const snapToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
+  const snapToggle = optionToggle(!basicOperator &&
+    tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true),
     'Snap frequency', 'Move the cursor to the nearest preset frequency in supported bands.');
   const snapControl = snapToggle.control;
   const snapInput = snapToggle.input;
@@ -12892,6 +12901,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const profilePanel = node('fieldset', 'tuner-spectrum-profile');
   profilePanel.append(node('legend', '', 'Spectrum performance'));
   const profileControl = node('label', 'tuner-spectrum-display-control ui-field');
+  const profileLabel = node('span', '', basicOperator ? 'Quality' : 'Profile');
   const profileSelect = node('select', 'ui-select');
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
@@ -12903,13 +12913,17 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     option.value = value;
     profileSelect.append(option);
   });
-  // Keep the always-visible tuner workspace bounded regardless of the richer Spectrum-page preference.
-  profileSelect.value = basicOperator ? 'efficient' : tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
-    'balanced', Object.keys(TUNER_SPECTRUM_PROFILES));
-  profileControl.append(node('span', '', 'Profile'), uiSelectFrame(profileSelect));
+  profileSelect.value = profileSelection ? (basicOperator ? tunerOperatorSpectrumProfile :
+    tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
+      'balanced', Object.keys(TUNER_SPECTRUM_PROFILES))) : 'efficient';
+  profileControl.append(profileLabel, uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl);
+  if (basicOperator && profileSelection) {
+    profileControl.classList.add('tuner-spectrum-toolbar-profile');
+    toolbarActions.prepend(profileControl);
+  }
   if (!basicOperator) profilePanel.append(profileWarning);
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
@@ -12921,7 +12935,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   options.addEventListener('toggle', () => {
     optionsSummary.setAttribute('aria-expanded', String(options.open));
   });
-  if (!panelOptions.inlineDisplayOptions) toolbarActions.append(options);
+  if (!basicOperator && !panelOptions.inlineDisplayOptions) toolbarActions.append(options);
+  if (toolbarActions.childElementCount) toolbar.append(toolbarActions);
   const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
   refiningBadge.hidden = true;
   refiningBadge.setAttribute('role', 'status');
@@ -12943,7 +12958,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   displayControls.append(refiningBadge, legendLabel, flagLegend);
 
   const instructions = node('p', 'visually-hidden', basicOperator ?
-    'Read-only FFT and waterfall.' :
+    'Move over the FFT or waterfall to read frequency. Use the mouse wheel or plus and minus keys to zoom. ' +
+      'Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.' :
     'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
       'Drag or use the arrow keys to pan. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
@@ -12955,15 +12971,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', ariaLabel);
     canvas.setAttribute('aria-describedby', instructions.id);
-    if (!basicOperator) {
+    if (viewportControls) {
       canvas.setAttribute('aria-keyshortcuts', '+ - ArrowLeft ArrowRight R 0 Home');
       canvas.tabIndex = 0;
     }
     const guide = node('div', 'tuner-spectrum-cursor-guide');
     guide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
-    if (basicOperator) host.append(canvas, overlay);
-    else host.append(canvas, guide, overlay);
+    if (frequencyCursor) host.append(canvas, guide, overlay);
+    else host.append(canvas, overlay);
     card.append(host);
     return { card, host, canvas, guide, overlay };
   };
@@ -13000,7 +13016,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   if (panelOptions.inlineDisplayOptions && !basicOperator) layout.append(options);
   if (!basicOperator) layout.append(readoutPanel, displayControls);
   layout.append(visualWindow);
-  if (!basicOperator) layout.append(cursorPopup);
+  if (frequencyCursor) layout.append(cursorPopup);
 
   let disposed = false;
   let paused = false;
@@ -13214,11 +13230,20 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   const renderReadouts = () => {
+    const zoom = zoomAmount();
+    if (viewportControls) {
+      zoomIn.disabled = !shouldRun() || !fullViewport || !viewport ||
+        zoom >= TUNER_SPECTRUM_MAXIMUM_ZOOM - 0.0001;
+      zoomOut.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
+      resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
+      layout.classList.toggle('zoomed', zoom > 1.0001);
+    }
+    if (profileSelection) profileSelect.disabled = !shouldRun() || refining;
+    if (basicOperator) return;
     const center = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : 0;
     const sampleRate = fullViewport ? fullViewport.endHz - fullViewport.startHz : 0;
     const fftSize = Number(frameMetadata?.fftSize || fftValues.length || 0);
     const visibleSpan = viewport ? viewport.endHz - viewport.startHz : sampleRate;
-    const zoom = sampleRate > 0 && visibleSpan > 0 ? sampleRate / visibleSpan : 1;
     const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length);
     const analysisSpan = frameDomain.endHz > frameDomain.startHz ? frameDomain.endHz - frameDomain.startHz : 0;
     const resolution = frameDomain.sentBinWidthHz || null;
@@ -13245,15 +13270,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     updateDiagnosticReadouts(readouts, [values[0], values[2], values[4], values[8]]);
     updateDiagnosticReadouts(moreReadouts,
       values.filter((_, index) => ![0, 2, 4, 8].includes(index)));
-    zoomIn.disabled = !shouldRun() || !fullViewport || !viewport || zoom >= TUNER_SPECTRUM_MAXIMUM_ZOOM - 0.0001;
-    zoomOut.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
-    resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
-    profileSelect.disabled = !shouldRun() || refining;
-    layout.classList.toggle('zoomed', zoom > 1.0001);
   };
 
   const setReadouts = (immediate = false) => {
-    if (disposed || basicOperator) return;
+    if (disposed) return;
     const now = performance.now();
     const remaining = Math.max(0, 200 - (now - lastReadoutAt));
     if (immediate || remaining === 0) {
@@ -14109,7 +14129,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotWheel(event) {
-    if (!canInteract()) return;
+    if (!viewportControls || !canInteract()) return;
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const anchor = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -14117,7 +14137,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotKeyDown(event) {
-    if (!canInteract()) return;
+    if (!viewportControls || !canInteract()) return;
     if (event.key === '+' || event.key === '=') {
       event.preventDefault();
       zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
@@ -14137,7 +14157,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-    if (!basicOperator) showCursor(ratio, event.currentTarget, yRatio);
+    if (frequencyCursor) showCursor(ratio, event.currentTarget, yRatio);
     if (!drag || drag.pointerId !== event.pointerId || drag.canvas !== event.currentTarget) return;
     const deltaPixels = event.clientX - drag.lastX;
     drag.lastX = event.clientX;
@@ -14150,7 +14170,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotPointerDown(event) {
-    if (!canInteract() || zoomAmount() <= 1.0001 || event.button !== 0) return;
+    if (!viewportControls || !canInteract() || zoomAmount() <= 1.0001 || event.button !== 0) return;
     event.preventDefault();
     cancelDrag();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -14163,7 +14183,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const moved = drag.moved;
     cancelDrag();
     if (moved) queueViewportUpdate();
-    else if (!basicOperator) openFrequencyActionsAtPointer(event);
+    else if (frequencyActions) openFrequencyActionsAtPointer(event);
   }
 
   function onPlotPointerCancel(event) {
@@ -14174,7 +14194,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotClick(event) {
-    if (basicOperator) return;
+    if (!frequencyActions) return;
     if (!canInteract() || zoomAmount() > 1.0001) return;
     openFrequencyActionsAtPointer(event);
   }
@@ -14480,15 +14500,16 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   });
   function applySelectedProfile() {
     spectrumProfile = profileSelect.value;
-    storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
+    if (basicOperator) tunerOperatorSpectrumProfile = spectrumProfile;
+    else storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile);
     if (shouldRun()) queueViewportUpdate(true);
   }
   profileSelect.addEventListener('change', applySelectedProfile);
   zoomIn.addEventListener('click', () => {
-    if (canInteract()) zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
+    if (viewportControls && canInteract()) zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
   });
   zoomOut.addEventListener('click', () => {
-    if (canInteract()) zoomAt(0.5, TUNER_SPECTRUM_ZOOM_FACTOR);
+    if (viewportControls && canInteract()) zoomAt(0.5, TUNER_SPECTRUM_ZOOM_FACTOR);
   });
   resetZoom.addEventListener('click', resetViewport);
   pause.addEventListener('click', () => {
@@ -14557,7 +14578,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
-  if (!basicOperator) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
+  if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => {
     pageFocused = document.hasFocus();
     sync();
@@ -23531,10 +23552,10 @@ async function renderTuners() {
   const workspace = node('div', 'tuners-workspace editor-workspace');
   workspace.append(left, right);
   const analyzeButton = node('button', 'ui-button ui-button-secondary tuners-analyze-button',
-    'Analyze all tuners at RadioResolve');
+    'Find Optimal Tuner Placement');
   analyzeButton.type = 'button';
   analyzeButton.disabled = true;
-  analyzeButton.title = 'Send all tuners and running channels';
+  analyzeButton.title = 'Open RadioResolve in a new tab with all tuners and running channels';
   analyzeButton.prepend(iconGlyph('icon-share'));
   const heading = pageHeader('Tuners', 'Tune and watch receiver signal');
   heading.classList.add('tuners-page-header');
@@ -24324,13 +24345,24 @@ async function renderTuners() {
 
   refreshButton.addEventListener('click', () => void refresh());
   analyzeButton.addEventListener('click', async () => {
+    const plannerTab = window.open('about:blank', '_blank');
+    if (!plannerTab) {
+      operationNotice = 'Allow pop-ups to open RadioResolve.';
+      renderSelection();
+      return;
+    }
+    plannerTab.opener = null;
     analyzing = true;
     analyzeButton.disabled = true;
     try {
       const snapshot = await api('/api/v1/admin/tuners/rf-analysis', {}, { signal: renderContext.signal });
-      if (!renderIsCurrent(renderContext)) return;
-      window.location.assign(buildRadioResolvePlannerUrl(snapshot));
+      if (!renderIsCurrent(renderContext)) {
+        plannerTab.close();
+        return;
+      }
+      plannerTab.location.replace(buildRadioResolvePlannerUrl(snapshot));
     } catch (error) {
+      plannerTab.close();
       if (renderIsCurrent(renderContext)) {
         operationNotice = error.message || 'Could not open external RF analysis.';
         renderSelection();
@@ -24361,6 +24393,9 @@ async function renderTuners() {
       managedSelection: true,
       inlineDisplayOptions: true,
       basicOperator: true,
+      frequencyCursor: true,
+      viewportControls: true,
+      profileSelection: true,
       targetId: selectedTuner()?.spectrum_target_id || ''
     });
     pageConnections.add(spectrum);

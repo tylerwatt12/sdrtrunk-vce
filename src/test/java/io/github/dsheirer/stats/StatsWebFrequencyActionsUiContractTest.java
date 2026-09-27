@@ -131,8 +131,9 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(tuner.contains("activeCarrier: carrier"));
         assertTrue(tuner.contains("canvas.addEventListener('click', onPlotClick)"));
         assertTrue(tuner.contains("flag.addEventListener('click'"));
+        assertTrue(tuner.contains("const frequencyActions = !basicOperator &&"));
         assertTrue(pointerUp.contains("if (moved) queueViewportUpdate();"));
-        assertTrue(pointerUp.contains("else if (!basicOperator) openFrequencyActionsAtPointer(event);"));
+        assertTrue(pointerUp.contains("else if (frequencyActions) openFrequencyActionsAtPointer(event);"));
         assertFalse(pointerCancel.contains("openFrequencyActionsAtPointer"));
         assertFalse(tuner.contains("updateCursor(ratio).then"));
         assertFalse(tuner.contains("acceptTunerFrame(frame).then"));

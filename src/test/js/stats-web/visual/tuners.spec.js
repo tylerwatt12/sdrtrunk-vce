@@ -232,29 +232,67 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
     center_frequency_hz: 851_012_500 });
 });
 
-test('embedded signal view contains only status, FFT, and waterfall', async ({ page }) => {
+test('embedded signal view reuses cursor, zoom, and selectable quality without tuner actions', async ({ page }) => {
+  const mutations = [];
   const current = operatorTuner({ channel_count: 2, spectrum_available: true,
     spectrum_target_id: 'diagnostic-a' });
-  await mockTuners(page, [], { currentTuner: current,
-    targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2' }] });
+  await mockTuners(page, mutations, { currentTuner: current,
+    targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2',
+      center_frequency_hz: 851_012_500, sample_rate_hz: 10_000_000 }] });
   await page.goto('/app.html?view=tuners');
 
-  await expect(page.locator('.tuners-spectrum canvas')).toHaveCount(2);
-  await expect(page.locator('.tuners-spectrum canvas[tabindex]')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum canvas[aria-keyshortcuts]')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum canvas').first()).toHaveCSS('cursor', 'default');
-  await expect(page.locator('.tuners-spectrum .visually-hidden')).toHaveText('Read-only FFT and waterfall.');
-  await expect(page.locator('.tuners-spectrum .tuner-spectrum-measurement-panel')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum .tuner-spectrum-cursor-popup')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum .tuner-spectrum-cursor-guide')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum .tuner-spectrum-active-flags')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Display options' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Zoom in' })).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum').getByRole('button', { name: 'Pause' })).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum .tuner-spectrum-band-rail')).toHaveCount(0);
-  await page.locator('.tuners-spectrum canvas').first().click({ position: { x: 40, y: 40 } });
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  const plot = await page.locator('.tuners-spectrum .tuner-spectrum-visual-window').boundingBox();
+  const embedded = page.locator('.tuners-spectrum');
+  const canvases = embedded.locator('canvas');
+  await expect(canvases).toHaveCount(2);
+  await expect(embedded.locator('canvas[tabindex="0"]')).toHaveCount(2);
+  await expect(embedded.locator('canvas[aria-keyshortcuts="+ - ArrowLeft ArrowRight R 0 Home"]')).toHaveCount(2);
+  await expect(embedded.locator('.visually-hidden')).toContainText('mouse wheel or plus and minus keys to zoom');
+  await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toHaveCount(1);
+  await expect(embedded.locator('.tuner-spectrum-cursor-guide')).toHaveCount(2);
+  await expect(embedded.getByRole('group', { name: 'Spectrum zoom' })).toBeVisible();
+  await expect(embedded.getByRole('button', { name: 'Zoom in' })).toBeVisible();
+  await expect(embedded.getByRole('button', { name: 'Zoom out' })).toBeVisible();
+  await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toBeVisible();
+
+  const profile = embedded.locator('.tuner-spectrum-toolbar-profile select');
+  await expect(profile).toBeVisible();
+  await expect(profile.locator('option')).toHaveText([
+    'Efficient · 2,048 bins / 5 FPS',
+    'Balanced · 8,192 bins / 10 FPS',
+    'High detail · 16,384 bins / 20 FPS',
+    'Maximum detail · 32,768 bins / 20 FPS'
+  ]);
+  await expect(profile).toHaveValue('efficient');
+  for (const value of ['efficient', 'balanced', 'high-detail', 'maximum-detail']) {
+    await profile.selectOption(value);
+    await expect(profile).toHaveValue(value);
+  }
+
+  await canvases.first().hover({ position: { x: 100, y: 60 } });
+  await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toBeVisible();
+  await expect(embedded.locator('.tuner-spectrum-cursor-frequency')).toContainText('MHz');
+  await expect(embedded.locator('.tuner-spectrum-cursor-guide').first()).toBeVisible();
+  await expect(embedded.locator('.tuner-spectrum-cursor-guide').last()).toBeVisible();
+
+  await embedded.locator('.channel-diagnostic-overlay').first().evaluate((overlay) => {
+    overlay.textContent = '';
+    overlay.hidden = true;
+  });
+  const zoomIn = embedded.getByRole('button', { name: 'Zoom in' });
+  await expect(zoomIn).toBeEnabled();
+  await zoomIn.click();
+  await expect(embedded.locator('.tuner-spectrum-layout')).toHaveClass(/\bzoomed\b/);
+  await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toBeEnabled();
+
+  await expect(embedded.locator('.tuner-spectrum-measurement-panel')).toHaveCount(0);
+  await expect(embedded.locator('.tuner-spectrum-active-flags')).toHaveCount(0);
+  await expect(embedded.getByRole('button', { name: 'Pause' })).toHaveCount(0);
+  await expect(embedded.locator('.tuner-spectrum-band-rail')).toHaveCount(0);
+  await canvases.first().click({ position: { x: 40, y: 40 } });
+  await expect(page.getByRole('dialog', { name: 'Frequency actions' })).toHaveCount(0);
+  await expect(page.locator('[popover][aria-label="Frequency actions"]')).toHaveCount(0);
+  expect(mutations).toEqual([]);
+  const plot = await embedded.locator('.tuner-spectrum-visual-window').boundingBox();
   expect(plot.height).toBeGreaterThanOrEqual(400);
 });
 
@@ -412,19 +450,26 @@ test('restore operation error stays in the prompt without reporting success', as
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(1);
 });
 
-test('RF analysis sends every eligible tuner and running frequency', async ({ page }) => {
+test('Find Optimal Tuner Placement opens every eligible tuner and running frequency in a new tab',
+    async ({ page, context }) => {
   const state = { currentTuner: operatorTuner(), rfAnalysis: { tuners: [
     { id: 'tuner-a', model: 'airspy', rate_hz: 10000000 },
     { id: 'tuner-b', model: 'rtl-r8x', rate_hz: 2400000 }
   ], frequencies_hz: [155070000, 851012500, 155070000] } };
   await mockTuners(page, [], state);
-  await page.route('https://radioresolve.com/rf-planner/**', (route) => route.fulfill({
+  await context.route('https://radioresolve.com/rf-planner/**', (route) => route.fulfill({
     status: 200, contentType: 'text/html', body: '<title>RadioResolve RF Planner</title>'
   }));
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Analyze all tuners at RadioResolve' }).click();
-  await page.waitForURL(/^https:\/\/radioresolve\.com\/rf-planner\//);
-  const url = new URL(page.url());
+  const originalUrl = page.url();
+  const placement = page.getByRole('button', { name: 'Find Optimal Tuner Placement', exact: true });
+  await expect(placement).toBeVisible();
+  const popupPromise = page.waitForEvent('popup');
+  await placement.click();
+  const planner = await popupPromise;
+  await planner.waitForURL(/^https:\/\/radioresolve\.com\/rf-planner\//);
+  await expect(page).toHaveURL(originalUrl);
+  const url = new URL(planner.url());
   expect(url.searchParams.getAll('model')).toEqual(['airspy', 'rtl-r8x']);
   expect(url.searchParams.getAll('rate')).toEqual(['10000000', '2400000']);
   expect(url.searchParams.get('frequencies')).toBe('155.07\n851.0125\n155.07');

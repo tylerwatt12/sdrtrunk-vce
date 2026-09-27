@@ -339,6 +339,18 @@
   cursor: default;
 }
 
+.tuners-spectrum .tuner-spectrum-layout-basic.tuner-spectrum-layout-cursor .tuner-spectrum-canvas {
+  cursor: crosshair;
+}
+
+.tuners-spectrum .tuner-spectrum-layout-basic.tuner-spectrum-layout-viewport.zoomed .tuner-spectrum-canvas {
+  cursor: grab;
+}
+
+.tuners-spectrum .tuner-spectrum-layout-basic.tuner-spectrum-layout-viewport .tuner-spectrum-canvas.dragging {
+  cursor: grabbing;
+}
+
 .tuners-spectrum .tuner-spectrum-toolbar {
   display: flex;
   align-items: center;
@@ -356,6 +368,11 @@
 .tuners-spectrum .tuner-spectrum-toolbar-actions {
   justify-content: flex-start;
   flex-wrap: wrap;
+}
+
+.tuners-spectrum .tuner-spectrum-toolbar-profile {
+  width: auto;
+  grid-template-columns: auto minmax(210px, 1fr);
 }
 
 .tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
@@ -623,6 +640,16 @@
 
   .tuners-spectrum .tuner-spectrum-layout-inline-options .tuner-spectrum-options[open] .tuner-spectrum-options-panel {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar-actions {
+    width: 100%;
+    display: flex;
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar-profile {
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .tuners-spectrum .tuner-spectrum-layout-basic {

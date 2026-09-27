@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"220\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"221\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -660,7 +660,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=192"));
+        assertTrue(html.contains("/assets/app.css?v=193"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1619,9 +1619,13 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("TUNER_SPECTRUM_STORAGE_KEY"));
         assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile'"));
         assertFalse(source.contains("function tunerPersistentSpectrumProfile(value)"));
-        assertTrue(tuner.contains("profileSelect.value = basicOperator ? 'efficient' : tunerStoredChoice(" +
-            "TUNER_SPECTRUM_PROFILE_PREFERENCE"));
-        assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
+        assertTrue(source.contains("let tunerOperatorSpectrumProfile = 'efficient'"));
+        assertTrue(tuner.contains("profileSelect.value = profileSelection ? (basicOperator ? " +
+            "tunerOperatorSpectrumProfile :"));
+        assertTrue(tuner.contains("tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE"));
+        assertTrue(tuner.contains("'balanced', Object.keys(TUNER_SPECTRUM_PROFILES)"));
+        assertTrue(tuner.contains("if (basicOperator) tunerOperatorSpectrumProfile = spectrumProfile"));
+        assertTrue(tuner.contains("else storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
         assertTrue(tuner.contains("profileSelect.addEventListener('change', applySelectedProfile)"));
         assertTrue(tuner.contains("window.addEventListener('blur', onBlur)"));
         assertTrue(tuner.contains("window.addEventListener('focus', onFocus)"));
@@ -1694,8 +1698,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("add('Site', activityValues(rows, (row) => row.tableSiteName))"));
         assertTrue(tuner.contains("add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName))"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
-        assertTrue(tuner.contains(
-            "const snapToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true)"));
+        assertTrue(tuner.contains("const snapToggle = optionToggle(!basicOperator &&"));
+        assertTrue(tuner.contains("tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true)"));
         assertTrue(tuner.contains("const snapInput = snapToggle.input"));
         assertTrue(tuner.contains("'tuner-spectrum-floor'"));
         assertTrue(tuner.contains("'tuner-spectrum-ceiling'"));

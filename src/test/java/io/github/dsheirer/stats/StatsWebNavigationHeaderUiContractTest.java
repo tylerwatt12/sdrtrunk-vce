@@ -25,10 +25,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"220\">"));
-        assertTrue(html.contains("/assets/app.css?v=192"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"221\">"));
+        assertTrue(html.contains("/assets/app.css?v=193"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=270\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=271\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
@@ -69,8 +69,13 @@ class StatsWebNavigationHeaderUiContractTest
         assertFalse(routes.contains("id: 'rf-planner'"));
         assertFalse(Files.exists(Path.of("stats-web", "assets", "features", "rf-planner.js")));
         assertFalse(Files.exists(Path.of("stats-web", "assets", "styles", "features", "rf-planner.css")));
-        assertTrue(source.contains("Analyze all tuners at RadioResolve"));
+        assertTrue(source.contains("Find Optimal Tuner Placement"));
         assertTrue(source.contains("'/api/v1/admin/tuners/rf-analysis'"));
+        assertTrue(source.contains("const plannerTab = window.open('about:blank', '_blank')"));
+        assertTrue(source.contains("plannerTab.opener = null"));
+        assertTrue(source.contains("plannerTab.location.replace(buildRadioResolvePlannerUrl(snapshot))"));
+        assertTrue(source.contains("plannerTab.close()"));
+        assertFalse(source.contains("window.location.assign(buildRadioResolvePlannerUrl(snapshot))"));
     }
 
     @Test

@@ -109,7 +109,7 @@ function harness(liveAllowed = true) {
   vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
     source.indexOf("  const profilePanel = node('fieldset', 'tuner-spectrum-profile')")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
-    source.indexOf('  if (!basicOperator) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
+    source.indexOf('  if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
   const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, fftOptions, waterfallOptions })', context);
   const toggle = (control, value) => { control.checked = value; control.dispatch('change'); };
   return { context, controls, toggle,
@@ -219,6 +219,65 @@ function sharedCursorHarness() {
     show: (ratio, canvas) => context.showCursor(ratio, canvas, 0.5) };
 }
 
+function embeddedSpectrumInteractionHarness() {
+  const viewportUpdates = [];
+  const cursorUpdates = [];
+  const frequencyActions = [];
+  let pointerCaptures = 0;
+  const canvas = {
+    classList: { add: () => {}, remove: () => {} },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 200 }),
+    setPointerCapture: () => { pointerCaptures += 1; }
+  };
+  const context = {
+    basicOperator: true,
+    frequencyCursor: true,
+    viewportControls: true,
+    frequencyActions: false,
+    fullViewport: { startHz: 100, endHz: 200 },
+    viewport: { startHz: 100, endHz: 200 },
+    spectrum: { overlay: { textContent: '' } },
+    drag: null,
+    TUNER_SPECTRUM_MAXIMUM_ZOOM: 64,
+    TUNER_SPECTRUM_ZOOM_FACTOR: 1.5,
+    shouldRun: () => true,
+    applyViewport: (nextViewport, requestMode) => viewportUpdates.push({ ...nextViewport, requestMode }),
+    queueViewportUpdate: () => {},
+    showCursor: (...args) => cursorUpdates.push(args),
+    openFrequencyActionsAtPointer: (...args) => frequencyActions.push(args),
+    cancelDrag: () => { context.drag = null; }
+  };
+  vm.createContext(context);
+  [
+    'function zoomAmount()', 'function clampViewport(startHz, endHz)',
+    'function zoomAt(anchor, factor)', 'function panBy(deltaHz, requestMode = \'immediate\')',
+    'function canInteract()', 'function onPlotWheel(event)', 'function onPlotKeyDown(event)',
+    'function onPlotPointerMove(event)', 'function onPlotPointerDown(event)',
+    'function onPlotPointerUp(event)', 'function onPlotClick(event)'
+  ].forEach((signature) => vm.runInContext(functionSource(signature), context));
+  const event = (overrides = {}) => ({
+    currentTarget: canvas,
+    clientX: 100,
+    clientY: 60,
+    deltaY: -1,
+    key: '',
+    button: 0,
+    pointerId: 7,
+    preventDefault: () => {},
+    ...overrides
+  });
+  return {
+    context,
+    canvas,
+    cursorUpdates,
+    frequencyActions,
+    viewportUpdates,
+    event,
+    pointerCaptures: () => pointerCaptures,
+    setViewport: (startHz, endHz) => { context.viewport = { startHz, endHz }; }
+  };
+}
+
 const row = (status, frequency_hz = 150_250_000, extra = {}) => ({ status, frequency_hz, ...extra });
 const table = (rows) => ({ table_id: 'test', channel_name: 'Dispatch', system_name: 'Local', rows });
 const statuses = (carriers) => Array.from(carriers, (carrier) => carrier.status);
@@ -242,6 +301,58 @@ test('frequency cursor stays aligned and visible across FFT and waterfall plots'
   h.show(0.75, h.waterfallCanvas);
   assert.equal(h.context.spectrum.guide.style.left, '60.000%');
   assert.equal(h.context.waterfall.guide.style.left, '60.000%');
+});
+
+test('embedded spectrum keeps the shared cursor and zoom handlers without enabling frequency actions', () => {
+  const h = embeddedSpectrumInteractionHarness();
+
+  h.context.onPlotPointerMove(h.event());
+  assert.equal(h.cursorUpdates.length, 1, 'hover uses the shared frequency cursor in the Tuners view');
+  assert.equal(h.cursorUpdates[0][0], 0.25);
+
+  h.context.onPlotWheel(h.event({ clientX: 300 }));
+  assert.equal(h.viewportUpdates.length, 1, 'the mouse wheel requests a zoomed viewport');
+  assert.ok(h.viewportUpdates[0].endHz - h.viewportUpdates[0].startHz < 100);
+
+  h.viewportUpdates.length = 0;
+  h.context.onPlotKeyDown(h.event({ key: '+' }));
+  assert.equal(h.viewportUpdates.length, 1, 'plus requests the same shared zoom behavior');
+
+  h.viewportUpdates.length = 0;
+  h.context.onPlotKeyDown(h.event({ key: 'ArrowRight' }));
+  assert.equal(h.viewportUpdates.length, 0, 'keyboard pan is inert at the full tuner span');
+  h.context.onPlotPointerDown(h.event());
+  assert.equal(h.pointerCaptures(), 0, 'drag pan does not begin at the full tuner span');
+  h.context.onPlotClick(h.event());
+  assert.equal(h.frequencyActions.length, 0, 'a full-span Tuners plot click never opens frequency actions');
+
+  h.setViewport(120, 180);
+  h.context.onPlotKeyDown(h.event({ key: 'ArrowRight' }));
+  assert.equal(h.viewportUpdates.length, 1, 'keyboard pan is enabled after zooming');
+  h.context.onPlotPointerDown(h.event());
+  assert.equal(h.pointerCaptures(), 1, 'drag pan is enabled after zooming');
+  h.context.onPlotPointerUp(h.event());
+  assert.equal(h.frequencyActions.length, 0,
+    'a zoomed pointer press and release without movement never opens frequency actions');
+
+  h.context.onPlotClick(h.event());
+  assert.equal(h.frequencyActions.length, 0, 'a zoomed Tuners plot click never opens frequency actions');
+});
+
+test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {
+  const spectrumPage = functionSource('async function renderTunerSpectrum()');
+  const tunersPage = functionSource('async function renderTuners()');
+  assert.match(spectrumPage, /tunerSpectrumPanel\(snapPresetDocument\)/);
+  assert.match(tunersPage, /tunerSpectrumPanel\(snapPresetDocument,\s*\{/);
+  assert.match(tunersPage, /basicOperator:\s*true/);
+  assert.match(tunersPage, /frequencyCursor:\s*true/);
+  assert.match(tunersPage, /viewportControls:\s*true/);
+  assert.match(tunersPage, /profileSelection:\s*true/);
+  assert.match(source, /const frequencyActions = !basicOperator/);
+  assert.match(source, /let tunerOperatorSpectrumProfile = 'efficient'/);
+  assert.match(source, /if \(basicOperator\) tunerOperatorSpectrumProfile = spectrumProfile/);
+  assert.match(source, /if \(!basicOperator && !panelOptions\.inlineDisplayOptions\)/);
+  assert.equal((source.match(/function tunerSpectrumPanel\(/g) || []).length, 1);
 });
 
 test('FFT and waterfall settings are separate and idle markers remain per-user, default off', () => {
@@ -363,6 +474,8 @@ test('maximum detail persists while inactive and only updates a running spectrum
   let updates = 0;
   const profileSelect = Object.assign(new Element('select'), { value: 'maximum-detail' });
   const context = {
+    basicOperator: false,
+    tunerOperatorSpectrumProfile: 'efficient',
     profileSelect,
     TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
     storeTunerChoice: (key, value) => stored.push([key, value]),
@@ -382,6 +495,29 @@ test('maximum detail persists while inactive and only updates a running spectrum
   profileSelect.dispatch('change');
   assert.deepEqual(stored.at(-1), ['profile', 'maximum-detail']);
   assert.equal(updates, 1);
+});
+
+test('embedded quality stays session-local and does not overwrite the Spectrum preference', () => {
+  const stored = [];
+  const profileSelect = Object.assign(new Element('select'), { value: 'high-detail' });
+  const context = {
+    basicOperator: true,
+    tunerOperatorSpectrumProfile: 'efficient',
+    profileSelect,
+    TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
+    storeTunerChoice: (key, value) => stored.push([key, value]),
+    shouldRun: () => false,
+    queueViewportUpdate: () => {}
+  };
+  vm.createContext(context);
+  vm.runInContext("let spectrumProfile = 'efficient';", context);
+  const tunerStart = source.indexOf('function tunerSpectrumPanel');
+  vm.runInContext(source.slice(source.indexOf('  function applySelectedProfile()', tunerStart),
+    source.indexOf("  zoomIn.addEventListener('click'", tunerStart)), context);
+
+  profileSelect.dispatch('change');
+  assert.equal(context.tunerOperatorSpectrumProfile, 'high-detail');
+  assert.deepEqual(stored, []);
 });
 
 test('spectrum lifecycle serializes focus and tuner rebinds without duplicate streams', async () => {
