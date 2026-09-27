@@ -485,7 +485,6 @@ public final class SetupWizard extends JDialog
         }
         if(Files.isRegularFile(database))
         {
-            paragraph("Your settings were saved by an earlier version. We’ll check them before making any changes.");
             notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
             Runnable inspect = () -> {
                 AtomicBoolean directUpdateRequested = new AtomicBoolean();
@@ -514,7 +513,6 @@ public final class SetupWizard extends JDialog
                     }
                     DatabaseMigrationChain.PreflightReport plan = inspection.plan();
                     page.removeAll();
-                    paragraph("Your saved settings can be used with this version. Before updating, we’ll save a recovery copy. Your recorded audio files will stay unchanged.");
                     migrationDetails(plan);
                     if(plan.source().requiresMigration())
                     {

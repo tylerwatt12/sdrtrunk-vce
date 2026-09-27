@@ -51,7 +51,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import org.sqlite.ProgressHandler;
 import org.sqlite.SQLiteConfig;
-import org.sqlite.SQLiteErrorCode;
 
 /**
  * Stages, validates, and promotes portable data accepted by the current sdrtrunk-vce build.
@@ -828,8 +827,7 @@ public final class ApplicationMigrationService
             }
             catch(SQLException failure)
             {
-                if(cancellationInterruptedSql.get() &&
-                    failure.getErrorCode() == SQLiteErrorCode.SQLITE_INTERRUPT.code)
+                if(cancellationInterruptedSql.get())
                 {
                     CancellationException cancelled = cancellationException();
                     cancelled.initCause(failure);

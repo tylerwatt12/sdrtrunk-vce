@@ -1083,6 +1083,51 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void approvalCancellationSurvivesNestedFormatValidationWrapping() throws Exception
+    {
+        Path database = Format15TestDatabase.create(
+            SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("wrapped-cancel-source")));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='database_format_version'");
+            statement.executeUpdate("""
+                WITH RECURSIVE user_number(value) AS (
+                    VALUES(1)
+                    UNION ALL
+                    SELECT value + 1 FROM user_number WHERE value < 200
+                )
+                INSERT INTO web_user (
+                    username, tier, primary_admin, credential_version, password_algorithm,
+                    password_iterations, password_derived_key_bits, password_salt, password_hash,
+                    password_changed_at_ms, auth_revision, preferences_json, preferences_revision,
+                    created_at_ms, updated_at_ms
+                )
+                SELECT 'canceluser' || printf('%03d', value), 'USER', 0, credential_version,
+                       password_algorithm, password_iterations, password_derived_key_bits,
+                       password_salt, password_hash, password_changed_at_ms, auth_revision,
+                       preferences_json, preferences_revision, created_at_ms, updated_at_ms
+                FROM web_user CROSS JOIN user_number
+                WHERE primary_admin = 1
+                """);
+        }
+        Path scratch = mTemporaryFolder.resolve("wrapped-cancel-scratch");
+        BooleanSupplier cancellation = () -> calledFromSqliteNative() &&
+            calledFromClass("io.github.dsheirer.database.upgrade.Format5WebStateValidator");
+
+        CancellationException exception = assertThrows(CancellationException.class,
+            () -> ApplicationMigrationService.readMigrationApproval(database, scratch, null, cancellation));
+
+        assertTrue(exception.getCause() instanceof SQLException);
+        assertFalse(((SQLException)exception.getCause()).getErrorCode() == 9,
+            "the nested validator should have wrapped the SQLite interrupt code");
+        try(var children = Files.list(scratch))
+        {
+            assertTrue(children.findAny().isEmpty(), "wrapped cancellation scratch must be removed");
+        }
+    }
+
+    @Test
     void approvalCancellationRequestedDuringCleanupReturnsOnlyAfterScratchIsEmpty() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
@@ -1900,9 +1945,14 @@ class ApplicationMigrationServiceTest
 
     private static boolean calledFromSqliteNative()
     {
+        return calledFromClass("org.sqlite.core.NativeDB");
+    }
+
+    private static boolean calledFromClass(String className)
+    {
         for(StackTraceElement frame: Thread.currentThread().getStackTrace())
         {
-            if("org.sqlite.core.NativeDB".equals(frame.getClassName()))
+            if(className.equals(frame.getClassName()))
             {
                 return true;
             }

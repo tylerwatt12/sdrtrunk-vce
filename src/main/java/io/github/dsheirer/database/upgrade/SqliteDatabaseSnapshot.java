@@ -101,7 +101,12 @@ public final class SqliteDatabaseSnapshot
             }
             catch(IOException cleanupFailure)
             {
-                if(primaryFailure != null)
+                if(primaryFailure instanceof CancellationException)
+                {
+                    cleanupFailure.addSuppressed(primaryFailure);
+                    throw cleanupFailure;
+                }
+                else if(primaryFailure != null)
                 {
                     primaryFailure.addSuppressed(cleanupFailure);
                 }
@@ -175,7 +180,12 @@ public final class SqliteDatabaseSnapshot
             }
             catch(IOException cleanupFailure)
             {
-                if(primaryFailure != null)
+                if(primaryFailure instanceof CancellationException)
+                {
+                    cleanupFailure.addSuppressed(primaryFailure);
+                    throw cleanupFailure;
+                }
+                else if(primaryFailure != null)
                 {
                     primaryFailure.addSuppressed(cleanupFailure);
                 }
