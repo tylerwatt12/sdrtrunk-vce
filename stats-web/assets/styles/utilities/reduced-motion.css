@@ -46,7 +46,8 @@
     transition: none;
   }
 
-  .network-visualizer-label {
+  .network-visualizer-label,
+  .network-visualizer-auto-focus {
     transition: none;
   }
 

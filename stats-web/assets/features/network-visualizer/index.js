@@ -93,6 +93,15 @@ function createP25Visualizer(dependencies = {}) {
     'ui-button ui-button-secondary network-visualizer-back');
   back.hidden = true;
   const scopeTitle = node('div', 'network-visualizer-scope-title', 'P25 radio systems');
+  const autoFocus = node('aside', 'network-visualizer-auto-focus');
+  autoFocus.hidden = true;
+  autoFocus.setAttribute('role', 'status');
+  autoFocus.setAttribute('aria-live', 'polite');
+  autoFocus.setAttribute('aria-atomic', 'true');
+  const autoFocusKicker = node('span', 'network-visualizer-auto-focus-kicker', 'AUTO FOCUS');
+  const autoFocusTitle = node('strong', 'network-visualizer-auto-focus-title');
+  const autoFocusDetail = node('span', 'network-visualizer-auto-focus-detail');
+  autoFocus.append(autoFocusKicker, autoFocusTitle, autoFocusDetail);
   const manualGuide = node('aside', 'network-visualizer-manual-guide');
   manualGuide.hidden = true;
   manualGuide.append(node('strong', '', 'Manual camera'), node('span', '', 'W/S move · A/D strafe · Q/E rise'),
@@ -115,12 +124,14 @@ function createP25Visualizer(dependencies = {}) {
   eventsHeader.append(eventsHeading, closeEvents);
   const eventList = node('ol', 'network-visualizer-event-list');
   events.append(eventsHeader, eventList);
-  stage.append(canvas, back, scopeTitle, manualGuide, empty, notice, legend, events);
+  stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, notice, legend, events);
   layout.append(toolbar, stage);
 
   let state = createP25HistoryState();
   let renderer = null;
   let selectedSystemKey = '';
+  let selectedGroupKey = '';
+  let visibleNodeKeys = new Set();
   let historyHours = 1;
   let mode = 'auto';
   let cursor = 0;
@@ -150,8 +161,24 @@ function createP25Visualizer(dependencies = {}) {
     if (detail) empty.append(node('p', '', detail));
   }
 
+  function clearAutoFocus() {
+    autoFocus.hidden = true;
+    autoFocus.dataset.phase = '';
+    autoFocus.dataset.category = '';
+  }
+
+  function showAutoFocus(event) {
+    autoFocusKicker.textContent = `AUTO FOCUS · ${formatTime(event.observedAtMs)}`;
+    autoFocusTitle.textContent = event.title || 'Noteworthy P25 activity';
+    autoFocusDetail.textContent = event.detail || 'P25 system activity';
+    autoFocus.dataset.category = event.category || '';
+    autoFocus.dataset.phase = 'focus';
+    autoFocus.hidden = false;
+  }
+
   function renderEvents() {
-    const rows = groupedP25Events(state, selectedSystemKey);
+    const rows = groupedP25Events(state, selectedSystemKey).filter((event) => !selectedGroupKey ||
+      event.focusKeys.some((key) => visibleNodeKeys.has(key)));
     if (!rows.length) {
       eventList.replaceChildren(node('li', 'network-visualizer-event network-visualizer-event-empty',
         'No noteworthy saved activity in this scope.'));
@@ -169,7 +196,8 @@ function createP25Visualizer(dependencies = {}) {
 
   function renderGraph(animate = true) {
     if (!renderer) return;
-    const graph = buildP25Graph(state, selectedSystemKey, Date.now());
+    const graph = buildP25Graph(state, selectedSystemKey, Date.now(), selectedGroupKey);
+    visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate });
     notice.hidden = !graph.truncated;
     notice.textContent = graph.truncated ? 'Some entities were omitted by visualization safety limits.' : '';
@@ -183,13 +211,33 @@ function createP25Visualizer(dependencies = {}) {
     introTimer = 0;
     if (optionsValue.automatic !== true) navigationRevision += 1;
     selectedSystemKey = system.key;
+    selectedGroupKey = '';
     back.hidden = false;
+    back.textContent = '← All systems';
     scopeTitle.textContent = system.label;
+    clearAutoFocus();
     camera.reset();
     lastCameraPhase = 'roam';
     renderer.setCameraPhase('roam');
     renderGraph(optionsValue.animate !== false);
     renderer.enterSystem(system.key, { immediate: optionsValue.immediate === true });
+    return true;
+  }
+
+  function enterTalkgroup(groupKey) {
+    const group = state.groups.get(String(groupKey || ''));
+    if (!group || group.systemKey !== selectedSystemKey || !renderer) return false;
+    navigationRevision += 1;
+    selectedGroupKey = group.key;
+    back.hidden = false;
+    back.textContent = '← System';
+    scopeTitle.textContent = group.label;
+    clearAutoFocus();
+    camera.reset();
+    lastCameraPhase = 'roam';
+    renderer.setCameraPhase('roam');
+    renderGraph(true);
+    renderer.enterTalkgroup(selectedSystemKey, group.key);
     return true;
   }
 
@@ -199,8 +247,10 @@ function createP25Visualizer(dependencies = {}) {
     introTimer = 0;
     navigationRevision += 1;
     selectedSystemKey = '';
+    selectedGroupKey = '';
     back.hidden = true;
     scopeTitle.textContent = 'P25 radio systems';
+    clearAutoFocus();
     camera.reset();
     lastCameraPhase = 'roam';
     renderer.setCameraPhase('roam');
@@ -211,11 +261,15 @@ function createP25Visualizer(dependencies = {}) {
   function applyAttention(candidates) {
     if (mode !== 'auto' || !selectedSystemKey) return;
     for (const event of candidates.filter((candidate) => candidate.systemKey === selectedSystemKey)) {
-      const decision = camera.consider(event, Date.now());
+      const focusKeys = event.focusKeys.filter((key) => visibleNodeKeys.has(key));
+      if (!focusKeys.length) continue;
+      const visibleEvent = { ...event, focusKeys };
+      const decision = camera.consider(visibleEvent, Date.now());
       if (!decision.accepted) continue;
       lastCameraPhase = 'focus';
       renderer?.setCameraPhase('focus');
-      renderer?.focus(event.focusKeys, decision.state.timing.transitionMs);
+      renderer?.focus(focusKeys, decision.state.timing.transitionMs);
+      showAutoFocus(event);
       break;
     }
   }
@@ -244,8 +298,11 @@ function createP25Visualizer(dependencies = {}) {
     dependencies.signal?.addEventListener?.('abort', abort, { once: true });
     state = createP25HistoryState();
     selectedSystemKey = '';
+    selectedGroupKey = '';
+    visibleNodeKeys = new Set();
     cursor = 0;
     camera.reset();
+    clearAutoFocus();
     renderer?.setData({ nodes: [], links: [] }, { animate: false });
     back.hidden = true;
     scopeTitle.textContent = 'P25 radio systems';
@@ -403,6 +460,7 @@ function createP25Visualizer(dependencies = {}) {
     manual.setAttribute('aria-pressed', String(mode === 'manual'));
     manualGuide.hidden = mode !== 'manual';
     camera.setMode(mode);
+    clearAutoFocus();
     lastCameraPhase = mode === 'auto' ? 'roam' : 'disabled';
     renderer?.setMode(mode);
     renderer?.setCameraPhase(mode === 'auto' ? 'roam' : 'disabled');
@@ -441,7 +499,10 @@ function createP25Visualizer(dependencies = {}) {
     if (mode === 'auto' && cameraState.changed && cameraState.phase !== lastCameraPhase) {
       lastCameraPhase = cameraState.phase;
       renderer?.setCameraPhase(cameraState.phase);
-      if (cameraState.phase === 'return') renderer?.home(cameraState.timing.returnMs);
+      if (cameraState.phase === 'return') {
+        autoFocus.dataset.phase = 'return';
+        renderer?.home(cameraState.timing.returnMs);
+      } else if (cameraState.phase === 'roam') clearAutoFocus();
     }
     animationFrame = requestAnimationFrame(animate);
   }
@@ -460,7 +521,7 @@ function createP25Visualizer(dependencies = {}) {
     eventsToggle.setAttribute('aria-pressed', 'false');
     eventsToggle.focus();
   });
-  back.addEventListener('click', showOverview);
+  back.addEventListener('click', () => selectedGroupKey ? enterSystem(selectedSystemKey) : showOverview());
   fullscreen.addEventListener('click', async () => {
     if (!renderer) return;
     if (document.fullscreenElement === layout) await renderer.exitFullscreen();
@@ -477,9 +538,13 @@ function createP25Visualizer(dependencies = {}) {
     renderer = await createP25Renderer({ host: canvas, mode, signal: dependencies.signal,
       onNodeClick: (selected) => {
         if (selected?.type === 'system' && selectedSystemKey !== selected.systemKey) enterSystem(selected.systemKey);
+        else if (selected?.type === 'talkgroup' && selectedSystemKey && selected.id !== selectedGroupKey) {
+          enterTalkgroup(selected.id);
+        }
       }, onInteraction: () => {
         if (mode === 'auto') {
           camera.cancel(Date.now());
+          clearAutoFocus();
           lastCameraPhase = 'roam';
           renderer?.setCameraPhase('roam');
         }

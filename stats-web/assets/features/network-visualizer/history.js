@@ -407,7 +407,7 @@ function visibleSignal(entity, atMs) {
   return entity?.highlightUntilMs > atMs ? entity.signalAction : '';
 }
 
-function buildP25Graph(state, systemKey = '', atMs = Date.now()) {
+function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey = '') {
   if (!systemKey) {
     const nodes = [...state.systems.values()].map((system) => ({ id: system.key, type: 'system',
       label: system.label, x: system.x, y: system.y, z: system.z, radius: 58, systemKey: system.key,
@@ -416,11 +416,18 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now()) {
   }
   const system = state.systems.get(systemKey);
   if (!system) return { nodes: [], links: [], labels: [], truncated: state.truncated };
-  const groups = [...system.groupKeys].map((key) => state.groups.get(key)).filter(Boolean)
-    .sort((left, right) => right.lastAtMs - left.lastAtMs).slice(0, 220);
+  const focusGroup = state.groups.get(focusGroupKey);
+  const focused = focusGroup?.systemKey === systemKey;
+  const allGroups = [...system.groupKeys].map((key) => state.groups.get(key)).filter(Boolean)
+    .sort((left, right) => right.lastAtMs - left.lastAtMs);
+  const groups = focused ? [focusGroup] : allGroups.slice(0, 220);
   const groupKeys = new Set(groups.map((group) => group.key));
-  const radios = [...system.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
-    .sort((left, right) => right.lastAtMs - left.lastAtMs).slice(0, 900);
+  const touchesFocus = (radio) => radio.visualGroupKey === focusGroup?.key ||
+    radio.priorGroupKeys.includes(focusGroup?.key) ||
+    [...radio.affiliations.values()].some((evidence) => evidence.groupKey === focusGroup?.key);
+  const eligibleRadios = [...system.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
+    .filter((radio) => !focused || touchesFocus(radio)).sort((left, right) => right.lastAtMs - left.lastAtMs);
+  const radios = eligibleRadios.slice(0, 900);
   const radioKeys = new Set(radios.map((radio) => radio.key));
   const nodes = [{ id: system.key, type: 'system', label: system.label, x: system.x, y: system.y, z: system.z,
     radius: system.radius, systemKey: system.key }];
@@ -429,7 +436,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now()) {
 
   const groupedRadios = new Map();
   radios.forEach((radio) => {
-    const parentKey = groupKeys.has(radio.visualGroupKey) ? radio.visualGroupKey : '';
+    const parentKey = focused ? focusGroup.key : groupKeys.has(radio.visualGroupKey) ? radio.visualGroupKey : '';
     if (!groupedRadios.has(parentKey)) groupedRadios.set(parentKey, []);
     groupedRadios.get(parentKey).push(radio);
   });
@@ -457,7 +464,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now()) {
       links.push({ id: `history:${radio.key}:${groupKey}`, source: radio.key, target: groupKey, kind: 'history' }));
   });
   return { nodes, links, labels: nodes.map((node) => node.id), truncated: state.truncated ||
-    groups.length < system.groupKeys.size || radios.length < system.radioKeys.size };
+    (!focused && groups.length < allGroups.length) || radios.length < eligibleRadios.length };
 }
 
 function groupedP25Events(state, systemKey = '') {

@@ -45,7 +45,8 @@ function createUnavailable(host, message, signal) {
   };
   signal?.addEventListener?.('abort', dispose, { once: true });
   return Object.freeze({ available: false, setData: () => {}, setMode: () => {}, setCameraPhase: () => {},
-    enterSystem: () => false, showOverview: () => false, focus: () => false, home: () => false,
+    enterSystem: () => false, enterTalkgroup: () => false, showOverview: () => false, focus: () => false,
+    home: () => false,
     moveManualCamera: () => false, enterFullscreen: async () => false, exitFullscreen: async () => false,
     dispose });
 }
@@ -262,7 +263,11 @@ async function createP25Renderer(options = {}) {
   }
 
   function systemNode() {
-    return scope.level === 'system' ? nodes.get(scope.systemKey) : null;
+    return scope.level === 'system' || scope.level === 'talkgroup' ? nodes.get(scope.systemKey) : null;
+  }
+
+  function talkgroupNode() {
+    return scope.level === 'talkgroup' ? nodes.get(scope.groupKey) : null;
   }
 
   function containSystemCamera() {
@@ -281,7 +286,8 @@ async function createP25Renderer(options = {}) {
 
   function updateAutoRotate() {
     if (!controls) return;
-    controls.autoRotate = Boolean(mode === 'auto' && cameraPhase === 'roam' && scope.level === 'system' &&
+    controls.autoRotate = Boolean(mode === 'auto' && cameraPhase === 'roam' &&
+      (scope.level === 'system' || scope.level === 'talkgroup') &&
       !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !reducedMotion);
     controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   }
@@ -350,10 +356,23 @@ async function createP25Renderer(options = {}) {
       z: system.z + radius * 0.53 }, target: { x: system.x, y: system.y, z: system.z } };
   }
 
+  function talkgroupHomePose(group, system) {
+    const related = [...nodes.values()].filter((node) => node.type !== 'system');
+    const radius = Math.max(34, ...related.map((node) => Math.hypot(node.x - group.x, node.y - group.y,
+      node.z - group.z) + finite(node.radius, 8)));
+    const distance = clamp(radius * 2.25, 86, 160);
+    const inward = new library.Vector3(system.x - group.x, system.y - group.y, system.z - group.z);
+    if (inward.lengthSq() < 0.001) inward.set(0.62, 0.34, 0.72);
+    inward.normalize();
+    return { position: { x: group.x + inward.x * distance, y: group.y + inward.y * distance,
+      z: group.z + inward.z * distance }, target: { x: group.x, y: group.y, z: group.z } };
+  }
+
   function home(duration = 900) {
     const system = systemNode();
     if (!system) return false;
-    const pose = homePose(system);
+    const group = talkgroupNode();
+    const pose = group ? talkgroupHomePose(group, system) : homePose(system);
     return tweenCamera(pose.position, pose.target, duration);
   }
 
@@ -371,7 +390,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function focus(keys, duration = 900) {
-    if (mode !== 'auto' || scope.level !== 'system') return false;
+    if (mode !== 'auto' || !['system', 'talkgroup'].includes(scope.level)) return false;
     const bounds = boundsFor(Array.isArray(keys) ? keys : [keys]);
     const system = systemNode();
     if (!bounds || !system) return false;
@@ -402,6 +421,15 @@ async function createP25Renderer(options = {}) {
 
   function enterSystem(systemKey, optionsValue = {}) {
     scope = { level: 'system', systemKey: String(systemKey || '') };
+    if (scene) scene.fog = new library.FogExp2(colors.background, 0.0032);
+    const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
+    containSystemCamera();
+    updateAutoRotate();
+    return result;
+  }
+
+  function enterTalkgroup(systemKey, groupKey, optionsValue = {}) {
+    scope = { level: 'talkgroup', systemKey: String(systemKey || ''), groupKey: String(groupKey || '') };
     if (scene) scene.fog = new library.FogExp2(colors.background, 0.0032);
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
     containSystemCamera();
@@ -460,6 +488,7 @@ async function createP25Renderer(options = {}) {
     }).slice(0, LABEL_LIMIT);
     const visible = new Set();
     for (const node of candidates) {
+      if (scope.level === 'talkgroup' && node.type === 'system') continue;
       const screen = graph.graph2ScreenCoords(node.x, node.y, node.z);
       const projected = new library.Vector3(node.x, node.y, node.z).project(camera);
       if (!screen || projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
@@ -476,7 +505,8 @@ async function createP25Renderer(options = {}) {
       label.dataset.signal = node.signalAction || '';
       label.style.transform = `translate3d(${Math.round(screen.x)}px, ${Math.round(screen.y)}px, 0)`;
       label.style.zIndex = String(Math.round((1 - projected.z) * 5_000));
-      const clear = scope.level === 'overview' || Boolean(node.signalAction) || node.type === 'system';
+      const clear = scope.level === 'overview' || scope.level === 'talkgroup' || Boolean(node.signalAction) ||
+        node.type === 'system';
       const depth = system ? camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)) /
         (finite(system.radius, SYSTEM_RADIUS) * 1.55) : 0;
       const haze = clear ? 0 : clamp((depth - 0.28) * 1.45, 0, 0.82);
@@ -642,8 +672,8 @@ async function createP25Renderer(options = {}) {
   resize();
   frame = requestAnimationFrame(animate);
 
-  return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, showOverview, focus, home,
-    moveManualCamera, enterFullscreen, exitFullscreen, dispose });
+  return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
+    showOverview, focus, home, moveManualCamera, enterFullscreen, exitFullscreen, dispose });
 }
 
 export { createP25Renderer };

@@ -68,6 +68,16 @@ async function main() {
   assert.equal(graph.nodes.filter((node) => node.type === 'talkgroup').length, 2);
   assert.equal(graph.nodes.filter((node) => node.type === 'radio').length, 1);
   assert.deepEqual(graph.links.map((link) => link.kind).sort(), ['current', 'history']);
+  const dispatchGraph = history.buildP25Graph(state, SYSTEM_A, Number.MAX_SAFE_INTEGER,
+    `${SYSTEM_A}:v1-g-101`);
+  assert.deepEqual(dispatchGraph.nodes.map((node) => node.type).sort(), ['radio', 'system', 'talkgroup'],
+    'talkgroup drill-down keeps its enclosing system, hub, and historically connected radios');
+  assert.deepEqual(dispatchGraph.links.map((link) => link.kind), ['history'],
+    'a radio that moved away remains connected by one faint historical link');
+  const tacticalGraph = history.buildP25Graph(state, SYSTEM_A, Number.MAX_SAFE_INTEGER,
+    `${SYSTEM_A}:v1-g-202`);
+  assert.deepEqual(tacticalGraph.links.map((link) => link.kind), ['current'],
+    'the selected talkgroup retains its current radio relationships');
   assert.equal(history.buildP25Graph(state, SYSTEM_A, 0).nodes.some((node) => node.signalAction), false,
     'seed history builds the scene without replaying old highlights');
 
