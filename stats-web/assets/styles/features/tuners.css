@@ -1,0 +1,173 @@
+.tuners-workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.tuners-workspace > section,
+.tuners-main,
+.tuners-main > section {
+  min-width: 0;
+}
+
+.tuners-list,
+.tuners-details {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.tuners-sidebar-actions {
+  justify-content: flex-start;
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.tuners-list-item {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.tuners-list-item[aria-pressed="true"] {
+  border-color: var(--focus-ring);
+  box-shadow: var(--shadow-focus);
+}
+
+.tuners-list-item-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tuners-list-item-main svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+}
+
+.tuners-list-item-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tuners-detail-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tuners-detail-heading h2 {
+  margin: 0;
+  font-size: var(--font-size-section-title);
+}
+
+.tuners-details dl {
+  padding: 0;
+}
+
+.tuners-settings {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.tuners-settings h3 {
+  margin: 0;
+  font-size: var(--font-size-section-title);
+}
+
+.tuners-settings-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+.tuners-setting {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.tuners-setting > :first-child {
+  min-width: 0;
+}
+
+.tuners-setting-hint,
+.tuners-setting-pending {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.tuners-setting-pending {
+  color: var(--ink);
+  font-weight: var(--font-weight-medium);
+}
+
+.tuners-setting-actions {
+  justify-content: flex-start;
+}
+
+.tuners-setting-message:not(:empty) {
+  color: var(--danger);
+  font-size: var(--font-size-meta);
+}
+
+.tuners-spectrum {
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.tuners-spectrum .tuner-spectrum-layout {
+  min-height: 680px;
+}
+
+.tuners-recordings {
+  grid-column: 1 / -1;
+}
+
+.tuners-recordings > summary {
+  cursor: pointer;
+}
+
+.tuners-recordings-body {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.tuners-recordings-hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.tuners-recordings-form {
+  max-width: 460px;
+}
+
+@media (max-width: 1000px) {
+  .tuners-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-list {
+    grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .tuners-spectrum .tuner-spectrum-layout {
+    min-height: 620px;
+  }
+}

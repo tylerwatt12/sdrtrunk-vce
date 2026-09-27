@@ -200,7 +200,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String live = function(source, "async function renderLive()");
         String channel = function(source, "function liveChannelPane()");
-        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument)");
+        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument, panelOptions = {})");
 
         assertTrue(live.contains("liveEventsPanel"));
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
@@ -1555,7 +1555,7 @@ class StatsWebInteractionUiContractTest
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz, scopes = [])");
         String snapMatches = function(source, "function tunerSnapMatches(frequencyHz, scopes)");
         String resolvedSegments = function(source, "function tunerResolvedScopeSegments(viewport, scopes = [])");
-        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument)");
+        String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument, panelOptions = {})");
         String parameters = function(tuner, "function diagnosticParameters()");
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");

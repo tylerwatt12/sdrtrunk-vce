@@ -138,7 +138,8 @@ function arrayBinding(source, name) {
 function functionBinding(source, name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `${name} must be declared`);
-  const open = source.indexOf('{', start);
+  const parameters = source.indexOf('(', start);
+  const open = source.indexOf('{', closingDelimiter(source, parameters) + 1);
   return source.slice(open, closingDelimiter(source, open, '{', '}') + 1);
 }
 

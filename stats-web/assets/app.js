@@ -128,6 +128,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   DASHBOARD: 'dashboard',
   LIVE: 'live',
   TUNER_SPECTRUM: 'tuner-spectrum',
+  ADMIN_TUNERS: 'admin-tuners',
   RADIO: 'radio',
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
@@ -703,7 +704,7 @@ function routeDefinitionAllowed(definition) {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
   }
   if (definition.access === 'admin-tuner') {
-    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.TUNER_SPECTRUM);
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS);
   }
   if (definition.access === 'admin-aliases') {
     return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
@@ -12714,16 +12715,21 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
   return segments;
 }
 
-function tunerSpectrumPanel(snapPresetDocument) {
+function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const frequencyScopes = snapPresetDocument?.scopes || [];
+  let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
+  const managedSelection = panelOptions.managedSelection === true;
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
   const targetSelect = node('select', 'ui-select');
   targetSelect.setAttribute('aria-label', 'Receiver window');
   targetSelect.disabled = true;
-  targetSelect.append(node('option', '', 'Loading tuners…'));
+  const loadingTarget = node('option', '', 'Loading tuners…');
+  loadingTarget.value = '';
+  targetSelect.append(loadingTarget);
   targetLabel.append(uiSelectFrame(targetSelect));
+  targetLabel.hidden = managedSelection;
   const status = badge('Loading', 'state-stale');
   const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
   const zoomIn = iconButton('icon-zoom-in', 'Zoom in', 'ui-button ui-button-secondary ui-icon-button');
@@ -12964,6 +12970,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
   let activeChannelSource = null;
   const activeChannelTables = new Map();
   const targetsById = new Map();
+  let targetsRefreshPending = false;
   let activeFlagSignature = '';
   let fftValues = new Float32Array(0);
   let smoothedFftValues = new Float32Array(0);
@@ -13044,6 +13051,20 @@ function tunerSpectrumPanel(snapPresetDocument) {
 
   const controller = {
     element: layout,
+    selectTarget(targetId) {
+      if (!managedSelection || disposed) return;
+      managedTargetId = String(targetId || '');
+      if (targetSelect.value === managedTargetId) return;
+      targetSelect.value = targetsById.has(managedTargetId) ? managedTargetId : '';
+      pause.disabled = !targetSelect.value;
+      closeStreams();
+      closeActiveChannels();
+      resetViewportForTarget();
+      resetPlots(managedTargetId ? 'Waiting for tuner data…' : 'No live samples—the tuner is idle.');
+      if (!targetSelect.value) setStatus('Idle');
+      sync();
+      if (managedTargetId && !targetsById.has(managedTargetId)) refreshTargets();
+    },
     close: () => {
       if (disposed) return;
       disposed = true;
@@ -13729,6 +13750,7 @@ function tunerSpectrumPanel(snapPresetDocument) {
       if (paused) setStatus('Paused');
       else if (pageSuspended || document.hidden) setStatus('Hidden');
       else if (!pageFocused) setStatus('Unfocused');
+      else if (managedSelection && !selectedTargetId()) setStatus('Idle');
       else setStatus('Waiting');
       return released;
     }
@@ -14518,17 +14540,23 @@ function tunerSpectrumPanel(snapPresetDocument) {
   resetPlots('Loading tuners…');
   renderFrequencyBands();
 
-  api('/api/v1/diagnostics/tuners').then((response) => {
+  function refreshTargets() {
+    if (disposed || targetsRefreshPending) return;
+    targetsRefreshPending = true;
+    api('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
     const targets = tunerDiagnosticTargets(response);
     targetsById.clear();
     targetSelect.replaceChildren();
     if (!targets.length) {
-      targetSelect.append(node('option', '', 'No tuners available'));
+      const unavailable = node('option', '', 'No tuners available');
+      unavailable.value = '';
+      targetSelect.append(unavailable);
       targetSelect.disabled = true;
       pause.disabled = true;
-      setStatus('Unavailable');
-      resetPlots('No enabled tuner supports spectrum diagnostics.');
+      setStatus(managedSelection ? 'Idle' : 'Unavailable');
+      resetPlots(managedSelection ? 'No live samples—the tuner is idle.' :
+        'No enabled tuner supports spectrum diagnostics.');
       return;
     }
     targets.forEach((target) => {
@@ -14537,21 +14565,27 @@ function tunerSpectrumPanel(snapPresetDocument) {
       option.value = target.id;
       targetSelect.append(option);
     });
-    targetSelect.value = tunerStoredChoice('session-target', targets[0].id,
-      targets.map((target) => target.id));
-    targetSelect.disabled = false;
-    pause.disabled = false;
+    targetSelect.value = managedSelection ?
+      (targetsById.has(managedTargetId) ? managedTargetId : '') :
+      tunerStoredChoice('session-target', targets[0].id, targets.map((target) => target.id));
+    targetSelect.disabled = managedSelection;
+    pause.disabled = !targetSelect.value;
     resetViewportForTarget();
-    resetPlots('Waiting for tuner data…');
+    resetPlots(targetSelect.value ? 'Waiting for tuner data…' : 'No live samples—the tuner is idle.');
+    if (!targetSelect.value) setStatus('Idle');
     sync();
-  }).catch((error) => {
+    }).catch((error) => {
     if (disposed) return;
-    targetSelect.replaceChildren(node('option', '', 'Tuners unavailable'));
+    const unavailable = node('option', '', 'Tuners unavailable');
+    unavailable.value = '';
+    targetSelect.replaceChildren(unavailable);
     targetSelect.disabled = true;
     pause.disabled = true;
     setStatus('Unavailable');
     resetPlots(error.message || 'Could not load tuner diagnostics.');
-  });
+    }).finally(() => { targetsRefreshPending = false; });
+  }
+  refreshTargets();
   return controller;
 }
 
@@ -23019,10 +23053,499 @@ function renderStreaming() {
   beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'), workspace.element);
 }
 
-function renderTuners() {
+function tunerInventoryRows(response) {
+  if (!response || !Array.isArray(response.tuners)) {
+    throw new Error('The receiver returned an invalid tuner list.');
+  }
+  return response.tuners.filter((tuner) => tuner && typeof tuner === 'object' &&
+    typeof tuner.id === 'string' && tuner.id && typeof tuner.name === 'string');
+}
+
+function tunerInventoryStatus(tuner) {
+  const status = String(tuner.status || 'Unknown');
+  if (!tuner.enabled) return { label: 'Disabled', tone: 'neutral' };
+  if (status.toUpperCase() === 'ERROR') return { label: 'Error', tone: 'danger' };
+  if (tuner.available) return { label: 'Ready', tone: 'success' };
+  return { label: status.replaceAll('_', ' '), tone: 'warning' };
+}
+
+function tunerInventoryFrequency(value) {
+  const hz = Number(value);
+  return Number.isFinite(hz) && hz > 0 ? `${frequency(hz)} MHz` : 'Unavailable';
+}
+
+function tunerInventoryRate(value) {
+  const hz = Number(value);
+  if (!Number.isFinite(hz) || hz <= 0) return 'Unavailable';
+  return hz >= 1_000_000 ? `${(hz / 1_000_000).toFixed(3)} MHz` : `${(hz / 1_000).toFixed(1)} kHz`;
+}
+
+function tunerSettingValue(setting, value) {
+  if (setting.kind === 'boolean') return value ? 'On' : 'Off';
+  const option = (Array.isArray(setting.options) ? setting.options : [])
+    .find((choice) => String(choice.value) === String(value));
+  return option ? String(option.label) : `${value}${setting.unit ? ` ${setting.unit}` : ''}`;
+}
+
+function tunerSettingInput(setting) {
+  const value = setting.pending_value == null ? setting.value : setting.pending_value;
+  if (setting.kind === 'boolean') {
+    const control = uiToggleField(setting.label, Boolean(value), setting.label);
+    return { element: control, input: control.querySelector('input'), read: (input) => input.checked };
+  }
+  if (setting.kind === 'choice') {
+    const input = node('select', 'ui-select');
+    for (const choice of Array.isArray(setting.options) ? setting.options : []) {
+      const option = node('option', '', String(choice.label));
+      option.value = String(choice.value);
+      input.append(option);
+    }
+    input.value = String(value ?? '');
+    const field = node('label', 'ui-field');
+    field.append(node('span', '', setting.label), uiSelectFrame(input));
+    return { element: field, input, read: (select) => select.value };
+  }
+  const input = node('input', 'ui-input');
+  input.type = 'number';
+  input.required = true;
+  if (setting.minimum != null && Number.isFinite(Number(setting.minimum))) input.min = String(setting.minimum);
+  if (setting.maximum != null && Number.isFinite(Number(setting.maximum))) input.max = String(setting.maximum);
+  if (setting.step != null && Number.isFinite(Number(setting.step)) && Number(setting.step) > 0) {
+    input.step = String(setting.step);
+  }
+  input.value = value == null ? '' : String(value);
+  const field = node('label', 'ui-field');
+  field.append(node('span', '', `${setting.label}${setting.unit ? ` (${setting.unit})` : ''}`), input);
+  return { element: field, input, read: (numberInput) => Number(numberInput.value) };
+}
+
+async function renderTuners() {
   const renderContext = captureRenderContext();
-  beginPage(renderContext, pageHeader('Tuners',
-    'Inspect and configure receiver hardware'), comingSoonPanel('Tuners'));
+  const listBody = node('div', 'tuners-list');
+  const detailsBody = node('div', 'tuners-details');
+  const spectrumBody = node('div', 'tuners-spectrum');
+  const refreshButton = node('button', 'ui-button ui-button-secondary', 'Refresh');
+  refreshButton.type = 'button';
+  refreshButton.prepend(iconGlyph('icon-refresh'));
+  const rescanUsbButton = node('button', 'ui-button ui-button-secondary', 'Rescan USB');
+  rescanUsbButton.type = 'button';
+  rescanUsbButton.prepend(iconGlyph('icon-refresh'));
+  const tunerListActions = node('div', 'tuners-sidebar-actions ui-action-row');
+  tunerListActions.append(refreshButton, rescanUsbButton);
+  const tunerListPanel = node('div', 'tuners-sidebar-panel');
+  tunerListPanel.append(tunerListActions, listBody);
+  const left = section('Receiver tuners', tunerListPanel);
+  const right = node('div', 'tuners-main');
+  right.append(section('Selected tuner', detailsBody), section('Spectrum and waterfall', spectrumBody));
+  const recordingPanel = node('details', 'tuners-recordings ui-section');
+  recordingPanel.append(node('summary', 'ui-section-title', 'Recording tuner files · debugging'));
+  const recordingsBody = node('div', 'tuners-recordings-body');
+  recordingPanel.append(recordingsBody);
+  const workspace = node('div', 'tuners-workspace editor-workspace');
+  workspace.append(left, right, recordingPanel);
+  if (!beginPage(renderContext, pageHeader('Tuners',
+    'Inspect receiver hardware and adjust tuners with live spectrum feedback'), workspace)) return;
+
+  let rows = [];
+  let selectedId = '';
+  let operationNotice = '';
+  let spectrum = null;
+  let refreshGeneration = 0;
+  let refreshTimer = null;
+  let recordingRequest = 0;
+  pageConnections.add({ close() { if (refreshTimer !== null) window.clearTimeout(refreshTimer); } });
+  listBody.append(node('div', 'loading', 'Loading tuners…'));
+  detailsBody.append(node('div', 'loading', 'Loading tuner details…'));
+  spectrumBody.append(node('div', 'loading', 'Loading spectrum…'));
+
+  async function loadRecordingFiles(rescan = false) {
+    const request = ++recordingRequest;
+    recordingsBody.replaceChildren(node('div', 'loading', 'Reading recording tuner files…'));
+    try {
+      const catalog = rescan ? await requestJson('/api/v1/admin/tuners/recordings/rescan', {
+        method: 'POST', signal: renderContext.signal
+      }) : await api('/api/v1/admin/tuners/recordings', {}, { signal: renderContext.signal });
+      if (!renderIsCurrent(renderContext) || request !== recordingRequest) return;
+      const entries = Array.isArray(catalog?.entries) ? catalog.entries : [];
+      const intro = node('p', 'tuners-recordings-hint',
+        'Place large I/Q WAV files in data/recording_tuners/ using local file tools, then choose Rescan.');
+      const rescanButton = node('button', 'ui-button ui-button-secondary', 'Rescan');
+      rescanButton.type = 'button';
+      rescanButton.prepend(iconGlyph('icon-refresh'));
+      rescanButton.addEventListener('click', () => void loadRecordingFiles(true));
+      const actions = node('div', 'tuners-recordings-actions ui-action-row');
+      actions.append(rescanButton);
+      recordingsBody.replaceChildren(intro, actions);
+      if (catalog?.truncated) recordingsBody.append(node('div', 'ui-notice',
+        'Only the first supported files are listed. Remove unneeded files locally and rescan.'));
+      if (Number(catalog?.rejected_count) > 0) recordingsBody.append(node('p', 'tuners-recordings-hint',
+        `${number(catalog.rejected_count)} file${Number(catalog.rejected_count) === 1 ? '' : 's'} could not be used.`));
+      if (!entries.length) {
+        recordingsBody.append(node('div', 'empty', 'No supported I/Q WAV files are in the folder.'));
+        return;
+      }
+      const form = node('form', 'tuners-recordings-form admin-form');
+      const select = node('select', 'ui-select');
+      for (const entry of entries) {
+        const option = node('option', '', String(entry.name || 'Recording'));
+        option.value = String(entry.id || '');
+        select.append(option);
+      }
+      const center = node('input', 'ui-input');
+      center.type = 'number';
+      center.min = '0.000001';
+      center.step = '0.000001';
+      center.required = true;
+      const metadata = node('p', 'tuners-recordings-hint');
+      const applySelection = () => {
+        const entry = entries.find((item) => String(item.id) === select.value);
+        if (!entry) return;
+        center.value = entry.suggested_center_frequency_hz ?
+          String(Number(entry.suggested_center_frequency_hz) / 1_000_000) : '';
+        metadata.textContent = `${tunerInventoryRate(entry.sample_rate_hz)} sample rate · ` +
+          `${(Number(entry.size_bytes) / (1024 ** 3)).toFixed(2)} GiB`;
+      };
+      select.addEventListener('change', applySelection);
+      applySelection();
+      const message = node('div', 'admin-form-message');
+      message.setAttribute('role', 'status');
+      const add = node('button', 'ui-button ui-button-primary', 'Add recording tuner');
+      add.type = 'submit';
+      form.append(formField('Recording WAV', select), metadata,
+        formField('Center frequency (MHz)', center), add, message);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        const centerFrequencyHz = Math.round(Number(center.value) * 1_000_000);
+        if (!Number.isSafeInteger(centerFrequencyHz) || centerFrequencyHz <= 0) {
+          message.textContent = 'Enter a valid center frequency.';
+          return;
+        }
+        add.disabled = true;
+        message.textContent = 'Adding recording tuner…';
+        try {
+          await requestJson('/api/v1/admin/tuners/recordings', {
+            method: 'POST', body: { file_id: select.value, center_frequency_hz: centerFrequencyHz }
+          });
+          message.textContent = 'Recording tuner added.';
+          await refresh();
+        } catch (error) {
+          message.textContent = error.message || 'Could not add recording tuner.';
+        } finally {
+          add.disabled = false;
+        }
+      });
+      recordingsBody.append(form);
+    } catch (error) {
+      if (renderIsCurrent(renderContext) && request === recordingRequest) {
+        recordingsBody.replaceChildren(node('div', 'error', error.message || 'Could not read recording tuner files.'));
+      }
+    }
+  }
+  recordingPanel.addEventListener('toggle', () => {
+    if (recordingPanel.open && recordingsBody.childElementCount === 0) void loadRecordingFiles();
+  });
+
+  const selectedTuner = () => rows.find((row) => row.id === selectedId) || null;
+  const detailFact = (label, value) => {
+    const fact = node('div', 'ui-fact');
+    fact.append(node('dt', '', label), node('dd', '', value));
+    return fact;
+  };
+
+  function renderSettings(tuner) {
+    const settings = Array.isArray(tuner.settings) ? tuner.settings : [];
+    if (!settings.length) return null;
+    const wrapper = node('div', 'tuners-settings');
+    wrapper.append(node('h3', '', 'Settings'));
+    const fields = node('div', 'tuners-settings-list');
+    for (const setting of settings) {
+      if (!setting || typeof setting.id !== 'string' || !/^[a-z0-9_]+$/.test(setting.id)) continue;
+      const form = node('form', 'tuners-setting');
+      const control = tunerSettingInput(setting);
+      const pending = setting.pending_value == null ? null :
+        node('p', 'tuners-setting-pending', `Queued: ${tunerSettingValue(setting, setting.pending_value)}`);
+      const message = node('div', 'tuners-setting-message');
+      message.setAttribute('role', 'status');
+      const actions = node('div', 'tuners-setting-actions ui-action-row');
+      const save = node('button', 'ui-button ui-button-primary',
+        setting.requires_idle && Number(tuner.channel_count) > 0 ? 'Queue change' : 'Apply');
+      save.type = 'submit';
+      save.disabled = setting.editable !== true;
+      control.input.disabled = setting.editable !== true;
+      actions.append(save);
+      const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
+      if (pending) {
+        const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel queued change');
+        cancel.type = 'button';
+        cancel.addEventListener('click', async () => {
+          cancel.disabled = true;
+          save.disabled = true;
+          try {
+            await requestJson(path, { method: 'DELETE' });
+            await refresh();
+          } catch (error) {
+            message.textContent = error.message || 'Could not cancel the queued change.';
+            cancel.disabled = false;
+            save.disabled = false;
+          }
+        });
+        actions.append(cancel);
+      }
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!control.input.reportValidity()) return;
+        save.disabled = true;
+        message.textContent = '';
+        try {
+          await requestJson(path, { method: 'PUT', body: { value: control.read(control.input) } });
+          await refresh();
+        } catch (error) {
+          message.textContent = error.message || 'Could not save the tuner setting.';
+          save.disabled = false;
+        }
+      });
+      form.append(control.element);
+      if (setting.requires_idle) form.append(node('p', 'tuners-setting-hint',
+        'Applies when this tuner is no longer in use.'));
+      if (pending) form.append(pending);
+      if (setting.editable !== true) form.append(node('p', 'tuners-setting-hint',
+        'This setting is shown for reference.'));
+      if (setting.editable === true) form.append(actions);
+      form.append(message);
+      fields.append(form);
+    }
+    wrapper.append(fields);
+    return wrapper;
+  }
+
+  async function changeEnabled(tuner, enabled) {
+    const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/enabled`;
+    await requestJson(path, { method: 'PUT', body: { enabled } });
+    operationNotice = enabled && String(tuner.status).toLowerCase() === 'error' ?
+      'Restart requested. Refresh to see the latest status.' : enabled ?
+      'Enable requested. Refresh to see the latest status.' :
+      'Disable requested. Refresh to see the latest status.';
+    await refresh();
+  }
+
+  function confirmDisable(tuner, returnFocusSelector) {
+    const body = node('div', 'admin-confirmation');
+    const channelCount = Math.max(0, Number(tuner.channel_count) || 0);
+    body.append(node('p', '', channelCount > 0 ?
+      `Disable ${tuner.name}? This will stop its ${channelCount} active channel${channelCount === 1 ? '' : 's'}.` :
+      `Disable ${tuner.name}?`));
+    const message = node('div', 'admin-form-message');
+    message.setAttribute('role', 'alert');
+    const actions = node('div', 'admin-form-actions');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    const disable = node('button', 'ui-button ui-button-danger', 'Disable tuner');
+    disable.type = 'button';
+    actions.append(cancel, disable);
+    body.append(message, actions);
+    const modal = openReadOnlyModal('Disable tuner', body, {
+      id: 'disable-tuner', returnFocusSelector, className: 'admin-modal'
+    });
+    if (!modal) return;
+    cancel.addEventListener('click', modal.close);
+    disable.addEventListener('click', () => {
+      disable.disabled = true;
+      cancel.disabled = true;
+      modal.setBusy(true);
+      message.textContent = 'Disabling tuner…';
+      void changeEnabled(tuner, false).then(() => modal.close()).catch((error) => {
+        message.textContent = error.message || 'Could not disable the tuner.';
+        disable.disabled = false;
+        cancel.disabled = false;
+        modal.setBusy(false);
+      });
+    });
+    disable.focus();
+  }
+
+  function confirmRemoveRecording(tuner) {
+    const body = node('div', 'admin-confirmation');
+    body.append(node('p', '', `Remove the recording tuner for ${tuner.name}? The WAV file will stay on disk.`));
+    const message = node('div', 'admin-form-message');
+    message.setAttribute('role', 'alert');
+    const actions = node('div', 'admin-form-actions');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    const remove = node('button', 'ui-button ui-button-danger', 'Remove recording tuner');
+    remove.type = 'button';
+    actions.append(cancel, remove);
+    body.append(message, actions);
+    const modal = openReadOnlyModal('Remove recording tuner', body, {
+      id: 'remove-recording-tuner', returnFocusSelector: '#selected-tuner-remove', className: 'admin-modal'
+    });
+    if (!modal) return;
+    cancel.addEventListener('click', modal.close);
+    remove.addEventListener('click', () => {
+      remove.disabled = true;
+      cancel.disabled = true;
+      modal.setBusy(true);
+      message.textContent = 'Removing recording tuner…';
+      void requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`, { method: 'DELETE' })
+        .then(async () => {
+          selectedId = '';
+          operationNotice = 'Recording tuner removed. The WAV file remains on disk.';
+          modal.close();
+          await refresh();
+        }).catch((error) => {
+          message.textContent = error.message || 'Could not remove the recording tuner.';
+          remove.disabled = false;
+          cancel.disabled = false;
+          modal.setBusy(false);
+        });
+    });
+    remove.focus();
+  }
+
+  function renderSelection() {
+    const tuner = selectedTuner();
+    listBody.replaceChildren();
+    if (!rows.length) {
+      listBody.append(node('div', 'empty', 'No tuners have been discovered.'));
+    }
+    for (const row of rows) {
+      const button = node('button', 'tuners-list-item ui-button ui-button-secondary');
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(row.id === selectedId));
+      const main = node('span', 'tuners-list-item-main');
+      main.append(iconGlyph(String(row.tuner_type).toLowerCase() === 'recording' ?
+        'icon-recording' : 'icon-tuner'),
+        node('span', 'tuners-list-item-name', row.name));
+      const status = tunerInventoryStatus(row);
+      button.append(main, uiPill(status.label, status.tone));
+      button.addEventListener('click', () => {
+        if (selectedId === row.id) return;
+        selectedId = row.id;
+        operationNotice = '';
+        renderSelection();
+      });
+      listBody.append(button);
+    }
+
+    detailsBody.replaceChildren();
+    if (!tuner) {
+      detailsBody.append(node('div', 'empty', 'Select a tuner to see its status.'));
+      spectrum?.selectTarget('');
+      return;
+    }
+    const status = tunerInventoryStatus(tuner);
+    const title = node('div', 'tuners-detail-heading');
+    title.append(node('h2', '', tuner.name), uiPill(status.label, status.tone));
+    const facts = node('dl', 'ui-facts');
+    facts.append(
+      detailFact('Type', String(tuner.tuner_class || tuner.tuner_type || 'Unknown')),
+      detailFact('Channels', String(Math.max(0, Number(tuner.channel_count) || 0))),
+      detailFact('Current center', tunerInventoryFrequency(tuner.frequency_hz)),
+      detailFact('Sample rate', tunerInventoryRate(tuner.sample_rate_hz))
+    );
+    if (tuner.device_group?.kind && tuner.device_group.kind !== 'single') {
+      facts.append(detailFact('Device group', `${tuner.device_group.kind} · ${tuner.device_group.role || 'member'}`));
+    }
+    detailsBody.append(title, facts);
+    const actions = node('div', 'tuners-detail-actions ui-action-row');
+    const restartable = tuner.enabled && String(tuner.status).toLowerCase() === 'error';
+    const enabledButton = node('button',
+      `ui-button ${tuner.enabled && !restartable ? 'ui-button-danger-quiet' : 'ui-button-secondary'}`,
+      restartable ? 'Restart tuner' : tuner.enabled ? 'Disable tuner' : 'Enable tuner');
+    enabledButton.type = 'button';
+    enabledButton.id = 'selected-tuner-enabled';
+    enabledButton.addEventListener('click', () => {
+      if (tuner.enabled && !restartable) confirmDisable(tuner, '#selected-tuner-enabled');
+      else {
+        enabledButton.disabled = true;
+        void changeEnabled(tuner, true).catch((error) => {
+          operationNotice = error.message || 'Could not enable the tuner.';
+          renderSelection();
+        });
+      }
+    });
+    actions.append(enabledButton);
+    if (String(tuner.tuner_class).toLowerCase() === 'recording') {
+      const remove = node('button', 'ui-button ui-button-danger-quiet', 'Remove recording tuner');
+      remove.type = 'button';
+      remove.id = 'selected-tuner-remove';
+      remove.addEventListener('click', () => confirmRemoveRecording(tuner));
+      actions.append(remove);
+    }
+    detailsBody.append(actions);
+    if (operationNotice) detailsBody.append(node('div', 'ui-notice', operationNotice));
+    if (tuner.pending) detailsBody.append(node('div', 'ui-notice',
+      'A tuner change is pending. Settings that require idle apply when the tuner is no longer in use. ' +
+      'Pending changes are lost if the receiver restarts.'));
+    if (tuner.maintenance_error) detailsBody.append(node('div', 'ui-notice ui-notice-danger',
+      String(tuner.maintenance_error)));
+    if (tuner.error_message) detailsBody.append(node('div', 'error', String(tuner.error_message)));
+    const settings = renderSettings(tuner);
+    if (settings) detailsBody.append(settings);
+    spectrum?.selectTarget(tuner.spectrum_target_id || '');
+  }
+
+  async function refresh() {
+    const generation = ++refreshGeneration;
+    if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    refreshTimer = null;
+    refreshButton.disabled = true;
+    try {
+      const response = await api('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
+      if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
+      rows = tunerInventoryRows(response);
+      const editing = detailsBody.contains(document.activeElement) &&
+        document.activeElement.matches('input, select, textarea');
+      const previousSelectedId = selectedId;
+      if (!rows.some((row) => row.id === selectedId)) selectedId = rows[0]?.id || '';
+      if (editing && selectedId === previousSelectedId) {
+        spectrum?.selectTarget(selectedTuner()?.spectrum_target_id || '');
+      } else renderSelection();
+    } catch (error) {
+      if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
+      listBody.replaceChildren(node('div', 'error', error.message || 'Could not load tuners.'));
+      detailsBody.replaceChildren(node('div', 'error', 'Tuner details are unavailable.'));
+      spectrum?.selectTarget('');
+    } finally {
+      if (renderIsCurrent(renderContext) && generation === refreshGeneration) {
+        refreshButton.disabled = false;
+        refreshTimer = window.setTimeout(() => {
+          if (document.hidden) {
+            refreshTimer = window.setTimeout(() => void refresh(), 5_000);
+          } else void refresh();
+        }, 5_000);
+      }
+    }
+  }
+
+  refreshButton.addEventListener('click', () => void refresh());
+  rescanUsbButton.addEventListener('click', async () => {
+    rescanUsbButton.disabled = true;
+    try {
+      await requestJson('/api/v1/admin/tuners/rescan', { method: 'POST' });
+      operationNotice = 'USB tuner rescan requested.';
+      await refresh();
+    } catch (error) {
+      operationNotice = error.message || 'Could not rescan USB tuners.';
+      renderSelection();
+    } finally {
+      rescanUsbButton.disabled = false;
+    }
+  });
+  void refresh();
+  try {
+    const snapPresetDocument = await requestSpectrumSnapPresetDocument();
+    if (!renderIsCurrent(renderContext)) return;
+    spectrum = tunerSpectrumPanel(snapPresetDocument, {
+      managedSelection: true,
+      targetId: selectedTuner()?.spectrum_target_id || ''
+    });
+    pageConnections.add(spectrum);
+    spectrumBody.replaceChildren(spectrum.element);
+  } catch (error) {
+    if (renderIsCurrent(renderContext)) spectrumBody.replaceChildren(
+      node('div', 'error', error.message || 'Spectrum is unavailable.'));
+  }
 }
 
 function renderRfPlanner() {
