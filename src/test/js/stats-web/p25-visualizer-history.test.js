@@ -14,8 +14,8 @@ function row(id, action, overrides = {}) {
   return {
     id,
     observed_at_ms: 1_700_000_000_000 + id,
-    protocol_code: 1,
-    channel_kind: 'TRUNKED',
+    protocol: 'p25',
+    channel_kind: 'trunked_site',
     channel_id: 10,
     configuration_id: 'configuration-a',
     radio_system_key: SYSTEM_A,
@@ -24,7 +24,6 @@ function row(id, action, overrides = {}) {
     system_id: 0x123,
     action,
     source_identity_key: 'v1-r-7001',
-    source_identity_kind_code: 2,
     source_radio_id: 7001,
     source_alias_name: 'Unit 7001',
     target_identity_key: 'v1-g-101',
@@ -48,8 +47,8 @@ async function main() {
     row(4, 'JOIN', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' }),
     row(1, 'CALL'),
     row(3, 'JOIN'),
-    row(2, 'JOIN', { protocol_code: 2, radio_system_key: 'dmr-system' }),
-    row(5, 'JOIN', { channel_kind: 'CONVENTIONAL', radio_system_key: '' })
+    row(2, 'JOIN', { protocol: 'dmr', radio_system_key: 'dmr-system' }),
+    row(5, 'JOIN', { channel_kind: 'conventional', radio_system_key: '' })
   ], { initial: true });
 
   assert.equal(seed.accepted, 2, 'only supported P25 trunked history should enter the model');

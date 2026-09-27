@@ -46,7 +46,8 @@ function keyKind(key) {
 }
 
 function isP25Trunked(row) {
-  return Number(row?.protocol_code) === 1 && text(row?.channel_kind).toUpperCase() === 'TRUNKED' &&
+  return text(row?.protocol).toLowerCase() === 'p25' &&
+    text(row?.channel_kind).toLowerCase() === 'trunked_site' &&
     Boolean(text(row?.radio_system_key));
 }
 
