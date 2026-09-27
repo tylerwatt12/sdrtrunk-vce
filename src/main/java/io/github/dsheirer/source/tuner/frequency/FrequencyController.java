@@ -272,11 +272,26 @@ public class FrequencyController
 
     public void setFrequencyCorrection(double correction) throws SourceException
     {
+        double previous = mFrequencyCorrection;
         mFrequencyCorrection = correction;
 
         if(mFrequency > 0)
         {
-            setFrequency(mFrequency, true);
+            try
+            {
+                // Tune without publishing first.  A rejected hardware retune must not leave the software PPM
+                // changed while the device is still on the previous frequency.
+                setFrequency(mFrequency, false);
+            }
+            catch(SourceException | RuntimeException e)
+            {
+                mFrequencyCorrection = previous;
+                throw e;
+            }
+
+            // Notification failure is different from hardware rejection: the new correction has taken effect and
+            // callers can inspect getFrequencyCorrection() to avoid falsely restoring the saved old value.
+            broadcastFrequencyChange();
         }
 
         broadcastFrequencyCorrectionChange();

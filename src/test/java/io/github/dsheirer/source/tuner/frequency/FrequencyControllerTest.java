@@ -40,6 +40,25 @@ class FrequencyControllerTest
         assertEquals(0, frequencyChangeEvents.get());
     }
 
+    @Test
+    void failedPpmHardwareRetuneRestoresPreviousCorrectionAndEmitsNoEvent() throws Exception
+    {
+        TestTunable tunable = new TestTunable();
+        FrequencyController controller = new FrequencyController(tunable);
+        controller.setMinimumFrequency(1);
+        controller.setMaximumFrequency(1_000_000_000L);
+        controller.setFrequency(100_000_000L);
+        AtomicInteger notifications = new AtomicInteger();
+        controller.addSourceEventProcessor(event -> notifications.incrementAndGet());
+
+        tunable.setFailTuning(true);
+        assertThrows(SourceException.class, () -> controller.setFrequencyCorrection(2.0));
+        assertEquals(0.0, controller.getFrequencyCorrection());
+        assertEquals(100_000_000L, controller.getFrequency());
+        assertEquals(100_000_000L, controller.getTunedFrequency());
+        assertEquals(0, notifications.get());
+    }
+
     private static class TestTunable implements FrequencyController.Tunable
     {
         private final ReentrantLock mLock = new ReentrantLock();

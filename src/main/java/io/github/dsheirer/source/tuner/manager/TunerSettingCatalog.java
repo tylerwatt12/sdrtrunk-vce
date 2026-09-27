@@ -142,7 +142,7 @@ public final class TunerSettingCatalog
         {
             descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "frequency",
                 "action", null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null,
-                null, null, null, "tuner", true, true));
+                null, null, null, "tuner", false, true));
         }
 
         return List.copyOf(descriptors);
@@ -259,6 +259,16 @@ public final class TunerSettingCatalog
 
     static boolean requiresIdle(TunerConfiguration configuration, String settingId)
     {
+        // These controls do not change the sample rate or perform allocator-managed center retuning.  Frequency
+        // limits may be applied to a busy tuner only when its active center and allocated channels remain in range.
+        // Manual PPM is a deliberate live retune, performed by the dedicated settings worker using only the
+        // frequency-correction setter; the browser must not promise an idle queue for it.
+        if(Set.of("frequency_correction_ppm", "center_frequency_locked", MINIMUM_FREQUENCY,
+            MAXIMUM_FREQUENCY, RESET_FREQUENCY_EXTENTS).contains(settingId))
+        {
+            return false;
+        }
+
         if(configuration instanceof AirspyTunerConfiguration || configuration instanceof HydraSdrTunerConfiguration)
         {
             return !Set.of("gain", "if_gain", "mixer_gain", "lna_gain", "mixer_agc", "lna_agc")

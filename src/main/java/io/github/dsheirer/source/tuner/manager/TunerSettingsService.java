@@ -1,6 +1,7 @@
 package io.github.dsheirer.source.tuner.manager;
 
 import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
@@ -40,9 +41,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Admin-initiated tuner settings and enable/disable actions.  Requests update a bounded latest-value map and return
- * immediately.  A single dedicated worker serializes hardware and persistence work.  Disruptive settings wait until
- * the tuner is idle; designated gain controls can be applied live.  Both use the lifecycle reservation shared with
- * channel allocation.
+ * immediately.  A single dedicated worker serializes hardware and persistence work.  Sample-rate and center-retune
+ * settings wait until idle; designated gain, calibration, lock and safe frequency-limit controls can apply live.
  */
 public final class TunerSettingsService implements AutoCloseable
 {
@@ -317,28 +317,6 @@ public final class TunerSettingsService implements AutoCloseable
                 if(settings != null && !settings.isEmpty())
                 {
                     Map<String,Object> snapshot = new HashMap<>(settings);
-                    Map<String,Object> extents = new HashMap<>();
-                    snapshot.forEach((settingId, value) ->
-                    {
-                        if(TunerSettingCatalog.isFrequencyExtent(settingId))
-                        {
-                            extents.put(settingId, value);
-                        }
-                    });
-
-                    if(!extents.isEmpty() && isIdle(tuner) && stillPending(tuner, extents))
-                    {
-                        ApplyResult result = applyFrequencyExtents(tuner, extents);
-                        if(result == ApplyResult.APPLIED)
-                        {
-                            persistNeeded = true;
-                        }
-                        if(result != ApplyResult.RETRY)
-                        {
-                            extents.entrySet().forEach(entry -> consumePending(tuner, entry));
-                        }
-                    }
-
                     for(Map.Entry<String,Object> entry: snapshot.entrySet())
                     {
                         if(TunerSettingCatalog.isFrequencyExtent(entry.getKey()))
@@ -428,10 +406,20 @@ public final class TunerSettingsService implements AutoCloseable
         }
 
         boolean persistNeeded = false;
-
-        for(Map.Entry<String,Object> entry: new HashMap<>(settings).entrySet())
+        Map<String,Object> snapshot = new HashMap<>(settings);
+        Map<String,Object> extents = new HashMap<>();
+        snapshot.forEach((settingId, value) ->
         {
-            if(TunerSettingCatalog.requiresIdle(configuration(tuner), entry.getKey()))
+            if(TunerSettingCatalog.isFrequencyExtent(settingId))
+            {
+                extents.put(settingId, value);
+            }
+        });
+
+        for(Map.Entry<String,Object> entry: snapshot.entrySet())
+        {
+            if(TunerSettingCatalog.isFrequencyExtent(entry.getKey()) ||
+                TunerSettingCatalog.requiresIdle(configuration(tuner), entry.getKey()))
             {
                 continue;
             }
@@ -451,6 +439,21 @@ public final class TunerSettingsService implements AutoCloseable
             if(result != ApplyResult.RETRY)
             {
                 consumePending(tuner, entry);
+            }
+        }
+
+        // A paired min/max request is one transaction, never two independently visible intermediate ranges.  Run
+        // it last so a rejected active range remains visible even if another live field succeeded in this pass.
+        if(!extents.isEmpty() && stillPending(tuner, extents))
+        {
+            ApplyResult result = applyFrequencyExtents(tuner, extents);
+            if(result == ApplyResult.APPLIED)
+            {
+                persistNeeded = true;
+            }
+            if(result != ApplyResult.RETRY)
+            {
+                extents.entrySet().forEach(entry -> consumePending(tuner, entry));
             }
         }
 
@@ -536,16 +539,28 @@ public final class TunerSettingsService implements AutoCloseable
         Object previous = TunerSettingCatalog.readRaw(configuration, settingId);
         boolean written = false;
         boolean applied = false;
+        boolean locked = false;
 
         try
         {
+            if(controller != null && ("frequency_correction_ppm".equals(settingId) ||
+                "center_frequency_locked".equals(settingId)))
+            {
+                // Both controls share state with allocator retunes and automatic correction.  If that lock is
+                // currently held, retry from the worker instead of waiting on an HTTP or decoder thread.
+                locked = controller.getLock().tryLock();
+                if(!locked)
+                {
+                    return ApplyResult.RETRY;
+                }
+            }
             TunerSettingCatalog.write(configuration, settingId, value);
             written = true;
 
             if(controller != null)
             {
-                // Match the legacy editor's direct live gain/AGC setters.  Do not reserve the tuner lifecycle or
-                // acquire an outer controller lock here; either could make channel allocation fail fast.
+                // Use field-specific setters only.  Do not reserve the lifecycle or reapply the entire hardware
+                // configuration; a manual PPM correction may briefly retune, but never changes sample rate/gain.
                 applyToHardware(controller, configuration, settingId);
             }
 
@@ -557,12 +572,27 @@ public final class TunerSettingsService implements AutoCloseable
         {
             if(written && !applied)
             {
-                TunerSettingCatalog.write(configuration, settingId, previous);
+                // A decoder notification may fail after the hardware accepted PPM.  Keep the saved value aligned
+                // with the actual controller instead of claiming a rollback that never reached the device.
+                applied = controller != null && "frequency_correction_ppm".equals(settingId) &&
+                    Double.compare(controller.getFrequencyCorrection(), ((Number)value).doubleValue()) == 0;
+                if(!applied)
+                {
+                    TunerSettingCatalog.write(configuration, settingId, previous);
+                }
             }
 
-            mErrors.put(tuner, "Unable to apply " + settingId + "; tuner may have disconnected");
+            mErrors.put(tuner, applied ? "Applied " + settingId + " but a receiver notification failed" :
+                "Unable to apply " + settingId + "; tuner may have disconnected");
             mLog.warn("Unable to apply live tuner setting [{}] for [{}]", settingId, tuner.getId(), e);
-            return ApplyResult.CONSUMED;
+            return applied ? ApplyResult.APPLIED : ApplyResult.CONSUMED;
+        }
+        finally
+        {
+            if(locked)
+            {
+                controller.getLock().unlock();
+            }
         }
     }
 
@@ -603,7 +633,11 @@ public final class TunerSettingsService implements AutoCloseable
         }
     }
 
-    /** Update the two bounds as one idle maintenance operation, never exposing an invalid intermediate range. */
+    /**
+     * Apply frequency limits together on the settings worker.  With active channels the limits govern subsequent
+     * admission only: never move the current center or invalidate an already allocated channel.  When idle, retain
+     * the established behavior of clamping and retuning the center to a newly selected range.
+     */
     private ApplyResult applyFrequencyExtents(DiscoveredTuner tuner, Map<String,Object> requested)
     {
         TunerConfiguration configuration = configuration(tuner);
@@ -611,6 +645,17 @@ public final class TunerSettingsService implements AutoCloseable
         if(tuner.isEnabled() && (tuner.getTunerStatus() != TunerStatus.ENABLED || controller == null))
         {
             return ApplyResult.RETRY;
+        }
+        // An idle retune must reserve the lifecycle against a new allocation.  An active limit change only adjusts
+        // admission bounds, so it does not reserve a busy tuner and make decoder-originated allocations fail fast.
+        boolean reserved = false;
+        if(isIdle(tuner))
+        {
+            if(!tuner.tryAcquireForAllocation())
+            {
+                return ApplyResult.RETRY;
+            }
+            reserved = true;
         }
         boolean locked = false;
         long previousMinimum = 0;
@@ -623,8 +668,14 @@ public final class TunerSettingsService implements AutoCloseable
             if(controller != null)
             {
                 locked = controller.getLock().tryLock();
-                if(!locked || !isIdle(tuner))
+                if(!locked)
                 {
+                    return ApplyResult.RETRY;
+                }
+                if(!reserved && isIdle(tuner))
+                {
+                    // It became idle after the initial observation.  Retry with the lifecycle reservation rather
+                    // than racing a new channel allocation if the new range requires a center retune.
                     return ApplyResult.RETRY;
                 }
             }
@@ -638,17 +689,48 @@ public final class TunerSettingsService implements AutoCloseable
 
             if(controller != null)
             {
+                if(!isIdle(tuner))
+                {
+                    if(clampedFrequency != frequency)
+                    {
+                        throw new IllegalArgumentException("Frequency limits exclude the current center; " +
+                            "stop its channels or choose limits containing the center");
+                    }
+                    ChannelSourceManager channels = tuner.getTuner().getChannelSourceManager();
+                    if(channels == null)
+                    {
+                        throw new IllegalArgumentException("Active channels are unavailable for limit validation");
+                    }
+                    var allocated = channels.getTunerChannels();
+                    if(channels.getTunerChannelCount() > 0 && allocated.isEmpty())
+                    {
+                        throw new IllegalArgumentException("Active channels are unavailable for limit validation");
+                    }
+                    for(TunerChannel channel: allocated)
+                    {
+                        if(channel.getMinFrequency() < extents.minimumHz() ||
+                            channel.getMaxFrequency() > extents.maximumHz())
+                        {
+                            throw new IllegalArgumentException("Frequency limits exclude an active channel; " +
+                                "stop that channel or choose wider limits");
+                        }
+                    }
+                }
                 previousMinimum = controller.getMinimumFrequency();
                 previousMaximum = controller.getMaximumFrequency();
                 previousFrequency = frequency;
-                // First widen the allowed range, retune if needed, then narrow it.  Both the old and new center
-                // frequencies remain valid throughout, even when the two configured ranges do not overlap.
-                controller.setFrequencyExtents(Math.min(previousMinimum, extents.minimumHz()),
-                    Math.max(previousMaximum, extents.maximumHz()));
-                hardwareChanged = true;
                 if(clampedFrequency != frequency)
                 {
+                    // Only an idle tuner can reach this branch.  First widen, retune, then narrow, keeping both
+                    // centers valid throughout even when the old and new ranges do not overlap.
+                    controller.setFrequencyExtents(Math.min(previousMinimum, extents.minimumHz()),
+                        Math.max(previousMaximum, extents.maximumHz()));
+                    hardwareChanged = true;
                     controller.setFrequency(clampedFrequency);
+                }
+                else
+                {
+                    hardwareChanged = true;
                 }
                 controller.setFrequencyExtents(extents.minimumHz(), extents.maximumHz());
             }
@@ -665,10 +747,10 @@ public final class TunerSettingsService implements AutoCloseable
             {
                 try
                 {
-                    controller.setFrequencyExtents(Math.min(previousMinimum, controller.getMinimumFrequency()),
-                        Math.max(previousMaximum, controller.getMaximumFrequency()));
                     if(controller.getFrequency() != previousFrequency)
                     {
+                        controller.setFrequencyExtents(Math.min(previousMinimum, controller.getMinimumFrequency()),
+                            Math.max(previousMaximum, controller.getMaximumFrequency()));
                         controller.setFrequency(previousFrequency);
                     }
                     controller.setFrequencyExtents(previousMinimum, previousMaximum);
@@ -694,6 +776,10 @@ public final class TunerSettingsService implements AutoCloseable
             if(locked)
             {
                 controller.getLock().unlock();
+            }
+            if(reserved)
+            {
+                tuner.releaseAfterAllocation();
             }
         }
     }
@@ -850,6 +936,19 @@ public final class TunerSettingsService implements AutoCloseable
             return;
         }
 
+        // These are common to all physical tuner families.  Never fall through to controller.apply(configuration)
+        // while channels are running: that method also retunes and reapplies sample rate and gain controls.
+        if("frequency_correction_ppm".equals(settingId))
+        {
+            controller.setFrequencyCorrection(configuration.getFrequencyCorrection());
+            return;
+        }
+        if("center_frequency_locked".equals(settingId))
+        {
+            controller.setCenterFrequencyLocked(configuration.isCenterFrequencyLocked());
+            return;
+        }
+
         if(!TunerSettingCatalog.requiresIdle(configuration, settingId))
         {
             if(controller instanceof AirspyTunerController airspy &&
@@ -955,12 +1054,8 @@ public final class TunerSettingsService implements AutoCloseable
 
         switch(settingId)
         {
-            case "frequency_correction_ppm" ->
-                controller.setFrequencyCorrection(configuration.getFrequencyCorrection());
             case "automatic_ppm" -> controller.getTunerFrequencyErrorManager()
                 .setEnabled(configuration.getAutoPPMCorrectionEnabled());
-            case "center_frequency_locked" ->
-                controller.setCenterFrequencyLocked(configuration.isCenterFrequencyLocked());
             case "sample_rate" -> rsp.setSampleRate(rspConfiguration.getSampleRate());
             case "lna" -> rsp.getControlRsp().setGain(rspConfiguration.getLNA(),
                 rspConfiguration.getBasebandGainReduction());

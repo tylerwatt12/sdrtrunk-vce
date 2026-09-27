@@ -129,7 +129,7 @@ class TunerSettingCatalogTest
     }
 
     @Test
-    void frequencyLimitsAreGenericIdleOnlySettingsAndResetIsAnAction()
+    void frequencyLimitsAndCalibrationAreGenericLiveSettingsAndResetIsAnAction()
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner("airspy-extents");
         AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
@@ -140,14 +140,18 @@ class TunerSettingCatalogTest
         TunerSettingCatalog.SettingDescriptor reset = setting(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS);
         assertEquals("decimal", minimum.kind());
         assertEquals("MHz", minimum.unit());
-        assertTrue(minimum.requiresIdle());
+        assertFalse(minimum.requiresIdle());
+        assertFalse(maximum.requiresIdle());
+        assertFalse(setting(tuner, "frequency_correction_ppm").requiresIdle());
+        assertFalse(setting(tuner, "center_frequency_locked").requiresIdle());
+        assertTrue(setting(tuner, "sample_rate").requiresIdle());
         assertTrue(minimum.editable());
         assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, minimum.value());
         assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, maximum.value());
         assertEquals("action", reset.kind());
         assertEquals("frequency", reset.group());
         assertEquals(null, reset.value());
-        assertTrue(reset.requiresIdle());
+        assertFalse(reset.requiresIdle());
         assertEquals(195_000_000L, TunerSettingCatalog.validate(tuner,
             TunerSettingCatalog.MINIMUM_FREQUENCY, 195.0));
         assertEquals(true, TunerSettingCatalog.validate(tuner,

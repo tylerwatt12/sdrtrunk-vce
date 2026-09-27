@@ -36,6 +36,7 @@ import java.time.Duration;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -148,7 +149,7 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void activeGainUsesDirectSetterWhileFrequencyCorrectionWaitsForIdle() throws Exception
+    void activeGainPpmAndCenterLockUseTargetedSettersWithoutIdleQueue() throws Exception
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
         TrackingAirspyController controller = new TrackingAirspyController();
@@ -165,8 +166,10 @@ class TunerSettingsServiceTest
         {
             assertFalse(service.describe(tuner).stream().filter(setting -> setting.id().equals("if_gain"))
                 .findFirst().orElseThrow().requiresIdle());
-            assertTrue(service.describe(tuner).stream().filter(setting ->
+            assertFalse(service.describe(tuner).stream().filter(setting ->
                 setting.id().equals("frequency_correction_ppm")).findFirst().orElseThrow().requiresIdle());
+            assertFalse(service.describe(tuner).stream().filter(setting ->
+                setting.id().equals("center_frequency_locked")).findFirst().orElseThrow().requiresIdle());
 
             assertTrue(tuner.tryAcquireForAllocation());
             try
@@ -181,18 +184,24 @@ class TunerSettingsServiceTest
             assertEquals(7, configuration.getIFGain());
             assertEquals(0, controller.mApplyCalls.get());
 
-            service.set(tuner, "frequency_correction_ppm", 1.5);
-            Thread.sleep(100);
-            assertEquals(0.0, configuration.getFrequencyCorrection());
-            assertTrue(service.hasPending(tuner));
-
-            channels.mCount.set(0);
+            int reservationAttempts = tuner.mReservationAttempts.get();
             controller.setLockedSampleRate(true);
-            Thread.sleep(100);
-            assertEquals(0.0, configuration.getFrequencyCorrection());
-            controller.setLockedSampleRate(false);
+            service.set(tuner, "frequency_correction_ppm", 1.5);
             await(Duration.ofSeconds(3), () -> configuration.getFrequencyCorrection() == 1.5);
-            assertEquals(1, controller.mApplyCalls.get());
+            assertEquals(1.5, controller.getFrequencyCorrection());
+            assertTrue(controller.mTunedFrequencyCalls.get() > 0);
+            assertEquals(0, controller.mApplyCalls.get(), "manual PPM must not reapply sample rate or gain");
+
+            service.set(tuner, "center_frequency_locked", true);
+            await(Duration.ofSeconds(3), () -> controller.isCenterFrequencyLocked());
+            assertTrue(configuration.isCenterFrequencyLocked());
+            service.set(tuner, "center_frequency_locked", false);
+            await(Duration.ofSeconds(3), () -> !controller.isCenterFrequencyLocked());
+            assertFalse(configuration.isCenterFrequencyLocked());
+            assertEquals(0, controller.mApplyCalls.get());
+            assertFalse(service.hasPending(tuner));
+            assertEquals(reservationAttempts, tuner.mReservationAttempts.get(),
+                "live PPM and lock controls must not reserve a busy tuner");
         }
     }
 
@@ -254,6 +263,39 @@ class TunerSettingsServiceTest
 
             assertEquals(7, configuration.getIFGain());
             assertTrue(persistenceCompleted.await(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void rspManualPpmUsesOnlyFrequencySetterWhileChannelsAreActive() throws Exception
+    {
+        AtomicInteger tunedFrequencyCalls = new AtomicInteger();
+        AtomicInteger gainCalls = new AtomicInteger();
+        AtomicInteger sampleRateCalls = new AtomicInteger();
+        IControlRsp1 control = (IControlRsp1)Proxy.newProxyInstance(IControlRsp1.class.getClassLoader(),
+            new Class<?>[]{IControlRsp1.class}, (proxy, method, arguments) -> switch(method.getName())
+            {
+                case "setTunedFrequency" -> { tunedFrequencyCalls.incrementAndGet(); yield null; }
+                case "setGain" -> { gainCalls.incrementAndGet(); yield null; }
+                case "setSampleRate" -> { sampleRateCalls.incrementAndGet(); yield null; }
+                default -> defaultValue(method.getReturnType());
+            });
+        Rsp1TunerController controller = new Rsp1TunerController(control, null);
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        Rsp1TunerConfiguration configuration = new Rsp1TunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+
+        try(TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null))
+        {
+            service.set(tuner, "frequency_correction_ppm", 1.5);
+            await(Duration.ofSeconds(3), () -> configuration.getFrequencyCorrection() == 1.5);
+            assertEquals(1, tunedFrequencyCalls.get());
+            assertEquals(0, gainCalls.get());
+            assertEquals(0, sampleRateCalls.get());
+            assertFalse(service.hasPending(tuner));
         }
     }
 
@@ -407,12 +449,99 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void frequencyLimitsWaitForIdleThenMoveTogetherAndResetToHardwareBounds() throws Exception
+    void rejectedLivePpmRetuneRestoresConfigurationAndControllerCorrection() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        TrackingAirspyController controller = new TrackingAirspyController();
+        controller.mRejectRetune = true;
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            service.set(tuner, "frequency_correction_ppm", 2.5);
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null && !service.hasPending(tuner));
+            assertEquals(0.0, configuration.getFrequencyCorrection());
+            assertEquals(0.0, controller.getFrequencyCorrection());
+            assertEquals(0, saves.get());
+            assertEquals(0, controller.mApplyCalls.get());
+        }
+    }
+
+    @Test
+    void contendedControllerLockRetriesLivePpmWithoutBlockingRequest() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+
+        try(TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null))
+        {
+            controller.getLock().lock();
+            try
+            {
+                assertEquals("queued", service.set(tuner, "frequency_correction_ppm", 3.0).status());
+                Thread.sleep(100);
+                assertEquals(0.0, configuration.getFrequencyCorrection());
+                assertTrue(service.hasPending(tuner));
+            }
+            finally
+            {
+                controller.getLock().unlock();
+            }
+            await(Duration.ofSeconds(3), () -> configuration.getFrequencyCorrection() == 3.0);
+            assertFalse(service.hasPending(tuner));
+        }
+    }
+
+    @Test
+    void notificationFailureAfterLivePpmTuneKeepsAcceptedCorrectionForPersistence() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        TrackingAirspyController controller = new TrackingAirspyController();
+        controller.addListener(event ->
+        {
+            if(event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE)
+            {
+                throw new SourceException("Simulated decoder notification failure");
+            }
+        });
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            service.set(tuner, "frequency_correction_ppm", 1.2);
+            await(Duration.ofSeconds(3), () -> saves.get() == 1);
+            assertEquals(1.2, configuration.getFrequencyCorrection());
+            assertEquals(1.2, controller.getFrequencyCorrection());
+            assertTrue(service.error(tuner).contains("notification failed"));
+            assertFalse(service.hasPending(tuner));
+        }
+    }
+
+    @Test
+    void frequencyLimitsApplyLiveWithoutRetuningAndIdleChangesCanMoveCenter() throws Exception
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
         ExtentTrackingAirspyController controller = new ExtentTrackingAirspyController();
         CountingChannelManager channels = new CountingChannelManager();
         channels.mCount.set(1);
+        channels.mChannels.add(new TunerChannel(101_000_000L, 12_500));
         AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
         configuration.setMinimumFrequency(100_000_000L);
         configuration.setMaximumFrequency(200_000_000L);
@@ -423,36 +552,74 @@ class TunerSettingsServiceTest
         try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
             ignored -> true, ignored -> null))
         {
-            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 195.000001);
-            Thread.sleep(100);
-            assertEquals(100_000_000L, configuration.getMinimumFrequency());
-            assertTrue(service.hasPending(tuner));
-
-            channels.mCount.set(0);
-            await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() == 195_000_001L);
-            assertEquals(205_000_001L, configuration.getMaximumFrequency());
-            assertEquals(195_000_001L, configuration.getFrequency());
-            assertEquals(195_000_001L, controller.getFrequency());
-            assertEquals(195_000_001L, controller.getMinimumFrequency());
-            assertEquals(205_000_001L, controller.getMaximumFrequency());
-            assertEquals(1, saves.get());
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 90.0);
+            await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() == 90_000_000L);
+            assertEquals(101_100_000L, controller.getFrequency(), "active channels must not be retuned");
+            assertEquals(90_000_000L, controller.getMinimumFrequency());
+            assertEquals(200_000_000L, controller.getMaximumFrequency());
+            assertEquals(0, controller.mRetuneCalls.get());
             assertFalse(service.hasPending(tuner));
 
-            channels.mCount.set(1);
+            service.set(tuner, TunerSettingCatalog.MAXIMUM_FREQUENCY, 180.0);
+            await(Duration.ofSeconds(3), () -> configuration.getMaximumFrequency() == 180_000_000L);
+            assertEquals(101_100_000L, controller.getFrequency());
+            assertEquals(0, controller.mRetuneCalls.get());
+
             service.set(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true);
-            assertEquals(true, service.describe(tuner).stream().filter(setting ->
-                setting.id().equals(TunerSettingCatalog.RESET_FREQUENCY_EXTENTS))
-                .findFirst().orElseThrow().pendingValue());
-            Thread.sleep(100);
-            assertEquals(195_000_001L, configuration.getMinimumFrequency());
-            channels.mCount.set(0);
             await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() ==
                 AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ);
             assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ,
                 configuration.getMaximumFrequency());
-            assertEquals(2, saves.get());
+            assertEquals(101_100_000L, controller.getFrequency());
+            assertEquals(0, controller.mRetuneCalls.get());
+
+            channels.mCount.set(0);
+            channels.mChannels.clear();
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 195.000001);
+            await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() == 195_000_001L);
+            assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ,
+                configuration.getMaximumFrequency());
+            assertEquals(195_000_001L, configuration.getFrequency());
+            assertEquals(195_000_001L, controller.getFrequency());
+            assertEquals(1, controller.mRetuneCalls.get());
+            await(Duration.ofSeconds(3), () -> saves.get() == 4);
             assertFalse(service.hasPending(tuner));
             assertEquals(null, service.error(tuner));
+        }
+    }
+
+    @Test
+    void busyLimitRejectsCenterOrAllocatedChannelOutsideNewRangeWithoutRetune() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        ExtentTrackingAirspyController controller = new ExtentTrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        channels.mChannels.add(new TunerChannel(100_500_000L, 12_500));
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(200_000_000L);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 110.0);
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null && !service.hasPending(tuner));
+            assertTrue(service.error(tuner).contains("current center"));
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 101.0);
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null && !service.hasPending(tuner));
+            assertTrue(service.error(tuner).contains("active channel"));
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+            assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
+                controller.getMinimumFrequency());
+            assertEquals(101_100_000L, controller.getFrequency());
+            assertEquals(0, controller.mRetuneCalls.get());
+            assertEquals(0, saves.get());
         }
     }
 
@@ -489,12 +656,12 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void frequencyLimitActionCanBeCancelledBeforeIdleAndFailedRetuneRestoresPreviousBounds() throws Exception
+    void frequencyLimitActionCanBeCancelledBeforeWorkerClaimAndFailedRetuneRestoresBounds() throws Exception
     {
         FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
         ExtentTrackingAirspyController controller = new ExtentTrackingAirspyController();
         CountingChannelManager channels = new CountingChannelManager();
-        channels.mCount.set(1);
+        channels.mCount.set(0);
         AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
         configuration.setMinimumFrequency(100_000_000L);
         configuration.setMaximumFrequency(200_000_000L);
@@ -505,10 +672,19 @@ class TunerSettingsServiceTest
         try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
             ignored -> true, ignored -> null))
         {
-            service.set(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true);
-            assertEquals("cancelled", service.cancel(tuner,
-                TunerSettingCatalog.RESET_FREQUENCY_EXTENTS).status());
-            channels.mCount.set(0);
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                service.set(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true);
+                Thread.sleep(100); // Let the worker observe the held reservation and defer this operation.
+                assertEquals("cancelled", service.cancel(tuner,
+                    TunerSettingCatalog.RESET_FREQUENCY_EXTENTS).status());
+                assertFalse(service.hasPending(tuner));
+            }
+            finally
+            {
+                tuner.releaseAfterAllocation();
+            }
             Thread.sleep(100);
             assertEquals(100_000_000L, configuration.getMinimumFrequency());
             assertEquals(0, saves.get());
@@ -539,7 +715,7 @@ class TunerSettingsServiceTest
 
         try(TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null))
         {
-            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 100.0);
+            service.set(tuner, "automatic_ppm", false);
             Thread.sleep(1_200);
             assertTrue(service.hasPending(tuner));
             assertEquals(0, tuner.mReservationAttempts.get(),
@@ -762,6 +938,8 @@ class TunerSettingsServiceTest
     {
         private final AtomicInteger mIfGainCalls = new AtomicInteger();
         private final AtomicInteger mApplyCalls = new AtomicInteger();
+        private final AtomicInteger mTunedFrequencyCalls = new AtomicInteger();
+        private volatile boolean mRejectRetune;
 
         private TrackingAirspyController()
         {
@@ -772,6 +950,16 @@ class TunerSettingsServiceTest
         public void setIFGain(int value)
         {
             mIfGainCalls.incrementAndGet();
+        }
+
+        @Override
+        public synchronized void setTunedFrequency(long frequency) throws SourceException
+        {
+            mTunedFrequencyCalls.incrementAndGet();
+            if(mRejectRetune)
+            {
+                throw new SourceException("Simulated PPM hardware retune failure");
+            }
         }
 
         @Override
@@ -815,6 +1003,7 @@ class TunerSettingsServiceTest
     private static final class ExtentTrackingAirspyController extends AirspyTunerController
     {
         private long mFrequency = 101_100_000L;
+        private final AtomicInteger mRetuneCalls = new AtomicInteger();
         private boolean mRejectRetune;
 
         private ExtentTrackingAirspyController()
@@ -839,6 +1028,7 @@ class TunerSettingsServiceTest
             {
                 throw new SourceException("Retuned outside frequency limits");
             }
+            mRetuneCalls.incrementAndGet();
             mFrequency = frequency;
         }
     }
@@ -861,8 +1051,9 @@ class TunerSettingsServiceTest
     private static final class CountingChannelManager extends ChannelSourceManager
     {
         private final AtomicInteger mCount = new AtomicInteger();
+        private final SortedSet<TunerChannel> mChannels = new ConcurrentSkipListSet<>();
 
-        @Override public SortedSet<TunerChannel> getTunerChannels() { return new TreeSet<>(); }
+        @Override public SortedSet<TunerChannel> getTunerChannels() { return new TreeSet<>(mChannels); }
         @Override public String getStateDescription() { return "test"; }
         @Override public int getTunerChannelCount() { return mCount.get(); }
         @Override public void stopAllChannels() { mCount.set(0); }
