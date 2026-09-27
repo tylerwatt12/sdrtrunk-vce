@@ -156,7 +156,7 @@ public final class ApplicationMigrationSuccessDialog
             "Your database was updated successfully.";
         String recovery = migration.safetyBackup() != null ?
             "\n\nBackup of your previous database:\n" + migration.safetyBackup() :
-            "\n\nNo recovery copy was created because backup and full safety checks were skipped.";
+            "\n\nNo recovery copy was created.";
         return result + "\n\n" + migration.helperOutput() + recovery;
     }
 

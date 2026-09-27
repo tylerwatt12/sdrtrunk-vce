@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
@@ -29,6 +30,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.EnumSet;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -238,6 +242,45 @@ class SqliteDatabaseSnapshotTest
     }
 
     @Test
+    void cancellableDigestStopsBetweenBoundedReads() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("digest-source.bin");
+        Files.write(source, new byte[512 * 1024]);
+        AtomicInteger checks = new AtomicInteger();
+
+        assertThrows(CancellationException.class,
+            () -> SqliteDatabaseSnapshot.sha256(source, () -> checks.incrementAndGet() > 4));
+
+        assertTrue(checks.get() > 4);
+        assertEquals(512 * 1024, Files.size(source));
+    }
+
+    @Test
+    void cancellationDuringChunkedExternalCopyRemovesPrivateWorkAndLeavesSourceUnchanged() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("cancellable-source.sqlite");
+        Path destination = mTemporaryFolder.resolve("cancellable-destination.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + source);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("CREATE TABLE sample(payload BLOB NOT NULL)");
+            statement.executeUpdate("INSERT INTO sample(payload) VALUES (zeroblob(2097152))");
+        }
+        byte[] sourceBytes = Files.readAllBytes(source);
+        BooleanSupplier cancellation = () -> hasPartialPrivateCopy(mTemporaryFolder);
+
+        assertThrows(CancellationException.class,
+            () -> SqliteDatabaseSnapshot.createExternal(source, destination, cancellation));
+
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source));
+        assertFalse(Files.exists(destination));
+        try(var children = Files.list(mTemporaryFolder))
+        {
+            assertTrue(children.noneMatch(path -> path.getFileName().toString().startsWith(".sqlite-source-")));
+        }
+    }
+
+    @Test
     void refusesSymbolicLinkDatabaseAndSidecars() throws Exception
     {
         Path source = mTemporaryFolder.resolve("source.sqlite");
@@ -288,6 +331,30 @@ class SqliteDatabaseSnapshotTest
         {
             assertTrue(resultSet.next());
             return resultSet.getString(1);
+        }
+    }
+
+    private static boolean hasPartialPrivateCopy(Path parent)
+    {
+        try(var children = Files.list(parent))
+        {
+            return children.filter(path -> path.getFileName().toString().startsWith(".sqlite-source-"))
+                .map(path -> path.resolve("source.sqlite"))
+                .anyMatch(path ->
+                {
+                    try
+                    {
+                        return Files.isRegularFile(path) && Files.size(path) > 0;
+                    }
+                    catch(IOException exception)
+                    {
+                        throw new UncheckedIOException(exception);
+                    }
+                });
+        }
+        catch(IOException exception)
+        {
+            throw new UncheckedIOException(exception);
         }
     }
 }

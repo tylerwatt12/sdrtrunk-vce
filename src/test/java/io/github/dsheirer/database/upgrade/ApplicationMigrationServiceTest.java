@@ -44,8 +44,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1049,6 +1051,64 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    void approvalCancellationDuringPrivatePlanInterruptsSqlAndCleansScratch() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("cancelled-plan-source"));
+        SdrTrunkTestDatabase.create(database);
+        byte[] sourceHash = sha256(database);
+        Path scratch = mTemporaryFolder.resolve("cancelled-plan-scratch");
+        AtomicBoolean checkingCopiedDatabase = new AtomicBoolean();
+        List<String> progress = new ArrayList<>();
+        BooleanSupplier cancellation = () -> checkingCopiedDatabase.get() && calledFromSqliteNative();
+
+        CancellationException exception = assertThrows(CancellationException.class,
+            () -> ApplicationMigrationService.readMigrationApproval(database, scratch, phase ->
+            {
+                progress.add(phase);
+                if("Checking the copied database".equals(phase))
+                {
+                    checkingCopiedDatabase.set(true);
+                }
+            }, cancellation));
+
+        assertTrue(exception.getCause() instanceof SQLException);
+        assertEquals(9, ((SQLException)exception.getCause()).getErrorCode());
+        assertTrue(progress.contains("Cleaning temporary review files"));
+        assertArrayEquals(sourceHash, sha256(database));
+        try(var children = Files.list(scratch))
+        {
+            assertTrue(children.findAny().isEmpty(), "cancelled approval scratch must be removed");
+        }
+    }
+
+    @Test
+    void approvalCancellationRequestedDuringCleanupReturnsOnlyAfterScratchIsEmpty() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(
+            mTemporaryFolder.resolve("cleanup-cancel-source"));
+        SdrTrunkTestDatabase.create(database);
+        byte[] sourceHash = sha256(database);
+        Path scratch = mTemporaryFolder.resolve("cleanup-cancel-scratch");
+        AtomicBoolean cancellation = new AtomicBoolean();
+
+        assertThrows(CancellationException.class,
+            () -> ApplicationMigrationService.readMigrationApproval(database, scratch, phase ->
+            {
+                if("Cleaning temporary review files".equals(phase))
+                {
+                    cancellation.set(true);
+                }
+            }, cancellation::get));
+
+        assertArrayEquals(sourceHash, sha256(database));
+        try(var children = Files.list(scratch))
+        {
+            assertTrue(children.findAny().isEmpty(), "cleanup must finish before cancellation returns");
+        }
+    }
+
+    @Test
     void preflightsAndImportsRepairableCurrentPreferencesWithoutChangingSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("repairable-current-source");
@@ -1181,6 +1241,7 @@ class ApplicationMigrationServiceTest
             "Step 1 of 2 — Add opt-in encrypted traffic-channel suppression"));
         assertTrue(progress.contains(
             "Step 2 of 2 — Retain exact P25 radio inhibit and uninhibit activity"));
+        assertTrue(progress.contains("Updating database directly"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -1835,6 +1896,18 @@ class ApplicationMigrationServiceTest
     private static byte[] sha256(Path path) throws Exception
     {
         return MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path));
+    }
+
+    private static boolean calledFromSqliteNative()
+    {
+        for(StackTraceElement frame: Thread.currentThread().getStackTrace())
+        {
+            if("org.sqlite.core.NativeDB".equals(frame.getClassName()))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String journalMode(Path database) throws Exception

@@ -153,7 +153,7 @@ class ApplicationMigrationSuccessDialogTest
             new ApplicationMigrationService.MigrationResult(false, null, null, helper,
                 PreviousBuildLocator.InputScope.DATABASE_FILE);
         assertEquals("Your database was updated successfully.\n\n" + helper +
-            "\n\nNo recovery copy was created because backup and full safety checks were skipped.",
+            "\n\nNo recovery copy was created.",
             ApplicationMigrationSuccessDialog.currentDatabaseReport(withoutBackup));
 
         ApplicationMigrationService.MigrationResult portable = new ApplicationMigrationService.MigrationResult(

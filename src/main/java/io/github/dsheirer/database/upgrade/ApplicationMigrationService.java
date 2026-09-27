@@ -46,7 +46,12 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import org.sqlite.ProgressHandler;
 import org.sqlite.SQLiteConfig;
+import org.sqlite.SQLiteErrorCode;
 
 /**
  * Stages, validates, and promotes portable data accepted by the current sdrtrunk-vce build.
@@ -62,6 +67,8 @@ public final class ApplicationMigrationService
     private static final String JMBE_DIRECTORY = "jmbe";
     private static final String MODULES_DIRECTORY = "modules";
     private static final String OPTIONAL_PROFILE_REPORT_HEADER = "Optional profile items:";
+    private static final int SQLITE_PROGRESS_VM_CALLS = 1_000;
+    private static final BooleanSupplier NEVER_CANCELLED = () -> false;
 
     private final Snapshotter mExternalSnapshotter;
     private final Snapshotter mLiveSnapshotter;
@@ -590,7 +597,7 @@ public final class ApplicationMigrationService
             throw new IOException("The database has a recovery journal. Use the safe update path instead.");
         }
 
-        listener.update("No-backup update selected — changes cannot be rolled back after commit");
+        listener.update("Updating database directly");
         listener.update("Checking temporary disk space");
         ensureFreeSpace(database.getParent(), safeAdd(safeMultiply(sqliteFootprint(database), 2),
             FREE_SPACE_MARGIN_BYTES));
@@ -693,6 +700,17 @@ public final class ApplicationMigrationService
                                                                ProgressListener progress)
         throws IOException, SQLException
     {
+        return readMigrationApproval(database, scratchDirectory, progress, NEVER_CANCELLED);
+    }
+
+    /** Creates approval scratch data with cooperative cancellation and complete cleanup before cancellation returns. */
+    public static ApprovedMigrationPlan readMigrationApproval(Path database, Path scratchDirectory,
+                                                               ProgressListener progress,
+                                                               BooleanSupplier cancellation)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(cancellation, "Migration approval cancellation cannot be null");
+        requireNotCancelled(cancellation);
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path normalized = database.toAbsolutePath().normalize();
         Path scratch = Objects.requireNonNull(scratchDirectory, "Migration scratch directory cannot be null")
@@ -707,16 +725,21 @@ public final class ApplicationMigrationService
         ensureFreeSpace(scratch, requiredSpace);
         Path previewDirectory = Files.createTempDirectory(scratch, ".sdrtrunk-migration-approval-");
         Path previewDatabase = previewDirectory.resolve(SdrTrunkDatabasePath.DATABASE_FILENAME);
+        ApprovedMigrationPlan approval = null;
         Throwable primaryFailure = null;
         try
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(previewDirectory);
             listener.update("Creating a temporary safety copy");
-            SqliteDatabaseSnapshot.createExternal(normalized, previewDatabase);
+            requireNotCancelled(cancellation);
+            SqliteDatabaseSnapshot.createExternal(normalized, previewDatabase, cancellation);
             listener.update("Checking the copied database");
-            DatabaseMigrationChain.PreflightReport plan = readPrivateMigrationPlan(previewDatabase);
+            requireNotCancelled(cancellation);
+            DatabaseMigrationChain.PreflightReport plan = readPrivateMigrationPlan(previewDatabase, cancellation);
             listener.update("Fingerprinting the copied database");
-            return new ApprovedMigrationPlan(plan, SqliteDatabaseSnapshot.sha256(previewDatabase));
+            requireNotCancelled(cancellation);
+            approval = new ApprovedMigrationPlan(plan,
+                SqliteDatabaseSnapshot.sha256(previewDatabase, cancellation));
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -732,7 +755,12 @@ public final class ApplicationMigrationService
             }
             catch(IOException cleanupFailure)
             {
-                if(primaryFailure != null)
+                if(primaryFailure instanceof CancellationException)
+                {
+                    cleanupFailure.addSuppressed(primaryFailure);
+                    throw cleanupFailure;
+                }
+                else if(primaryFailure != null)
                 {
                     primaryFailure.addSuppressed(cleanupFailure);
                 }
@@ -742,21 +770,120 @@ public final class ApplicationMigrationService
                 }
             }
         }
+        requireNotCancelled(cancellation);
+        return Objects.requireNonNull(approval, "Migration approval was not produced");
     }
 
     /** Reads an application-owned standalone snapshot without making another full-size copy. */
     private static DatabaseMigrationChain.PreflightReport readPrivateMigrationPlan(Path database)
         throws IOException, SQLException
     {
+        return readPrivateMigrationPlan(database, null);
+    }
+
+    /** Reads a private snapshot with SQLite VM cancellation for integrity and format-inspection scans. */
+    private static DatabaseMigrationChain.PreflightReport readPrivateMigrationPlan(Path database,
+                                                                                    BooleanSupplier cancellation)
+        throws IOException, SQLException
+    {
+        requireNotCancelled(cancellation);
         Path normalized = database.toAbsolutePath().normalize();
         SqliteDatabaseSnapshot.requireSourceUsable(normalized);
         try(Connection connection = openReadOnly(normalized))
         {
-            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-            DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
-            requireSourceQuickCheck(connection);
-            return DatabaseMigrationChain.planForApplicationMigration(connection, source);
+            boolean handlerInstalled = false;
+            AtomicBoolean cancellationInterruptedSql = new AtomicBoolean();
+            Throwable primaryFailure = null;
+            try
+            {
+                if(cancellation != null)
+                {
+                    ProgressHandler.setHandler(connection, SQLITE_PROGRESS_VM_CALLS, new ProgressHandler()
+                    {
+                        @Override
+                        protected int progress()
+                        {
+                            if(cancellation.getAsBoolean())
+                            {
+                                cancellationInterruptedSql.set(true);
+                                return 1;
+                            }
+                            return 0;
+                        }
+                    });
+                    handlerInstalled = true;
+                }
+
+                requireNotCancelled(cancellation);
+                SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+                requireNotCancelled(cancellation);
+                DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+                requireNotCancelled(cancellation);
+                requireSourceQuickCheck(connection);
+                requireNotCancelled(cancellation);
+                DatabaseMigrationChain.PreflightReport plan =
+                    DatabaseMigrationChain.planForApplicationMigration(connection, source);
+                requireNotCancelled(cancellation);
+                return plan;
+            }
+            catch(SQLException failure)
+            {
+                if(cancellationInterruptedSql.get() &&
+                    failure.getErrorCode() == SQLiteErrorCode.SQLITE_INTERRUPT.code)
+                {
+                    CancellationException cancelled = cancellationException();
+                    cancelled.initCause(failure);
+                    primaryFailure = cancelled;
+                    throw cancelled;
+                }
+                primaryFailure = failure;
+                throw failure;
+            }
+            catch(RuntimeException | Error failure)
+            {
+                primaryFailure = failure;
+                throw failure;
+            }
+            finally
+            {
+                if(handlerInstalled)
+                {
+                    try
+                    {
+                        ProgressHandler.clearHandler(connection);
+                    }
+                    catch(SQLException cleanupFailure)
+                    {
+                        if(primaryFailure instanceof CancellationException)
+                        {
+                            cleanupFailure.addSuppressed(primaryFailure);
+                            throw cleanupFailure;
+                        }
+                        else if(primaryFailure != null)
+                        {
+                            primaryFailure.addSuppressed(cleanupFailure);
+                        }
+                        else
+                        {
+                            throw cleanupFailure;
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private static void requireNotCancelled(BooleanSupplier cancellation)
+    {
+        if(cancellation != null && cancellation.getAsBoolean())
+        {
+            throw cancellationException();
+        }
+    }
+
+    private static CancellationException cancellationException()
+    {
+        return new CancellationException("Database safety review was skipped.");
     }
 
     private static ApprovedMigrationPlan readPrivateApprovedMigrationPlan(Path database)

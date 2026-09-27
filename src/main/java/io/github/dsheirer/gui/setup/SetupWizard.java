@@ -314,7 +314,7 @@ public final class SetupWizard extends JDialog
         exit.setMnemonic(java.awt.event.KeyEvent.VK_X);
         cancel.setVisible(false);
         cancel.addActionListener(e -> {
-            if(cancellation != null) { cancel.setEnabled(false); operation = "Cancelling — waiting for a safe boundary…"; cancellation.run(); }
+            if(cancellation != null) cancellation.run();
         });
         navigation.add(exit); navigation.add(cancel); navigation.add(back); navigation.add(next);
         footer.add(navigation);
@@ -487,39 +487,45 @@ public final class SetupWizard extends JDialog
         {
             paragraph("Your settings were saved by an earlier version. We’ll check them before making any changes.");
             notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
-            if(startupMigrationPlan != null && startupMigrationPlan.requiresMigration())
-            {
-                migrationDetails(startupMigrationPlan);
-            }
-            if(startupMigrationPlan != null && startupMigrationPlan.source().requiresMigration())
-            {
-                notice("Need the receiver back sooner?", "Skip backup and safety checks updates this database " +
-                    "directly. It is faster, but after it commits there is no automatic recovery copy and the " +
-                    "previous VCE version cannot reopen this database. The required schema update still runs and " +
-                    "may take several minutes.", false);
-                button("Skip backup & safety checks", this::confirmFastMigration);
-            }
-            Runnable inspect = () -> job("Checking your saved settings…", null, () -> {
-                ApplicationMigrationService.ApprovedMigrationPlan approval =
-                    ApplicationMigrationService.readMigrationApproval(database, database.getParent(),
-                        this::migrationProgress);
-                return new CurrentMigrationInspection(approval.plan(), approval);
-            }, inspection -> {
+            Runnable inspect = () -> {
+                AtomicBoolean directUpdateRequested = new AtomicBoolean();
+                boolean directUpdateAvailable = startupMigrationPlan != null &&
+                    startupMigrationPlan.source().requiresMigration();
+                Runnable requestDirectUpdate = directUpdateAvailable ? () -> {
+                    if(directUpdateRequested.compareAndSet(false, true))
+                    {
+                        cancel.setEnabled(false);
+                        operation = "Stopping safety checks…";
+                    }
+                } : null;
+                job("Checking your saved settings…", "Skip safety checks & update now", requestDirectUpdate, () -> {
+                    ApplicationMigrationService.ApprovedMigrationPlan approval =
+                        ApplicationMigrationService.readMigrationApproval(database, database.getParent(),
+                            value -> {
+                                if(directUpdateRequested.get()) output.accept(value);
+                                else migrationProgress(value);
+                            }, directUpdateRequested::get);
+                    return new CurrentMigrationInspection(approval.plan(), approval);
+                }, inspection -> {
+                    if(directUpdateRequested.get())
+                    {
+                        confirmFastMigration();
+                        return;
+                    }
                     DatabaseMigrationChain.PreflightReport plan = inspection.plan();
                     page.removeAll();
                     paragraph("Your saved settings can be used with this version. Before updating, we’ll save a recovery copy. Your recorded audio files will stay unchanged.");
                     migrationDetails(plan);
                     if(plan.source().requiresMigration())
                     {
-                        notice("Faster update available", "You can still skip the backup and full safety checks. " +
-                            "The database update itself remains transactional.", false);
-                        button("Skip backup & safety checks", this::confirmFastMigration);
+                        button("Update without backup", this::confirmFastMigration);
                     }
                     next.setText(plan.requiresMigration() ? "Back up & update" : "Continue setup");
                     accept = plan.requiresMigration() ? () -> migrate(null, false, false, inspection.approval()) :
                         () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
                     page.revalidate();
-                });
+                }, ignored -> confirmFastMigration());
+            };
             next.setText("Check safely"); accept = inspect;
             return;
         }
@@ -633,12 +639,10 @@ public final class SetupWizard extends JDialog
     private void confirmFastMigration()
     {
         int selected = JOptionPane.showOptionDialog(this,
-            "This updates the active database without making a recovery copy or running full-file checks. " +
-                "If the computer loses power or storage fails during the update, manual recovery may be required. " +
-                "After commit, this database cannot be opened by the previous VCE version. The required schema " +
-                "update still runs and may take several minutes.",
+            "Continue without a recovery copy or full safety checks? The schema update still runs, but the " +
+                "previous VCE version cannot reopen this database after it completes.",
             "Update without a backup?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
-            new Object[]{"Update without backup", "Cancel"}, "Cancel");
+            new Object[]{"Update now", "Cancel"}, "Cancel");
         if(selected == 0)
         {
             migrate(null, false, false, null, true);
@@ -1075,15 +1079,27 @@ public final class SetupWizard extends JDialog
 
     private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success)
     {
+        String cancelCaption = step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation";
+        Runnable cancellationRequest = cancelAction == null ? null : () -> {
+            cancel.setEnabled(false);
+            operation = "Stopping safely…";
+            cancelAction.run();
+        };
+        job(description, cancelCaption, cancellationRequest, work, success, null);
+    }
+
+    private <T> void job(String description, String cancelCaption, Runnable cancellationRequest, Callable<T> work,
+                         Consumer<T> success, Consumer<Throwable> stoppedHandler)
+    {
         if(busy) return;
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
-        busy=true; cancellation=cancelAction; long attempt=++generation;
+        busy=true; cancellation=cancellationRequest; long attempt=++generation;
         if(progress != null) { progress.set(step,RUNNING); persist(); }
         danger.setVisible(false); errorReport=""; copyError.setVisible(false); copyError.setText("Copy error");
         operation=description; operationStartedNanos=System.nanoTime(); completed=0; total=0;
         output.clear(); output.accept(description);
-        meter.setVisible(true); cancel.setVisible(cancelAction!=null); cancel.setEnabled(true); updateNavigation();
-        cancel.setText(step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation");
+        meter.setVisible(true); cancel.setVisible(cancellationRequest!=null); cancel.setEnabled(true); updateNavigation();
+        cancel.setText(cancelCaption);
         diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
         worker.submit(() -> {
             T result=null; Throwable failure=null;
@@ -1094,7 +1110,15 @@ public final class SetupWizard extends JDialog
                 busy=false; cancellation=null; cancel.setVisible(false); meter.setVisible(false); updateNavigation();
                 if(problem!=null)
                 {
-                    boolean stopped=problem instanceof InterruptedException;
+                    boolean stopped=problem instanceof InterruptedException ||
+                        problem instanceof CancellationException;
+                    if(stopped && stoppedHandler != null)
+                    {
+                        if(progress != null) { progress.set(step, previous); persist(); }
+                        attempt(() -> stoppedHandler.accept(problem));
+                        updateNavigation();
+                        return;
+                    }
                     if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
                     if(step == SetupStep.SOURCE &&
                         problem instanceof ApplicationMigrationService.LiveDatabaseRecoveryException recovery)

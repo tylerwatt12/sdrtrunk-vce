@@ -13,11 +13,13 @@ package io.github.dsheirer.database.upgrade;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.FileVisitResult;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -26,6 +28,9 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HexFormat;
+import java.util.Objects;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteConnection;
 
@@ -37,6 +42,8 @@ public final class SqliteDatabaseSnapshot
 {
     private static final int SQLITE_OK = 0;
     private static final int BUSY_TIMEOUT_MILLISECONDS = 10_000;
+    private static final int COPY_BUFFER_BYTES = 64 * 1024;
+    private static final BooleanSupplier NEVER_CANCELLED = () -> false;
 
     private SqliteDatabaseSnapshot()
     {
@@ -48,6 +55,15 @@ public final class SqliteDatabaseSnapshot
      */
     public static void create(Path source, Path destination) throws IOException, SQLException
     {
+        create(source, destination, NEVER_CANCELLED);
+    }
+
+    /** Creates an online snapshot while honoring cancellation at every application-controlled safe boundary. */
+    static void create(Path source, Path destination, BooleanSupplier cancellation)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(cancellation, "SQLite snapshot cancellation cannot be null");
+        requireNotCancelled(cancellation);
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
         requireSourceUsable(normalizedSource);
@@ -65,9 +81,11 @@ public final class SqliteDatabaseSnapshot
         try
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(privateDirectory);
-            createOnline(normalizedSource, privateSnapshot);
+            requireNotCancelled(cancellation);
+            createOnline(normalizedSource, privateSnapshot, cancellation);
             FileAccessAttributeSnapshot.restrictSensitiveFile(privateSnapshot);
             requireUnusedDestination(normalizedDestination);
+            requireNotCancelled(cancellation);
             Files.move(privateSnapshot, normalizedDestination);
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
@@ -101,6 +119,18 @@ public final class SqliteDatabaseSnapshot
      */
     public static void createExternal(Path source, Path destination) throws IOException, SQLException
     {
+        createExternal(source, destination, NEVER_CANCELLED);
+    }
+
+    /**
+     * Creates a source-immutable snapshot while honoring cancellation at application-controlled copy, hash, and
+     * recovery boundaries. Any partial private work is removed before cancellation is returned to the caller.
+     */
+    public static void createExternal(Path source, Path destination, BooleanSupplier cancellation)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(cancellation, "SQLite snapshot cancellation cannot be null");
+        requireNotCancelled(cancellation);
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
         requireSourceUsable(normalizedSource);
@@ -112,22 +142,25 @@ public final class SqliteDatabaseSnapshot
         }
         Files.createDirectories(destinationParent);
 
-        ExternalSourceState sourceState = captureExternalSourceState(normalizedSource);
+        ExternalSourceState sourceState = captureExternalSourceState(normalizedSource, cancellation);
+        requireNotCancelled(cancellation);
         Path privateDirectory = Files.createTempDirectory(destinationParent, ".sqlite-source-");
         Path privateSource = privateDirectory.resolve("source.sqlite");
         Throwable primaryFailure = null;
         try
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(privateDirectory);
-            copyCapturedFile(normalizedSource, privateSource, sourceState.database());
+            requireNotCancelled(cancellation);
+            copyCapturedFile(normalizedSource, privateSource, sourceState.database(), cancellation);
             copyCapturedFile(Path.of(normalizedSource + "-journal"), Path.of(privateSource + "-journal"),
-                sourceState.journal());
+                sourceState.journal(), cancellation);
             copyCapturedFile(Path.of(normalizedSource + "-wal"), Path.of(privateSource + "-wal"),
-                sourceState.wal());
-            requireExternalCopyMatches(privateSource, sourceState);
-            requireExternalSourceUnchanged(normalizedSource, sourceState);
-            recoverPrivateSource(privateSource);
-            create(privateSource, normalizedDestination);
+                sourceState.wal(), cancellation);
+            requireExternalCopyMatches(privateSource, sourceState, cancellation);
+            requireExternalSourceUnchanged(normalizedSource, sourceState, cancellation);
+            recoverPrivateSource(privateSource, cancellation);
+            requireNotCancelled(cancellation);
+            create(privateSource, normalizedDestination, cancellation);
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -154,24 +187,49 @@ public final class SqliteDatabaseSnapshot
         }
     }
 
-    private static void copyCapturedFile(Path source, Path destination, FileState expected) throws IOException
+    private static void copyCapturedFile(Path source, Path destination, FileState expected,
+                                         BooleanSupplier cancellation) throws IOException
     {
         if(expected.exists())
         {
-            Files.copy(source, destination);
+            requireNotCancelled(cancellation);
+            try(InputStream input = Files.newInputStream(source);
+                OutputStream output = Files.newOutputStream(destination, StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE))
+            {
+                byte[] buffer = new byte[COPY_BUFFER_BYTES];
+                int read;
+                while((read = input.read(buffer)) >= 0)
+                {
+                    requireNotCancelled(cancellation);
+                    if(read > 0)
+                    {
+                        output.write(buffer, 0, read);
+                    }
+                }
+            }
+            requireNotCancelled(cancellation);
         }
     }
 
     static void requireExternalCopyMatches(Path privateSource, ExternalSourceState expected) throws IOException
     {
-        requireCopiedContent(privateSource, expected.database());
-        requireCopiedContent(Path.of(privateSource + "-journal"), expected.journal());
-        requireCopiedContent(Path.of(privateSource + "-wal"), expected.wal());
+        requireExternalCopyMatches(privateSource, expected, NEVER_CANCELLED);
     }
 
-    private static void requireCopiedContent(Path copied, FileState expected) throws IOException
+    private static void requireExternalCopyMatches(Path privateSource, ExternalSourceState expected,
+                                                   BooleanSupplier cancellation) throws IOException
     {
-        FileState actual = fileState(copied);
+        requireCopiedContent(privateSource, expected.database(), cancellation);
+        requireCopiedContent(Path.of(privateSource + "-journal"), expected.journal(), cancellation);
+        requireCopiedContent(Path.of(privateSource + "-wal"), expected.wal(), cancellation);
+    }
+
+    private static void requireCopiedContent(Path copied, FileState expected, BooleanSupplier cancellation)
+        throws IOException
+    {
+        requireNotCancelled(cancellation);
+        FileState actual = fileState(copied, cancellation);
         if(actual.exists() != expected.exists() || actual.size() != expected.size() ||
             !actual.sha256().equals(expected.sha256()))
         {
@@ -180,9 +238,10 @@ public final class SqliteDatabaseSnapshot
         }
     }
 
-    private static void createOnline(Path source, Path destination)
+    private static void createOnline(Path source, Path destination, BooleanSupplier cancellation)
         throws IOException, SQLException
     {
+        requireNotCancelled(cancellation);
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
         requireReadableSource(normalizedSource);
@@ -206,12 +265,16 @@ public final class SqliteDatabaseSnapshot
                 throw new SQLException("The configured JDBC driver is not the SQLite driver.");
             }
 
+            requireNotCancelled(cancellation);
             int result = sqliteConnection.getDatabase().backup("main", normalizedDestination.toString(), null);
 
             if(result != SQLITE_OK)
             {
                 throw new SQLException("SQLite backup returned status " + result + ".");
             }
+            //The sqlite-jdbc backup loop does not expose a cancellable progress callback. Treat it as one safe
+            //boundary and honor a request immediately after the native call returns.
+            requireNotCancelled(cancellation);
         }
         catch(SQLException | RuntimeException e)
         {
@@ -233,8 +296,9 @@ public final class SqliteDatabaseSnapshot
      * deliberately writable because rollback-journal recovery cannot run through a read-only connection. The path is
      * an application-owned private copy; the selected source is never opened here.
      */
-    private static void recoverPrivateSource(Path privateSource) throws SQLException
+    private static void recoverPrivateSource(Path privateSource, BooleanSupplier cancellation) throws SQLException
     {
+        requireNotCancelled(cancellation);
         SQLiteConfig config = new SQLiteConfig();
         config.setBusyTimeout(BUSY_TIMEOUT_MILLISECONDS);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + privateSource,
@@ -246,6 +310,7 @@ public final class SqliteDatabaseSnapshot
                 throw new SQLException("The private SQLite source copy could not be recovered safely.");
             }
         }
+        requireNotCancelled(cancellation);
     }
 
     static void requireSourceUsable(Path source) throws IOException
@@ -294,15 +359,31 @@ public final class SqliteDatabaseSnapshot
 
     static ExternalSourceState captureExternalSourceState(Path source) throws IOException
     {
+        return captureExternalSourceState(source, NEVER_CANCELLED);
+    }
+
+    private static ExternalSourceState captureExternalSourceState(Path source, BooleanSupplier cancellation)
+        throws IOException
+    {
+        requireNotCancelled(cancellation);
         Path normalized = source.toAbsolutePath().normalize();
-        return new ExternalSourceState(fileState(normalized), fileState(Path.of(normalized + "-journal")),
-            fileState(Path.of(normalized + "-wal")), fileState(Path.of(normalized + "-shm")));
+        return new ExternalSourceState(fileState(normalized, cancellation),
+            fileState(Path.of(normalized + "-journal"), cancellation),
+            fileState(Path.of(normalized + "-wal"), cancellation),
+            fileState(Path.of(normalized + "-shm"), cancellation));
     }
 
     static void requireExternalSourceUnchanged(Path source, ExternalSourceState expected) throws IOException
     {
+        requireExternalSourceUnchanged(source, expected, NEVER_CANCELLED);
+    }
+
+    private static void requireExternalSourceUnchanged(Path source, ExternalSourceState expected,
+                                                       BooleanSupplier cancellation) throws IOException
+    {
+        requireNotCancelled(cancellation);
         requireSourceUsable(source);
-        ExternalSourceState actual = captureExternalSourceState(source);
+        ExternalSourceState actual = captureExternalSourceState(source, cancellation);
         if(!actual.equals(expected))
         {
             throw new IOException("The selected SQLite source changed while it was being read. Close the previous " +
@@ -310,8 +391,9 @@ public final class SqliteDatabaseSnapshot
         }
     }
 
-    private static FileState fileState(Path path) throws IOException
+    private static FileState fileState(Path path, BooleanSupplier cancellation) throws IOException
     {
+        requireNotCancelled(cancellation);
         if(!Files.exists(path, LinkOption.NOFOLLOW_LINKS))
         {
             return new FileState(false, 0, "", "", "");
@@ -319,12 +401,20 @@ public final class SqliteDatabaseSnapshot
         BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
             LinkOption.NOFOLLOW_LINKS);
         return new FileState(true, attributes.size(), attributes.lastModifiedTime().toString(),
-            String.valueOf(attributes.fileKey()), sha256(path));
+            String.valueOf(attributes.fileKey()), sha256(path, cancellation));
     }
 
     /** Content digest for an application-owned standalone snapshot. */
     static String sha256(Path path) throws IOException
     {
+        return sha256(path, NEVER_CANCELLED);
+    }
+
+    /** Content digest that can stop between bounded file reads. */
+    static String sha256(Path path, BooleanSupplier cancellation) throws IOException
+    {
+        Objects.requireNonNull(cancellation, "SQLite digest cancellation cannot be null");
+        requireNotCancelled(cancellation);
         final MessageDigest digest;
         try
         {
@@ -336,17 +426,27 @@ public final class SqliteDatabaseSnapshot
         }
         try(InputStream input = Files.newInputStream(path))
         {
-            byte[] buffer = new byte[64 * 1024];
+            byte[] buffer = new byte[COPY_BUFFER_BYTES];
             int read;
             while((read = input.read(buffer)) >= 0)
             {
+                requireNotCancelled(cancellation);
                 if(read > 0)
                 {
                     digest.update(buffer, 0, read);
                 }
             }
         }
+        requireNotCancelled(cancellation);
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static void requireNotCancelled(BooleanSupplier cancellation)
+    {
+        if(cancellation.getAsBoolean())
+        {
+            throw new CancellationException("SQLite safety review was skipped.");
+        }
     }
 
     /** Opens a standalone source without creating or changing SQLite sidecars beside it. */

@@ -379,6 +379,12 @@ SQLite integrity scans, foreign-key scan, and optional direct-source repair swee
 transformations and their declared preserve, reset, default, drop, or skip behavior still apply, but this path does not
 first repair damage merely because the safe staged path could isolate it.
 
+While the default approval inspection is copying, checking, fingerprinting, or cleaning its temporary files, setup
+offers one `Skip safety checks & update now` control. A skip request stops cancellable file and SQLite work, then waits
+for the current native SQLite backup boundary when one is already running. Temporary approval files are deleted before
+the direct-update confirmation is shown, and the direct update is never started concurrently with inspection. A
+scratch-cleanup failure remains an error instead of falling through to the no-backup update.
+
 The shortcut does not create another migration route. Inside one `BEGIN IMMEDIATE` transaction it runs the same exact
 registered `N -> N+1 -> ... -> current` chain, stamps and verifies the exact target after every step, restores strict
 row `CHECK` enforcement, and retains final validation of the current global format, exact schema contracts, required
@@ -387,11 +393,12 @@ the adjacent steps have no independent durability or resume boundary. After comm
 or automatic rollback; the previous application version cannot reopen the upgraded database, and a power or storage
 failure can require manual recovery.
 
-No-backup progress is descriptive status rather than a percentage or durable progress journal. The wizard shows
-elapsed time and emits `Step X of Y — description` immediately before each adjacent step, followed by explicit
-validation and commit phases. Those messages are not per-step commits or restart checkpoints, and the commit-phase
-message is not success; success is reported only after `COMMIT` returns. A connection-cleanup problem after that point
-is a warning about an already committed update, not a reason to present the operation as safely retryable.
+Migration progress is one current phase with elapsed time, not a percentage or durable progress journal. Detailed
+phase output is available on demand. The no-backup update emits `Step X of Y — description` immediately before each
+adjacent step, followed by explicit validation and commit phases. Those messages are not per-step commits or restart
+checkpoints, and the commit-phase message is not success; success is reported only after `COMMIT` returns. A
+connection-cleanup problem after that point is a warning about an already committed update, not a reason to present
+the operation as safely retryable.
 
 For an import, the selected source database and previous installation remain unchanged. For an in-place upgrade, the
 live database is replaced only after the staged result passes every check, and the pre-migration safety backup is
