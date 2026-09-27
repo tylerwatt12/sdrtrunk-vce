@@ -206,6 +206,11 @@ body[data-view="network-visualizer"] .content {
   border-color: var(--network-arrival);
 }
 
+.network-visualizer-label[data-signal="call"] {
+  color: var(--network-activity);
+  border-color: var(--network-activity);
+}
+
 .network-visualizer-renderer-status,
 .network-visualizer-empty {
   position: absolute;
@@ -340,6 +345,14 @@ body[data-view="network-visualizer"] .content {
   color: var(--network-arrival);
 }
 
+.network-visualizer-auto-focus[data-category="call"] {
+  border-color: var(--network-activity);
+}
+
+.network-visualizer-auto-focus[data-category="call"] .network-visualizer-auto-focus-kicker {
+  color: var(--network-activity);
+}
+
 .network-visualizer-manual-guide {
   right: var(--space-3);
   bottom: var(--space-3);
@@ -471,6 +484,14 @@ body[data-view="network-visualizer"] .content {
 .network-visualizer-event[data-category="busy"],
 .network-visualizer-event[data-category="queued"] {
   border-inline-start: 3px solid var(--network-busy);
+}
+
+.network-visualizer-event[data-category="call"] .network-visualizer-event-kind {
+  color: var(--network-activity);
+}
+
+.read-only-modal.network-visualizer-settings-modal {
+  width: min(920px, calc(100vw - 2 * var(--space-4)));
 }
 
 .network-visualizer-event-empty {

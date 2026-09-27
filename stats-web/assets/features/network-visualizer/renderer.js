@@ -97,7 +97,9 @@ async function createP25Renderer(options = {}) {
       talkgroup: color('--network-hub', '#8fc4d3'),
       radio: color('--network-radio', '#78909c'),
       current: color('--network-affiliation', '#d59a46'),
+      activity: color('--network-activity', '#80bfe5'),
       history: color('--network-space-muted', '#8ea1ac'),
+      call: color('--network-activity', '#80bfe5'),
       movement: color('--network-arrival', '#ffc366'),
       emergency: color('--network-emergency', '#ff7d72'),
       denial: color('--network-denial', '#f38eae'),
@@ -202,11 +204,12 @@ async function createP25Renderer(options = {}) {
     const key = `line:${kind}:${dimmed}`;
     if (materials.has(key)) return materials.get(key);
     const historical = kind === 'history';
+    const dashed = historical || kind === 'activity';
     const baseOpacity = historical ? 0.18 : 0.58;
     const dimOpacity = dimmed ? 0.012 : baseOpacity;
     const value = new library.LineMaterial({ color: colorFor(kind), linewidth: historical ? 1.25 : 2.5,
       transparent: true, opacity: baseOpacity + (dimOpacity - baseOpacity) * focusAmount,
-      dashed: historical, dashSize: 6, gapSize: 5,
+      dashed, dashSize: 6, gapSize: 5,
       depthTest: true, depthWrite: false });
     value.userData.p25BaseOpacity = baseOpacity;
     value.userData.p25DimOpacity = dimOpacity;
@@ -219,7 +222,7 @@ async function createP25Renderer(options = {}) {
     const geometryValue = new library.LineGeometry();
     geometryValue.setPositions([0, 0, 0, 0, 0, 0]);
     const object = new library.Line2(geometryValue, lineMaterial(link.kind, linkIsDimmed(link)));
-    if (link.kind === 'history') object.computeLineDistances?.();
+    if (link.kind === 'history' || link.kind === 'activity') object.computeLineDistances?.();
     linkObjects.set(link.id, object);
     return object;
   }
@@ -277,7 +280,7 @@ async function createP25Renderer(options = {}) {
   function updateLinkPosition(object, start, end, link) {
     object.geometry.setPositions([finite(start?.x), finite(start?.y), finite(start?.z),
       finite(end?.x), finite(end?.y), finite(end?.z)]);
-    if (link.kind === 'history') object.computeLineDistances?.();
+    if (link.kind === 'history' || link.kind === 'activity') object.computeLineDistances?.();
     return true;
   }
 

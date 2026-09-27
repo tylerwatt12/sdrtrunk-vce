@@ -4,8 +4,9 @@ const P25_HISTORY_ACTIONS = Object.freeze([
   'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
   'PATCH', 'PATCH_CREATE', 'PATCH_CANCEL'
 ]);
+const P25_ROUTINE_ACTIONS = Object.freeze(['CALL', 'GRANT']);
 
-const ACTIONS = new Set(P25_HISTORY_ACTIONS);
+const ACTIONS = new Set([...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS]);
 const MAX_EVENTS = 120;
 const MAX_SEEN_IDS = 30_000;
 const MAX_PRIOR_GROUPS = 3;
@@ -25,7 +26,8 @@ const CAMERA_PRIORITY = Object.freeze({
   queued: 2,
   check: 1,
   page: 1,
-  logout: 1
+  logout: 1,
+  call: 0.5
 });
 
 function finite(value, fallback = 0) {
@@ -257,7 +259,7 @@ function ensureRadio(state, system, row, identityKey, role) {
     radio = { key, identityKey, systemKey: system.key, label: radioLabel(row, identityKey, role),
       nativeId: nativeId(identityKey, role === 'source' ? row.source_native_id ?? row.source_radio_id :
         row.target_native_id ?? row.target_id), x: system.x + local.x, y: system.y + local.y,
-      z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', affiliations: new Map(),
+      z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', activityGroupKey: '', affiliations: new Map(),
       priorGroupKeys: [], signalAction: '', highlightUntilMs: 0 };
     state.radios.set(key, radio);
     system.radioKeys.add(key);
@@ -304,7 +306,7 @@ function eventDetail(action, radio, group, previousGroup) {
   return radio?.label || group?.label || 'P25 system activity';
 }
 
-function applyJoin(state, system, row, result, initial, ingestedAtMs) {
+function applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight) {
   const radioIdentity = sourceRadioKey(row);
   const groupIdentity = targetGroupKey(row, false);
   if (!radioIdentity || !groupIdentity) return;
@@ -329,7 +331,7 @@ function applyJoin(state, system, row, result, initial, ingestedAtMs) {
   previousGroup.radioKeys.delete(radio.key);
   radio.priorGroupKeys = [previousGroup.key, ...radio.priorGroupKeys.filter((key) => key !== previousGroup.key)]
     .slice(0, MAX_PRIOR_GROUPS);
-  if (!initial) {
+  if (!initial && shouldHighlight('movement')) {
     highlight(radio, 'movement', ingestedAtMs + 8_000);
     highlight(group, 'movement', ingestedAtMs + 8_000);
   }
@@ -342,7 +344,7 @@ function applyJoin(state, system, row, result, initial, ingestedAtMs) {
   if (!initial) result.focusCandidates.push(event);
 }
 
-function applySignal(state, system, row, result, initial, action, ingestedAtMs) {
+function applySignal(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight) {
   const atMs = finite(row.observed_at_ms);
   let radioIdentity = '';
   let role = 'source';
@@ -377,7 +379,7 @@ function applySignal(state, system, row, result, initial, action, ingestedAtMs) 
     focusKeys: [radio?.key, group?.key].filter(Boolean), priority };
   const firstGroupedEvent = !state.events.has(eventKey);
   const focusEligible = upsertEvent(state, event);
-  if (!initial) {
+  if (!initial && shouldHighlight(eventCategory)) {
     const untilMs = ingestedAtMs + (action === 'EMERGENCY' ? 12_000 : 7_000);
     highlight(radio, eventCategory, untilMs);
     highlight(group, eventCategory, untilMs);
@@ -388,7 +390,7 @@ function applySignal(state, system, row, result, initial, action, ingestedAtMs) 
   if (!initial && focusEligible) result.focusCandidates.push(event);
 }
 
-function applyLogout(state, system, row, result, initial, ingestedAtMs) {
+function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHighlight) {
   const identity = sourceRadioKey(row) || targetRadioKey(row);
   if (!identity) return;
   const role = sourceRadioKey(row) ? 'source' : 'target';
@@ -406,7 +408,7 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs) {
       ...radio.priorGroupKeys.filter((key) => key !== previousVisualGroupKey)].slice(0, MAX_PRIOR_GROUPS);
   }
   const group = state.groups.get(previousVisualGroupKey);
-  if (!initial) highlight(radio, 'logout', ingestedAtMs + 7_000);
+  if (!initial && shouldHighlight('logout')) highlight(radio, 'logout', ingestedAtMs + 7_000);
   const event = { key: `logout:${radio.key}`, category: 'logout', title: 'Logout observed',
     detail: eventDetail('logout', radio, group), observedAtMs: atMs, systemKey: system.key,
     focusKeys: [radio.key], priority: CAMERA_PRIORITY.logout };
@@ -416,10 +418,36 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs) {
   if (!initial && focusEligible) result.focusCandidates.push(event);
 }
 
+function applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight) {
+  const radioIdentity = sourceRadioKey(row) || targetRadioKey(row);
+  const role = sourceRadioKey(row) ? 'source' : 'target';
+  const groupIdentity = targetGroupKey(row);
+  const group = groupIdentity ? ensureGroup(state, system, row, groupIdentity) : null;
+  const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, role) : null;
+  if (!radio && !group) return;
+  if (radio && group) radio.activityGroupKey = group.key;
+  const atMs = finite(row.observed_at_ms);
+  const entity = group || radio;
+  const event = { key: `call:${entity.key}`, category: 'call',
+    title: action === 'GRANT' ? 'Grant activity' : 'Call activity',
+    detail: eventDetail('call', radio, group), observedAtMs: atMs, systemKey: system.key,
+    focusKeys: [radio?.key, group?.key].filter(Boolean), priority: CAMERA_PRIORITY.call };
+  const firstGroupedEvent = !state.events.has(event.key);
+  const focusEligible = upsertEvent(state, event);
+  if (!initial && shouldHighlight('call')) {
+    highlight(radio, 'call', ingestedAtMs + 7_000);
+    highlight(group, 'call', ingestedAtMs + 7_000);
+  }
+  if (firstGroupedEvent) system.score += 0.5;
+  if (!initial && focusEligible) result.focusCandidates.push(event);
+}
+
 function applyP25ActivityRows(state, rows, options = {}) {
   if (!state?.systems || !state?.groups || !state?.radios) throw new TypeError('P25 history state is required.');
   const initial = options.initial === true;
   const ingestedAtMs = finite(options.atMs, Date.now());
+  const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
+  const shouldHighlight = (category) => !highlighted || highlighted.has(category);
   const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [] };
   const ordered = (Array.isArray(rows) ? rows : []).slice().sort((left, right) =>
     finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
@@ -436,9 +464,11 @@ function applyP25ActivityRows(state, rows, options = {}) {
       continue;
     }
     const system = ensureSystem(state, row);
-    if (action === 'JOIN') applyJoin(state, system, row, result, initial, ingestedAtMs);
-    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, ingestedAtMs);
-    else applySignal(state, system, row, result, initial, action, ingestedAtMs);
+    if (action === 'JOIN') applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
+    else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHighlight);
+    else if (P25_ROUTINE_ACTIONS.includes(action)) {
+      applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight);
+    } else applySignal(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight);
     result.accepted += 1;
     result.changed = true;
   }
@@ -447,11 +477,13 @@ function applyP25ActivityRows(state, rows, options = {}) {
   return result;
 }
 
-function visibleSignal(entity, atMs) {
-  return entity?.highlightUntilMs > atMs ? entity.signalAction : '';
+function visibleSignal(entity, atMs, highlighted) {
+  const signal = entity?.highlightUntilMs > atMs ? entity.signalAction : '';
+  return signal && (!highlighted || highlighted.has(signal)) ? signal : '';
 }
 
-function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey = '') {
+function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey = '', options = {}) {
+  const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
   if (!systemKey) {
     const nodes = [...state.systems.values()].map((system) => ({ id: system.key, type: 'system',
       label: system.label, x: system.x, y: system.y, z: system.z, radius: 58, systemKey: system.key,
@@ -472,6 +504,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   const groups = focused ? [focusGroup] : layoutGroups;
   const groupKeys = new Set(groups.map((group) => group.key));
   const touchesFocus = (radio) => radio.visualGroupKey === focusGroup?.key ||
+    radio.activityGroupKey === focusGroup?.key ||
     radio.priorGroupKeys.includes(focusGroup?.key) ||
     [...radio.affiliations.values()].some((evidence) => evidence.groupKey === focusGroup?.key);
   const eligibleRadios = [...system.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
@@ -484,12 +517,13 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
     const position = groupPositions.get(group.key);
     nodes.push({ id: group.key, type: 'talkgroup', label: group.label,
       x: position.x, y: position.y, z: position.z, radius: 13, systemKey,
-      signalAction: visibleSignal(group, atMs) });
+      signalAction: visibleSignal(group, atMs, highlighted) });
   });
 
   const groupedRadios = new Map();
   radios.forEach((radio) => {
-    const parentKey = focused ? focusGroup.key : groupKeys.has(radio.visualGroupKey) ? radio.visualGroupKey : '';
+    const parentKey = focused ? focusGroup.key : groupKeys.has(radio.visualGroupKey) ? radio.visualGroupKey :
+      groupKeys.has(radio.activityGroupKey) ? radio.activityGroupKey : '';
     if (!groupedRadios.has(parentKey)) groupedRadios.set(parentKey, []);
     groupedRadios.get(parentKey).push(radio);
   });
@@ -502,7 +536,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
       radio.y = parent.y + offset.y;
       radio.z = parent.z + offset.z;
       nodes.push({ id: radio.key, type: 'radio', label: radio.label, x: radio.x, y: radio.y, z: radio.z,
-        radius: 6.5, systemKey, groupKey: parentKey, signalAction: visibleSignal(radio, atMs) });
+        radius: 6.5, systemKey, groupKey: parentKey, signalAction: visibleSignal(radio, atMs, highlighted) });
     });
   });
 
@@ -511,6 +545,10 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
     if (!radioKeys.has(radio.key)) return;
     if (groupKeys.has(radio.visualGroupKey)) links.push({ id: `current:${radio.key}:${radio.visualGroupKey}`,
       source: radio.key, target: radio.visualGroupKey, kind: 'current' });
+    if (groupKeys.has(radio.activityGroupKey) && radio.activityGroupKey !== radio.visualGroupKey) {
+      links.push({ id: `activity:${radio.key}:${radio.activityGroupKey}`,
+        source: radio.key, target: radio.activityGroupKey, kind: 'activity' });
+    }
     const earlierGroups = new Set([...radio.priorGroupKeys,
       ...[...radio.affiliations.values()].map((evidence) => evidence.groupKey)]);
     [...earlierGroups].filter((key) => groupKeys.has(key) && key !== radio.visualGroupKey).forEach((groupKey) =>
@@ -532,6 +570,7 @@ function mostActiveP25System(state) {
 
 export {
   P25_HISTORY_ACTIONS,
+  P25_ROUTINE_ACTIONS,
   CAMERA_PRIORITY,
   createP25HistoryState,
   applyP25ActivityRows,

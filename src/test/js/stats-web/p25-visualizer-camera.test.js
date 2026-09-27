@@ -25,7 +25,8 @@ async function main() {
     queued: 2,
     check: 1,
     page: 1,
-    logout: 1
+    logout: 1,
+    call: 0.5
   });
 
   const camera = createP25CameraCoordinator({ transitionMs: 100, focusMs: 500, returnMs: 100,

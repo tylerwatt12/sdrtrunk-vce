@@ -9,7 +9,8 @@ const CAMERA_PRIORITY = Object.freeze({
   queued: 2,
   check: 1,
   page: 1,
-  logout: 1
+  logout: 1,
+  call: 0.5
 });
 
 function finite(value, fallback) {

@@ -15725,16 +15725,45 @@ async function renderLive() {
 }
 
 let p25VisualizerModulePromise = null;
+const P25_VISUALIZER_SETTINGS_STORAGE_PREFIX = 'sdrtrunk-vce-p25-visualizer-events-v1:';
+
+function p25VisualizerSettingsStorageKey() {
+  const identity = accessSession.authenticated ? accessSession.username : 'anonymous';
+  return `${P25_VISUALIZER_SETTINGS_STORAGE_PREFIX}${encodeURIComponent(String(identity || 'anonymous'))}`;
+}
+
+function loadP25VisualizerEventSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(p25VisualizerSettingsStorageKey()) || 'null');
+  } catch (_error) {
+    return null;
+  }
+}
+
+function saveP25VisualizerEventSettings(value) {
+  try {
+    localStorage.setItem(p25VisualizerSettingsStorageKey(), JSON.stringify(value));
+  } catch (_error) {
+    throw new Error('Visualizer choices could not be saved in this browser.');
+  }
+}
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=24');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=25');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
     node,
     iconGlyph,
     iconButton,
+    openReadOnlyModal,
+    preferenceCheckbox,
+    settingsCard,
+    settingsCardGrid,
+    modalFooter: aliasModalFooter,
+    loadEventSettings: loadP25VisualizerEventSettings,
+    saveEventSettings: saveP25VisualizerEventSettings,
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
     historyStatus: statsLoggingState(),
     signal: renderContext.signal

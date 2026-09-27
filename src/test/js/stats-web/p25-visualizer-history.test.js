@@ -36,16 +36,26 @@ function row(id, action, overrides = {}) {
 
 async function main() {
   const history = await import(`${pathToFileURL(path.join(feature, 'history.js')).href}?history-test=1`);
+  const settings = await import(`${pathToFileURL(path.join(feature, 'settings.js')).href}?settings-test=1`);
 
   assert.deepEqual(history.P25_HISTORY_ACTIONS, [
     'JOIN', 'LOGOUT', 'DENIAL', 'EMERGENCY', 'CHECK', 'PAGE', 'BUSY', 'QUEUED',
     'PATCH', 'PATCH_CREATE', 'PATCH_CANCEL'
   ]);
+  assert.deepEqual(history.P25_ROUTINE_ACTIONS, ['CALL', 'GRANT']);
+  const defaults = settings.defaultP25EventSettings();
+  assert.deepEqual(defaults.call, { highlight: false, autoZoom: false },
+    'routine calls and grants must remain opt-in');
+  assert.equal(settings.routineP25ActivityEnabled(defaults), false);
+  const callsEnabled = settings.normalizeP25EventSettings({ call: { highlight: true, autoZoom: false } });
+  assert.equal(settings.routineP25ActivityEnabled(callsEnabled), true);
+  assert.equal(settings.enabledP25EventCategories(callsEnabled, 'highlight').has('call'), true);
+  assert.equal(settings.enabledP25EventCategories(callsEnabled, 'autoZoom').has('call'), false);
 
   const state = history.createP25HistoryState();
   const seed = history.applyP25ActivityRows(state, [
     row(4, 'JOIN', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' }),
-    row(1, 'CALL'),
+    row(1, 'ACTIVE'),
     row(3, 'JOIN'),
     row(2, 'JOIN', { protocol: 'dmr', radio_system_key: 'dmr-system' }),
     row(5, 'JOIN', { channel_kind: 'conventional', radio_system_key: '' })
@@ -80,6 +90,32 @@ async function main() {
     'the selected talkgroup retains its current radio relationships');
   assert.equal(history.buildP25Graph(state, SYSTEM_A, 0).nodes.some((node) => node.signalAction), false,
     'seed history builds the scene without replaying old highlights');
+
+  const routineState = history.createP25HistoryState();
+  const routineSeed = history.applyP25ActivityRows(routineState, [row(50, 'GRANT')], { initial: true });
+  assert.equal(routineSeed.accepted, 1);
+  assert.deepEqual(routineSeed.focusCandidates, [], 'saved grant history must not replay camera attention');
+  const routineRadio = [...routineState.radios.values()][0];
+  assert.equal(routineRadio.visualGroupKey, '', 'a grant must not fabricate an affiliation');
+  assert.equal(routineRadio.activityGroupKey, `${SYSTEM_A}:v1-g-101`);
+  assert.deepEqual(history.buildP25Graph(routineState, SYSTEM_A).links.map((link) => link.kind), ['activity'],
+    'a heard-on relationship is distinct from affiliation');
+  const routineUpdate = history.applyP25ActivityRows(routineState, [row(51, 'CALL', {
+    target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical'
+  })], { atMs: 2_000_000_000_000, highlightCategories: new Set(['call']) });
+  assert.equal(routineUpdate.focusCandidates[0]?.category, 'call');
+  assert.equal(routineUpdate.focusCandidates[0]?.priority, 0.5);
+  assert.equal(routineRadio.visualGroupKey, '', 'call activity must still not become affiliation evidence');
+  assert.equal(routineRadio.activityGroupKey, `${SYSTEM_A}:v1-g-202`);
+  assert.equal(history.buildP25Graph(routineState, SYSTEM_A, 2_000_000_000_001, '', {
+    highlightCategories: new Set(['call'])
+  }).nodes.find((entry) => entry.id === routineRadio.key)?.signalAction, 'call');
+  const unknownSource = history.createP25HistoryState();
+  history.applyP25ActivityRows(unknownSource, [row(52, 'GRANT', {
+    source_identity_key: null, source_radio_id: null, source_alias_name: null
+  })], { initial: true });
+  assert.equal(unknownSource.groups.size, 1);
+  assert.equal(unknownSource.radios.size, 0, 'a source-less grant must not fabricate a subscriber radio');
 
   const cloudRows = Array.from({ length: 220 }, (_, index) => row(100 + index, 'JOIN', {
     source_identity_key: `v1-r-${8_000 + index}`,
