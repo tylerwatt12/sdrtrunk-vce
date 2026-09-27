@@ -18,6 +18,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDecisionOutcome;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCounters;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticDecision;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticSnapshot;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallMergeProof;
@@ -49,7 +50,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1180,9 +1180,8 @@ class AudioCallCoordinatorTest
             assertEquals(4, coordinatorMapSize(coordinator, "mCohorts"));
             assertEquals(4, scheduler.getQueue().size(),
                 "Each retained cohort may own at most one pending deadline task");
-            assertEquals(8, decisions.stream()
-                .filter(decision -> decision.outcome() == LogicalCallDecisionOutcome.FAIL_OPEN &&
-                    decision.decisionReasons().contains(LogicalCallSeparationReason.COHORT_CAPACITY)).count(),
+            assertTrue(decisions.isEmpty(), "Nonduplicates must not create monitor decisions");
+            assertEquals(8L, coordinator.getDiagnosticSnapshot().counters().failOpenLogicalCalls(),
                 "Every call beyond the fixed cohort bound must be preserved as an independent fail-open output");
             assertEquals(0L, coordinator.getQueueStatus().droppedIngress());
 
@@ -1279,7 +1278,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void diagnosticsDistinguishKnownSeparationP25FailOpenAndNonP25Independent() throws Exception
+    void diagnosticsIgnoreSeparatedAndIndependentCalls() throws Exception
     {
         AliasList aliasList = aliasList(835);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -1298,17 +1297,8 @@ class AudioCallCoordinatorTest
                 1_000, 3_000, GOOD_QUALITY, true, Set.of()), fingerprints(146));
             emitLeg(coordinator, leg(124, aliasList, 0x12346, 0x235, 19, 192, 10_120, 9_002,
                 1_050, 3_050, GOOD_QUALITY, true, Set.of()), fingerprints(156));
-            await(() -> decisions.size() == 2);
-
-            List<LogicalCallDiagnosticDecision> failOpen = decisions.stream()
-                .filter(decision -> decision.decisionReasons()
-                    .contains(LogicalCallSeparationReason.INSUFFICIENT_DUPLICATE_PROOF)).toList();
-            assertEquals(2, failOpen.size());
-            assertTrue(failOpen.stream().allMatch(decision ->
-                decision.outcome() == LogicalCallDecisionOutcome.FAIL_OPEN));
-            assertTrue(failOpen.stream().allMatch(decision -> decision.evidence().uncertainPairCount() == 1L));
-            assertTrue(failOpen.stream().allMatch(decision -> decision.evidence()
-                .rejectionReasonCount(LogicalCallSeparationReason.INSUFFICIENT_DUPLICATE_PROOF) == 1L));
+            await(() -> resolved.size() == 2);
+            assertTrue(decisions.isEmpty(), "Separated calls must not enter duplicate history");
 
             Leg missingSite = leg(125, aliasList, null, 0, 0, 0, 10_121, 9_003,
                 4_000, 5_000, GOOD_QUALITY, true, Set.of());
@@ -1316,19 +1306,13 @@ class AudioCallCoordinatorTest
             Leg p25Shape = leg(126, aliasList, 0x12346, 0x235, 19, 193, 10_122, 9_004,
                 6_000, 7_000, GOOD_QUALITY, true, Set.of());
             emitLeg(coordinator, withDecoder(p25Shape, DecoderType.DMR), fingerprints(176));
-            await(() -> decisions.size() == 4 && resolved.size() == 4);
-
-            LogicalCallDiagnosticDecision missingIdentity = decisions.stream()
-                .filter(decision -> decision.decisionReasons()
-                    .contains(LogicalCallSeparationReason.MISSING_RADIO_SYSTEM_IDENTITY))
-                .findFirst().orElseThrow();
-            assertEquals(LogicalCallDecisionOutcome.FAIL_OPEN, missingIdentity.outcome());
-            LogicalCallDiagnosticDecision nonP25 = decisions.stream()
-                .filter(decision -> decision.decisionReasons()
-                    .contains(LogicalCallSeparationReason.NON_P25_RESOLUTION_NOT_APPLICABLE))
-                .findFirst().orElseThrow();
-            assertEquals(LogicalCallDecisionOutcome.INDEPENDENT, nonP25.outcome());
-            assertEquals(DecoderType.DMR.name(), nonP25.callIdentity().decoder());
+            await(() -> resolved.size() == 4 &&
+                coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 4L);
+            assertTrue(decisions.isEmpty(), "Only confirmed merges should be projected to the monitor");
+            LogicalCallDiagnosticCounters counters = coordinator.getDiagnosticSnapshot().counters();
+            assertEquals(3L, counters.failOpenLogicalCalls());
+            assertEquals(1L, counters.independentLogicalCalls());
+            assertEquals(0L, counters.diagnosticDecisionsOffered());
         }
         finally
         {
@@ -1480,7 +1464,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void failOpenOutcomeRetainsExactUncertainEvidenceAtHighCandidateVolume() throws Exception
+    void highVolumeFailOpenDoesNotPopulateDuplicateDiagnostics() throws Exception
     {
         AliasList aliasList = aliasList(842);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -1508,20 +1492,12 @@ class AudioCallCoordinatorTest
 
             emitLeg(coordinator, leg(500, aliasList, 0x1234C, 0x23B, 25, 255, 20_000, null,
                 1_020, 3_020, GOOD_QUALITY, true, Set.of()), List.of());
-            await(() -> decisions.size() == 130 && resolved.size() == 130);
-
-            LogicalCallDiagnosticDecision firstDecision = decisions.stream()
-                .filter(decision -> decision.legs().stream()
-                    .anyMatch(leg -> first.callLegId().toString().equals(leg.legId())))
-                .findFirst().orElseThrow();
-            assertEquals(LogicalCallDecisionOutcome.FAIL_OPEN, firstDecision.outcome());
-            assertTrue(firstDecision.decisionReasons()
-                .contains(LogicalCallSeparationReason.INSUFFICIENT_DUPLICATE_PROOF));
-            assertEquals(129L, firstDecision.evidence().candidateComparisonCount());
-            assertEquals(128L, firstDecision.evidence().separatedPairCount());
-            assertEquals(1L, firstDecision.evidence().uncertainPairCount());
-            assertEquals(1L, firstDecision.evidence()
-                .rejectionReasonCount(LogicalCallSeparationReason.INSUFFICIENT_DUPLICATE_PROOF));
+            await(() -> resolved.size() == 130 &&
+                coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 130L);
+            assertTrue(decisions.isEmpty(), "Fail-open calls must not fill or evict duplicate history");
+            LogicalCallDiagnosticCounters counters = coordinator.getDiagnosticSnapshot().counters();
+            assertTrue(counters.failOpenLogicalCalls() > 0L);
+            assertEquals(0L, counters.diagnosticDecisionsOffered());
         }
         finally
         {
@@ -1612,7 +1588,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void throwingDiagnosticSinkCannotSuppressOutputOrStopTheResolver() throws Exception
+    void independentCallsDoNotInvokeDiagnosticSink() throws Exception
     {
         AliasList aliasList = aliasList(839);
         List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
@@ -1631,9 +1607,10 @@ class AudioCallCoordinatorTest
                 3_000, 4_000, GOOD_QUALITY, true, Set.of()), fingerprints(226));
 
             await(() -> resolved.size() == 2 &&
-                coordinator.getDiagnosticSnapshot().counters().diagnosticDecisionsRejected() == 2L);
-            assertEquals(2, resolved.size(), "Diagnostic failures must not suppress current or later call output");
-            assertEquals(2L, coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls());
+                coordinator.getDiagnosticSnapshot().counters().emittedLogicalCalls() == 2L);
+            assertEquals(2, resolved.size(), "Unrelated calls must still be emitted normally");
+            assertEquals(0L, coordinator.getDiagnosticSnapshot().counters().diagnosticDecisionsOffered());
+            assertEquals(0L, coordinator.getDiagnosticSnapshot().counters().diagnosticDecisionsRejected());
         }
         finally
         {
@@ -1672,20 +1649,9 @@ class AudioCallCoordinatorTest
             assertTrue(aborted.callLegId().markIngressCompromised());
             coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot(aborted, false),
                 new float[160], false, 999L, aborted.end()));
-            await(() -> decisions.stream().anyMatch(decision ->
-                decision.outcome() == LogicalCallDecisionOutcome.ABORTED));
-            await(() -> decisions.stream().anyMatch(decision ->
-                decision.outcome() == LogicalCallDecisionOutcome.MERGED));
+            await(() -> decisions.size() == 1 &&
+                decisions.getFirst().outcome() == LogicalCallDecisionOutcome.MERGED);
 
-            LogicalCallDiagnosticDecision abortedDecision = decisions.stream()
-                .filter(decision -> decision.outcome() == LogicalCallDecisionOutcome.ABORTED)
-                .findFirst().orElseThrow();
-            assertNull(abortedDecision.winner(), "A discarded leg must not be presented as an output winner");
-            assertTrue(abortedDecision.legs().stream().noneMatch(leg -> leg.winner()));
-            assertEquals(480L, abortedDecision.legs().getFirst().retainedAudioSampleCount(),
-                "Abort diagnostics must capture worker-owned audio facts before releasing the leg");
-            assertEquals(GOOD_QUALITY.decodedFrameCount(),
-                abortedDecision.legs().getFirst().decodedFrameCount());
             LogicalCallDiagnosticDecision merged = decisions.stream()
                 .filter(decision -> decision.outcome() == LogicalCallDecisionOutcome.MERGED)
                 .findFirst().orElseThrow();

@@ -124,7 +124,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final Map<CallLegId, ReceiverLeg> mActiveLegs = new HashMap<>();
     private final Map<Long, ResolutionCohort> mCohorts = new HashMap<>();
     private final List<CompletedAudioCall> mPendingFanouts = new ArrayList<>();
-    private final LinkedHashSet<CallLegId> mPublishedAbortLegIds = new LinkedHashSet<>();
     private final int[] mSharedFrameDeltaCounts = new int[SHARED_FRAME_DELTA_BUCKETS];
     private final int[] mSharedFrameDeltaMarks = new int[SHARED_FRAME_DELTA_BUCKETS];
     private final AtomicBoolean mCohortSweepRequested = new AtomicBoolean();
@@ -419,8 +418,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                     mAbortedCallCount.incrementAndGet();
                 }
 
-                publishAbortDecision(callLegId, diagnosticLeg(snapshot, callLegId.toString()),
-                    LogicalCallSeparationReason.ACTIVE_LEG_CAPACITY);
                 abortLeg(callLegId);
                 return;
             }
@@ -845,18 +842,10 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         ReceiverLeg active = mActiveLegs.remove(callLegId);
-        LogicalCallDiagnosticLeg abortedDiagnosticLeg = null;
         boolean changed = active != null;
 
         if(active != null)
         {
-            CompletedReceiverLeg preview = active.preview();
-
-            if(preview != null)
-            {
-                abortedDiagnosticLeg = diagnosticLeg(preview, qualityBaselineFrames(preview), false);
-            }
-
             mRetainedAudioSamples = Math.max(0L, mRetainedAudioSamples - active.discard());
         }
 
@@ -879,11 +868,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             if(removed != null)
             {
-                if(abortedDiagnosticLeg == null)
-                {
-                    abortedDiagnosticLeg = diagnosticLeg(removed, qualityBaselineFrames(removed), false);
-                }
-
                 changed = true;
                 mRetainedAudioSamples = Math.max(0L, mRetainedAudioSamples - removed.audioSampleCount);
                 removed.releaseCoordinatorReferences();
@@ -910,51 +894,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         if(changed || callLegId.isIngressCompromised())
         {
-            publishAbortDecision(callLegId, abortedDiagnosticLeg,
-                LogicalCallSeparationReason.INGRESS_COMPROMISED);
             markDiagnosticSnapshotDirty();
         }
-    }
-
-    private void publishAbortDecision(CallLegId callLegId, LogicalCallDiagnosticLeg diagnosticLeg,
-                                      LogicalCallSeparationReason reason)
-    {
-        if(mForcedDiscard.get() || mDiagnosticSink == null || callLegId == null ||
-            !mPublishedAbortLegIds.add(callLegId))
-        {
-            return;
-        }
-
-        while(mPublishedAbortLegIds.size() > mIngress.capacity())
-        {
-            var iterator = mPublishedAbortLegIds.iterator();
-
-            if(iterator.hasNext())
-            {
-                iterator.next();
-                iterator.remove();
-            }
-        }
-
-        try
-        {
-            List<LogicalCallDiagnosticLeg> legs = diagnosticLeg != null ? List.of(diagnosticLeg) : List.of();
-            LogicalCallDiagnosticDecision decision = new LogicalCallDiagnosticDecision(
-                mNextDiagnosticDecisionSequence++, System.currentTimeMillis(), null,
-                LogicalCallDecisionOutcome.ABORTED, null, null, null, legs,
-                LogicalCallDiagnosticEvidence.EMPTY,
-                List.of(reason != null ? reason : LogicalCallSeparationReason.INGRESS_COMPROMISED));
-            offerDiagnosticDecision(decision);
-        }
-        catch(Throwable throwable)
-        {
-            rethrowFatal(throwable);
-            mDiagnosticDecisionRejectedCount++;
-            mLog.warn("Unable to project an aborted logical-call diagnostic; resolver state was still preserved",
-                throwable);
-        }
-
-        markDiagnosticSnapshotDirty();
     }
 
     /**
@@ -1349,7 +1290,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             }
         }
 
-        if(mDiagnosticSink != null)
+        if(mDiagnosticSink != null && outcome == LogicalCallDecisionOutcome.MERGED)
         {
             try
             {
@@ -1514,34 +1455,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             quality.fecErrorCount(), quality.fecProtectedBitCount(), qualityPercent,
             score.missingAndConcealedRate, score.repeatedRate, score.normalizedFecRate,
             leg.audioSampleCount, leg.ingressLoss, leg.audioTruncated, winner);
-    }
-
-    private LogicalCallDiagnosticLeg diagnosticLeg(AudioCallSnapshot snapshot, String callLegId)
-    {
-        CallLegSource source = snapshot.callLegSource();
-        P25SiteIdentity site = source != null ? source.p25SiteIdentity() : null;
-        VoiceCallQuality quality = snapshot.voiceCallQuality();
-        long expected = Math.max(VoiceCallQuality.expectedFrameCount(snapshot.startTimestamp(),
-            snapshot.lastActivityTimestamp()), quality.expectedFrameCount());
-        long missing = Math.max(quality.missingFrameCount(), Math.max(0L, expected - quality.observedFrameCount()));
-        long missingAndConcealed = missing + quality.concealedFrameCount();
-        double missingRate = expected > 0L ? (double)missingAndConcealed / expected : 1.0d;
-        double repeatedRate = expected > 0L ? (double)quality.repeatedFrameCount() / expected : 1.0d;
-        double fecRate = quality.fecProtectedBitCount() > 0L ?
-            (double)quality.fecErrorCount() / quality.fecProtectedBitCount() : 1.0d;
-        double qualityPercent = expected > 0L ? 100.0d * quality.decodedFrameCount() / expected : 0.0d;
-        return new LogicalCallDiagnosticLeg(callLegId,
-            source != null && source.decoderType() != null ? source.decoderType().name() : null,
-            source != null ? source.channelConfigurationId() : null, source != null ? source.channelName() : null,
-            source != null ? source.radioResolveId() : null,
-            source != null ? source.aliasListId() : 0L, site != null ? site.wacn() : null,
-            site != null ? site.system() : null, site != null ? site.rfss() : null,
-            site != null ? site.site() : null, snapshot.startTimestamp(), snapshot.lastActivityTimestamp(),
-            Math.max(0L, snapshot.lastActivityTimestamp() - snapshot.startTimestamp()), expected,
-            quality.observedFrameCount(), quality.decodedFrameCount(), quality.decodedFrameCount(),
-            quality.repeatedFrameCount(), quality.concealedFrameCount(), missing, quality.fecErrorCount(),
-            quality.fecProtectedBitCount(), qualityPercent, missingRate, repeatedRate, fecRate, 0L,
-            snapshot.callLegId().isIngressCompromised(), false, false);
     }
 
     private LogicalCallDiagnosticLeg diagnosticLeg(ReceiverLeg leg)
@@ -1995,7 +1908,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         mActiveLegs.clear();
         mCohorts.clear();
         mPendingFanouts.clear();
-        mPublishedAbortLegIds.clear();
         mRetainedAudioSamples = 0L;
         markDiagnosticSnapshotDirty();
     }

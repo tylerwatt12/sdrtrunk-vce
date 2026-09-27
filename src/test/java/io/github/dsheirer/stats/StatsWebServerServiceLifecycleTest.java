@@ -129,7 +129,7 @@ class StatsWebServerServiceLifecycleTest
                 .header("Cookie", userCookie).GET().build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(403, denied.statusCode(), denied.body());
 
-            diagnostic = new LogicalCallDiagnosticService(mTemporaryDirectory.resolve("call-matching-logs"));
+            diagnostic = new LogicalCallDiagnosticService();
             coordinator = new AudioCallCoordinator(null, null, null, null, diagnostic);
             web.setLogicalCallDiagnostics(diagnostic, coordinator);
             HttpResponse<String> accepted = client.send(adminRequest, HttpResponse.BodyHandlers.ofString());

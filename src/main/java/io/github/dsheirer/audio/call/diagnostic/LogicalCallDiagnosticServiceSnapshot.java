@@ -12,15 +12,15 @@ import java.util.Objects;
  * Immutable session-only view for the diagnostic user interface.
  */
 public record LogicalCallDiagnosticServiceSnapshot(String sessionId, long sessionStartedAtEpochMillis,
-                                                   long recentDecisionsEvicted,
-                                                   List<LogicalCallDiagnosticDecision> recentDecisions,
+                                                   long duplicatesEvicted,
+                                                   List<LogicalCallDiagnosticDecision> recentDuplicates,
                                                    LogicalCallDiagnosticStatus status)
 {
     public LogicalCallDiagnosticServiceSnapshot
     {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
-        recentDecisions = List.copyOf(Objects.requireNonNull(recentDecisions,
-            "recentDecisions cannot be null"));
+        recentDuplicates = List.copyOf(Objects.requireNonNull(recentDuplicates,
+            "recentDuplicates cannot be null"));
         Objects.requireNonNull(status, "status cannot be null");
     }
 }

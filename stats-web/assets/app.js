@@ -23349,21 +23349,6 @@ function callMatchingHealth(snapshot) {
   return ['Healthy', 'success'];
 }
 
-function callMatchingFileHealth(status) {
-  const drops = Number(status.records_dropped_at_queue || 0) + Number(status.records_rejected_after_close || 0) +
-    Number(status.file_records_dropped || 0) + Number(status.oversized_records_dropped || 0);
-  const published = {
-    ACTIVE: ['Active', 'success'], WARNING: ['Warning', 'warning'], ERROR: ['Error', 'danger']
-  }[status.file_health_state];
-  if (published) return [...published, drops];
-  if (status.file_state === 'DISABLED' || Number(status.file_write_failures || 0) > 0) return ['Error', 'danger', drops];
-  if (drops || Number(status.queued_records || 0) * 4 >= Math.max(1, Number(status.queue_capacity || 0)) * 3) {
-    return ['Warning', 'warning', drops];
-  }
-  if (status.file_state === 'ACTIVE') return ['Active', 'success', drops];
-  return [callMatchingLabel(status.file_state) || 'Unavailable', 'neutral', drops];
-}
-
 function callMatchingSnapshot(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.duplicates) ||
       !value.resolver || !value.queue || !value.diagnostic_status || !value.history) {
@@ -23397,7 +23382,7 @@ function callMatchingComparison(decision) {
     ['Runner-up site', runnerUp ? callMatchingCopySite(runnerUp) : 'Unavailable'],
     ['Selected value', decision.winner?.winner_value?.display || '—'],
     ['Runner-up value', decision.winner?.runner_up_value?.display || '—'],
-    ['Output', callMatchingOutputTags(decision.output_policy)]
+    ['Requested output', callMatchingOutputTags(decision.output_policy)]
   ]);
   body.append(summary);
   const heading = node('h3', 'call-matching-comparison-heading', 'Receiver copy comparison');
@@ -23507,7 +23492,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         node('small', '', callMatchingCriterion(row.winner?.criterion)));
       return cell;
     } },
-    { id: 'outputs', label: 'Outputs', render: (row) => callMatchingOutputTags(row.output_policy) },
+    { id: 'outputs', label: 'Requested outputs', render: (row) => callMatchingOutputTags(row.output_policy) },
     { id: 'action', label: '', fullLabel: 'Compare receiver copies', essential: true, render: (row) => {
       const button = node('button', 'ui-button ui-button-secondary call-matching-compare', 'Compare');
       button.type = 'button';
@@ -23550,9 +23535,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     const resolver = latest.resolver;
     const counters = resolver.counters || {};
     const queue = latest.queue;
-    const file = latest.diagnostic_status;
     const [health, healthTone] = callMatchingHealth(latest);
-    const [fileHealth, fileTone, drops] = callMatchingFileHealth(file);
     status.replaceChildren(uiStatus('Live', 'success'), node('span', '', 'Updated just now · every 1 s'));
     const summary = node('div', 'call-matching-health-summary');
     const state = node('div', 'call-matching-health-state');
@@ -23561,21 +23544,14 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       ['Call matching', 0, health], ['Receiving now', resolver.active_leg_count],
       ['Waiting to match', resolver.active_cohort_count],
       ['Duplicates combined', counters.merged_logical_calls],
-      ['Extra copies suppressed', counters.merged_receiver_copies],
-      ['Diagnostic file', 0, fileHealth]
+      ['Extra copies suppressed', counters.merged_receiver_copies]
     ], true));
     const facts = keyValues([
       ['Resolver queue', `${callMatchingCount(queue.ingress_depth)} / ${callMatchingCount(queue.total_ingress_capacity)}`],
-      ['Diagnostic queue', `${callMatchingCount(file.queued_records)} / ${callMatchingCount(file.queue_capacity)}`],
-      ['Uncertain kept separate', callMatchingCount(counters.fail_open_logical_calls)],
-      ['Recorded confirmations', callMatchingCount(file.recorded_confirmations_observed)],
-      ['Stream confirmations', callMatchingCount(file.stream_submitted_confirmations_observed)],
-      ['Current file', `${adminStatusBytes(file.active_file_bytes)} / ${adminStatusBytes(file.maximum_file_bytes)}`],
-      ['Files retained', `${callMatchingCount(file.retained_file_count)} / ${callMatchingCount(file.maximum_files)}`],
-      ['Total drops', callMatchingCount(drops)]
+      ['Uncertain kept separate', callMatchingCount(counters.fail_open_logical_calls)]
     ]);
     const technical = node('div', 'call-matching-technical');
-    technical.append(node('h3', '', 'Queues & diagnostic file'), facts);
+    technical.append(node('h3', '', 'Matching queue'), facts);
     statusContent.replaceChildren(summary, technical);
     statusContent.setAttribute('aria-busy', 'false');
     const retained = new Set(latest.duplicates.map((item) => Number(item.decision_sequence)));
@@ -23586,8 +23562,8 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     }
     tableController.reconcileRows(latest.duplicates);
     footer.textContent = `Only confirmed duplicate decisions are shown. Showing ${number(latest.duplicates.length)} ` +
-      `from ${callMatchingCount(latest.history.recent_decisions_retained)} retained decisions · ` +
-      `${callMatchingCount(latest.history.recent_decisions_evicted)} older decisions evicted.`;
+      `from ${callMatchingCount(latest.history.duplicates_retained)} retained duplicates · ` +
+      `${callMatchingCount(latest.history.duplicates_evicted)} older duplicates evicted.`;
   };
   let inFlight = false;
   let stopped = false;

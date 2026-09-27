@@ -12,7 +12,6 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCallIdentit
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticCounters;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticDecision;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticEvidence;
-import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticFileState;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticLeg;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputPolicy;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOverlap;
@@ -118,7 +117,7 @@ public final class CallMatchingHttpController
                                      AudioCallCoordinator.CoordinatorQueueStatus queue, long now)
     {
         List<DuplicateDecision> duplicates = new ArrayList<>(MAXIMUM_VISIBLE_DUPLICATES);
-        List<LogicalCallDiagnosticDecision> decisions = history.recentDecisions();
+        List<LogicalCallDiagnosticDecision> decisions = history.recentDuplicates();
 
         for(int index = decisions.size() - 1; index >= 0 && duplicates.size() < MAXIMUM_VISIBLE_DUPLICATES; index--)
         {
@@ -141,15 +140,16 @@ public final class CallMatchingHttpController
         QueueStatus queueStatus = new QueueStatus(queue.ingressDepth(), queue.regularIngressCapacity(),
             queue.totalIngressCapacity(), queue.acceptedIngress(), queue.droppedIngress(),
             queue.droppedLifecycle(), queue.droppedOperations(), queue.abortedCalls());
-        HistoryStatus historyStatus = new HistoryStatus(history.recentDecisionsEvicted(), decisions.size(),
-            duplicates.size(), MAXIMUM_VISIBLE_DUPLICATES);
+        HistoryStatus historyStatus = new HistoryStatus(decisions.size(), history.duplicatesEvicted(),
+            MAXIMUM_VISIBLE_DUPLICATES);
         return new Document(true, safeLabel(history.sessionId()), history.sessionStartedAtEpochMillis(),
             resolverStatus, queueStatus, diagnosticStatus(status), historyStatus, List.copyOf(duplicates));
     }
 
     private static String matchingHealth(LogicalCallDiagnosticSnapshot resolver,
                                          AudioCallCoordinator.CoordinatorQueueStatus queue,
-                                         LogicalCallDiagnosticStatus status, long snapshotAge)
+                                         LogicalCallDiagnosticStatus status,
+                                         long snapshotAge)
     {
         if(resolver.disposed())
         {
@@ -163,29 +163,17 @@ public final class CallMatchingHttpController
         {
             return "UNRESPONSIVE";
         }
+        if(!status.accepting())
+        {
+            return "WARNING";
+        }
         if(queue.ingressDepth() >= pressureThreshold(queue.totalIngressCapacity()) ||
             queue.droppedIngress() > 0 || queue.droppedOperations() > 0 ||
-            status.recordsDroppedAtQueue() > 0 || status.fileWriteFailures() > 0)
+            resolver.counters().diagnosticDecisionsRejected() > 0)
         {
             return "WARNING";
         }
         return "HEALTHY";
-    }
-
-    private static String fileHealth(LogicalCallDiagnosticStatus status)
-    {
-        if(status.fileState() == LogicalCallDiagnosticFileState.DISABLED ||
-            status.fileWriteFailures() > 0 || status.oversizedRecordsDropped() > 0)
-        {
-            return "ERROR";
-        }
-        if(status.fileState() != LogicalCallDiagnosticFileState.ACTIVE ||
-            status.queuedRecords() >= pressureThreshold(status.queueCapacity()) ||
-            status.recordsDroppedAtQueue() > 0 || status.fileRecordsDropped() > 0)
-        {
-            return "WARNING";
-        }
-        return "ACTIVE";
     }
 
     private static int pressureThreshold(int capacity)
@@ -392,13 +380,8 @@ public final class CallMatchingHttpController
 
     private static DiagnosticStatus diagnosticStatus(LogicalCallDiagnosticStatus status)
     {
-        return new DiagnosticStatus(status.accepting(), status.writerTerminated(), status.queuedRecords(),
-            status.queueCapacity(), status.decisionsObserved(), status.outputConfirmationsObserved(),
-            status.recordedConfirmationsObserved(), status.streamSubmittedConfirmationsObserved(),
-            status.recordsEnqueued(), status.recordsDroppedAtQueue(), status.recordsRejectedAfterClose(),
-            status.fileRecordsWritten(), status.fileRecordsDropped(), status.oversizedRecordsDropped(),
-            status.fileWriteFailures(), status.fileState().name(), fileHealth(status), status.activeFileBytes(),
-            status.retainedFileCount(), status.maximumFileBytes(), status.maximumFiles());
+        return new DiagnosticStatus(status.accepting(), status.decisionsObserved(),
+            status.recordsRejectedAfterClose());
     }
 
     private static String safeLabel(String value)
@@ -499,19 +482,12 @@ public final class CallMatchingHttpController
     {
     }
 
-    private record DiagnosticStatus(boolean accepting, boolean writerTerminated, int queuedRecords,
-                                    int queueCapacity, long decisionsObserved, long outputConfirmationsObserved,
-                                    long recordedConfirmationsObserved, long streamSubmittedConfirmationsObserved,
-                                    long recordsEnqueued, long recordsDroppedAtQueue, long recordsRejectedAfterClose,
-                                    long fileRecordsWritten, long fileRecordsDropped, long oversizedRecordsDropped,
-                                    long fileWriteFailures, String fileState, String fileHealthState,
-                                    long activeFileBytes, int retainedFileCount, long maximumFileBytes,
-                                    int maximumFiles)
+    private record DiagnosticStatus(boolean accepting, long decisionsObserved,
+                                    long recordsRejectedAfterClose)
     {
     }
 
-    private record HistoryStatus(long recentDecisionsEvicted, int recentDecisionsRetained,
-                                 int duplicateDecisionsShown, int limit)
+    private record HistoryStatus(int duplicatesRetained, long duplicatesEvicted, int limit)
     {
     }
 

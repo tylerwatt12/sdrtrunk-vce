@@ -11,8 +11,8 @@ import java.util.Map;
 
 /**
  * Exact, fixed-cardinality summary of the duplicate comparisons that contributed to one final call decision.
- * Counts replace the former per-pair transcript so diagnostic memory and file size do not grow with the number of
- * unrelated candidate calls checked by the resolver.
+ * Counts replace the former per-pair transcript so diagnostic memory and API responses do not grow with the number
+ * of unrelated candidate calls checked by the resolver.
  */
 public record LogicalCallDiagnosticEvidence(long confirmedDuplicatePairCount, long separatedPairCount,
                                             long uncertainPairCount,

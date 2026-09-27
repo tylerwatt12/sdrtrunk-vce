@@ -91,17 +91,11 @@ function snapshot(duplicates = [duplicate()]) {
       dropped_operations: 0, aborted_calls: 0
     },
     diagnostic_status: {
-      accepting: true, writer_terminated: false, queued_records: 0, queue_capacity: 256,
-      recorded_confirmations_observed: 142, stream_submitted_confirmations_observed: 139,
-      records_dropped_at_queue: 0, records_rejected_after_close: 0,
-      file_records_dropped: 0, oversized_records_dropped: 0, file_write_failures: 0,
-      file_state: 'ACTIVE', file_health_state: 'ACTIVE',
-      active_file_bytes: 18_400_000, maximum_file_bytes: 50_000_000,
-      retained_file_count: 3, maximum_files: 8
+      accepting: true, decisions_observed: 147, records_rejected_after_close: 0
     },
     history: {
-      recent_decisions_evicted: 6, recent_decisions_retained: duplicates.length,
-      duplicate_decisions_shown: duplicates.filter((item) => item.outcome === 'MERGED').length,
+      duplicates_evicted: 6,
+      duplicates_retained: duplicates.filter((item) => item.outcome === 'MERGED').length,
       limit: 100
     },
     duplicates
@@ -153,6 +147,10 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(table).toContainText('Matching voice frames');
   await expect(table).not.toContainText('Single call');
   await expect(page.locator('.call-matching-workspace .ui-toggle')).toHaveCount(0);
+  await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic file');
+  await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic queue');
+  await expect(page.locator('.call-matching-history-footer')).toContainText('retained duplicates');
+  await expect(page.locator('.call-matching-history-footer')).toContainText('older duplicates evicted');
   const compare = page.getByRole('button', { name: 'Compare duplicate decision 71' });
   await compare.click();
   const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
@@ -232,14 +230,13 @@ test('empty and failed snapshots recover on a later poll', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Compare duplicate decision 71' })).toBeVisible({ timeout: 3500 });
 });
 
-test('published warning states appear in matching and file health', async ({ page }) => {
+test('published warning state appears without file-debug health', async ({ page }) => {
   const data = snapshot();
   data.resolver.health_state = 'WARNING';
-  data.diagnostic_status.file_health_state = 'WARNING';
   await openApp(page, { matching: async () => ({ data }) });
   await expect(page.locator('.call-matching-health-state')).toContainText('Warning');
-  await expect(page.locator('.call-matching-health-summary')).toContainText('Diagnostic file');
-  await expect(page.locator('.call-matching-health-summary')).toContainText('Warning');
+  await expect(page.locator('.call-matching-health-summary')).not.toContainText('Diagnostic file');
+  await expect(page.locator('.call-matching-status-content')).toContainText('Matching queue');
 });
 
 for (const [name, viewport, theme] of [

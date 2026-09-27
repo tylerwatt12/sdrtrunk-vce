@@ -23,10 +23,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
-import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
-import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputEvent;
-import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticOutputType;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
@@ -236,14 +233,13 @@ public class SDRTrunk
 
         mReceiverActivityService = new ReceiverActivityService(mUserPreferences);
 
-        mLogicalCallDiagnosticService = new LogicalCallDiagnosticService(
-            mUserPreferences.getDirectoryPreference().getDirectoryApplicationLog());
+        mLogicalCallDiagnosticService = new LogicalCallDiagnosticService();
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
-            this::receiveRecordedCall);
+            mReceiverActivityService::receiveRecordedCall);
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
-            mUserPreferences, this::receiveStreamedCall);
+            mUserPreferences, mReceiverActivityService::receiveStreamedCall);
 
         mDecodeEventViewService = new DecodeEventViewService(
             mConfigurationManager.getChannelProcessingManager(), mConfigurationManager.getAliasModel());
@@ -746,44 +742,6 @@ public class SDRTrunk
         });
     }
 
-    /** Records the completed local file action and preserves the existing activity-statistics callback. */
-    private void receiveRecordedCall(CompletedAudioCall completedAudioCall)
-    {
-        try
-        {
-            mReceiverActivityService.receiveRecordedCall(completedAudioCall);
-        }
-        finally
-        {
-            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.RECORDED);
-        }
-    }
-
-    /** Records local streamer submission, not acknowledgement or publication by a remote provider. */
-    private void receiveStreamedCall(CompletedAudioCall completedAudioCall)
-    {
-        try
-        {
-            mReceiverActivityService.receiveStreamedCall(completedAudioCall);
-        }
-        finally
-        {
-            offerDiagnosticOutput(completedAudioCall, LogicalCallDiagnosticOutputType.STREAM_SUBMITTED);
-        }
-    }
-
-    private void offerDiagnosticOutput(CompletedAudioCall completedAudioCall,
-                                       LogicalCallDiagnosticOutputType outputType)
-    {
-        LogicalCallDiagnosticService diagnosticService = mLogicalCallDiagnosticService;
-
-        if(diagnosticService != null && completedAudioCall != null && completedAudioCall.logicalCallId() != null)
-        {
-            diagnosticService.offerOutput(new LogicalCallDiagnosticOutputEvent(
-                completedAudioCall.logicalCallId().sequence(), System.currentTimeMillis(), outputType));
-        }
-    }
-
     /** Opens a local directory with the platform file browser. */
     private void openFileExplorer(File directory)
     {
@@ -1037,7 +995,6 @@ public class SDRTrunk
 
         if(mLogicalCallDiagnosticService != null)
         {
-            //Output managers report their final recorded/stream-submitted confirmations while draining.
             mLogicalCallDiagnosticService.close();
         }
 

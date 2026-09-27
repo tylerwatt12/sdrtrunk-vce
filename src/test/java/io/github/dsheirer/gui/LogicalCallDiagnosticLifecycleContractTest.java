@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.gui;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -18,15 +19,15 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * The diagnostic service is shared by the resolver and the web monitor. Its lifetime must include the final
- * recording and streaming output confirmations, even though it no longer owns a JavaFX window.
+ * The diagnostic service is shared by the resolver and the web monitor. It must outlive the coordinator's final
+ * duplicate decisions, but it must not subscribe to output confirmations or create a file-debug path.
  */
 class LogicalCallDiagnosticLifecycleContractTest
 {
     private static final Path APPLICATION = Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
 
     @Test
-    void diagnosticServiceReceivesOutputsAndClosesAfterProducersDrain() throws Exception
+    void duplicateHistoryClosesAfterCoordinatorDrainsWithoutFileOrOutputDebugWiring() throws Exception
     {
         String application = Files.readString(APPLICATION);
         int serviceCreation = application.indexOf("new LogicalCallDiagnosticService(");
@@ -39,8 +40,10 @@ class LogicalCallDiagnosticLifecycleContractTest
         int serviceClose = application.indexOf("mLogicalCallDiagnosticService.close();");
 
         assertTrue(serviceCreation >= 0 && serviceCreation < coordinatorCreation);
-        assertTrue(application.contains("LogicalCallDiagnosticOutputType.RECORDED"));
-        assertTrue(application.contains("LogicalCallDiagnosticOutputType.STREAM_SUBMITTED"));
+        assertTrue(application.contains("new LogicalCallDiagnosticService()"));
+        assertTrue(application.contains("mReceiverActivityService::receiveRecordedCall"));
+        assertTrue(application.contains("mReceiverActivityService::receiveStreamedCall"));
+        assertFalse(application.contains("offerDiagnosticOutput"));
         assertTrue(siteMetadataDrain >= 0 && siteMetadataDrain < coordinatorStop);
         assertTrue(coordinatorStop >= 0 && coordinatorStop < streamingStop && coordinatorStop < recordingStop);
         assertTrue(streamingStop < statisticsStop && streamingStop < serviceClose);

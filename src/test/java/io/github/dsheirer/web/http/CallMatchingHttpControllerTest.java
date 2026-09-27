@@ -39,8 +39,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,14 +49,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class CallMatchingHttpControllerTest
 {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    @TempDir
-    Path mTemporaryDirectory;
 
     @Test
     void returnsNewestConfirmedDuplicatesOnlyWithBoundedCopiesAndSafeLabels() throws Exception
@@ -82,14 +76,15 @@ class CallMatchingHttpControllerTest
             assertEquals("no-store", exchange.getResponseHeaders().getFirst("Cache-Control"));
             JsonNode data = MAPPER.readTree(exchange.body()).path("data");
             assertTrue(data.path("available").booleanValue());
-            assertEquals(45, data.at("/history/recent_decisions_evicted").longValue());
-            assertEquals(256, data.at("/history/recent_decisions_retained").intValue());
-            assertEquals(100, data.at("/history/duplicate_decisions_shown").intValue());
+            assertEquals(0, data.at("/history/duplicates_evicted").longValue());
+            assertEquals(151, data.at("/history/duplicates_retained").intValue());
             assertEquals(100, data.at("/history/limit").intValue());
-            assertEquals(301, data.at("/diagnostic_status/decisions_observed").longValue());
+            assertEquals(151, data.at("/diagnostic_status/decisions_observed").longValue());
             assertTrue(data.at("/queue/total_ingress_capacity").intValue() > 0);
             assertNotNull(data.at("/resolver/health_state").textValue());
-            assertNotNull(data.at("/diagnostic_status/file_health_state").textValue());
+            assertFalse(data.path("diagnostic_status").has("file_health_state"));
+            assertFalse(data.path("diagnostic_status").has("queued_records"));
+            assertFalse(data.path("diagnostic_status").has("output_confirmations_observed"));
 
             JsonNode duplicates = data.path("duplicates");
             assertEquals(100, duplicates.size());
@@ -130,6 +125,13 @@ class CallMatchingHttpControllerTest
             assertFalse(exchange.body().contains("topsecret"));
             assertFalse(exchange.body().contains("192.168.1.1"));
             assertFalse(exchange.body().contains("physical-leg"));
+
+            service.close();
+            TestExchange closedHistory = new TestExchange(CallMatchingHttpController.PATH, "GET");
+            new CallMatchingHttpController(() -> service, () -> coordinator).handle(closedHistory);
+            JsonNode closedData = MAPPER.readTree(closedHistory.body()).path("data");
+            assertFalse(closedData.at("/diagnostic_status/accepting").booleanValue());
+            assertEquals("WARNING", closedData.at("/resolver/health_state").textValue());
         }
         finally
         {
@@ -212,9 +214,7 @@ class CallMatchingHttpControllerTest
 
     private LogicalCallDiagnosticService diagnosticService()
     {
-        return new LogicalCallDiagnosticService(new LogicalCallDiagnosticConfiguration(
-            mTemporaryDirectory.resolve("diagnostic-files"), 256, 256, 1_048_576, 2, 65_536,
-            Duration.ofSeconds(2)));
+        return new LogicalCallDiagnosticService(new LogicalCallDiagnosticConfiguration(256));
     }
 
     private static LogicalCallDiagnosticDecision decision(int sequence, LogicalCallDecisionOutcome outcome)

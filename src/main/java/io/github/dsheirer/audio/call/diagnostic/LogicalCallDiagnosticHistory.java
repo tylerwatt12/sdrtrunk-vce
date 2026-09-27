@@ -12,11 +12,12 @@ import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- * Fixed session-only decision ring.  Appends use only bounded atomic writes and snapshots never make an appender wait.
+ * Fixed session-only duplicate-decision ring. Appends use only bounded atomic writes and snapshots never make an
+ * appender wait.
  */
 final class LogicalCallDiagnosticHistory
 {
-    private final AtomicReferenceArray<LogicalCallDiagnosticDecision> mDecisions;
+    private final AtomicReferenceArray<LogicalCallDiagnosticDecision> mDuplicates;
     private final AtomicLongArray mPublishedPositions;
     private final AtomicLong mNextPosition = new AtomicLong();
     private final int mMask;
@@ -28,7 +29,7 @@ final class LogicalCallDiagnosticHistory
             throw new IllegalArgumentException("capacity must be a power of two greater than one");
         }
 
-        mDecisions = new AtomicReferenceArray<>(capacity);
+        mDuplicates = new AtomicReferenceArray<>(capacity);
         mPublishedPositions = new AtomicLongArray(capacity);
         mMask = capacity - 1;
     }
@@ -38,15 +39,15 @@ final class LogicalCallDiagnosticHistory
         long position = mNextPosition.getAndIncrement();
         int index = (int)position & mMask;
         mPublishedPositions.set(index, 0);
-        mDecisions.set(index, decision);
+        mDuplicates.set(index, decision);
         mPublishedPositions.set(index, position + 1);
     }
 
     Snapshot snapshot()
     {
         long nextPosition = mNextPosition.get();
-        long oldestPosition = Math.max(0, nextPosition - mDecisions.length());
-        List<LogicalCallDiagnosticDecision> decisions = new ArrayList<>((int)(nextPosition - oldestPosition));
+        long oldestPosition = Math.max(0, nextPosition - mDuplicates.length());
+        List<LogicalCallDiagnosticDecision> duplicates = new ArrayList<>((int)(nextPosition - oldestPosition));
 
         for(long position = oldestPosition; position < nextPosition; position++)
         {
@@ -56,24 +57,24 @@ final class LogicalCallDiagnosticHistory
 
             if(firstPublication == expectedPublication)
             {
-                LogicalCallDiagnosticDecision decision = mDecisions.get(index);
+                LogicalCallDiagnosticDecision decision = mDuplicates.get(index);
 
                 if(decision != null && mPublishedPositions.get(index) == expectedPublication)
                 {
-                    decisions.add(decision);
+                    duplicates.add(decision);
                 }
             }
         }
 
-        return new Snapshot(List.copyOf(decisions), Math.max(0, nextPosition - mDecisions.length()));
+        return new Snapshot(List.copyOf(duplicates), Math.max(0, nextPosition - mDuplicates.length()));
     }
 
     int capacity()
     {
-        return mDecisions.length();
+        return mDuplicates.length();
     }
 
-    record Snapshot(List<LogicalCallDiagnosticDecision> decisions, long evictedDecisions)
+    record Snapshot(List<LogicalCallDiagnosticDecision> duplicates, long evictedDuplicates)
     {
     }
 }
