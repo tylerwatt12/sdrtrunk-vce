@@ -163,6 +163,10 @@ class WebAccessControllersTest
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").isPresent());
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
                 .contains("form-action 'self'"));
+            assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
+                .contains("img-src 'self' data: https://tile.openstreetmap.org;"));
+            assertFalse(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
+                .contains("connect-src 'self' https://tile.openstreetmap.org"));
             assertFalse(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
                 .contains("radioreference.com"));
             assertEquals("camera=(), microphone=(), geolocation=(self)",

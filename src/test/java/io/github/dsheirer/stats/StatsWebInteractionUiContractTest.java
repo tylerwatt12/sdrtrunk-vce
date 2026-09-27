@@ -151,7 +151,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(status.contains("historyLabel"));
         assertFalse(status.contains("History off"));
         assertTrue(historyNotice.contains("Store Detailed Event History"));
-        assertTrue(historyNotice.contains("Stats & Web > Stats Server"));
+        assertTrue(historyNotice.contains("Administration > Receiver operations"));
         assertTrue(historyNotice.contains("earlier activity cannot be recovered"));
         assertTrue(historyNotice.contains("New activity is not being saved."));
         assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"214\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"217\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -660,7 +660,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=186"));
+        assertTrue(html.contains("/assets/app.css?v=189"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1067,7 +1067,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanLists.contains("heading.classList.add('scan-list-page-header')"));
         assertTrue(source.contains("function renderStreaming()"));
         assertTrue(source.contains("function renderTuners()"));
-        assertTrue(source.contains("function renderRfPlanner()"));
+        assertFalse(source.contains("function renderRfPlanner()"));
+        assertTrue(source.contains("const actionSetting = setting.kind === 'action'"));
+        assertTrue(source.contains("body: { value: actionSetting ? true : control.read(control.input) }"));
+        assertTrue(source.contains("if (setting.minimum != null"));
+        assertTrue(source.contains("if (setting.maximum != null"));
         assertFalse(source.contains("href('configuration', { tab: 'scan-lists' })"));
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));

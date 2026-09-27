@@ -92,6 +92,22 @@ public final class RecordingStatusBroadcaster implements IRecordingStatusListene
         }
     }
 
+    @Override
+    public void failed(String reason)
+    {
+        for(IRecordingStatusListener listener: mListeners)
+        {
+            try
+            {
+                listener.failed(reason);
+            }
+            catch(Exception exception)
+            {
+                mLog.error("Error broadcasting tuner recording failure", exception);
+            }
+        }
+    }
+
     private void notifyListener(IRecordingStatusListener listener, RecordingStatus status)
     {
         try

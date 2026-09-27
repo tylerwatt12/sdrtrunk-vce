@@ -43,7 +43,7 @@ class TunerManagerFrequencyPersistenceTest
         TrackingTunerController controller = createController(857_000_000L);
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner("current-center", controller);
         TunerManager tunerManager = new TunerManager(null, configurationManager);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         Source source = null;
 
         try
@@ -69,7 +69,7 @@ class TunerManagerFrequencyPersistenceTest
         TrackingTunerController controller = createController(853_000_000L);
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner("retuned-tuner", controller);
         TunerManager tunerManager = new TunerManager(null, configurationManager);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         Source source = null;
 
         try

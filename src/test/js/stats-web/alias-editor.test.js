@@ -7,6 +7,12 @@ const vm = require('node:vm');
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
 const application = fs.readFileSync(applicationPath, 'utf8');
+assert.match(application, /api\('\/api\/v1\/listen\/map\/icons'/,
+  'Alias icon previews must use the receiver allowlisted standard-icon catalog.');
+assert.equal((application.match(/iconField\.append\(aliasIconPreview\(icon\)\)/g) || []).length, 2,
+  'Both single and bulk Alias appearance editors must show a standard-icon preview.');
+assert.match(application, /catalog\.get\(name\) \|\| 'no-icon'/,
+  'Unknown or custom Alias icons must use the bundled no-icon preview.');
 
 function functionSource(signature) {
   const start = application.indexOf(signature);

@@ -105,6 +105,9 @@ public final class TunerAdministrationService
         int channelCount = available ? Math.max(0, tuner.getChannelSourceManager().getTunerChannelCount()) : 0;
         Long frequency = available ? tuner.getTunerController().getFrequency() : null;
         Long sampleRate = available ? Math.round(tuner.getTunerController().getSampleRate()) : null;
+        int measuredHz = available ? tuner.getTunerController().getMeasuredFrequencyError() : 0;
+        MeasuredError measuredError = measuredHz != 0 && frequency != null && frequency > 0 ?
+            new MeasuredError(measuredHz, measuredHz / (frequency / 1_000_000.0)) : null;
         String spectrumTargetId = available && channelCount > 0 ? mSpectrumTargetId.apply(tuner) : null;
         String plannerModel = TunerSettingCatalog.plannerModel(tunerType);
         Planner planner = plannerModel != null && sampleRate != null && sampleRate > 0 ?
@@ -125,6 +128,7 @@ public final class TunerAdministrationService
             discovered.getTunerClass().name().toLowerCase(Locale.ROOT), tunerType.name().toLowerCase(Locale.ROOT),
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), discovered.isEnabled(), available,
             channelCount, frequency, sampleRate, configuration != null ? configuration.getFrequency() : null,
+            measuredError,
             spectrumTargetId, spectrumTargetId != null, planner, settings,
             mSettings != null && mSettings.hasPending(discovered),
             maintenanceError);
@@ -190,9 +194,11 @@ public final class TunerAdministrationService
     public record Snapshot(List<Item> tuners) { }
     public record DeviceGroup(String id, String kind, String role) { }
     public record Planner(String model, long rateHz) { }
+    public record MeasuredError(int hertz, double ppm) { }
     public record Item(String id, DeviceGroup deviceGroup, String name, String tunerClass, String tunerType,
                        String status, boolean enabled, boolean available, int channelCount, Long frequencyHz,
-                       Long sampleRateHz, Long configuredFrequencyHz, String spectrumTargetId,
+                       Long sampleRateHz, Long configuredFrequencyHz, MeasuredError measuredError,
+                       String spectrumTargetId,
                        boolean spectrumAvailable, Planner planner, Object settings, boolean pending,
                        String maintenanceError) { }
 }

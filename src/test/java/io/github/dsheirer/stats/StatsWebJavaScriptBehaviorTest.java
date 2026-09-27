@@ -28,7 +28,9 @@ class StatsWebJavaScriptBehaviorTest
     private static final Path APP_STYLESHEET = Path.of("stats-web", "assets", "app.css");
     private static final Path CORE_MODULES = Path.of("stats-web", "assets", "core");
     private static final Path PAGE_LIFECYCLE = CORE_MODULES.resolve("page-lifecycle.js");
-    private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
+    private static final Path RADIORESOLVE_ANALYSIS = Path.of("stats-web", "assets", "features",
+        "radioresolve-analysis.js");
+    private static final Path LISTEN_MAP = Path.of("stats-web", "assets", "features", "listen-map.js");
     private static final Path NETWORK_VISUALIZER = Path.of("stats-web", "assets", "features", "network-visualizer");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final String NODE = System.getenv().getOrDefault("NODE_BINARY", "node");
@@ -42,6 +44,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("health alert settings", "health-alert-settings.test.js", APP_JAVASCRIPT),
         contract("Live detail filters", "live-detail-filters.test.js", APP_JAVASCRIPT),
         contract("Live presentation", "live-presentation.test.js", APP_JAVASCRIPT),
+        contract("Listen map", "listen-map.test.js", LISTEN_MAP),
         contract("P25 Visualizer history", "p25-visualizer-history.test.js", NETWORK_VISUALIZER),
         contract("P25 Visualizer camera", "p25-visualizer-camera.test.js", NETWORK_VISUALIZER),
         contract("channel patches", "channel-patches.test.js", APP_JAVASCRIPT),
@@ -49,7 +52,7 @@ class StatsWebJavaScriptBehaviorTest
         contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),
         contract("page lifecycle", "page-lifecycle.test.js", PAGE_LIFECYCLE),
         contract("radio identity presentation", "radio-identity-presentation.test.js", APP_JAVASCRIPT),
-        contract("RF planner", "rf-planner.test.js", RF_PLANNER),
+        contract("external RF analysis", "radioresolve-analysis.test.js", RADIORESOLVE_ANALYSIS),
         contract("receiver-health alert catalog", "receiver-health-alerts.test.js", CORE_MODULES),
         contract("receiver-health pagination", "receiver-health-pagination.test.js", APP_JAVASCRIPT),
         contract("status availability", "status-availability.test.js", APP_JAVASCRIPT),

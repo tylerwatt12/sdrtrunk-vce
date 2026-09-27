@@ -27,13 +27,13 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/radio-directory.css?v=4") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/tuners.css?v=1") layer(features);',
+  '@import url("./styles/features/listen-map.css?v=1") layer(features);',
   '@import url("./styles/features/network-visualizer.css?v=8") layer(features);',
   '@import url("./styles/features/scanner.css?v=5") layer(features);',
-  '@import url("./styles/features/rf-planner.css?v=3") layer(features);',
-  '@import url("./styles/features/aliases.css?v=8") layer(features);',
+  '@import url("./styles/features/aliases.css?v=9") layer(features);',
   '@import url("./styles/features/scan-lists.css?v=1") layer(features);',
   '@import url("./styles/features/dashboard.css?v=3") layer(features);',
-  '@import url("./styles/features/administration.css?v=3") layer(features);',
+  '@import url("./styles/features/administration.css?v=4") layer(features);',
   '@import url("./styles/features/call-matching.css?v=1") layer(features);',
   '@import url("./styles/features/signal-quality.css?v=3") layer(features);',
   '@import url("./styles/features/radioreference.css?v=13") layer(features);',
@@ -721,21 +721,6 @@ function validateScannerFeature(stylesheets, entry) {
     'Scanner presentation must not add important declarations');
 }
 
-function validateRfPlannerFeature(stylesheets, entry) {
-  const planner = stylesheetModule(stylesheets, entry, 'features/rf-planner.css').source;
-  for(const selector of ['.rf-planner', '.rfp-layout', '.rfp-tuner-card',
-    '.rfp-summary', '.rfp-spectrum-track']) {
-    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    assert.match(planner, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
-      `Missing RF Planner rule ${selector}`);
-  }
-  assert.match(planner,
-    /@media \(max-width: 640px\)[\s\S]*\.rfp-tuner-fields,[\s\S]*\.rfp-detail-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
-    'RF Planner fields and result details must collapse on small screens');
-  assert.doesNotMatch(planner, /:root\[data-theme="dark"\]/,
-    'RF Planner presentation must adapt through semantic tokens instead of feature theme overrides');
-}
-
 function validateAliasesFeature(stylesheets, entry) {
   const aliases = stylesheetModule(stylesheets, entry, 'features/aliases.css').source;
   for(const selector of ['.alias-editor-workspace', '.alias-list-rail', '.alias-list-summary',
@@ -994,7 +979,6 @@ validateSettingsComposition(stylesheets, entryStylesheet);
 validateSettingsFeatures(stylesheets, entryStylesheet);
 validateTunerSpectrumFeature(stylesheets, entryStylesheet);
 validateScannerFeature(stylesheets, entryStylesheet);
-validateRfPlannerFeature(stylesheets, entryStylesheet);
 validateAliasesFeature(stylesheets, entryStylesheet);
 validateScanListsFeature(stylesheets, entryStylesheet);
 validateLiveFeature(stylesheets, entryStylesheet);

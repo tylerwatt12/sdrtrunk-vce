@@ -61,7 +61,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     private int mMeasuredFrequencyError;
     private double mUsableBandwidthPercentage;
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
-    private NativeBufferWaveRecorder mRecorder;
+    private volatile NativeBufferWaveRecorder mRecorder;
     private final RecordingStatusBroadcaster mRecordingStatusBroadcaster = new RecordingStatusBroadcaster();
     private ITunerErrorListener mTunerErrorListener;
     private volatile boolean mCenterFrequencyLocked;
@@ -122,6 +122,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
 
     protected void dispose()
     {
+        stopRecorder();
         getTunerFrequencyErrorManager().dispose();
         mRecordingStatusBroadcaster.dispose();
         mNativeBufferBroadcaster.clear();
@@ -785,32 +786,77 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      * @param statusListener to receive updates on recording file name and size
      * @param prefix for the recording file name (ie tuner class name)
      */
-    public void startRecorder(UserPreferences userPreferences, IRecordingStatusListener statusListener, String prefix)
+    public synchronized void startRecorder(UserPreferences userPreferences, IRecordingStatusListener statusListener,
+                                           String prefix)
     {
         addRecordingStatusListener(statusListener);
 
         if(!isRecording())
         {
             mRecordingStatusBroadcaster.clearStatus();
-            mRecorder = RecorderFactory.getTunerRecorder(prefix + "_" + getFrequency(), userPreferences,
-                    mRecordingStatusBroadcaster);
-            mRecorder.setSampleRate((float)getSampleRate());
-            mRecorder.start();
-            addBufferListener(mRecorder);
+            NativeBufferWaveRecorder recorder = RecorderFactory.getTunerRecorder(prefix + "_" + getFrequency(),
+                userPreferences, mRecordingStatusBroadcaster);
+            recorder.setSampleRate((float)getSampleRate());
+            recorder.setFailureHandler(reason -> recorderFailed(recorder, reason));
+            recorder.start();
+            if(!recorder.isRunning())
+            {
+                mRecordingStatusBroadcaster.removeListener(statusListener);
+                throw new IllegalStateException("Baseband recording could not be started");
+            }
+            mRecorder = recorder;
+            try
+            {
+                addBufferListener(recorder);
+            }
+            catch(RuntimeException exception)
+            {
+                mRecorder = null;
+                recorder.stop();
+                mRecordingStatusBroadcaster.removeListener(statusListener);
+                throw exception;
+            }
         }
+    }
+
+    private void recorderFailed(NativeBufferWaveRecorder recorder, String reason)
+    {
+        synchronized(this)
+        {
+            if(mRecorder != recorder)
+            {
+                return;
+            }
+            try
+            {
+                stopRecorder();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Unable to detach failed baseband recorder", exception);
+            }
+        }
+        mRecordingStatusBroadcaster.failed(reason);
     }
 
     /**
      * Stops the recording of complex I/Q buffers
      */
-    public void stopRecorder()
+    public synchronized void stopRecorder()
     {
-        if(isRecording())
+        NativeBufferWaveRecorder recorder = mRecorder;
+        if(recorder != null)
         {
-            removeBufferListener(mRecorder);
-            mRecorder.stop();
             mRecorder = null;
-            mRecordingStatusBroadcaster.clearStatus();
+            try
+            {
+                removeBufferListener(recorder);
+            }
+            finally
+            {
+                recorder.stop();
+                mRecordingStatusBroadcaster.clearStatus();
+            }
         }
     }
 

@@ -176,7 +176,7 @@ class StatsWebTrunkedChannelUiContractTest
         assertFalse(channelInfo.contains("['Name', channel.channel_name]"));
         assertFalse(siteName.contains("channel_name"));
         assertTrue(groups.contains("section('Group Activity on This Channel'"));
-        assertTrue(groups.contains("label: 'Logical Calls'"));
+        assertTrue(groups.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
         assertTrue(groups.contains("row.logical_call_count"));
         assertTrue(groups.contains("fullLabel: 'Encrypted Logical Calls'"));
         assertTrue(groups.contains("row.encrypted_logical_call_count"));
@@ -225,15 +225,17 @@ class StatsWebTrunkedChannelUiContractTest
     @Test
     void labelsTheOneEffectiveP25BandplanWithoutInventingOverrideObservations() throws Exception
     {
-        String channel = function(source(), "async function renderTrunkedChannel(channel, configurationId, renderContext)");
+        String source = source();
+        String channel = function(source, "async function renderTrunkedChannel(channel, configurationId, renderContext)");
+        String bandPlans = function(source, "function renderTrunkedChannelBandPlans(channel, data)");
 
-        assertTrue(channel.contains("data.band_source === 'P25_OVERRIDE'"));
-        assertTrue(channel.contains("overrideActive ? 'P25 override' : 'OTA band plan'"));
-        assertTrue(channel.contains("if (!overrideActive) homeBandColumns.push("));
-        assertTrue(channel.contains("label: 'Observations'"));
-        assertFalse(channel.contains("label: 'Obs'"));
-        assertTrue(channel.contains("label: 'Seen'"));
-        assertFalse(channel.contains("label: 'Source'"));
+        assertTrue(channel.contains("renderTrunkedChannelBandPlans(channel, data)"));
+        assertTrue(bandPlans.contains("data.band_source === 'P25_OVERRIDE'"));
+        assertTrue(bandPlans.contains("overrideActive ? 'P25 override' : 'OTA band plan'"));
+        assertTrue(bandPlans.contains("if (!overrideActive) homeBandColumns.push("));
+        assertTrue(bandPlans.contains("label: 'Obs', fullLabel: 'Observations'"));
+        assertTrue(bandPlans.contains("label: 'Seen', fullLabel: 'Last Seen'"));
+        assertFalse(bandPlans.contains("label: 'Source'"));
     }
 
     private static String source() throws Exception

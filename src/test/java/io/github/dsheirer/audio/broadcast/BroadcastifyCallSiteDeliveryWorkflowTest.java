@@ -373,7 +373,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
         private void submit(AudioCallSnapshot... snapshots) throws InterruptedException
         {
             int expectedRecordings = mRecordings.size() + 1;
-            int expectedDecisions = mDecisions.size() + 1;
+            int expectedDecisions = mDecisions.size() + (snapshots.length > 1 ? 1 : 0);
             long carrierTimestamp = System.currentTimeMillis();
 
             for(AudioCallSnapshot snapshot : snapshots)
@@ -402,7 +402,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
                     mStreamingManager.getQueueStatus().retainedCalls() > 0,
                 "Coordinator did not hand one resolved call to the streaming manager");
             assertEquals(expectedDecisions, mDecisions.size(),
-                "Every submission must produce exactly one logical-call decision: " + mDecisions);
+                "Only confirmed duplicate merges should be retained as logical-call decisions: " + mDecisions);
             assertEquals(1, mStreamingManager.getQueueStatus().retainedCalls(),
                 "Every submission must hand exactly one logical call to streaming: " + mDecisions);
 

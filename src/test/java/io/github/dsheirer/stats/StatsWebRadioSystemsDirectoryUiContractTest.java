@@ -59,15 +59,15 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         String app = readText(APP_JAVASCRIPT);
         String directory = function(app, "function renderNestedRadioDirectory(renderContext, embedded = false)");
         String systemCard = function(app, "function radioDirectorySystemCard(row)");
-        String channelCard = function(app, "function radioDirectoryConventionalCard(row)");
+        String channelCard = function(app, "function radioDirectoryConventionalSystemCard(row)");
 
         assertTrue(directory.contains("bare: true"));
         assertTrue(directory.contains("radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system'"));
-        assertTrue(directory.contains("radioDirectoryCardSection('Conventional Channels', conventionalRows, 'channel'"));
+        assertTrue(directory.contains("radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional'"));
         assertFalse(directory.contains("table("));
         assertTrue(systemCard.contains("ui-surface radio-directory-system-card"));
         assertTrue(systemCard.contains("uiIconTile('icon-trunked')"));
-        assertTrue(channelCard.contains("ui-surface radio-directory-channel-card"));
+        assertTrue(channelCard.contains("ui-surface radio-directory-system-card radio-directory-conventional-card"));
         assertTrue(channelCard.contains("uiIconTile('icon-conventional', 'blue')"));
         assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
     }

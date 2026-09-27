@@ -20,40 +20,28 @@
 package io.github.dsheirer.source.tuner;
 
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.airspy.AirspyTuner;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
-import io.github.dsheirer.source.tuner.airspy.AirspyTunerEditor;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTuner;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
 import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerController;
-import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerEditor;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTuner;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController;
-import io.github.dsheirer.source.tuner.hackrf.HackRFTunerEditor;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTuner;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerConfiguration;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController;
-import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerEditor;
-import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
-import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
-import io.github.dsheirer.source.tuner.recording.RecordingTunerEditor;
 import io.github.dsheirer.source.tuner.rtl.EmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.RTL2832Tuner;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController;
-import io.github.dsheirer.source.tuner.rtl.RTL2832UnknownTunerEditor;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
-import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerEditor;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013EmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
-import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerEditor;
-import io.github.dsheirer.source.tuner.rtl.r8x.R8xTunerEditor;
 import io.github.dsheirer.source.tuner.rtl.r8x.r820t.R820TEmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.r8x.r820t.R820TTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.r8x.r828d.R828DEmbeddedTuner;
@@ -77,25 +65,21 @@ import io.github.dsheirer.source.tuner.sdrplay.rsp1.DiscoveredRsp1Tuner;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.IControlRsp1;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.Rsp1TunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.Rsp1TunerController;
-import io.github.dsheirer.source.tuner.sdrplay.rsp1.Rsp1TunerEditor;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1a.ControlRsp1a;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1a.DiscoveredRsp1aTuner;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1a.IControlRsp1a;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1a.Rsp1aTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1a.Rsp1aTunerController;
-import io.github.dsheirer.source.tuner.sdrplay.rsp1a.Rsp1aTunerEditor;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1b.ControlRsp1b;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1b.DiscoveredRsp1bTuner;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1b.IControlRsp1b;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1b.Rsp1bTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1b.Rsp1bTunerController;
-import io.github.dsheirer.source.tuner.sdrplay.rsp1b.Rsp1bTunerEditor;
 import io.github.dsheirer.source.tuner.sdrplay.rsp2.ControlRsp2;
 import io.github.dsheirer.source.tuner.sdrplay.rsp2.DiscoveredRsp2Tuner;
 import io.github.dsheirer.source.tuner.sdrplay.rsp2.IControlRsp2;
 import io.github.dsheirer.source.tuner.sdrplay.rsp2.Rsp2TunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.rsp2.Rsp2TunerController;
-import io.github.dsheirer.source.tuner.sdrplay.rsp2.Rsp2TunerEditor;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.ControlRspDuoTuner1Master;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.ControlRspDuoTuner1Single;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.ControlRspDuoTuner2Single;
@@ -107,17 +91,13 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.IControlRspDuoTuner2;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.MasterSlaveBridge;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Configuration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Controller;
-import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Editor;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Configuration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Controller;
-import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Editor;
 import io.github.dsheirer.source.tuner.sdrplay.rspDx.ControlRspDx;
 import io.github.dsheirer.source.tuner.sdrplay.rspDx.DiscoveredRspDxTuner;
 import io.github.dsheirer.source.tuner.sdrplay.rspDx.IControlRspDx;
 import io.github.dsheirer.source.tuner.sdrplay.rspDx.RspDxTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDx.RspDxTunerController;
-import io.github.dsheirer.source.tuner.sdrplay.rspDx.RspDxTunerEditor;
-import io.github.dsheirer.source.tuner.ui.TunerEditor;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -427,95 +407,4 @@ public class TunerFactory
         }
     }
 
-    /**
-     * Creates a tuner editor gui for the specified tuner
-     */
-    public static TunerEditor getEditor(UserPreferences userPreferences, DiscoveredTuner discoveredTuner,
-                                        TunerManager tunerManager)
-    {
-        switch(discoveredTuner.getTunerClass())
-        {
-            case AIRSPY:
-                return new AirspyTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case AIRSPY_HF:
-                return new AirspyHfTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case HACKRF:
-                return new HackRFTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case HYDRASDR:
-                return new HydraSdrTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case RSP:
-                if(discoveredTuner instanceof DiscoveredRspTuner discoveredRspTuner)
-                {
-                    switch(discoveredRspTuner.getDeviceType())
-                    {
-                        case RSP1:
-                            return new Rsp1TunerEditor(userPreferences, tunerManager, discoveredRspTuner);
-                        case RSP1A:
-                            return new Rsp1aTunerEditor(userPreferences, tunerManager, discoveredRspTuner);
-                        case RSP1B:
-                            return new Rsp1bTunerEditor(userPreferences, tunerManager, discoveredRspTuner);
-                        case RSP2:
-                            return new Rsp2TunerEditor(userPreferences, tunerManager, discoveredRspTuner);
-                        case RSPdx:
-                        case RSPdxR2:
-                            return new RspDxTunerEditor(userPreferences, tunerManager, discoveredRspTuner);
-                        case RSPduo:
-                            if(discoveredRspTuner instanceof DiscoveredRspDuoTuner1 duoTuner1)
-                            {
-                                return new RspDuoTuner1Editor(userPreferences, tunerManager, duoTuner1);
-                            }
-                            else if(discoveredRspTuner instanceof DiscoveredRspDuoTuner2 duoTuner2)
-                            {
-                                return new RspDuoTuner2Editor(userPreferences, tunerManager, duoTuner2);
-                            }
-                            else
-                            {
-                                throw new IllegalArgumentException("Unrecognized RSPduo device type:" +
-                                        discoveredRspTuner.getClass());
-                            }
-                        case UNKNOWN:
-                            throw new IllegalArgumentException("Unrecognized RSP device type: " +
-                                    discoveredRspTuner.getDeviceType());
-                    }
-                }
-                throw new IllegalArgumentException("Unrecognized discovered RSP tuner class: " +
-                        discoveredTuner.getClass());
-            case RECORDING_TUNER:
-                return new RecordingTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case RTL2832:
-                if(discoveredTuner.hasTuner())
-                {
-                    switch(discoveredTuner.getTuner().getTunerType())
-                    {
-                        case ELONICS_E4000:
-                            return new E4KTunerEditor(userPreferences, tunerManager, discoveredTuner);
-                        case FITIPOWER_FC0013:
-                            return new FC0013TunerEditor(userPreferences, tunerManager, discoveredTuner);
-                        case RAFAELMICRO_R820T:
-                        case RAFAELMICRO_R828D:
-                            return new R8xTunerEditor(userPreferences, tunerManager, discoveredTuner);
-                    }
-                }
-
-                if(discoveredTuner.getTunerConfiguration() instanceof E4KTunerConfiguration)
-                {
-                    return new E4KTunerEditor(userPreferences, tunerManager, discoveredTuner);
-                }
-                else if(discoveredTuner.getTunerConfiguration() instanceof FC0013TunerConfiguration)
-                {
-                    return new FC0013TunerEditor(userPreferences, tunerManager, discoveredTuner);
-                }
-                else if(discoveredTuner.getTunerConfiguration() instanceof R820TTunerConfiguration ||
-                        discoveredTuner.getTunerConfiguration() instanceof R828DTunerConfiguration)
-                {
-                    return new R8xTunerEditor(userPreferences, tunerManager, discoveredTuner);
-                }
-
-                return new RTL2832UnknownTunerEditor(userPreferences, tunerManager, discoveredTuner);
-            case TEST_TUNER:
-            case UNKNOWN:
-            default:
-                throw new IllegalArgumentException("Unsupported tuner class: " + discoveredTuner.getTunerClass());
-        }
-    }
 }

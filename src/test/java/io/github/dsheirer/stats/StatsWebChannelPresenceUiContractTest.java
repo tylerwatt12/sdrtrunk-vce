@@ -64,7 +64,7 @@ class StatsWebChannelPresenceUiContractTest
         assertTrue(groupIdentity.contains("affiliated: affiliatedOnly ? true : null"));
         assertTrue(groupIdentity.contains("row.currently_affiliated === true ? channelPresenceCell(row)"));
         assertTrue(groupIdentity.contains("label: 'Confirmed Channel'"));
-        assertTrue(groupIdentity.contains("['Affiliated Channels', number(groupIdentity.affiliated_channels)]"));
+        assertTrue(groupIdentity.contains("['Affiliated Channels', groupIdentity.affiliated_channels]"));
         assertTrue(groupIdentity.contains("affiliatedOnly ? 'Clear Filter' : 'Show Affiliated'"));
         assertTrue(groupIdentity.contains("affiliatedOnly ? 'Affiliated Radios' : 'Radios'"));
         assertTrue(groupIdentity.contains("channelPresenceCell(row) : ''"));
@@ -109,7 +109,7 @@ class StatsWebChannelPresenceUiContractTest
         String source = source();
         String radio = function(source, "async function renderRadio()");
         String channel = function(source, "async function renderTrunkedChannelInfo(channel, renderContext)");
-        String metrics = function(source, "function metrics(values, embedded = false)");
+        String metricCard = function(source, "function metricCard(label, value, displayValue = undefined)");
 
         assertTrue(radio.contains("radioSystemCapability(radio, 'current_affiliations')"));
         assertTrue(radio.contains(
@@ -124,7 +124,7 @@ class StatsWebChannelPresenceUiContractTest
         assertTrue(channel.contains("summary.push(['Affiliated Radios', channel.affiliated_radios, linked])"));
         assertTrue(channel.contains("affiliated: true"));
         assertTrue(channel.contains("configuration_id: channel.configuration_id"));
-        assertTrue(metrics.contains("displayed.append(valueNode("));
+        assertTrue(metricCard.contains("displayed.append(valueNode("));
     }
 
     private static String source() throws Exception

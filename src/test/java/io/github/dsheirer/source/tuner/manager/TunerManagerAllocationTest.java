@@ -55,7 +55,7 @@ class TunerManagerAllocationTest
         TrackingTunerController controller = createController(857_000_000);
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller);
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
 
         try
@@ -111,7 +111,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "invalid-envelope-request-fallback");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
         Source allocated = null;
 
@@ -144,8 +144,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner currentTuner = new TestDiscoveredTuner(currentController, currentManager,
             "busy-current-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(idleTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(currentTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(idleTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(currentTuner);
         Source existing = currentManager.getSource(new TunerChannel(860_000_000, 12_500), CHANNEL_SPECIFICATION,
             "existing-current-channel");
         Source allocated = null;
@@ -188,8 +188,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner availableTuner = new TestDiscoveredTuner(availableController, availableManager,
             "available-current-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(contendedTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(availableTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(contendedTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(availableTuner);
         CountDownLatch controllerLockAcquired = new CountDownLatch(1);
         CountDownLatch releaseControllerLock = new CountDownLatch(1);
         CountDownLatch allocationReturned = new CountDownLatch(1);
@@ -265,8 +265,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner polyphaseTuner = new TestDiscoveredTuner(polyphaseController, polyphaseManager,
             "polyphase-current-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(passThroughTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(polyphaseTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(passThroughTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(polyphaseTuner);
         Source allocated = null;
         passThroughController.clearFrequencyAttempts();
         polyphaseController.clearFrequencyAttempts();
@@ -304,8 +304,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner polyphaseTuner = new TestDiscoveredTuner(polyphaseController, polyphaseManager,
             "polyphase-current-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(passThroughTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(polyphaseTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(passThroughTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(polyphaseTuner);
         Source allocated = null;
         passThroughController.clearFrequencyAttempts();
         polyphaseController.clearFrequencyAttempts();
@@ -342,8 +342,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner preferredTuner = new TestDiscoveredTuner(preferredController, preferredManager,
             "current-preferred");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(firstTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(preferredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(firstTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(preferredTuner);
         firstController.clearFrequencyAttempts();
         preferredController.clearFrequencyAttempts();
         Source allocated = null;
@@ -379,8 +379,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner currentTuner = new TestDiscoveredTuner(currentController, currentManager,
             "current-nonpreferred");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(preferredTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(currentTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(preferredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(currentTuner);
         preferredController.clearFrequencyAttempts();
         currentController.clearFrequencyAttempts();
         Source allocated = null;
@@ -414,7 +414,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "idle-envelope-placement");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
         Source allocated = null;
 
@@ -444,8 +444,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner busyTuner = new TestDiscoveredTuner(busyController, busyManager, "busy-retune-first");
         TestDiscoveredTuner idleTuner = new TestDiscoveredTuner(idleController, idleManager, "idle-retune-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(busyTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(idleTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(busyTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(idleTuner);
         Source existing = busyManager.getSource(new TunerChannel(857_000_000, 12_500), CHANNEL_SPECIFICATION,
             "existing-busy-channel");
         Source allocated = null;
@@ -483,7 +483,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "busy-retune-last-resort");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         Source existing = sourceManager.getSource(new TunerChannel(857_000_000, 12_500), CHANNEL_SPECIFICATION,
             "existing-retained-channel");
         Source allocated = null;
@@ -520,7 +520,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "busy-span-too-wide");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         Source existing = sourceManager.getSource(new TunerChannel(857_000_000, 12_500), CHANNEL_SPECIFICATION,
             "existing-wide-span-channel");
         controller.clearFrequencyAttempts();
@@ -557,7 +557,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "locked-current-coverage");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
         Source allocated = null;
 
@@ -587,7 +587,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, new PolyphaseChannelSourceManager(
             controller), "locked-outside-coverage");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
 
         try
@@ -616,7 +616,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, new PolyphaseChannelSourceManager(
             controller), "retune-preserves-limits");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
         Source allocated = null;
 
@@ -650,7 +650,7 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager,
             "failed-hardware-retune");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.failHardwareTunesTo(862_000_000);
         controller.clearFrequencyAttempts();
 
@@ -691,8 +691,8 @@ class TunerManagerAllocationTest
         TestDiscoveredTuner fallbackTuner = new TestDiscoveredTuner(fallbackController, fallbackManager,
             "fallback-retune-second");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(failingTuner);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(fallbackTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(failingTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(fallbackTuner);
         failingController.failHardwareTunesTo(862_000_000);
         failingController.clearFrequencyAttempts();
         fallbackController.clearFrequencyAttempts();
@@ -729,7 +729,7 @@ class TunerManagerAllocationTest
         RetryAllocationDiscoveredTuner discoveredTuner = new RetryAllocationDiscoveredTuner(controller,
             sourceManager, "lifecycle-retry-current");
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         controller.clearFrequencyAttempts();
         Source allocated = null;
 
@@ -758,7 +758,7 @@ class TunerManagerAllocationTest
         BlockingChannelSourceManager sourceManager = new BlockingChannelSourceManager();
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager);
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         AtomicReference<Throwable> allocationFailure = new AtomicReference<>();
         AtomicReference<Throwable> disableFailure = new AtomicReference<>();
         CountDownLatch disableStarted = new CountDownLatch(1);
@@ -820,7 +820,7 @@ class TunerManagerAllocationTest
         BlockingChannelSourceManager sourceManager = new BlockingChannelSourceManager();
         TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(controller, sourceManager);
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         AtomicReference<Throwable> allocationFailure = new AtomicReference<>();
         AtomicReference<Throwable> stopFailure = new AtomicReference<>();
         CountDownLatch stopStarted = new CountDownLatch(1);
@@ -886,7 +886,7 @@ class TunerManagerAllocationTest
         BlockingChannelSourceManager sourceManager = new BlockingChannelSourceManager();
         CoordinatedDiscoveredTuner discoveredTuner = new CoordinatedDiscoveredTuner(controller, sourceManager);
         TunerManager tunerManager = new TunerManager(null);
-        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        tunerManager.getDiscoveredTunerRegistry().add(discoveredTuner);
         AtomicReference<Source> allocationResult = new AtomicReference<>();
         AtomicReference<Throwable> allocationFailure = new AtomicReference<>();
         AtomicReference<Throwable> disableFailure = new AtomicReference<>();

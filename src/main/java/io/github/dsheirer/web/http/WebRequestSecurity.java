@@ -37,7 +37,8 @@ public final class WebRequestSecurity implements AutoCloseable
     private static final int MAXIMUM_COOKIE_HEADER_CHARACTERS = 8 * 1024;
     private static final String SECURITY_POLICY =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; " +
+            "img-src 'self' data: https://tile.openstreetmap.org; media-src 'self' blob:; " +
+            "connect-src 'self'; object-src 'none'; " +
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
     private static final String SAME_ORIGIN_FRAME_SECURITY_POLICY =
         SECURITY_POLICY.replace("frame-ancestors 'none'", "frame-ancestors 'self'");

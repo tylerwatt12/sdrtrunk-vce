@@ -44,7 +44,6 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
-import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -89,7 +88,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public static final int USB_RESCAN_FAILED = -2;
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerRegistry mDiscoveredTunerRegistry;
-    private volatile DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
@@ -123,18 +121,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = Objects.requireNonNull(tunerConfigurationManager);
         mDiscoveredTunerRegistry = new DiscoveredTunerRegistry(mTunerConfigurationManager);
-    }
-
-    /**
-     * Discovered tuner model
-     */
-    public synchronized DiscoveredTunerModel getDiscoveredTunerModel()
-    {
-        if(mDiscoveredTunerModel == null)
-        {
-            mDiscoveredTunerModel = new DiscoveredTunerModel(mDiscoveredTunerRegistry);
-        }
-        return mDiscoveredTunerModel;
     }
 
     /** Receiver-owned tuner inventory, independent of the desktop UI. */

@@ -37,6 +37,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.message.DecodeMessageViewService;
+import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.PreferenceType;
@@ -67,6 +68,8 @@ import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
 import io.github.dsheirer.web.http.ChannelAdminHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
+import io.github.dsheirer.web.http.MapSnapshotHttpController;
+import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
@@ -85,6 +88,7 @@ import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
 import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
+import io.github.dsheirer.web.settings.OperationalPreferencesService;
 import io.github.dsheirer.web.settings.WebReceiverSettingsService;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
@@ -200,6 +204,7 @@ public class StatsWebServerService implements AutoCloseable
     private final StreamingAdministrationService mStreamingAdministrationService;
     private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private volatile AudioCallCoordinator mAudioCallCoordinator;
+    private volatile MapSnapshotService mMapSnapshotService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final RadioReferenceImportService mRadioReferenceImportService;
@@ -794,6 +799,11 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(WebReceiverSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, receiverSettingsController::handle));
 
+        OperationalPreferencesHttpController operationalPreferencesController =
+            new OperationalPreferencesHttpController(new OperationalPreferencesService(mUserPreferences));
+        server.createContext(OperationalPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, operationalPreferencesController::handle));
+
         SpectrumSnapPresetHttpController spectrumSnapController =
             new SpectrumSnapPresetHttpController(mSpectrumSnapSettingsService);
         server.createContext(SpectrumSnapPresetHttpController.PATH, mWebRequestSecurity.protectApi(
@@ -820,6 +830,10 @@ public class StatsWebServerService implements AutoCloseable
             () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator);
         server.createContext(CallMatchingHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, callMatchingController::handle));
+
+        MapSnapshotHttpController mapController = new MapSnapshotHttpController(() -> mMapSnapshotService);
+        server.createContext(MapSnapshotHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.WEB_AUDIO_LISTEN, mapController::handle));
 
         if(mTunerAdministrationService != null)
         {
@@ -2205,6 +2219,12 @@ public class StatsWebServerService implements AutoCloseable
         mAudioCallCoordinator = coordinator;
     }
 
+    /** Attaches receiver-owned map snapshots; the application owns the decode listener and service lifecycle. */
+    public void setMapSnapshotService(MapSnapshotService service)
+    {
+        mMapSnapshotService = service;
+    }
+
     private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException
     {
         WebRequestSecurity.prepareSecurityHeaders(exchange);
@@ -2387,6 +2407,13 @@ public class StatsWebServerService implements AutoCloseable
             return;
         }
 
+        // Finish any claimed USB/native setting write before receiver shutdown is allowed to stop channels or tuners.
+        // If this cannot quiesce, leave the rest of the web service intact so shutdown can be retried safely.
+        if(mTunerSettingsService != null)
+        {
+            mTunerSettingsService.close();
+        }
+
         mClosed = true;
         mSupportBundleService.close();
         mReceiverHealthService.close();
@@ -2419,10 +2446,6 @@ public class StatsWebServerService implements AutoCloseable
         {
             mFrequencyListenService.close();
             mTunerDiagnosticService.close();
-        }
-        if(mTunerSettingsService != null)
-        {
-            mTunerSettingsService.close();
         }
         mDiagnosticFftScheduler.close();
         mWebCallService.close();

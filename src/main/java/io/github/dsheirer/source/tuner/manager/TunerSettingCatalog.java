@@ -15,6 +15,7 @@ import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerConfiguration;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController.SampleRate;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
@@ -48,6 +49,10 @@ import java.util.Set;
  */
 public final class TunerSettingCatalog
 {
+    static final String MINIMUM_FREQUENCY = "minimum_frequency_mhz";
+    static final String MAXIMUM_FREQUENCY = "maximum_frequency_mhz";
+    static final String RESET_FREQUENCY_EXTENTS = "reset_frequency_extents";
+
     private TunerSettingCatalog()
     {
     }
@@ -125,6 +130,13 @@ public final class TunerSettingCatalog
             }
         }
 
+        if(hasFrequencyExtents(configuration))
+        {
+            descriptors.add(new SettingDescriptor(RESET_FREQUENCY_EXTENTS, "Reset frequency limits", "action",
+                null, pending.containsKey(RESET_FREQUENCY_EXTENTS) ? true : null, List.of(), null, null,
+                null, null, "tuner", true, true));
+        }
+
         return List.copyOf(descriptors);
     }
 
@@ -132,6 +144,14 @@ public final class TunerSettingCatalog
     public static Object validate(DiscoveredTuner discovered, String settingId, Object rawValue)
     {
         TunerConfiguration configuration = discovered.getTunerConfiguration();
+        if(RESET_FREQUENCY_EXTENTS.equals(settingId))
+        {
+            if(!hasFrequencyExtents(configuration) || !Boolean.TRUE.equals(rawValue))
+            {
+                throw new IllegalArgumentException("Reset frequency limits requires true");
+            }
+            return true;
+        }
         TunerController controller = discovered.hasTuner() ? discovered.getTuner().getTunerController() : null;
         Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
@@ -151,7 +171,7 @@ public final class TunerSettingCatalog
                 throw new IllegalArgumentException("This setting requires the tuner to be available");
             }
 
-            Object value = "frequency_mhz".equals(spec.id()) ? parseFrequencyMHz(rawValue) :
+            Object value = isFrequencyMHz(spec.id()) ? parseFrequencyMHz(rawValue) :
                 coerce(rawValue, type);
 
             if("lna".equals(spec.id()) && configuration instanceof RspTunerConfiguration)
@@ -188,6 +208,11 @@ public final class TunerSettingCatalog
                 }
             }
 
+            if("sample_rate".equals(settingId))
+            {
+                validateSampleRateSpan(configuration, value);
+            }
+
             return value;
         }
         catch(ReflectiveOperationException e)
@@ -198,6 +223,10 @@ public final class TunerSettingCatalog
 
     static String scope(TunerConfiguration configuration, String settingId)
     {
+        if(RESET_FREQUENCY_EXTENTS.equals(settingId) && hasFrequencyExtents(configuration))
+        {
+            return "tuner";
+        }
         return specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId))
             .map(Spec::scope).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
     }
@@ -233,6 +262,10 @@ public final class TunerSettingCatalog
 
     static boolean isEditableInCurrentMode(TunerConfiguration configuration, String settingId)
     {
+        if(RESET_FREQUENCY_EXTENTS.equals(settingId))
+        {
+            return hasFrequencyExtents(configuration);
+        }
         Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
         return editableForConfiguration(configuration, spec);
@@ -341,7 +374,7 @@ public final class TunerSettingCatalog
 
     private static String kind(Spec spec, TunerConfiguration configuration) throws ReflectiveOperationException
     {
-        if("frequency_mhz".equals(spec.id()))
+        if(isFrequencyMHz(spec.id()))
         {
             return "decimal";
         }
@@ -354,12 +387,20 @@ public final class TunerSettingCatalog
     private static Object read(TunerConfiguration configuration, Spec spec) throws ReflectiveOperationException
     {
         Object value = getter(configuration, spec).invoke(configuration);
+        if(MINIMUM_FREQUENCY.equals(spec.id()) && value instanceof Number number && number.longValue() <= 0)
+        {
+            value = hardwareMinimum(configuration);
+        }
+        else if(MAXIMUM_FREQUENCY.equals(spec.id()) && value instanceof Number number && number.longValue() <= 0)
+        {
+            value = hardwareMaximum(configuration);
+        }
         return publicValue(spec, value);
     }
 
     private static Object publicValue(Spec spec, Object value)
     {
-        if("frequency_mhz".equals(spec.id()) && value instanceof Number frequency)
+        if(isFrequencyMHz(spec.id()) && value instanceof Number frequency)
         {
             return frequency.doubleValue() / 1_000_000.0;
         }
@@ -368,8 +409,13 @@ public final class TunerSettingCatalog
 
     private static Number publicBound(Spec spec, Number value)
     {
-        return "frequency_mhz".equals(spec.id()) && value != null ?
+        return isFrequencyMHz(spec.id()) && value != null ?
             value.doubleValue() / 1_000_000.0 : value;
+    }
+
+    private static boolean isFrequencyMHz(String settingId)
+    {
+        return Set.of("frequency_mhz", MINIMUM_FREQUENCY, MAXIMUM_FREQUENCY).contains(settingId);
     }
 
     private static long parseFrequencyMHz(Object raw)
@@ -545,6 +591,10 @@ public final class TunerSettingCatalog
         long hardwareMaximum = hardwareMaximum(configuration);
         if(hardwareMinimum > 0 && hardwareMaximum > hardwareMinimum)
         {
+            specs.add(spec(MINIMUM_FREQUENCY, "Minimum frequency", "getMinimumFrequency",
+                "setMinimumFrequency", hardwareMinimum, hardwareMaximum, 0.000001, "MHz"));
+            specs.add(spec(MAXIMUM_FREQUENCY, "Maximum frequency", "getMaximumFrequency",
+                "setMaximumFrequency", hardwareMinimum, hardwareMaximum, 0.000001, "MHz"));
             long minimum = Math.max(hardwareMinimum, configuration.getMinimumFrequency());
             long maximum = configuration.getMaximumFrequency() > 0 ?
                 Math.min(hardwareMaximum, configuration.getMaximumFrequency()) : hardwareMaximum;
@@ -671,6 +721,94 @@ public final class TunerSettingCatalog
         }
 
         return specs;
+    }
+
+    static boolean isFrequencyExtent(String settingId)
+    {
+        return MINIMUM_FREQUENCY.equals(settingId) || MAXIMUM_FREQUENCY.equals(settingId) ||
+            RESET_FREQUENCY_EXTENTS.equals(settingId);
+    }
+
+    private static boolean hasFrequencyExtents(TunerConfiguration configuration)
+    {
+        return configuration != null && !(configuration instanceof RecordingTunerConfiguration) &&
+            hardwareMinimum(configuration) > 0 && hardwareMaximum(configuration) > hardwareMinimum(configuration);
+    }
+
+    /**
+     * Resolve an entire extent request before changing either controller bound.  A single edited bound may move the
+     * other one just as the desktop editor does; two explicitly requested bounds must already fit the sample rate.
+     */
+    static FrequencyExtents resolveFrequencyExtents(TunerConfiguration configuration, Map<String,Object> requested,
+                                                    long sampleRateHz)
+    {
+        if(!hasFrequencyExtents(configuration) || requested.keySet().stream().noneMatch(
+            TunerSettingCatalog::isFrequencyExtent))
+        {
+            throw new IllegalArgumentException("Tuner frequency limits are unavailable");
+        }
+
+        long hardwareMinimum = hardwareMinimum(configuration);
+        long hardwareMaximum = hardwareMaximum(configuration);
+        boolean reset = Boolean.TRUE.equals(requested.get(RESET_FREQUENCY_EXTENTS));
+        boolean editMinimum = requested.containsKey(MINIMUM_FREQUENCY);
+        boolean editMaximum = requested.containsKey(MAXIMUM_FREQUENCY);
+        long minimum = reset ? hardwareMinimum : editMinimum ?
+            ((Number)requested.get(MINIMUM_FREQUENCY)).longValue() :
+            configuration.getMinimumFrequency() > 0 ? configuration.getMinimumFrequency() : hardwareMinimum;
+        long maximum = reset ? hardwareMaximum : editMaximum ?
+            ((Number)requested.get(MAXIMUM_FREQUENCY)).longValue() :
+            configuration.getMaximumFrequency() > 0 ? configuration.getMaximumFrequency() : hardwareMaximum;
+        long minimumGap = Math.max(1, sampleRateHz);
+
+        if(minimum < hardwareMinimum || minimum > hardwareMaximum ||
+            maximum < hardwareMinimum || maximum > hardwareMaximum)
+        {
+            throw new IllegalArgumentException("Frequency limit is outside the tuner's supported range");
+        }
+        if(maximum - minimum < minimumGap)
+        {
+            if(!reset && editMinimum && !editMaximum && minimum <= hardwareMaximum - minimumGap)
+            {
+                maximum = minimum + minimumGap;
+            }
+            else if(!reset && editMaximum && !editMinimum && maximum >= hardwareMinimum + minimumGap)
+            {
+                minimum = maximum - minimumGap;
+            }
+            else
+            {
+                throw new IllegalArgumentException("Frequency limits must span at least the sample rate");
+            }
+        }
+
+        return new FrequencyExtents(minimum, maximum);
+    }
+
+    static void validateSampleRateSpan(TunerConfiguration configuration, Object rate)
+    {
+        if(!hasFrequencyExtents(configuration))
+        {
+            return;
+        }
+
+        long hertz = rate instanceof Number number ? number.longValue() :
+            rate instanceof HackRFSampleRate hackrf ? hackrf.getRate() :
+            rate instanceof SampleRate rtl ? rtl.getRate() :
+            rate instanceof RspSampleRate rsp ? rsp.getEffectiveSampleRate() : 0;
+        long minimum = configuration.getMinimumFrequency() > 0 ? configuration.getMinimumFrequency() :
+            hardwareMinimum(configuration);
+        long maximum = configuration.getMaximumFrequency() > 0 ? configuration.getMaximumFrequency() :
+            hardwareMaximum(configuration);
+
+        if(hertz <= 0 || maximum - minimum < hertz)
+        {
+            throw new IllegalArgumentException("Sample rate exceeds configured frequency limits; widen them first");
+        }
+    }
+
+    record FrequencyExtents(long minimumHz, long maximumHz)
+    {
     }
 
     private static long hardwareMinimum(TunerConfiguration configuration)

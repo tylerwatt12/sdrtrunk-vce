@@ -82,8 +82,8 @@ class ApplicationIconTest
     {
         String applicationIcon = source("src/main/java/io/github/dsheirer/gui/ApplicationIcon.java");
         String setupWizard = source("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java");
-        String recordingTuner =
-            source("src/main/java/io/github/dsheirer/source/tuner/recording/AddRecordingTunerDialog.java");
+        String basebandRecording =
+            source("src/main/java/io/github/dsheirer/gui/diagnostic/BasebandRecordingDialog.java");
         String recordingViewer =
             source("src/main/java/io/github/dsheirer/gui/viewer/MessageRecordingViewer.java");
         String migrationProgress =
@@ -98,7 +98,7 @@ class ApplicationIconTest
         assertFalse(applicationIcon.contains("sdr-trunk-icon"));
         assertTrue(setupWizard.contains("ApplicationIcon.apply(this);"));
         assertTrue(setupWizard.contains("ApplicationIcon.applyTaskbarIcon();"));
-        assertTrue(recordingTuner.contains("ApplicationIcon.apply(this);"));
+        assertTrue(basebandRecording.contains("ApplicationIcon.apply(this);"));
         assertTrue(recordingViewer.contains("ApplicationIcon.applyTaskbarIcon();"));
         assertTrue(recordingViewer.contains("ApplicationIcon.apply(primaryStage);"));
         assertTrue(recordingViewer.contains("VCE - Message Recording Viewer (.bits)"));

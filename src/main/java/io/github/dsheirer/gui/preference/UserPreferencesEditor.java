@@ -173,17 +173,9 @@ public class UserPreferencesEditor extends BorderPane
             TreeItem<Object> treeRoot = new TreeItem<>("Root node");
 
             TreeItem<Object> applicationItem = new TreeItem<>("Application");
-            applicationItem.getChildren().add(new TreeItem<>(PreferenceEditorType.APPLICATION));
             applicationItem.getChildren().add(new TreeItem<>(PreferenceEditorType.APPEARANCE));
             treeRoot.getChildren().add(applicationItem);
             applicationItem.setExpanded(true);
-
-            TreeItem<Object> audioItem = new TreeItem<>("Audio");
-            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_CALL_MANAGEMENT));
-            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_MP3));
-            audioItem.getChildren().add(new TreeItem<>(PreferenceEditorType.AUDIO_RECORD));
-            treeRoot.getChildren().add(audioItem);
-            audioItem.setExpanded(true);
 
             TreeItem<Object> cpuItem = new TreeItem<>("CPU");
             cpuItem.getChildren().add(new TreeItem<>(PreferenceEditorType.VECTOR_CALIBRATION));
@@ -195,13 +187,6 @@ public class UserPreferencesEditor extends BorderPane
             decoderItem.getChildren().add(new TreeItem<>(PreferenceEditorType.VOICE_DECRYPTION_MODULE));
             treeRoot.getChildren().add(decoderItem);
             decoderItem.setExpanded(true);
-
-            TreeItem<Object> displayItem = new TreeItem<>("Display");
-            displayItem.getChildren().add(new TreeItem<>(PreferenceEditorType.CHANNEL_EVENT));
-            displayItem.getChildren().add(new TreeItem<>(PreferenceEditorType.NOW_PLAYING));
-            displayItem.getChildren().add(new TreeItem<>(PreferenceEditorType.TALKGROUP_FORMAT));
-            treeRoot.getChildren().add(displayItem);
-            displayItem.setExpanded(true);
 
             TreeItem<Object> storageItem = new TreeItem<>("File Storage");
             storageItem.getChildren().add(new TreeItem<>(PreferenceEditorType.DIRECTORY));

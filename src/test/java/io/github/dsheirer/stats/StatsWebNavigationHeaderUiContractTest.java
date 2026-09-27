@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebNavigationHeaderUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path RF_PLANNER = Path.of("stats-web", "assets", "features", "rf-planner.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
@@ -26,10 +25,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"214\">"));
-        assertTrue(html.contains("/assets/app.css?v=186"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"217\">"));
+        assertTrue(html.contains("/assets/app.css?v=189"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=264\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=267\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
@@ -40,13 +39,14 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("data-view=\"radioreference\" href=\"/?view=radioreference\""));
         assertTrue(html.contains("data-view=\"streaming\" href=\"/?view=streaming\""));
         assertTrue(html.contains("data-view=\"tuners\" href=\"/?view=tuners\""));
-        assertTrue(html.contains("data-view=\"rf-planner\" href=\"/?view=rf-planner\""));
-        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js?v=5';"));
-        String hardware = block(source, "function renderHardware()");
-        assertTrue(hardware.contains("route.get('tab') === 'rf-planner'"));
-        assertTrue(source.contains("function renderRfPlanner()"));
-        assertTrue(source.contains("rfPlanner.createPlanner(() =>"));
-        assertTrue(source.contains("api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })"));
+        assertTrue(html.contains("data-view=\"map\" href=\"/?view=map\""));
+        assertTrue(html.contains("<use href=\"#icon-map\"></use></svg><span>Map</span>"));
+        assertFalse(html.contains("data-view=\"rf-planner\""));
+        assertFalse(source.contains("renderRfPlanner"));
+        assertTrue(source.contains("buildRadioResolvePlannerUrl(tuner.planner, catalog)"));
+        assertTrue(source.contains("map: renderListenMap"));
+        assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
+            .contains("{ id: 'map', label: 'Map', title: 'Map', parent: 'map', capability: 'call-audio'"));
         assertTrue(html.contains("<span>RadioReference</span><svg class=\"nav-lock\""));
         assertFalse(html.contains("<span>RadioReference</span><small>Coming soon</small>"));
         assertFalse(html.contains("<span>Recording</span><small>Coming soon</small>"));
@@ -60,31 +60,17 @@ class StatsWebNavigationHeaderUiContractTest
     }
 
     @Test
-    void keepsRfPlannerOnTheSharedThemeAndOperatorLanguage() throws Exception
+    void replacesTheInternalPlannerWithExternalAnalysis() throws Exception
     {
-        String planner = readText(RF_PLANNER);
-        String plannerCss = Files.readString(Path.of("stats-web", "assets", "styles", "features",
-            "rf-planner.css"));
-
-        assertTrue(planner.contains("Frequencies to cover (MHz)"));
-        assertTrue(planner.contains("Loaded ${loaded.length} tuner"));
-        assertTrue(planner.contains("target?.usable_bandwidth_hz"));
-        assertTrue(planner.contains("if (planBuilt) calculate();"));
-        assertTrue(planner.contains("ui-button ui-button-secondary rfp-add-tuner"));
-        assertTrue(planner.contains("ui-empty-state rfp-empty"));
-        assertTrue(planner.contains("ui-notice ui-notice-${tone} rfp-notice"));
-        assertFalse(planner.contains("DSheirer"));
-        assertFalse(planner.contains("upstream"));
-        assertFalse(planner.contains("rfp-placement-engine"));
-        assertFalse(planner.contains("Planning model verified"));
-        assertFalse(planner.contains("polyphase channelizer"));
-        assertTrue(plannerCss.contains("--rfp-channel: var(--chart-decode)"));
-        assertTrue(plannerCss.contains("background: var(--surface-2)"));
-        assertFalse(plannerCss.contains("#28a7d5"));
-        assertFalse(plannerCss.contains("#31a56c"));
-        assertFalse(plannerCss.contains("#d38a22"));
-        assertFalse(plannerCss.contains("#d84b62"));
-        assertFalse(plannerCss.contains("#061118"));
+        String html = readText(INDEX_HTML);
+        String source = readText(APP_JAVASCRIPT);
+        String routes = readText(Path.of("stats-web", "assets", "core", "routes.js"));
+        assertFalse(html.contains("RF Planner</span>"));
+        assertFalse(routes.contains("id: 'rf-planner'"));
+        assertFalse(Files.exists(Path.of("stats-web", "assets", "features", "rf-planner.js")));
+        assertFalse(Files.exists(Path.of("stats-web", "assets", "styles", "features", "rf-planner.css")));
+        assertTrue(source.contains("Analyze at RadioResolve"));
+        assertTrue(source.contains("'/api/v1/admin/channels'"));
     }
 
     @Test

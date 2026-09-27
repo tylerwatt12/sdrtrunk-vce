@@ -17,7 +17,7 @@ import java.util.Objects;
 import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
-/** Receiver-wide traffic timing and optional Java desktop views. */
+/** Receiver-wide traffic timing. */
 public class NowPlayingPreference extends Preference
 {
     private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
@@ -30,28 +30,6 @@ public class NowPlayingPreference extends Preference
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private volatile ReceiverSettingsSnapshot mReceiverSettings;
-
-    /** Optional Java desktop views that can be independently shown or hidden. */
-    public enum JavaInterfaceView
-    {
-        MAP("Map", "java.tab.map.visible", false);
-
-        private final String mLabel;
-        private final String mPreferenceKey;
-        private final boolean mDefaultEnabled;
-
-        JavaInterfaceView(String label, String preferenceKey, boolean defaultEnabled)
-        {
-            mLabel = label;
-            mPreferenceKey = preferenceKey;
-            mDefaultEnabled = defaultEnabled;
-        }
-
-        public String getLabel()
-        {
-            return mLabel;
-        }
-    }
 
     /** One coherent snapshot of the setting that changes receiver behavior for everyone. */
     public record ReceiverSettings(int trafficGrantAgeOutMilliseconds)
@@ -159,20 +137,6 @@ public class NowPlayingPreference extends Preference
         mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
             settings.trafficGrantAgeOutMilliseconds());
         mPreferences.putLong(PREFERENCE_KEY_RECEIVER_SETTINGS_REVISION, snapshot.revision());
-    }
-
-    public boolean isJavaInterfaceViewEnabled(JavaInterfaceView view)
-    {
-        return view != null && mPreferences.getBoolean(view.mPreferenceKey, view.mDefaultEnabled);
-    }
-
-    public void setJavaInterfaceViewEnabled(JavaInterfaceView view, boolean enabled)
-    {
-        if(view != null)
-        {
-            mPreferences.putBoolean(view.mPreferenceKey, enabled);
-            notifyPreferenceUpdated();
-        }
     }
 
     private static int clamp(int value, int minimum, int maximum)

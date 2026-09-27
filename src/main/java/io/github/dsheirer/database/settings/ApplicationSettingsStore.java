@@ -98,33 +98,37 @@ public class ApplicationSettingsStore
         }
     }
 
-    private static void flushPendingWrites()
+    private static synchronized void flushPendingWrites()
     {
-        Map<PendingKey,String> writes = Map.copyOf(PENDING_WRITES);
-
-        for(Map.Entry<PendingKey,String> entry: writes.entrySet())
+        try
         {
-            PENDING_WRITES.remove(entry.getKey(), entry.getValue());
+            flushPendingWritesNow();
         }
-
-        for(Map.Entry<PendingKey,String> entry: writes.entrySet())
+        catch(IOException | SQLException exception)
         {
-            try
+            mLog.error("Error saving pending application settings to SQLite; retrying", exception);
+        }
+    }
+
+    /** Commit delayed settings before a graceful receiver shutdown or database replacement can close SQLite. */
+    public static synchronized void flushPendingWritesNow() throws IOException, SQLException
+    {
+        try
+        {
+            for(Map.Entry<PendingKey,String> entry: Map.copyOf(PENDING_WRITES).entrySet())
             {
                 saveJson(entry.getKey().databasePath(), entry.getKey().key(), entry.getValue());
-            }
-            catch(IOException | SQLException e)
-            {
-                mLog.error("Error saving application setting [{}] to SQLite [{}]", entry.getKey().key(),
-                    entry.getKey().databasePath(), e);
+                PENDING_WRITES.remove(entry.getKey(), entry.getValue());
             }
         }
-
-        SAVE_PENDING.set(false);
-
-        if(!PENDING_WRITES.isEmpty())
+        finally
         {
-            schedulePendingWrites();
+            SAVE_PENDING.set(false);
+
+            if(!PENDING_WRITES.isEmpty())
+            {
+                schedulePendingWrites();
+            }
         }
     }
 

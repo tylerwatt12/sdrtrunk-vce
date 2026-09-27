@@ -44,6 +44,7 @@ public class SqlitePreferencesFactory implements PreferencesFactory
     private static PreferenceStore sStore;
     private static Preferences sUserRoot;
     private static Preferences sSystemRoot;
+    private static volatile Runnable sShutdownCoordinator;
 
     public static synchronized void install(Path databasePath) throws IOException, SQLException
     {
@@ -54,8 +55,32 @@ public class SqlitePreferencesFactory implements PreferencesFactory
 
         System.setProperty(FACTORY_PROPERTY, SqlitePreferencesFactory.class.getName());
         sStore = new PreferenceStore(databasePath);
-        Runtime.getRuntime().addShutdownHook(new Thread(SqlitePreferencesFactory::shutdown,
+        Runtime.getRuntime().addShutdownHook(new Thread(SqlitePreferencesFactory::coordinatedShutdown,
             "sdrtrunk portable preferences shutdown"));
+    }
+
+    /** Runs receiver teardown before the existing preferences hook closes its database writer. */
+    public static void setShutdownCoordinator(Runnable coordinator)
+    {
+        sShutdownCoordinator = coordinator;
+    }
+
+    private static void coordinatedShutdown()
+    {
+        Runnable coordinator = sShutdownCoordinator;
+        if(coordinator != null)
+        {
+            try
+            {
+                coordinator.run();
+            }
+            catch(Throwable failure)
+            {
+                System.err.println("Receiver shutdown did not complete cleanly (" +
+                    failure.getClass().getSimpleName() + ")");
+            }
+        }
+        shutdown();
     }
 
     public static synchronized void shutdown()

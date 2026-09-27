@@ -133,7 +133,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(scannerPlayback.contains("same channel or talkgroup"));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
         assertTrue(source.contains("id = 'scanner-settings'"));
-        assertTrue(source.contains("openScannerSettings('#scanner-settings')"));
+        assertTrue(source.contains("scannerSettings.addEventListener('click', () => void activateScannerSettings(scannerSettings))"));
+        assertTrue(source.contains("if (snapshot.loaded) openScannerSettings(returnFocusSelector)"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));
         assertFalse(source.contains("/api/v1/live/settings"));

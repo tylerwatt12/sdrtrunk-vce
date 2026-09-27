@@ -20,15 +20,10 @@
 package io.github.dsheirer.gui.preference;
 
 import io.github.dsheirer.gui.preference.application.AppearancePreferenceEditor;
-import io.github.dsheirer.gui.preference.application.ApplicationPreferenceEditor;
 import io.github.dsheirer.gui.preference.calibration.VectorCalibrationPreferenceEditor;
-import io.github.dsheirer.gui.preference.call.CallManagementPreferenceEditor;
 import io.github.dsheirer.gui.preference.decoder.JmbeLibraryPreferenceEditor;
 import io.github.dsheirer.gui.preference.decoder.VoiceDecryptionModulePreferenceEditor;
 import io.github.dsheirer.gui.preference.directory.DirectoryPreferenceEditor;
-import io.github.dsheirer.gui.preference.mp3.MP3PreferenceEditor;
-import io.github.dsheirer.gui.preference.nowplaying.NowPlayingPreferenceEditor;
-import io.github.dsheirer.gui.preference.record.RecordPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.StatsServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.tuner.TunerPreferenceEditor;
@@ -55,32 +50,18 @@ public class PreferenceEditorFactory
     {
         switch(preferenceEditorType)
         {
-            case APPLICATION:
-                return new ApplicationPreferenceEditor(userPreferences);
             case APPEARANCE:
                 return new AppearancePreferenceEditor(userPreferences);
-            case AUDIO_CALL_MANAGEMENT:
-                return new CallManagementPreferenceEditor(userPreferences);
-            case AUDIO_MP3:
-                return new MP3PreferenceEditor(userPreferences);
-            case AUDIO_RECORD:
-                return new RecordPreferenceEditor(userPreferences);
-            case CHANNEL_EVENT:
-                return new DecodeEventViewPreferenceEditor(userPreferences);
             case DIRECTORY:
                 return new DirectoryPreferenceEditor(userPreferences);
             case JMBE_LIBRARY:
                 return new JmbeLibraryPreferenceEditor(userPreferences);
             case VOICE_DECRYPTION_MODULE:
                 return new VoiceDecryptionModulePreferenceEditor(userPreferences);
-            case NOW_PLAYING:
-                return new NowPlayingPreferenceEditor(userPreferences);
             case SOURCE_TUNERS:
                 return new TunerPreferenceEditor(userPreferences);
             case STATS_SERVER:
                 return new StatsServerPreferenceEditor(userPreferences);
-            case TALKGROUP_FORMAT:
-                return new TalkgroupFormatPreferenceEditor(userPreferences);
             case VECTOR_CALIBRATION:
                 return new VectorCalibrationPreferenceEditor(userPreferences);
             case WEB_SERVER:

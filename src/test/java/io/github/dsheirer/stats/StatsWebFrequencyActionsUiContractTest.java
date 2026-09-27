@@ -68,7 +68,7 @@ class StatsWebFrequencyActionsUiContractTest
     void opensCompactSpectrumActionsAndSeparateRadioReferenceResults() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String tuner = block(source, "function tunerSpectrumPanel(snapPresetDocument)");
+        String tuner = block(source, "function tunerSpectrumPanel(snapPresetDocument, panelOptions = {})");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
         String lookup = block(source, "function openTunerRadioReferenceLookup(selectedHz)");
         String results = block(source, "function radioReferenceResultView(");
@@ -164,7 +164,7 @@ class StatsWebFrequencyActionsUiContractTest
     {
         int start = source.indexOf(marker);
         assertTrue(start >= 0, marker);
-        int opening = source.indexOf('{', start);
+        int opening = source.indexOf('{', start + marker.length());
         int depth = 0;
 
         for(int index = opening; index < source.length(); index++)

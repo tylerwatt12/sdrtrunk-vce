@@ -3,6 +3,7 @@
   const definitions = Object.freeze([
     { id: 'dashboard', label: 'Main', title: 'Main', parent: 'dashboard', capability: 'dashboard', databaseNotice: true },
     { id: 'live', label: 'Live', title: 'Live', parent: 'live', capability: 'live', databaseNotice: false },
+    { id: 'map', label: 'Map', title: 'Map', parent: 'map', capability: 'call-audio', databaseNotice: false },
     { id: 'network-visualizer', label: 'P25 Visualizer', title: 'P25 Visualizer', parent: 'network-visualizer', capability: 'radio', databaseNotice: false },
     { id: 'scanner', label: 'Scanner', title: 'Scanner', parent: 'scanner', capability: 'call-audio', databaseNotice: false },
     { id: 'tuner-spectrum', label: 'Tuner Spectrum', title: 'Tuner Spectrum', parent: 'tuner-spectrum', access: 'admin-tuner', databaseNotice: false },
@@ -18,7 +19,6 @@
     { id: 'radioreference', label: 'RadioReference', title: 'RadioReference', parent: 'radioreference', access: 'admin-configuration', databaseNotice: false },
     { id: 'streaming', label: 'Streaming', title: 'Streaming', parent: 'streaming', access: 'admin-streaming', databaseNotice: false },
     { id: 'tuners', label: 'Tuners', title: 'Tuners', parent: 'tuners', access: 'admin-tuner', databaseNotice: false },
-    { id: 'rf-planner', label: 'RF Planner', title: 'RF Planner', parent: 'rf-planner', access: 'admin-tuner', databaseNotice: false },
     { id: 'configuration', label: 'Manage', title: 'Manage', parent: 'configuration', access: 'admin-configuration', databaseNotice: false },
     { id: 'hardware', label: 'Hardware', title: 'Hardware', parent: 'hardware', access: 'admin-tuner', databaseNotice: false },
     { id: 'admin', label: 'Administration', title: 'Administration', parent: 'admin', access: 'admin', databaseNotice: false },

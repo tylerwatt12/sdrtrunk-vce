@@ -107,8 +107,9 @@ class StatsWebAliasCatalogUiContractTest
         assertFalse(columns.contains("view === 'evidence'"));
         assertTrue(columns.contains("view === 'custom'"));
         assertFalse(source.contains("function aliasColumnChooser("));
-        assertTrue(source.contains("defaultHiddenColumns: view === 'custom' ? definitions"));
-        assertTrue(source.contains("exportCsvLink('aliases', exportContext, 'Download table report', { loading: true })"));
+        assertTrue(columns.contains("const definitions = [...aliasCustomConfigurationColumns(), ...activity]"));
+        assertTrue(columns.contains("return [...selection, ...definitions]"));
+        assertTrue(source.contains("exportCsvLink('aliases', exportContext, { loading: true })"));
         assertTrue(base.contains("id: 'description'"));
         for(String field: new String[]{"logical_call_count", "signaling_observation_count", "last_evidence_ms"})
         {
@@ -175,8 +176,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(fields.contains("alias-tone-up"));
         assertTrue(fields.contains("alias-tone-down"));
         assertTrue(fields.contains("reorderedAliasToneRows(rows, index, direction)"));
-        assertTrue(fields.contains("aria-label', 'Move tone up"));
-        assertTrue(fields.contains("aria-label', 'Move tone down"));
+        assertTrue(fields.contains("iconButton('icon-arrow-up', 'Move tone up'"));
+        assertTrue(fields.contains("iconButton('icon-arrow-down', 'Move tone down'"));
         assertTrue(fields.contains("button.disabled ? fallback : button"));
         assertTrue(source.contains("value: aliasMatcherKey(entry), label: entry.label"));
         assertTrue(source.contains("source.matcher?.type, source.matcher?.protocol"));
@@ -547,7 +548,7 @@ class StatsWebAliasCatalogUiContractTest
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
         }
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
-        assertTrue(css.contains(":not(.auth-action):not(.auth-session-button):not(.table-sort-control)"));
+        assertTrue(css.contains(".ui-data-table th .table-sort-control"));
         assertTrue(function(source(), "function aliasEditorModalTabs(panels, initial = 'basics')")
             .contains("node('button', 'ui-segmented-option', label)"));
         assertTrue(function(source(), "function aliasBulkBinaryOperation")

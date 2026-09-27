@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="214">
+  <meta name="sdrtrunk-web-revision" content="217">
   <meta name="theme-color" content="#202a33" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#090e13" media="(prefers-color-scheme: dark)">
   <title>VCE</title>
@@ -11,13 +11,14 @@
   <link rel="icon" href="/assets/vce-icon-32.png?v=1" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/assets/vce-apple-touch-icon.png?v=1" sizes="180x180">
   <link rel="manifest" href="/assets/site.webmanifest?v=1">
-  <link rel="stylesheet" href="/assets/app.css?v=186">
+  <link rel="stylesheet" href="/assets/app.css?v=189">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
     <symbol id="icon-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></symbol>
     <symbol id="icon-live" viewBox="0 0 24 24"><path d="M2 12h4l2.5-6 4.5 12 2.5-6H22"></path></symbol>
     <symbol id="icon-network-visualizer" viewBox="0 0 24 24"><circle cx="5" cy="7" r="2"></circle><circle cx="18.5" cy="5" r="2"></circle><circle cx="12" cy="12" r="2.5"></circle><circle cx="5.5" cy="18" r="2"></circle><circle cx="19" cy="18" r="2"></circle><path d="m6.8 7.8 3.1 2.6M14 10.5l2.8-3.7M10 13.5l-2.8 3M14.2 13.5l3.2 3M7.5 18h9.5"></path></symbol>
+    <symbol id="icon-map" viewBox="0 0 24 24"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2Z"></path><path d="M9 3v16M15 5v16"></path></symbol>
     <symbol id="icon-scanner" viewBox="0 0 24 24"><path d="M8 4l7-2M9 4h7a3 3 0 0 1 3 3v13H6V7a3 3 0 0 1 3-3Z"></path><rect x="9" y="7" width="7" height="4" rx="1"></rect><circle cx="12.5" cy="15.5" r="2.5"></circle></symbol>
     <symbol id="icon-trunked" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="12" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><path d="M12 6v5M5 17v-3h14v3M12 11v6"></path></symbol>
     <symbol id="icon-channel" viewBox="0 0 24 24"><path d="M4 18a8 8 0 0 1 16 0M6.5 15.5 5 14M9 11 8 9.5M12 10V7M15 11l1-1.5M17.5 15.5 19 14M12 18l4-5"></path><circle cx="12" cy="18" r="1"></circle></symbol>
@@ -76,6 +77,7 @@
           <details class="nav-group" data-nav-group="listen"><summary>Listen</summary><div class="nav-group-links">
             <a data-view="dashboard" href="/?view=dashboard"><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Main</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="live" href="/?view=live"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Live</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
+            <a data-view="map" href="/?view=map"><svg class="nav-icon" aria-hidden="true"><use href="#icon-map"></use></svg><span>Map</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="network-visualizer" href="/?view=network-visualizer"><svg class="nav-icon" aria-hidden="true"><use href="#icon-network-visualizer"></use></svg><span>P25 Visualizer</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="scanner" href="/?view=scanner"><svg class="nav-icon" aria-hidden="true"><use href="#icon-scanner"></use></svg><span>Scanner</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
@@ -88,7 +90,6 @@
           </div></details>
           <details class="nav-group" data-nav-group="hardware"><summary>Hardware</summary><div class="nav-group-links">
             <a data-view="tuners" href="/?view=tuners"><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>Tuners</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
-            <a data-view="rf-planner" href="/?view=rf-planner"><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>RF Planner</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
             <a data-view="tuner-spectrum" href="/?view=tuner-spectrum"><svg class="nav-icon" aria-hidden="true"><use href="#icon-spectrum"></use></svg><span>Spectrum</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
           </div></details>
           <a data-view="admin" class="nav-direct" href="/?view=admin&amp;tab=health"><svg class="nav-icon" aria-hidden="true"><use href="#icon-admin"></use></svg><span>Administration</span><svg class="nav-lock" aria-label="Access required" hidden><use href="#icon-lock"></use></svg></a>
@@ -116,6 +117,6 @@
     </div>
     <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading ui-feedback ui-feedback-loading" role="status">Loading</div></main>
   </div>
-  <script type="module" src="/assets/app.js?v=264"></script>
+  <script type="module" src="/assets/app.js?v=267"></script>
 </body>
 </html>

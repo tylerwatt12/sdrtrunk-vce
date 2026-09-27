@@ -23,8 +23,6 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.icon.IconManager;
-import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
@@ -79,20 +77,17 @@ public class JavaFxWindowManager extends Application
 {
     private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
 
-    public static final String ICON_MANAGER = "iconmanager";
     public static final String CONFIGURATION_EDITOR = "configuration";
     public static final String ENCRYPTION_KEY_EDITOR = "encryptionkeys";
     public static final String USER_PREFERENCES_EDITOR = "preferences";
     public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
-    public static final String STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR = "icon.manager";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
     public static final String STAGE_MONITOR_KEY_CONFIGURATION_EDITOR = "configuration";
     public static final String STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR = "encryption.keys";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
-    private IconManager mIconManager;
     private JmbeEditor mJmbeEditor;
     private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
@@ -102,7 +97,6 @@ public class JavaFxWindowManager extends Application
     private volatile StatsWebServerService mStatsWebServerService;
     private MessageRecordingViewer mMessageRecordingViewer;
 
-    private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
     private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
@@ -262,32 +256,6 @@ public class JavaFxWindowManager extends Application
         }
 
         return mMessageRecordingViewer;
-    }
-
-    public Stage getIconManagerStage()
-    {
-        if(mIconManagerStage == null)
-        {
-            Scene scene = new Scene(getIconManager(), 500, 500);
-            ThemeManager.getInstance().register(scene);
-            mIconManagerStage = new Stage();
-            mIconManagerStage.setTitle("VCE - Icon Manager");
-            mIconManagerStage.setScene(scene);
-            ApplicationIcon.apply(mIconManagerStage);
-            mUserPreferences.getJavaFxPreferences().monitor(mIconManagerStage, STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR);
-        }
-
-        return mIconManagerStage;
-    }
-
-    public IconManager getIconManager()
-    {
-        if(mIconManager == null)
-        {
-            mIconManager = new IconManager(mConfigurationManager.getIconModel());
-        }
-
-        return mIconManager;
     }
 
     /**
@@ -604,12 +572,6 @@ public class JavaFxWindowManager extends Application
         });
     }
 
-    @Subscribe
-    public void process(final ViewIconManagerRequest request)
-    {
-        execute(() -> restoreStage(getIconManagerStage()));
-    }
-
     /**
      * Process a recording viewer request
      */
@@ -648,10 +610,6 @@ public class JavaFxWindowManager extends Application
             {
                 switch(window)
                 {
-                    case ICON_MANAGER:
-                        valid = true;
-                        process(new ViewIconManagerRequest());
-                        break;
                     case CONFIGURATION_EDITOR:
                         valid = true;
                         process(new ViewConfigurationRequest());
@@ -674,7 +632,7 @@ public class JavaFxWindowManager extends Application
         {
             StringBuilder sb = new StringBuilder();
             sb.append("An argument is required to launch JavaFX windows from this window manager.  " +
-                "Valid options are:\n\ticonmanager\tIcon Manager\n\tconfiguration\tConfiguration Editor\n" +
+                "Valid options are:\n\tconfiguration\tStreaming (Web)\n" +
                 "\tencryptionkeys\tEncryption Keys\n\tpreferences\tUser Preferences Editor\n");
             sb.append("Supplied Argument(s): ").append(parameters.getRaw());
 

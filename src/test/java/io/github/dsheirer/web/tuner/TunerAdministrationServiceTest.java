@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
@@ -14,6 +15,7 @@ import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceType;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
+import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -84,6 +86,20 @@ class TunerAdministrationServiceTest
         assertFalse(ApiHttpResponse.normalizePayload(service.snapshot()).toString().contains("secret device path"));
     }
 
+    @Test
+    void exposesMeasuredDecoderFrequencyErrorOnlyForAnAvailableTuner()
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner("measured-error");
+        TestTuner live = new TestTuner(tuner);
+        live.getTunerController().setMeasuredFrequencyError(100);
+        tuner.install(live);
+        TunerAdministrationService service = new TunerAdministrationService(() -> List.of(tuner), target -> null);
+
+        TunerAdministrationService.MeasuredError error = service.snapshot().tuners().getFirst().measuredError();
+        assertEquals(100, error.hertz());
+        assertEquals(100 / (live.getTunerController().getFrequency() / 1_000_000.0), error.ppm());
+    }
+
     private static final class FakeDiscoveredTuner extends DiscoveredTuner
     {
         private final String mId;
@@ -91,6 +107,11 @@ class TunerAdministrationServiceTest
         private FakeDiscoveredTuner(String id)
         {
             mId = id;
+        }
+
+        private void install(Tuner tuner)
+        {
+            mTuner = tuner;
         }
 
         @Override

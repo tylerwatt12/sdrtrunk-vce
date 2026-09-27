@@ -2,6 +2,7 @@ package io.github.dsheirer.source.tuner.manager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.SourceException;
@@ -17,6 +18,8 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
+import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.HackRFSampleRate;
 import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.IControlRsp1;
 import io.github.dsheirer.source.tuner.sdrplay.rsp1.Rsp1TunerConfiguration;
@@ -36,6 +39,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
@@ -402,6 +406,289 @@ class TunerSettingsServiceTest
         }
     }
 
+    @Test
+    void frequencyLimitsWaitForIdleThenMoveTogetherAndResetToHardwareBounds() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        ExtentTrackingAirspyController controller = new ExtentTrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(200_000_000L);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 195.000001);
+            Thread.sleep(100);
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+            assertTrue(service.hasPending(tuner));
+
+            channels.mCount.set(0);
+            await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() == 195_000_001L);
+            assertEquals(205_000_001L, configuration.getMaximumFrequency());
+            assertEquals(195_000_001L, configuration.getFrequency());
+            assertEquals(195_000_001L, controller.getFrequency());
+            assertEquals(195_000_001L, controller.getMinimumFrequency());
+            assertEquals(205_000_001L, controller.getMaximumFrequency());
+            assertEquals(1, saves.get());
+            assertFalse(service.hasPending(tuner));
+
+            channels.mCount.set(1);
+            service.set(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true);
+            assertEquals(true, service.describe(tuner).stream().filter(setting ->
+                setting.id().equals(TunerSettingCatalog.RESET_FREQUENCY_EXTENTS))
+                .findFirst().orElseThrow().pendingValue());
+            Thread.sleep(100);
+            assertEquals(195_000_001L, configuration.getMinimumFrequency());
+            channels.mCount.set(0);
+            await(Duration.ofSeconds(3), () -> configuration.getMinimumFrequency() ==
+                AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ);
+            assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ,
+                configuration.getMaximumFrequency());
+            assertEquals(2, saves.get());
+            assertFalse(service.hasPending(tuner));
+            assertEquals(null, service.error(tuner));
+        }
+    }
+
+    @Test
+    void pairedFrequencyLimitsRejectAnInvalidGapWithoutChangingControllerOrPersistence() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner();
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(200_000_000L);
+        tuner.setTunerConfiguration(configuration);
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 195.0);
+                service.set(tuner, TunerSettingCatalog.MAXIMUM_FREQUENCY, 200.0);
+            }
+            finally
+            {
+                tuner.releaseAfterAllocation();
+            }
+
+            await(Duration.ofSeconds(3), () -> !service.hasPending(tuner));
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+            assertEquals(200_000_000L, configuration.getMaximumFrequency());
+            assertEquals(0, saves.get());
+            assertTrue(service.error(tuner).contains("span at least the sample rate"));
+        }
+    }
+
+    @Test
+    void frequencyLimitActionCanBeCancelledBeforeIdleAndFailedRetuneRestoresPreviousBounds() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        ExtentTrackingAirspyController controller = new ExtentTrackingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(200_000_000L);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            service.set(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true);
+            assertEquals("cancelled", service.cancel(tuner,
+                TunerSettingCatalog.RESET_FREQUENCY_EXTENTS).status());
+            channels.mCount.set(0);
+            Thread.sleep(100);
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+            assertEquals(0, saves.get());
+
+            controller.mRejectRetune = true;
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 195.0);
+            await(Duration.ofSeconds(3), () -> service.error(tuner) != null && !service.hasPending(tuner));
+            assertEquals(100_000_000L, configuration.getMinimumFrequency());
+            assertEquals(200_000_000L, configuration.getMaximumFrequency());
+            assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
+                controller.getMinimumFrequency());
+            assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ,
+                controller.getMaximumFrequency());
+            assertEquals(101_100_000L, controller.getFrequency());
+            assertEquals(0, saves.get());
+        }
+    }
+
+    @Test
+    void queuedIdleSettingDoesNotReserveAnActiveTunerOnRetries() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(new ExtentTrackingAirspyController(), tuner, channels));
+
+        try(TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null))
+        {
+            service.set(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY, 100.0);
+            Thread.sleep(1_200);
+            assertTrue(service.hasPending(tuner));
+            assertEquals(0, tuner.mReservationAttempts.get(),
+                "A busy tuner must not be reserved by periodic idle-setting retries");
+        }
+    }
+
+    @Test
+    void queuedSampleRateRechecksFrequencySpanBeforeChangingSavedConfiguration() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner();
+        HackRFTunerConfiguration configuration = new HackRFTunerConfiguration(tuner.getId());
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(120_000_000L);
+        tuner.setTunerConfiguration(configuration);
+        AtomicInteger saves = new AtomicInteger();
+
+        try(TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null))
+        {
+            assertTrue(tuner.tryAcquireForAllocation());
+            try
+            {
+                service.set(tuner, "sample_rate", HackRFSampleRate.RATE_8_0.name());
+                configuration.setMaximumFrequency(102_000_000L);
+            }
+            finally
+            {
+                tuner.releaseAfterAllocation();
+            }
+
+            await(Duration.ofSeconds(3), () -> !service.hasPending(tuner));
+            assertEquals(HackRFSampleRate.RATE_5_0, configuration.getSampleRate());
+            assertEquals(0, saves.get());
+            assertTrue(service.error(tuner).contains("widen them first"));
+        }
+    }
+
+    @Test
+    void closeCancelsUnclaimedSettingsAndRejectsFurtherRequests() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner();
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+        AtomicInteger saves = new AtomicInteger();
+        TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null);
+
+        assertTrue(tuner.tryAcquireForAllocation());
+        try
+        {
+            service.set(tuner, "automatic_ppm", false);
+            service.close();
+        }
+        finally
+        {
+            tuner.releaseAfterAllocation();
+        }
+
+        assertTrue(configuration.getAutoPPMCorrectionEnabled());
+        assertFalse(service.hasPending(tuner));
+        assertEquals(0, saves.get());
+        assertThrows(IllegalStateException.class, () -> service.set(tuner, "automatic_ppm", false));
+        assertThrows(IllegalStateException.class, () -> service.requestEnabled(tuner, true));
+    }
+
+    @Test
+    void closeWaitsForClaimedHardwareWriteAndSave() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        BlockingAirspyController controller = new BlockingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setGain(Gain.CUSTOM);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        AtomicInteger saves = new AtomicInteger();
+        TunerSettingsService service = new TunerSettingsService(saves::incrementAndGet,
+            ignored -> true, ignored -> null);
+        CountDownLatch closeFinished = new CountDownLatch(1);
+        AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+
+        try
+        {
+            service.set(tuner, "if_gain", 7);
+            assertTrue(controller.mEntered.await(3, TimeUnit.SECONDS));
+            Thread closer = new Thread(() ->
+            {
+                try
+                {
+                    service.close();
+                }
+                catch(Throwable failure)
+                {
+                    closeFailure.set(failure);
+                }
+                finally
+                {
+                    closeFinished.countDown();
+                }
+            });
+            closer.start();
+
+            assertFalse(closeFinished.await(100, TimeUnit.MILLISECONDS),
+                "close must not return during an in-flight hardware write");
+            controller.mRelease.countDown();
+            assertTrue(closeFinished.await(3, TimeUnit.SECONDS));
+            assertEquals(null, closeFailure.get());
+            assertTrue(controller.mCompleted.get());
+            assertEquals(1, saves.get(), "a claimed setting must finish persistence before shutdown returns");
+        }
+        finally
+        {
+            controller.mRelease.countDown();
+            service.close();
+        }
+    }
+
+    @Test
+    void closeReportsWhenClaimedHardwareWriteDoesNotQuiesceWithinBound() throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(false);
+        BlockingAirspyController controller = new BlockingAirspyController();
+        CountingChannelManager channels = new CountingChannelManager();
+        channels.mCount.set(1);
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        configuration.setGain(Gain.CUSTOM);
+        tuner.setTunerConfiguration(configuration);
+        tuner.install(new FakeTuner(controller, tuner, channels));
+        TunerSettingsService service = new TunerSettingsService(() -> { }, ignored -> true, ignored -> null);
+
+        try
+        {
+            service.set(tuner, "if_gain", 7);
+            assertTrue(controller.mEntered.await(3, TimeUnit.SECONDS));
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> service.closeWithin(100, TimeUnit.MILLISECONDS));
+            assertTrue(failure.getMessage().contains("hardware maintenance may still be active"));
+            assertFalse(controller.mCompleted.get());
+        }
+        finally
+        {
+            controller.mRelease.countDown();
+            service.closeWithin(3, TimeUnit.SECONDS);
+        }
+        assertTrue(controller.mCompleted.get());
+    }
+
     private static Object defaultValue(Class<?> type)
     {
         if(type == boolean.class) return false;
@@ -426,6 +713,8 @@ class TunerSettingsServiceTest
 
     private static final class FakeDiscoveredTuner extends DiscoveredTuner
     {
+        private final AtomicInteger mReservationAttempts = new AtomicInteger();
+
         private FakeDiscoveredTuner()
         {
             this(true);
@@ -442,6 +731,13 @@ class TunerSettingsServiceTest
         private void install(Tuner tuner)
         {
             mTuner = tuner;
+        }
+
+        @Override
+        boolean tryAcquireForAllocation()
+        {
+            mReservationAttempts.incrementAndGet();
+            return super.tryAcquireForAllocation();
         }
 
         @Override
@@ -482,6 +778,68 @@ class TunerSettingsServiceTest
         public void apply(TunerConfiguration configuration) throws SourceException
         {
             mApplyCalls.incrementAndGet();
+        }
+    }
+
+    private static final class BlockingAirspyController extends AirspyTunerController
+    {
+        private final CountDownLatch mEntered = new CountDownLatch(1);
+        private final CountDownLatch mRelease = new CountDownLatch(1);
+        private final AtomicBoolean mCompleted = new AtomicBoolean();
+
+        private BlockingAirspyController()
+        {
+            super(0, "blocking-test", null);
+        }
+
+        @Override
+        public void setIFGain(int value)
+        {
+            mEntered.countDown();
+            try
+            {
+                if(!mRelease.await(3, TimeUnit.SECONDS))
+                {
+                    throw new IllegalStateException("Timed out waiting to finish hardware test write");
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Hardware test write was interrupted", exception);
+            }
+            mCompleted.set(true);
+        }
+    }
+
+    private static final class ExtentTrackingAirspyController extends AirspyTunerController
+    {
+        private long mFrequency = 101_100_000L;
+        private boolean mRejectRetune;
+
+        private ExtentTrackingAirspyController()
+        {
+            super(0, "extents-test", null);
+        }
+
+        @Override
+        public long getFrequency()
+        {
+            return mFrequency;
+        }
+
+        @Override
+        public void setFrequency(long frequency) throws SourceException
+        {
+            if(mRejectRetune)
+            {
+                throw new SourceException("Simulated hardware retune failure");
+            }
+            if(frequency < getMinimumFrequency() || frequency > getMaximumFrequency())
+            {
+                throw new SourceException("Retuned outside frequency limits");
+            }
+            mFrequency = frequency;
         }
     }
 

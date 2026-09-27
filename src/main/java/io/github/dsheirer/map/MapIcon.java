@@ -59,8 +59,7 @@ public class MapIcon extends Setting implements Comparable<MapIcon>
      * @param path - file path to the icon
      * @param editable - defines if the map icon or details can be edited
      *
-     * Note: the default icons are constructed with editable = false, so that
-     * they cannot be deleted from the Icon Manager editor window
+     * Note: built-in icons retain editable = false for compatibility with saved icon metadata.
      */
     public MapIcon(String name, String path, boolean editable)
     {

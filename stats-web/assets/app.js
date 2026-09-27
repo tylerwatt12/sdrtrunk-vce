@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js?v=5';
+import * as routeFoundation from './core/routes.js?v=7';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -13,7 +13,8 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=2';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import * as rfPlanner from './features/rf-planner.js?v=5';
+import { createListenMap } from './features/listen-map.js?v=2';
+import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=1';
 import {
   createAliasList,
   createInlineAliasListCreator as buildInlineAliasListCreator
@@ -2092,14 +2093,14 @@ function detailedHistoryNotice() {
     const lastSaved = logging.lastHistoryMs ?
       ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
     return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
-      `New activity is not being saved.${lastSaved} Enable Store Detailed Event History in Stats & Web > Stats Server to save new activity.`);
+      `New activity is not being saved.${lastSaved} Enable Store Detailed Event History in Administration > Receiver operations to save new activity.`);
   }
   if (logging.historyConfigured && !logging.summaryActive) {
     return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-      'Saved activity is unavailable because Collect Summary Statistics is turned off. Turn it on in Stats & Web > Stats Server to begin saving activity.');
+      'Saved activity is unavailable because Collect Summary Statistics is turned off. Turn it on in Administration > Receiver operations to begin saving activity.');
   }
   return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-    'No saved activity is available because Store Detailed Event History is turned off. Enable it in Stats & Web > Stats Server. Activity begins saving from that point forward; earlier activity cannot be recovered.');
+    'No saved activity is available because Store Detailed Event History is turned off. Enable it in Administration > Receiver operations. Activity begins saving from that point forward; earlier activity cannot be recovered.');
 }
 
 function databaseLoggingNotice(view) {
@@ -3867,6 +3868,46 @@ function aliasSelect(name, values, selectedValue = '', includeBlank = false) {
   return select;
 }
 
+let standardMapIconsPromise = null;
+
+function standardMapIcons() {
+  if (!standardMapIconsPromise) {
+    standardMapIconsPromise = api('/api/v1/listen/map/icons', {}, { page: false })
+      .then((response) => new Map((response.rows || []).filter((entry) =>
+        typeof entry?.name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry?.slug))
+        .map((entry) => [entry.name, entry.slug])))
+      .catch(() => {
+        standardMapIconsPromise = null;
+        return new Map();
+      });
+  }
+  return standardMapIconsPromise;
+}
+
+function mapIconUrl(slug) {
+  const safe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(slug)) ? slug : 'no-icon';
+  return `/api/v1/listen/map/icons/${encodeURIComponent(safe)}`;
+}
+
+function aliasIconPreview(select) {
+  const preview = node('span', 'alias-icon-preview');
+  const image = document.createElement('img');
+  image.alt = '';
+  const text = node('span');
+  preview.append(image, text);
+  let catalog = new Map();
+  const update = () => {
+    const name = select.value;
+    const slug = catalog.get(name) || 'no-icon';
+    image.src = mapIconUrl(slug);
+    text.textContent = !name ? 'No icon' : catalog.has(name) ? name : 'No web map preview for this icon';
+  };
+  select.addEventListener('change', update);
+  update();
+  void standardMapIcons().then((icons) => { catalog = icons; update(); });
+  return preview;
+}
+
 function aliasTextInput(name, value = '', type = 'text') {
   const input = node('input', 'ui-input');
   input.type = type;
@@ -4470,9 +4511,11 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       options.icon_names_truncated === true);
     const icon = aliasSelect('iconName', iconEntries, selectedIcon, true);
     const basicsGrid = node('div', 'alias-editor-grid');
+    const iconField = aliasFormField('Icon', icon);
+    iconField.append(aliasIconPreview(icon));
     basicsGrid.append(aliasFormField('Alias list', listSelect), aliasFormField('Alias name', name),
       aliasFormField('Group', group), groupList, aliasFormField('Color', color),
-      aliasFormField('Icon', icon), aliasFormField('Description', description));
+      iconField, aliasFormField('Description', description));
     basics.append(basicsGrid);
     const groupLimitNotice = aliasOptionLimitNotice(options, 'group_names', 'existing group suggestions',
       'You can still type an exact group name.');
@@ -4937,8 +4980,9 @@ function openAliasBulkModal(kind) {
     colorOperation.addEventListener('change', () => { color.disabled = colorOperation.value !== 'SET'; });
     const icon = aliasSelect('iconName', [{ value: '', label: 'Leave icon unchanged' },
       ...(options.icon_names || []).map((value) => ({ value, label: value }))], '');
-    form.append(aliasFormField('Color change', colorOperation), aliasFormField('Color', color),
-      aliasFormField('Icon change', icon));
+    const iconField = aliasFormField('Icon change', icon);
+    iconField.append(aliasIconPreview(icon));
+    form.append(aliasFormField('Color change', colorOperation), aliasFormField('Color', color), iconField);
     readChange = () => {
       if (!colorOperation.value && !icon.value) throw new Error('Choose a color or icon change');
       return { ...(colorOperation.value ? {
@@ -21764,6 +21808,196 @@ async function renderAdminReceiverBehaviorSettings() {
   }
 }
 
+function decodeOperationalPreferencesEnvelope(value) {
+  const settings = value?.settings;
+  const options = value?.options;
+  const fields = [
+    'patch_group_streaming_option', 'audio_record_format', 'mp3_setting', 'mp3_input_audio_format',
+    'mp3_normalize_audio', 'stats_logging_enabled', 'stats_detailed_history_enabled',
+    'stats_logging_retention_days'
+  ];
+  if (!value || !/^[0-9a-f]{64}$/.test(String(value.revision || '')) ||
+      !settings || typeof settings !== 'object' || Array.isArray(settings) ||
+      !options || typeof options !== 'object' || Array.isArray(options) ||
+      !fields.every((field) => Object.hasOwn(settings, field)) ||
+      !Array.isArray(options.patch_group_streaming_options) ||
+      !Array.isArray(options.audio_record_formats) || !Array.isArray(options.mp3_settings) ||
+      !options.mp3_input_audio_formats_by_setting ||
+      !Number.isInteger(options.minimum_stats_logging_retention_days) ||
+      !Number.isInteger(options.maximum_stats_logging_retention_days)) {
+    throw new Error('The receiver returned invalid operational preferences.');
+  }
+  return value;
+}
+
+async function requestOperationalPreference(method = 'GET', field = '', value = undefined, revision = '') {
+  const path = `/api/v1/admin/operational-preferences${field ? `/${field}` : ''}`;
+  const headers = { Accept: 'application/json' };
+  const options = { method, headers };
+  if (method === 'PUT') {
+    if (!/^[0-9a-f]{64}$/.test(revision)) throw new Error('Reload receiver operations before saving.');
+    headers['Content-Type'] = 'application/json';
+    headers['If-Match'] = `"${revision}"`;
+    options.body = JSON.stringify({ value });
+  }
+  const response = await jsonDocumentFetch(path, options);
+  let documentValue = null;
+  try { documentValue = await response.json(); } catch (_) { }
+  if (!response.ok) {
+    const failure = documentValue?.error && typeof documentValue.error === 'object' ? documentValue.error : null;
+    const error = new Error(failure?.message || 'Receiver operations could not be saved.');
+    error.status = response.status;
+    if (response.status === 409) {
+      try { error.current = decodeOperationalPreferencesEnvelope(documentValue); } catch (_) { }
+    }
+    throw error;
+  }
+  return decodeOperationalPreferencesEnvelope(documentValue);
+}
+
+async function renderAdminOperationalPreferences(renderContext = captureRenderContext()) {
+  const body = node('div', 'admin-section-body operational-preferences');
+  const status = node('div', 'admin-form-message', 'Loading receiver operations…');
+  status.setAttribute('role', 'status');
+  const reload = node('button', 'ui-button ui-button-secondary', 'Reload current values');
+  reload.type = 'button';
+  reload.disabled = true;
+  const heading = node('div', 'ui-action-row');
+  heading.append(reload);
+  const cards = node('div', 'settings-card-grid');
+  body.append(status, heading, cards);
+  content.append(section('Receiver operations', body));
+  let confirmed = null;
+  let saving = false;
+
+  const groups = [
+    { title: 'Calls', description: 'How patch-group calls are sent to streaming outputs.', fields: [
+      { id: 'patch_group_streaming_option', label: 'Stream a patch-group call as', kind: 'select',
+        options: 'patch_group_streaming_options' }
+    ] },
+    { title: 'Audio recording', description: 'Default format for newly recorded calls.', fields: [
+      { id: 'audio_record_format', label: 'Recording format', kind: 'select', options: 'audio_record_formats' }
+    ] },
+    { title: 'MP3 encoding', description: 'Settings for new MP3 recordings and streams.', fields: [
+      { id: 'mp3_setting', label: 'Encoder setting', kind: 'select', options: 'mp3_settings',
+        detail: 'To see more encoder choices, first choose an 8 or 16 kHz input format.' },
+      { id: 'mp3_input_audio_format', label: 'Input audio format', kind: 'select',
+        detail: 'The available formats depend on the saved encoder setting.' },
+      { id: 'mp3_normalize_audio', label: 'Normalize audio before encoding', kind: 'boolean' }
+    ] },
+    { title: 'Statistics', description: 'Collection and retention of receiver activity.', fields: [
+      { id: 'stats_logging_enabled', label: 'Collect summary statistics', kind: 'boolean' },
+      { id: 'stats_detailed_history_enabled', label: 'Store detailed event history', kind: 'boolean',
+        detail: 'New history is saved from the time this is enabled; earlier events cannot be recovered.' },
+      { id: 'stats_logging_retention_days', label: 'Retain time-based data for (days)', kind: 'number' }
+    ] }
+  ];
+
+  function optionsFor(field) {
+    if (field.id === 'mp3_input_audio_format') {
+      return confirmed.options.mp3_input_audio_formats_by_setting[confirmed.settings.mp3_setting] || [];
+    }
+    const all = confirmed.options[field.options] || [];
+    if (field.id !== 'mp3_setting') return all;
+    const selectedFormat = confirmed.settings.mp3_input_audio_format;
+    return all.filter((option) =>
+      (confirmed.options.mp3_input_audio_formats_by_setting[option.value] || [])
+        .some((format) => format.value === selectedFormat));
+  }
+
+  function renderFields() {
+    if (!confirmed || !renderIsCurrent(renderContext)) return;
+    cards.replaceChildren(...groups.map((group) => {
+      const forms = group.fields.map((field) => {
+        const form = node('form', 'admin-form operational-preference-form');
+        form.dataset.preference = field.id;
+        const current = confirmed.settings[field.id];
+        let input;
+        if (field.kind === 'select') {
+          input = node('select');
+          input.required = true;
+          input.append(...optionsFor(field).map((choice) => {
+            const option = node('option', '', choice.label);
+            option.value = choice.value;
+            return option;
+          }));
+          input.value = current;
+          form.append(formField(field.label, input, field.detail || ''));
+        } else if (field.kind === 'boolean') {
+          const toggle = uiToggleField(field.label, current, field.label, field.detail || '');
+          input = toggle.querySelector('input');
+          form.append(toggle);
+        } else {
+          input = node('input');
+          input.type = 'number';
+          input.required = true;
+          input.step = '1';
+          input.min = String(confirmed.options.minimum_stats_logging_retention_days);
+          input.max = String(confirmed.options.maximum_stats_logging_retention_days);
+          input.value = String(current);
+          form.append(formField(field.label, input));
+        }
+        const save = node('button', 'ui-button ui-button-primary', 'Save');
+        save.type = 'submit';
+        const readValue = () => field.kind === 'boolean' ? input.checked :
+          field.kind === 'number' ? Number(input.value) : input.value;
+        const updateSave = () => { save.disabled = saving || readValue() === current; };
+        updateSave();
+        input.addEventListener(field.kind === 'number' ? 'input' : 'change', updateSave);
+        const actions = node('div', 'ui-action-row operational-preference-actions');
+        actions.append(save);
+        form.append(actions);
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          if (saving || save.disabled || !form.reportValidity()) return;
+          saving = true;
+          save.disabled = true;
+          status.textContent = `Saving ${field.label.toLowerCase()}…`;
+          try {
+            confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
+            status.textContent = `${field.label} saved.`;
+          } catch (error) {
+            if (error.current) {
+              confirmed = error.current;
+              status.textContent = 'Receiver operations changed elsewhere. Current values were reloaded.';
+            } else {
+              status.textContent = error.message || 'Receiver operations could not be saved.';
+            }
+          } finally {
+            saving = false;
+            renderFields();
+          }
+        });
+        return form;
+      });
+      return settingsCard(group.title, group.description, ...forms);
+    }));
+  }
+
+  reload.addEventListener('click', async () => {
+    reload.disabled = true;
+    try {
+      confirmed = await requestOperationalPreference();
+      status.textContent = '';
+      renderFields();
+    } catch (error) {
+      status.textContent = error.message || 'Receiver operations are unavailable.';
+    } finally {
+      reload.disabled = false;
+    }
+  });
+  try {
+    confirmed = await requestOperationalPreference();
+    if (!renderIsCurrent(renderContext)) return;
+    renderFields();
+    status.textContent = '';
+  } catch (error) {
+    if (renderIsCurrent(renderContext)) status.textContent = error.message || 'Receiver operations are unavailable.';
+  } finally {
+    reload.disabled = false;
+  }
+}
+
 function p25OverrideInput(label, field, value = '', options = {}) {
   const input = node('input');
   input.dataset.p25OverrideField = field;
@@ -23053,6 +23287,21 @@ function renderStreaming() {
   beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'), workspace.element);
 }
 
+function renderListenMap() {
+  const renderContext = captureRenderContext();
+  const map = createListenMap({
+    node, iconGlyph,
+    fetchSnapshot: () => api('/api/v1/listen/map', {}, { signal: renderContext.signal }),
+    iconUrl: mapIconUrl
+  });
+  if (!beginPage(renderContext, pageHeader('Map',
+    'Recent receiver-observed locations and trails'), map.element)) {
+    map.close();
+    return;
+  }
+  pageConnections.add(map);
+}
+
 function tunerInventoryRows(response) {
   if (!response || !Array.isArray(response.tuners)) {
     throw new Error('The receiver returned an invalid tuner list.');
@@ -23081,6 +23330,7 @@ function tunerInventoryRate(value) {
 }
 
 function tunerSettingValue(setting, value) {
+  if (setting.kind === 'action') return setting.label;
   if (setting.kind === 'boolean') return value ? 'On' : 'Off';
   const option = (Array.isArray(setting.options) ? setting.options : [])
     .find((choice) => String(choice.value) === String(value));
@@ -23262,17 +23512,19 @@ async function renderTuners() {
     for (const setting of settings) {
       if (!setting || typeof setting.id !== 'string' || !/^[a-z0-9_]+$/.test(setting.id)) continue;
       const form = node('form', 'tuners-setting');
-      const control = tunerSettingInput(setting);
+      const actionSetting = setting.kind === 'action';
+      const control = actionSetting ? null : tunerSettingInput(setting);
       const pending = setting.pending_value == null ? null :
         node('p', 'tuners-setting-pending', `Queued: ${tunerSettingValue(setting, setting.pending_value)}`);
       const message = node('div', 'tuners-setting-message');
       message.setAttribute('role', 'status');
       const actions = node('div', 'tuners-setting-actions ui-action-row');
-      const save = node('button', 'ui-button ui-button-primary',
-        setting.requires_idle && Number(tuner.channel_count) > 0 ? 'Queue change' : 'Apply');
+      const save = node('button', 'ui-button ui-button-primary', actionSetting ?
+        (setting.requires_idle && Number(tuner.channel_count) > 0 ? `Queue: ${setting.label}` : setting.label) :
+        (setting.requires_idle && Number(tuner.channel_count) > 0 ? 'Queue change' : 'Apply'));
       save.type = 'submit';
       save.disabled = setting.editable !== true;
-      control.input.disabled = setting.editable !== true;
+      if (control) control.input.disabled = setting.editable !== true;
       actions.append(save);
       const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
       if (pending) {
@@ -23294,18 +23546,18 @@ async function renderTuners() {
       }
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!control.input.reportValidity()) return;
+        if (control && !control.input.reportValidity()) return;
         save.disabled = true;
         message.textContent = '';
         try {
-          await requestJson(path, { method: 'PUT', body: { value: control.read(control.input) } });
+          await requestJson(path, { method: 'PUT', body: { value: actionSetting ? true : control.read(control.input) } });
           await refresh();
         } catch (error) {
           message.textContent = error.message || 'Could not save the tuner setting.';
           save.disabled = false;
         }
       });
-      form.append(control.element);
+      if (control) form.append(control.element);
       if (setting.requires_idle) form.append(node('p', 'tuners-setting-hint',
         'Applies when this tuner is no longer in use.'));
       if (pending) form.append(pending);
@@ -23465,6 +23717,29 @@ async function renderTuners() {
       }
     });
     actions.append(enabledButton);
+    if (tuner.planner) {
+      const analyze = node('button', 'ui-button ui-button-secondary', 'Analyze at RadioResolve');
+      analyze.type = 'button';
+      analyze.prepend(iconGlyph('icon-share'));
+      analyze.addEventListener('click', async () => {
+        analyze.disabled = true;
+        try {
+          const catalog = await requestChannelConfigurationJson('/api/v1/admin/channels', {
+            csrf: false, signal: renderContext.signal
+          });
+          if (!renderIsCurrent(renderContext)) return;
+          window.location.assign(buildRadioResolvePlannerUrl(tuner.planner, catalog));
+        } catch (error) {
+          if (renderIsCurrent(renderContext)) {
+            operationNotice = error.message || 'Could not open external RF analysis.';
+            renderSelection();
+          }
+        } finally {
+          analyze.disabled = false;
+        }
+      });
+      actions.append(analyze);
+    }
     if (String(tuner.tuner_class).toLowerCase() === 'recording') {
       const remove = node('button', 'ui-button ui-button-danger-quiet', 'Remove recording tuner');
       remove.type = 'button';
@@ -23548,13 +23823,6 @@ async function renderTuners() {
   }
 }
 
-function renderRfPlanner() {
-  const renderContext = captureRenderContext();
-  beginPage(renderContext, pageHeader('RF Planner',
-    'Plan channel coverage and tuner center frequencies'), rfPlanner.createPlanner(() =>
-    api('/api/v1/diagnostics/tuners', {}, { signal: renderContext.signal })));
-}
-
 async function renderConfiguration() {
   const requested = route.get('tab') || 'scan-lists';
   if (requested === 'radioreference') return renderAdminRadioReferenceSettings();
@@ -23563,7 +23831,6 @@ async function renderConfiguration() {
 }
 
 function renderHardware() {
-  if (route.get('tab') === 'rf-planner') return renderRfPlanner();
   return renderTuners();
 }
 
@@ -24351,6 +24618,8 @@ function adminSettingsGroups() {
         scope: 'Receiver-wide' }
     ] },
     { label: 'Receiver', items: [
+      { id: 'operations', label: 'Receiver operations', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide' },
       { id: 'spectrum', label: 'Spectrum frequency scopes', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         scope: 'Receiver-wide' },
       { label: 'Protocols', items: [
@@ -24413,6 +24682,7 @@ async function renderAdmin() {
     await renderAdminReceiverBehaviorSettings();
   }
   else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
+  else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'protocol-p25') {
     pageTitleController.update({ pageTitle: 'P25 receiver settings' });
     await renderAdminP25BandplanOverrides();
@@ -24608,8 +24878,8 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'network-visualizer', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
-        'tuners', 'rf-planner', 'tuner-spectrum', 'admin', 'credits']
+      !['live', 'map', 'network-visualizer', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
+        'tuners', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
   }
@@ -24618,6 +24888,7 @@ async function loadStatus(refreshCurrentView = false) {
 applicationRoutes = routeFoundation.createRegistry({
   dashboard: renderDashboard,
   live: renderLive,
+  map: renderListenMap,
   'network-visualizer': renderP25Visualizer,
   scanner: renderScanner,
   'tuner-spectrum': renderTunerSpectrum,
@@ -24633,7 +24904,6 @@ applicationRoutes = routeFoundation.createRegistry({
   radioreference: renderAdminRadioReferenceSettings,
   streaming: renderStreaming,
   tuners: renderTuners,
-  'rf-planner': renderRfPlanner,
   configuration: renderConfiguration,
   hardware: renderHardware,
   admin: renderAdmin,

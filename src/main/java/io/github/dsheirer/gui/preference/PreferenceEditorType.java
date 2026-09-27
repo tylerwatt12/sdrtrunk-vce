@@ -24,19 +24,12 @@ package io.github.dsheirer.gui.preference;
  */
 public enum PreferenceEditorType
 {
-    APPLICATION("General"),
     APPEARANCE("Appearance"),
-    CHANNEL_EVENT("Channel Events"),
-    NOW_PLAYING("Desktop Interface"),
     DIRECTORY("Directories"),
     JMBE_LIBRARY("JMBE Audio Library"),
     VOICE_DECRYPTION_MODULE("Optional Voice Module"),
-    AUDIO_MP3("MP3"),
-    AUDIO_RECORD("Record"),
-    AUDIO_CALL_MANAGEMENT("Call Management"),
     SOURCE_TUNERS("Tuners"),
-    STATS_SERVER("Stats Server"),
-    TALKGROUP_FORMAT("Talkgroup & Radio ID"),
+    STATS_SERVER("Stats Database Maintenance"),
     VECTOR_CALIBRATION("Vector Calibration"),
     WEB_SERVER("Web Server"),
     DEFAULT("Default");

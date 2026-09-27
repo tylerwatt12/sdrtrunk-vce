@@ -255,7 +255,7 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'modal', 'modal-long', 'h
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
-  'scanner', 'tuner-spectrum', 'rf-planner', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
+  'scanner', 'tuner-spectrum', 'aliases', 'alias-modal', 'alias-export', 'scan-list-members', 'channels',
   'radio-directory', 'entity-details', 'live-notice', 'live-filter', 'tuner-frequency-popover'].includes(parameters.get('view')) ?
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;

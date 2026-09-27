@@ -31,4 +31,9 @@ public interface IRecordingStatusListener
      * @param size of recording
      */
     void update(int fileCount, String file, long size);
+
+    /** Called when a recording cannot be continued without losing samples. */
+    default void failed(String reason)
+    {
+    }
 }

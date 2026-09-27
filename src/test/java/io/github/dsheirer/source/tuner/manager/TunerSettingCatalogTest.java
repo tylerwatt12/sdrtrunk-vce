@@ -9,6 +9,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.HackRFSampleRate;
@@ -23,6 +24,7 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Configuration;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Configuration;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingCatalogTest
@@ -91,6 +93,14 @@ class TunerSettingCatalogTest
             .allMatch(option -> HackRFSampleRate.valueOf((String)option.value()).isValidSampleRate()));
         assertThrows(IllegalArgumentException.class, () ->
             TunerSettingCatalog.validate(hackrf, "sample_rate", HackRFSampleRate.RATE_2_3.name()));
+        HackRFTunerConfiguration hackrfConfiguration = (HackRFTunerConfiguration)hackrf.getTunerConfiguration();
+        hackrfConfiguration.setMinimumFrequency(100_000_000L);
+        hackrfConfiguration.setMaximumFrequency(102_000_000L);
+        assertThrows(IllegalArgumentException.class, () ->
+            TunerSettingCatalog.validate(hackrf, "sample_rate", HackRFSampleRate.RATE_5_0.name()));
+        hackrfConfiguration.setMaximumFrequency(106_000_000L);
+        assertEquals(HackRFSampleRate.RATE_5_0,
+            TunerSettingCatalog.validate(hackrf, "sample_rate", HackRFSampleRate.RATE_5_0.name()));
 
         FakeDiscoveredTuner airspy = new FakeDiscoveredTuner("airspy");
         AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(airspy.getId());
@@ -113,6 +123,59 @@ class TunerSettingCatalogTest
         configuration.setMixerAGC(true);
         assertFalse(setting(airspy, "mixer_gain").editable());
         assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.validate(airspy, "mixer_gain", 5));
+    }
+
+    @Test
+    void frequencyLimitsAreGenericIdleOnlySettingsAndResetIsAnAction()
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner("airspy-extents");
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration(tuner.getId());
+        tuner.setTunerConfiguration(configuration);
+
+        TunerSettingCatalog.SettingDescriptor minimum = setting(tuner, TunerSettingCatalog.MINIMUM_FREQUENCY);
+        TunerSettingCatalog.SettingDescriptor maximum = setting(tuner, TunerSettingCatalog.MAXIMUM_FREQUENCY);
+        TunerSettingCatalog.SettingDescriptor reset = setting(tuner, TunerSettingCatalog.RESET_FREQUENCY_EXTENTS);
+        assertEquals("decimal", minimum.kind());
+        assertEquals("MHz", minimum.unit());
+        assertTrue(minimum.requiresIdle());
+        assertTrue(minimum.editable());
+        assertEquals(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, minimum.value());
+        assertEquals(AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ / 1_000_000.0, maximum.value());
+        assertEquals("action", reset.kind());
+        assertEquals(null, reset.value());
+        assertTrue(reset.requiresIdle());
+        assertEquals(195_000_000L, TunerSettingCatalog.validate(tuner,
+            TunerSettingCatalog.MINIMUM_FREQUENCY, 195.0));
+        assertEquals(true, TunerSettingCatalog.validate(tuner,
+            TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true));
+        assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.validate(tuner,
+            TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, false));
+        assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.validate(tuner,
+            TunerSettingCatalog.MINIMUM_FREQUENCY, 1.0));
+        assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.validate(tuner,
+            TunerSettingCatalog.MAXIMUM_FREQUENCY, 195.0000001));
+    }
+
+    @Test
+    void frequencyLimitsPreserveSampleRateGapAndRejectAmbiguousPair()
+    {
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration("airspy-extents");
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(200_000_000L);
+
+        assertEquals(new TunerSettingCatalog.FrequencyExtents(195_000_000L, 205_000_000L),
+            TunerSettingCatalog.resolveFrequencyExtents(configuration,
+                Map.of(TunerSettingCatalog.MINIMUM_FREQUENCY, 195_000_000L), 10_000_000L));
+        assertEquals(new TunerSettingCatalog.FrequencyExtents(95_000_000L, 105_000_000L),
+            TunerSettingCatalog.resolveFrequencyExtents(configuration,
+                Map.of(TunerSettingCatalog.MAXIMUM_FREQUENCY, 105_000_000L), 10_000_000L));
+        assertThrows(IllegalArgumentException.class, () -> TunerSettingCatalog.resolveFrequencyExtents(configuration,
+            Map.of(TunerSettingCatalog.MINIMUM_FREQUENCY, 195_000_000L,
+                TunerSettingCatalog.MAXIMUM_FREQUENCY, 200_000_000L), 10_000_000L));
+        assertEquals(new TunerSettingCatalog.FrequencyExtents(AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ,
+            AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ),
+            TunerSettingCatalog.resolveFrequencyExtents(configuration,
+                Map.of(TunerSettingCatalog.RESET_FREQUENCY_EXTENTS, true), 10_000_000L));
     }
 
     private static TunerSettingCatalog.SettingDescriptor setting(DiscoveredTuner tuner, String id)

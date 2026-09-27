@@ -71,4 +71,28 @@ class ApplicationSettingsStoreTest
         assertEquals(1.5d, loadedTuner.getFrequencyCorrection());
         assertTrue(loadedTuner.isCenterFrequencyLocked());
     }
+
+    @Test
+    void explicitShutdownFlushCommitsTheLatestQueuedTunerSettings() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("queued-settings.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ApplicationSettingsStore store = new ApplicationSettingsStore(database);
+
+        AirspyTunerConfiguration first = new AirspyTunerConfiguration("airspy-1");
+        first.setMinimumFrequency(100_000_000L);
+        TunerSettings earlier = new TunerSettings();
+        earlier.setTunerConfigurations(List.of(first));
+        store.saveLater(ApplicationSettingsStore.TUNER_SETTINGS, earlier);
+
+        AirspyTunerConfiguration latest = new AirspyTunerConfiguration("airspy-1");
+        latest.setMinimumFrequency(150_000_000L);
+        TunerSettings updated = new TunerSettings();
+        updated.setTunerConfigurations(List.of(latest));
+        store.saveLater(ApplicationSettingsStore.TUNER_SETTINGS, updated);
+
+        ApplicationSettingsStore.flushPendingWritesNow();
+        TunerSettings loaded = store.load(ApplicationSettingsStore.TUNER_SETTINGS, TunerSettings.class).orElseThrow();
+        assertEquals(150_000_000L, loaded.getTunerConfigurations().getFirst().getMinimumFrequency());
+    }
 }

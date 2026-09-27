@@ -13,20 +13,16 @@ package io.github.dsheirer.gui.preference.stats;
 
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.util.Optional;
 import javafx.application.Platform;
-import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.Spinner;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
@@ -35,16 +31,12 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
 /**
- * Stats collection, retention, and database maintenance preferences.
+ * Local-only statistics database maintenance. Operational collection and retention settings live in the web UI.
  */
 public class StatsServerPreferenceEditor extends HBox
 {
-    private final ApplicationPreference mApplicationPreference;
     private final UserPreferences mUserPreferences;
     private GridPane mEditorPane;
-    private Spinner<Integer> mRetentionSpinner;
-    private CheckBox mLoggingCheckBox;
-    private CheckBox mDetailedHistoryCheckBox;
     private Label mMaintenanceStatusLabel;
     private Button mMaintainButton;
     private Button mShrinkButton;
@@ -54,7 +46,6 @@ public class StatsServerPreferenceEditor extends HBox
     public StatsServerPreferenceEditor(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
-        mApplicationPreference = userPreferences.getApplicationPreference();
         setMaxWidth(Double.MAX_VALUE);
         VBox vbox = new VBox(getEditorPane());
         vbox.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
@@ -72,19 +63,10 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.setVgap(10);
             mEditorPane.setHgap(8);
             mEditorPane.setPadding(new Insets(10));
-            mEditorPane.add(new Label("Statistics Collection"), 0, row++, 3, 1);
-            mEditorPane.add(getLoggingCheckBox(), 0, row++, 3, 1);
-            Label featureExplanation = new Label(
-                "Summary statistics power Dashboard and directory pages. Detailed history additionally powers " +
-                    "Activity pages. Retention cleanup continues when collection is off. The web server, Live page, " +
-                    "Radio Systems and Channels, and web audio operate independently.");
-            featureExplanation.setWrapText(true);
-            mEditorPane.add(featureExplanation, 0, row++, 3, 1);
-            mEditorPane.add(getDetailedHistoryCheckBox(), 1, row++, 2, 1);
-            mEditorPane.add(new Label("Retain time-based data for"), 0, row);
-            GridPane.setHalignment(getRetentionSpinner(), HPos.RIGHT);
-            mEditorPane.add(getRetentionSpinner(), 1, row);
-            mEditorPane.add(new Label("days"), 2, row++);
+            mEditorPane.add(new Label("Local Statistics Database Maintenance"), 0, row++, 3, 1);
+            Label settingsNote = new Label("Collection and retention settings are available in the web interface.");
+            settingsNote.setWrapText(true);
+            mEditorPane.add(settingsNote, 0, row++, 3, 1);
             mEditorPane.add(new Label("Database file"), 0, row);
             Label path = new Label(ReceiverActivityPath.getDatabasePath(mUserPreferences).toString());
             path.setWrapText(true);
@@ -99,56 +81,9 @@ public class StatsServerPreferenceEditor extends HBox
             ColumnConstraints valueColumn = new ColumnConstraints();
             valueColumn.setHgrow(Priority.ALWAYS);
             mEditorPane.getColumnConstraints().addAll(labelColumn, valueColumn);
-            updateControlState();
         }
 
         return mEditorPane;
-    }
-
-    private CheckBox getLoggingCheckBox()
-    {
-        if(mLoggingCheckBox == null)
-        {
-            mLoggingCheckBox = new CheckBox("Collect Summary Statistics");
-            mLoggingCheckBox.setTooltip(new Tooltip(
-                "Stores compact lifetime and hourly summaries in SQLite for Dashboard and directory pages."));
-            mLoggingCheckBox.setSelected(mApplicationPreference.isStatsLoggingEnabled());
-            mLoggingCheckBox.setOnAction(event -> {
-                mApplicationPreference.setStatsLoggingEnabled(mLoggingCheckBox.isSelected());
-                updateControlState();
-            });
-        }
-
-        return mLoggingCheckBox;
-    }
-
-    private CheckBox getDetailedHistoryCheckBox()
-    {
-        if(mDetailedHistoryCheckBox == null)
-        {
-            mDetailedHistoryCheckBox = new CheckBox("Store Detailed Event History");
-            mDetailedHistoryCheckBox.setTooltip(new Tooltip(
-                "Stores individual event rows for historical Activity pages. New activity is saved from the time this is enabled."));
-            mDetailedHistoryCheckBox.setSelected(mApplicationPreference.isStatsDetailedHistoryEnabled());
-            mDetailedHistoryCheckBox.setOnAction(event ->
-                mApplicationPreference.setStatsDetailedHistoryEnabled(mDetailedHistoryCheckBox.isSelected()));
-        }
-
-        return mDetailedHistoryCheckBox;
-    }
-
-    private Spinner<Integer> getRetentionSpinner()
-    {
-        if(mRetentionSpinner == null)
-        {
-            mRetentionSpinner = new Spinner<>(ApplicationPreference.MIN_STATS_LOGGING_RETENTION_DAYS,
-                ApplicationPreference.MAX_STATS_LOGGING_RETENTION_DAYS,
-                mApplicationPreference.getStatsLoggingRetentionDays(), 1);
-            mRetentionSpinner.valueProperty().addListener((observable, oldValue, newValue) ->
-                mApplicationPreference.setStatsLoggingRetentionDays(newValue));
-        }
-
-        return mRetentionSpinner;
     }
 
     private Button getMaintainButton()
@@ -232,13 +167,6 @@ public class StatsServerPreferenceEditor extends HBox
         }
 
         return mMaintenanceStatusLabel;
-    }
-
-    private void updateControlState()
-    {
-        boolean enabled = getLoggingCheckBox().isSelected();
-        getDetailedHistoryCheckBox().setDisable(!enabled);
-        getRetentionSpinner().setDisable(false);
     }
 
     private void run(ReceiverActivityMaintenance.Operation operation)

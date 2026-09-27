@@ -28,20 +28,20 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
-import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
-import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
+import io.github.dsheirer.gui.diagnostic.BasebandRecordingDialog;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.theme.ThemeManager;
@@ -49,7 +49,7 @@ import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
-import io.github.dsheirer.map.MapService;
+import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.module.log.EventLogger;
@@ -65,7 +65,6 @@ import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.record.AudioRecordingManager;
-import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -118,7 +117,6 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
-import javax.swing.JSplitPane;
 import javax.swing.KeyStroke;
 import javax.swing.WindowConstants;
 
@@ -131,9 +129,7 @@ public class SDRTrunk
     private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
         "sdrtrunk.resource.status.update.icon.migration.1";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
-    private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
-    private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
-    private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
+    private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".thin.shell.frame";
     private static final String APPLICATION_MIGRATOR_TITLE = "VCE Application Migrator";
     private static final long SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS = 8_000L;
     private static final long CALL_COORDINATOR_SHUTDOWN_STOP_MILLISECONDS = 8_000L;
@@ -149,12 +145,11 @@ public class SDRTrunk
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
-    private ControllerPanel mControllerPanel;
     private IconModel mIconModel;
     private ConfigurationManager mConfigurationManager;
-    private SettingsManager mSettingsManager;
     private JFrame mMainGui;
-    private JSplitPane mSplitPane;
+    private BasebandRecordingDialog mBasebandRecordingDialog;
+    private MapSnapshotService mMapSnapshotService;
     private JavaFxWindowManager mJavaFxWindowManager;
     private UserPreferences mUserPreferences;
     private TunerManager mTunerManager;
@@ -174,17 +169,19 @@ public class SDRTrunk
     private volatile boolean mDatabaseReplacementInProgress;
     private PortableDataRootLock mDataRootLock;
     private final boolean mStartConfiguredChannels;
+    private final boolean mGuiAvailable;
 
     private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock, boolean startConfiguredChannels)
     {
         mUserPreferences = userPreferences;
         mDataRootLock = dataRootLock;
         mStartConfiguredChannels = startConfiguredChannels;
+        mGuiAvailable = !GraphicsEnvironment.isHeadless();
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
         mIconModel = new IconModel();
 
-        if(!GraphicsEnvironment.isHeadless())
+        if(mGuiAvailable)
         {
             //Install the stored look-and-feel before realizing the first Swing component.
             ThemeManager.getInstance().initialize(mUserPreferences);
@@ -207,22 +204,22 @@ public class SDRTrunk
             mLog.info("SDRPlay API native library preemptively loaded");
         }
 
-        mResourceMonitor = new ResourceMonitor(mUserPreferences);
-
         ThreadPool.logSettings();
 
-        //Register FontAwesome so we can use the fonts in Swing windows
-        IconFontSwing.register(FontAwesome.getIconFont());
+        if(mGuiAvailable)
+        {
+            mResourceMonitor = new ResourceMonitor(mUserPreferences);
+            // Register icon fonts only for local Swing windows.
+            IconFontSwing.register(FontAwesome.getIconFont());
+        }
 
         mTunerManager = new TunerManager(mUserPreferences);
-
-        mSettingsManager = new SettingsManager();
 
         AliasModel aliasModel = new AliasModel();
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
 
-        if(!GraphicsEnvironment.isHeadless())
+        if(mGuiAvailable)
         {
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
         }
@@ -254,7 +251,7 @@ public class SDRTrunk
             mConfigurationManager.getRadioReferenceImportService(),
             mConfigurationManager.getStreamingAdministrationService());
 
-        if(!GraphicsEnvironment.isHeadless() && !mStatsWebServerService.getRuntimeState().running())
+        if(mGuiAvailable && !mStatsWebServerService.getRuntimeState().running())
         {
             try
             {
@@ -293,20 +290,17 @@ public class SDRTrunk
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(mConfigurationManager.getBroadcastModel());
         mConfigurationManager.getChannelProcessingManager().addSiteMetadataListener(new SiteControlChannelLearner(mConfigurationManager));
 
-        MapService mapService = new MapService(aliasModel);
-        mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
-
-        if(!GraphicsEnvironment.isHeadless())
-        {
-            mControllerPanel = new ControllerPanel(mConfigurationManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences);
-        }
+        mMapSnapshotService = new MapSnapshotService(aliasModel);
+        mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mMapSnapshotService);
+        mStatsWebServerService.setMapSnapshotService(mMapSnapshotService);
 
         mConfigurationManager.init();
 
-        if(GraphicsEnvironment.isHeadless())
+        if(!mGuiAvailable)
         {
             mLog.info("starting main application headless");
+            SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);
+            startPostLaunchExperience();
         }
         else
         {
@@ -314,41 +308,42 @@ public class SDRTrunk
 
             //Initialize the GUI
             initGUI();
-        }
-
-        //Start the gui
-        EventQueue.invokeLater(() -> {
-            try
-            {
-                if(!GraphicsEnvironment.isHeadless())
+            // SIGTERM follows the portable preferences shutdown hook, not the Swing window listener. Keep the
+            // same tuner-settings quiescence boundary for a deployed GUI receiver as for headless operation.
+            SqlitePreferencesFactory.setShutdownCoordinator(this::processShutdown);
+            EventQueue.invokeLater(() -> {
+                try
                 {
                     ThemeManager.getInstance().registerSwing(mMainGui);
                     mMainGui.setVisible(true);
                     checkForUpdates(false);
                 }
-            }
-            catch(Exception e)
-            {
-                mLog.error("Unable to finish initial GUI setup; continuing with post-launch startup", e);
-            }
-
-            try
-            {
-                startPostLaunchExperience();
-            }
-            catch(Exception e)
-            {
-                mLog.error("Post-launch startup failed; starting configured channels without the startup dialog", e);
-                EncryptionKeyVaultService vaultService = getLockedLaunchVault();
-
-                if(vaultService != null)
+                catch(Exception e)
                 {
-                    vaultService.disableForRun();
+                    mLog.error("Unable to finish initial GUI setup; continuing with post-launch startup", e);
                 }
 
-                if(mStartConfiguredChannels) startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
-            }
-        });
+                try
+                {
+                    startPostLaunchExperience();
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Post-launch startup failed; starting configured channels without the startup dialog", e);
+                    EncryptionKeyVaultService vaultService = getLockedLaunchVault();
+
+                    if(vaultService != null)
+                    {
+                        vaultService.disableForRun();
+                    }
+
+                    if(mStartConfiguredChannels)
+                    {
+                        startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
+                    }
+                }
+            });
+        }
     }
 
     private void startPostLaunchExperience()
@@ -357,7 +352,7 @@ public class SDRTrunk
         List<Channel> channels = mConfigurationManager.getChannelModel().getAutoStartChannels();
         EncryptionKeyVaultService vaultService = getLockedLaunchVault();
 
-        if(GraphicsEnvironment.isHeadless())
+        if(!mGuiAvailable)
         {
             if(vaultService != null)
             {
@@ -410,7 +405,7 @@ public class SDRTrunk
      */
     private void initGUI()
     {
-        mMainGui.setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[]0[grow,fill]0[shrink 0]"));
+        mMainGui.setLayout(new MigLayout("insets 6 6 6 6", "[grow,fill]", "[]0[shrink 0]"));
         ApplicationIcon.apply(mMainGui);
 
         /**
@@ -420,28 +415,19 @@ public class SDRTrunk
 
         Point location = mUserPreferences.getSwingPreference().getLocation(WINDOW_FRAME_IDENTIFIER);
         Dimension dimension = mUserPreferences.getSwingPreference().getDimension(WINDOW_FRAME_IDENTIFIER);
-        mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         mMainGui.addWindowListener(new ShutdownMonitor());
         registerQuitHandler();
 
-        mControllerPanel.setPreferredSize(new Dimension(1280, 500));
-        mControllerPanel.setMinimumSize(new Dimension(0, MAIN_CONTROLLER_MINIMUM_HEIGHT));
-
         if(dimension != null)
         {
-            Dimension controller = mUserPreferences.getSwingPreference().getDimension(CONTROLLER_PANEL_IDENTIFIER);
-            if(controller != null)
-            {
-                Dimension pref = mControllerPanel.getPreferredSize();
-                mControllerPanel.setPreferredSize(new Dimension(pref.width, controller.height));
-            }
-
             mMainGui.setSize(dimension);
         }
         else
         {
-            mMainGui.setSize(new Dimension(1280, 800));
+            mMainGui.setSize(new Dimension(680, 180));
         }
+        mMainGui.setMinimumSize(new Dimension(480, 120));
 
         //Center only after the first-use size is known. Centering a zero-sized frame places its upper-left corner at
         //the screen center and leaves most of the expanded window off-screen.
@@ -458,18 +444,13 @@ public class SDRTrunk
         {
             mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
         }
-        mSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        mSplitPane.setDividerSize(5);
-        mSplitPane.setResizeWeight(1.0);
-        mSplitPane.setTopComponent(mControllerPanel);
         mMainGui.add(getMainControlPanel(), "cell 0 0,growx");
-        mMainGui.add(mSplitPane, "cell 0 1,grow");
 
         mResourceMonitor.start();
         mResourceStatusVisible = initializeResourceStatusVisibility();
         if(mResourceStatusVisible)
         {
-            mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
+            mMainGui.add(getResourceStatusPanel(), "cell 0 1,growx");
         }
 
         /**
@@ -490,16 +471,7 @@ public class SDRTrunk
         fileMenu.add(new JSeparator());
 
         JMenuItem exitMenu = new JMenuItem("Exit");
-        exitMenu.addActionListener(event -> {
-                if(mDatabaseReplacementInProgress)
-                {
-                    Toolkit.getDefaultToolkit().beep();
-                    return;
-                }
-                processShutdown();
-                System.exit(0);
-            }
-        );
+        exitMenu.addActionListener(event -> requestGuiShutdown());
 
         fileMenu.add(exitMenu);
 
@@ -545,11 +517,6 @@ public class SDRTrunk
                 openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryEventLog().toFile()));
         viewMenu.add(viewEventLogsMenu);
 
-        JMenuItem iconManagerMenu = new JMenuItem("Icon Manager");
-        iconManagerMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.PICTURE_O, 12));
-        iconManagerMenu.addActionListener(arg0 -> MyEventBus.getGlobalEventBus().post(new ViewIconManagerRequest()));
-        viewMenu.add(iconManagerMenu);
-
         JMenuItem recordingViewerMenu = new JMenuItem("Message Recording Viewer (.bits)");
         recordingViewerMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.BRAILLE, 12));
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
@@ -578,6 +545,19 @@ public class SDRTrunk
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 
         menuBar.add(viewMenu);
+
+        JMenu diagnosticsMenu = new JMenu("Diagnostics");
+        JMenuItem basebandRecordingItem = new JMenuItem("Baseband Recording (Debug)…");
+        basebandRecordingItem.addActionListener(event -> {
+            if(mBasebandRecordingDialog == null || !mBasebandRecordingDialog.isDisplayable())
+            {
+                mBasebandRecordingDialog = new BasebandRecordingDialog(mMainGui, mTunerManager, mUserPreferences);
+            }
+            mBasebandRecordingDialog.setVisible(true);
+            mBasebandRecordingDialog.toFront();
+        });
+        diagnosticsMenu.add(basebandRecordingItem);
+        menuBar.add(diagnosticsMenu);
 
         JMenuItem screenCaptureItem = new JMenuItem("Screen Capture");
         screenCaptureItem.setIcon(IconFontSwing.buildIcon(FontAwesome.CAMERA, 12));
@@ -859,7 +839,7 @@ public class SDRTrunk
         catch(Exception e)
         {
             mDatabaseReplacementInProgress = false;
-            mMainGui.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+            mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
             CopyableErrorDialog.show(mMainGui, "Restart Required",
                 "Automatic restart failed. Close this process and start again with --setup-wizard.",
                 exceptionMessage(e));
@@ -888,12 +868,34 @@ public class SDRTrunk
             cause.getMessage() : cause.getClass().getSimpleName();
     }
 
+    private void requestGuiShutdown()
+    {
+        if(mDatabaseReplacementInProgress)
+        {
+            Toolkit.getDefaultToolkit().beep();
+            return;
+        }
+
+        try
+        {
+            processShutdown();
+            System.exit(0);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Receiver shutdown was not safe to complete", exception);
+            JOptionPane.showMessageDialog(mMainGui,
+                "Receiver shutdown could not finish safely. Review the application log, then try again.",
+                "Shutdown Paused", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void processShutdown()
     {
         processShutdown(true);
     }
 
-    private void processShutdown(boolean releaseDataRootLock)
+    private synchronized void processShutdown(boolean releaseDataRootLock)
     {
         if(mShutdownProcessed)
         {
@@ -902,21 +904,39 @@ public class SDRTrunk
 
         mShutdownProcessed = true;
         boolean databaseBoundarySafe = true;
-        MyEventBus.getGlobalEventBus().unregister(this);
         mLog.info("Application shutdown started ...");
-        mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
-        mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
-        mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
-            (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
-        mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
-        mUserPreferences.getSwingPreference().flush();
-        mControllerPanel.dispose();
-        mJavaFxWindowManager.shutdown();
-        mLog.info("Stopping channels ...");
-        if(mStatsWebServerService != null)
+        try
         {
-            mStatsWebServerService.close();
+            if(mStatsWebServerService != null)
+            {
+                mStatsWebServerService.close();
+            }
+            // Tuner settings and recording-tuner catalog changes use a short delayed SQLite coalescer. Once the
+            // admin worker is quiescent, commit its last acknowledged mutation before any receiver teardown.
+            ApplicationSettingsStore.flushPendingWritesNow();
         }
+        catch(Exception unsafeShutdown)
+        {
+            mShutdownProcessed = false;
+            mLog.error("Receiver shutdown paused before tuner settings were safe and durable", unsafeShutdown);
+            throw new IllegalStateException("Tuner maintenance did not quiesce or its settings could not be saved",
+                unsafeShutdown);
+        }
+        if(mGuiAvailable)
+        {
+            MyEventBus.getGlobalEventBus().unregister(this);
+            mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
+            mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
+            mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
+                (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
+            mUserPreferences.getSwingPreference().flush();
+            if(mBasebandRecordingDialog != null)
+            {
+                mBasebandRecordingDialog.dispose();
+            }
+            mJavaFxWindowManager.shutdown();
+        }
+        mLog.info("Stopping channels ...");
         if(mControlChannelQualityRegistry != null)
         {
             mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
@@ -925,6 +945,10 @@ public class SDRTrunk
         ChannelProcessingManager channelProcessingManager =
             mConfigurationManager.getChannelProcessingManager();
         channelProcessingManager.close();
+        if(mMapSnapshotService != null)
+        {
+            mMapSnapshotService.close();
+        }
         boolean siteMetadataDrained = channelProcessingManager.awaitSiteMetadataDrain(
             SITE_METADATA_SHUTDOWN_DRAIN_MILLISECONDS, TimeUnit.MILLISECONDS);
         databaseBoundarySafe &= siteMetadataDrained;
@@ -1002,7 +1026,10 @@ public class SDRTrunk
         {
             mControlChannelQualityRegistry.clear();
         }
-        mResourceMonitor.stop();
+        if(mResourceMonitor != null)
+        {
+            mResourceMonitor.stop();
+        }
 
         mLog.info("Stopping tuners ...");
         mTunerManager.stop();
@@ -1214,10 +1241,7 @@ public class SDRTrunk
         @Override
         public void windowClosing(WindowEvent e)
         {
-            if(!mDatabaseReplacementInProgress)
-            {
-                processShutdown();
-            }
+            requestGuiShutdown();
         }
     }
 
@@ -1235,7 +1259,7 @@ public class SDRTrunk
                 EventQueue.invokeLater(() -> {
                     if(mResourceStatusVisible)
                     {
-                        mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
+                        mMainGui.add(getResourceStatusPanel(), "cell 0 1,growx");
                     }
                     else
                     {

@@ -56,5 +56,29 @@ class RecordingStatusBroadcasterTest
         assertEquals(List.of(), updates);
     }
 
+    @Test
+    void failureReachesCurrentListenerWithoutMasqueradingAsProgress()
+    {
+        RecordingStatusBroadcaster broadcaster = new RecordingStatusBroadcaster();
+        List<String> failures = new ArrayList<>();
+        broadcaster.addListener(new IRecordingStatusListener()
+        {
+            @Override
+            public void update(int count, String file, long size)
+            {
+            }
+
+            @Override
+            public void failed(String reason)
+            {
+                failures.add(reason);
+            }
+        });
+
+        broadcaster.failed("Incomplete recording");
+
+        assertEquals(List.of("Incomplete recording"), failures);
+    }
+
     private record Status(int fileCount, String file, long size) {}
 }

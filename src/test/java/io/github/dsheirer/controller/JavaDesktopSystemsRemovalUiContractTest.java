@@ -5,7 +5,6 @@
  */
 package io.github.dsheirer.controller;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,22 +28,26 @@ class JavaDesktopSystemsRemovalUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/preference/nowplaying/NowPlayingPreferenceEditor.java");
     private static final Path TUNER_EDITOR =
         Path.of("src/main/java/io/github/dsheirer/source/tuner/ui/TunerEditor.java");
+    private static final Path DEBUG_RECORDER =
+        Path.of("src/main/java/io/github/dsheirer/gui/diagnostic/BasebandRecordingDialog.java");
     private static final Path TUNER_EVENT =
         Path.of("src/main/java/io/github/dsheirer/source/tuner/TunerEvent.java");
     private static final Path USER_PREFERENCES =
         Path.of("src/main/java/io/github/dsheirer/preference/UserPreferences.java");
 
     @Test
-    void controllerContainsOnlyOptionalMapAndTunersTabs() throws Exception
+    void mapIsReceiverOwnedWithoutSwingController() throws Exception
     {
-        String source = Files.readString(CONTROLLER);
+        String application = Files.readString(APPLICATION);
 
-        assertTrue(source.contains("mTabbedPane.addTab(\"Map\", mMapPanel);"));
-        assertTrue(source.contains("mTabbedPane.addTab(\"Tuners\", mTunerManagerPanel);"));
-        assertEquals(2, occurrences(source, "mTabbedPane.addTab("));
-        assertFalse(source.contains("NowPlayingPanel"));
-        assertFalse(source.contains("JavaInterfaceView.SYSTEMS"));
-        assertFalse(source.contains("addTab(\"Systems\""));
+        assertFalse(Files.exists(CONTROLLER));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/map/MapPanel.java")));
+        assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/map/MapService.java")));
+        assertTrue(application.contains("new MapSnapshotService(aliasModel)"));
+        assertTrue(application.contains("addDecodeEventListener(mMapSnapshotService)"));
+        assertTrue(application.contains("setMapSnapshotService(mMapSnapshotService)"));
+        assertFalse(application.contains("mControllerPanel"));
+        assertFalse(application.contains("new MapService("));
     }
 
     @Test
@@ -52,29 +55,20 @@ class JavaDesktopSystemsRemovalUiContractTest
     {
         String application = Files.readString(APPLICATION);
         String preference = Files.readString(PREFERENCE);
-        String editor = Files.readString(PREFERENCE_EDITOR);
 
         assertFalse(application.contains("PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE"));
         assertFalse(application.contains("NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER"));
         assertFalse(application.contains("CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER"));
         assertFalse(application.contains("getLowerViewsToggleButton"));
         assertFalse(application.contains("getNowPlayingPanel"));
-        assertTrue(preference.contains("MAP(\"Map\""));
-        assertFalse(preference.contains("SPECTRUM(\"Spectrum\""));
-        assertFalse(preference.contains("SYSTEMS(\"Systems\""));
-        assertFalse(editor.contains("Systems Activity Settings"));
-        assertFalse(editor.contains("JavaInterfaceView.values()"));
-        assertFalse(editor.contains("JavaInterfaceView.SPECTRUM"));
-        assertFalse(editor.contains("Live Activity Settings"));
-        assertFalse(editor.contains("Retain Last Call Source/Target"));
-        assertFalse(editor.contains("P25 Grant Idle Age-Out"));
+        assertFalse(preference.contains("JavaInterfaceView"));
+        assertFalse(Files.exists(PREFERENCE_EDITOR));
     }
 
     @Test
     void applicationHasNoReceiverLocalSpectrumOrWaterfall() throws Exception
     {
         String application = Files.readString(APPLICATION);
-        String tunerEditor = Files.readString(TUNER_EDITOR);
         String tunerEvent = Files.readString(TUNER_EVENT);
         String userPreferences = Files.readString(USER_PREFERENCES);
 
@@ -82,14 +76,28 @@ class JavaDesktopSystemsRemovalUiContractTest
         assertFalse(application.contains("SpectrumFrame"));
         assertFalse(application.contains("SpectrumWaterfall"));
         assertFalse(application.contains("TunersMenu"));
-        assertFalse(tunerEditor.contains("View Spectrum"));
-        assertFalse(tunerEditor.contains("New Spectrum Display"));
+        assertFalse(Files.exists(TUNER_EDITOR));
+        assertFalse(Files.exists(Path.of(
+            "src/main/java/io/github/dsheirer/source/tuner/ui/TunerViewPanel.java")));
         assertFalse(tunerEvent.contains("SPECTRAL_DISPLAY"));
         assertFalse(userPreferences.contains("SpectrumPreference"));
         assertFalse(Files.exists(Path.of(
             "src/main/java/io/github/dsheirer/spectrum/WaterfallPanel.java")));
         assertFalse(Files.exists(Path.of(
             "src/main/java/io/github/dsheirer/spectrum/SpectralDisplayPanel.java")));
+    }
+
+    @Test
+    void localDebugRecorderSurvivesTunerEditorRemoval() throws Exception
+    {
+        String application = Files.readString(APPLICATION);
+        String recorder = Files.readString(DEBUG_RECORDER);
+
+        assertTrue(application.contains("Baseband Recording (Debug)"));
+        assertTrue(recorder.contains("controller.startRecorder("));
+        assertTrue(recorder.contains("controller.stopRecorder();"));
+        assertTrue(recorder.contains("public void dispose()"));
+        assertFalse(recorder.contains("selected.setEnabled("));
     }
 
     @Test
@@ -103,17 +111,4 @@ class JavaDesktopSystemsRemovalUiContractTest
         assertTrue(source.contains("channelMetadata.removeUpdateEventListener()"));
     }
 
-    private static int occurrences(String source, String value)
-    {
-        int count = 0;
-        int offset = 0;
-
-        while((offset = source.indexOf(value, offset)) >= 0)
-        {
-            count++;
-            offset += value.length();
-        }
-
-        return count;
-    }
 }

@@ -160,7 +160,7 @@ class StatsWebDashboardUiContractTest
 
         assertTrue(calls.contains("label: 'Conventional Channel'"));
         assertTrue(calls.contains("label: 'Mode'"));
-        assertTrue(calls.contains("label: 'Logical Calls'"));
+        assertTrue(calls.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
         assertTrue(calls.contains("label: 'Recorded'"));
         assertTrue(calls.contains("label: 'Submitted'"));
         assertFalse(calls.contains("label: 'Type'"));
@@ -168,7 +168,7 @@ class StatsWebDashboardUiContractTest
         assertFalse(calls.contains("Latest Hour"));
         assertTrue(identities.contains("label: identityLabel"));
         assertTrue(identities.contains("label: 'System / Channel'"));
-        assertTrue(identities.contains("label: 'Logical Calls'"));
+        assertTrue(identities.contains("label: 'Calls', fullLabel: 'Logical Calls'"));
         assertFalse(identities.contains("...dashboardCallSourceColumns"));
         String identity = function(source, "function dashboardIdentity(row)");
         assertTrue(identity.contains("dashboard-identity-context"));

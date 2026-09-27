@@ -67,6 +67,23 @@ class SqlitePreferencesFactoryTest
         reader.close();
     }
 
+    @Test
+    void receiverShutdownCoordinatorRunsBeforePortablePreferencesClose() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("coordinated-shutdown.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process process = new ProcessBuilder(javaExecutable, "-Djava.awt.headless=true", "-cp",
+            System.getProperty("java.class.path"), ShutdownCoordinatorProcess.class.getName(),
+            database.toString()).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(0, process.waitFor(), output);
+
+        SqlitePreferencesFactory.PreferenceStore reader = new SqlitePreferencesFactory.PreferenceStore(database);
+        assertEquals("receiver-first", reader.get("user/portable/smoke", "shutdownOrder"));
+        reader.close();
+    }
+
     public static class PreferenceProcess
     {
         public static void main(String[] args) throws Exception
@@ -77,6 +94,16 @@ class SqlitePreferencesFactoryTest
             preferences.flush();
             assertTrue(preferences.getBoolean("enabled", false));
             SqlitePreferencesFactory.shutdown();
+        }
+    }
+
+    public static class ShutdownCoordinatorProcess
+    {
+        public static void main(String[] args) throws Exception
+        {
+            SqlitePreferencesFactory.install(Path.of(args[0]));
+            SqlitePreferencesFactory.setShutdownCoordinator(() ->
+                Preferences.userRoot().node("/portable/smoke").put("shutdownOrder", "receiver-first"));
         }
     }
 }

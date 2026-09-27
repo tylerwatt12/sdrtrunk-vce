@@ -384,6 +384,30 @@
   white-space: nowrap;
 }
 
+.operational-preferences {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-2);
+}
+
+.operational-preferences > .admin-form-message:empty {
+  display: none;
+}
+
+.operational-preferences .settings-card-body {
+  align-content: start;
+}
+
+.operational-preference-form + .operational-preference-form {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.operational-preference-actions {
+  justify-content: flex-end;
+}
+
 @media (max-width: 820px) {
   .admin-web-access-control {
     align-items: stretch;

@@ -444,10 +444,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   width: min(1180px, calc(100% - 32px));
 }
 
-.visual-rf-planner-example {
-  width: min(1240px, calc(100% - 32px));
-}
-
 .visual-aliases-example,
 .visual-scan-list-members-example {
   width: min(1320px, calc(100% - 32px));
@@ -575,7 +571,6 @@ body:not([data-gallery-view="radioreference-results"]) .visual-radioreference-re
 body:not([data-gallery-view="radio-directory-coverage"]):not([data-gallery-view="radio-directory-panel"]) .visual-radio-directory-coverage-example,
 body:not([data-gallery-view="scanner"]) .visual-scanner-example,
 body:not([data-gallery-view="tuner-spectrum"]) .visual-tuner-spectrum-example,
-body:not([data-gallery-view="rf-planner"]) .visual-rf-planner-example,
 body:not([data-gallery-view="aliases"]) .visual-aliases-example,
 body:not([data-gallery-view="alias-modal"]) .visual-alias-modal-example,
 body:not([data-gallery-view="alias-export"]) .visual-alias-export-example,
@@ -652,10 +647,6 @@ body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-
   }
 
   .visual-scanner-example {
-    width: min(100% - 20px, 1180px);
-  }
-
-  .visual-rf-planner-example {
     width: min(100% - 20px, 1180px);
   }
 
