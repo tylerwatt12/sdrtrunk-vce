@@ -12761,10 +12761,11 @@ function tunerResolvedScopeSegments(viewport, scopes = []) {
 
 function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const frequencyScopes = snapPresetDocument?.scopes || [];
+  const basicOperator = panelOptions.basicOperator === true;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
   const layout = node('div', `tuner-spectrum-layout${panelOptions.inlineDisplayOptions ?
-    ' tuner-spectrum-layout-inline-options' : ''}`);
+    ' tuner-spectrum-layout-inline-options' : ''}${basicOperator ? ' tuner-spectrum-layout-basic' : ''}`);
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
   const targetSelect = node('select', 'ui-select');
@@ -12794,10 +12795,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   playbackActions.setAttribute('role', 'group');
   playbackActions.setAttribute('aria-label', 'Spectrum playback');
   playbackActions.append(pause);
-  toolbarActions.append(zoomActions, playbackActions);
+  if (!basicOperator) toolbarActions.append(zoomActions, playbackActions);
   const tunerSelection = node('div', 'tuner-spectrum-selection');
   tunerSelection.append(targetLabel, status);
-  toolbar.append(tunerSelection, toolbarActions);
+  toolbar.append(tunerSelection);
+  if (!basicOperator) toolbar.append(toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
   const options = node('details', 'tuner-spectrum-options');
@@ -12880,9 +12882,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
   idleChannelsControl.hidden = !liveActivityAllowed;
   const displayOptions = node('fieldset', 'tuner-spectrum-display-section tuner-spectrum-range-section');
-  displayOptions.append(node('legend', '', 'Display'), rangeControl, rangeHelp, snapControl);
+  displayOptions.append(node('legend', '', 'Display'), rangeControl);
+  if (!basicOperator) displayOptions.append(rangeHelp, snapControl);
   const fftOptions = node('fieldset', 'tuner-spectrum-display-section');
-  fftOptions.append(node('legend', '', 'FFT'), smoothControl, idleChannelsControl);
+  fftOptions.append(node('legend', '', 'FFT'), smoothControl);
+  if (!basicOperator) fftOptions.append(idleChannelsControl);
   const waterfallOptions = node('fieldset', 'tuner-spectrum-display-section');
   waterfallOptions.append(node('legend', '', 'Waterfall'), speedControl);
   const profilePanel = node('fieldset', 'tuner-spectrum-profile');
@@ -12899,15 +12903,18 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     option.value = value;
     profileSelect.append(option);
   });
-  profileSelect.value = tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, 'balanced',
-    Object.keys(TUNER_SPECTRUM_PROFILES));
+  // Keep the always-visible tuner workspace bounded regardless of the richer Spectrum-page preference.
+  profileSelect.value = basicOperator ? 'efficient' : tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE,
+    'balanced', Object.keys(TUNER_SPECTRUM_PROFILES));
   profileControl.append(node('span', '', 'Profile'), uiSelectFrame(profileSelect));
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
-  profilePanel.append(profileControl, profileWarning);
+  profilePanel.append(profileControl);
+  if (!basicOperator) profilePanel.append(profileWarning);
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
-    node('strong', '', 'Spectrum and waterfall'),
+    node('strong', '', basicOperator ? 'Signal display' : 'Spectrum and waterfall'));
+  if (!basicOperator) optionsHeader.append(
     node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
   optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions, profilePanel);
   options.append(optionsSummary, optionsPanel);
@@ -12935,9 +12942,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   legendLabel.hidden = !liveActivityAllowed;
   displayControls.append(refiningBadge, legendLabel, flagLegend);
 
-  const instructions = node('p', 'visually-hidden',
+  const instructions = node('p', 'visually-hidden', basicOperator ?
+    'Read-only FFT and waterfall.' :
     'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
-    'Drag or use the arrow keys to pan. Press R to reset zoom.');
+      'Drag or use the arrow keys to pan. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
 
   const plot = (ariaLabel, extraClass = '') => {
@@ -12947,12 +12955,15 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', ariaLabel);
     canvas.setAttribute('aria-describedby', instructions.id);
-    canvas.setAttribute('aria-keyshortcuts', '+ - ArrowLeft ArrowRight R 0 Home');
-    canvas.tabIndex = 0;
+    if (!basicOperator) {
+      canvas.setAttribute('aria-keyshortcuts', '+ - ArrowLeft ArrowRight R 0 Home');
+      canvas.tabIndex = 0;
+    }
     const guide = node('div', 'tuner-spectrum-cursor-guide');
     guide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
-    host.append(canvas, guide, overlay);
+    if (basicOperator) host.append(canvas, overlay);
+    else host.append(canvas, guide, overlay);
     card.append(host);
     return { card, host, canvas, guide, overlay };
   };
@@ -12963,10 +12974,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const fftBandRail = node('div', 'tuner-spectrum-band-rail');
   fftBandRail.setAttribute('role', 'img');
   fftBandRail.setAttribute('aria-label', `${snapPresetDocument.countryLabel} frequency bands`);
-  spectrum.card.append(fftBandRail);
+  if (!basicOperator) spectrum.card.append(fftBandRail);
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
   const activeFlagLayers = [spectrumActiveFlags];
-  spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
+  if (!basicOperator) spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
   const cursorPopup = node('div', 'tuner-spectrum-cursor-popup');
   const cursorFrequency = node('span', 'tuner-spectrum-cursor-frequency');
   const cursorSnap = node('span', 'tuner-spectrum-cursor-snap');
@@ -12986,8 +12997,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const visualWindow = node('div', 'tuner-spectrum-visual-window');
   visualWindow.append(spectrum.card, waterfall.card);
   layout.append(instructions, toolbar);
-  if (panelOptions.inlineDisplayOptions) layout.append(options);
-  layout.append(readoutPanel, displayControls, visualWindow, cursorPopup);
+  if (panelOptions.inlineDisplayOptions && !basicOperator) layout.append(options);
+  if (!basicOperator) layout.append(readoutPanel, displayControls);
+  layout.append(visualWindow);
+  if (!basicOperator) layout.append(cursorPopup);
 
   let disposed = false;
   let paused = false;
@@ -14122,7 +14135,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-    showCursor(ratio, event.currentTarget, yRatio);
+    if (!basicOperator) showCursor(ratio, event.currentTarget, yRatio);
     if (!drag || drag.pointerId !== event.pointerId || drag.canvas !== event.currentTarget) return;
     const deltaPixels = event.clientX - drag.lastX;
     drag.lastX = event.clientX;
@@ -14148,7 +14161,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     const moved = drag.moved;
     cancelDrag();
     if (moved) queueViewportUpdate();
-    else openFrequencyActionsAtPointer(event);
+    else if (!basicOperator) openFrequencyActionsAtPointer(event);
   }
 
   function onPlotPointerCancel(event) {
@@ -14159,6 +14172,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function onPlotClick(event) {
+    if (basicOperator) return;
     if (!canInteract() || zoomAmount() > 1.0001) return;
     openFrequencyActionsAtPointer(event);
   }
@@ -14201,7 +14215,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function connectActiveChannels() {
-    if (!liveActivityAllowed || !shouldRun() || activeChannelSource) return;
+    if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return;
     const source = subscribeLiveChannelActivity({
       snapshot: (snapshot) => {
         activeChannelTables.clear();
@@ -14414,20 +14428,23 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
     const createFlags = () => carriers.map((carrier) => {
-      const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
-      flag.type = 'button';
+      const flag = node(basicOperator ? 'span' : 'button',
+        `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
+      if (!basicOperator) flag.type = 'button';
       flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / visibleSpanHz * 100).toFixed(3)}%`;
       flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
       const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
       flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
         (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
-      flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
-      flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
-      flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
-      flag.addEventListener('blur', () => hideActiveFlag(flag));
-      flag.addEventListener('click', () => openTunerFrequencyActions({
-        ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
-      }));
+      if (!basicOperator) {
+        flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
+        flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
+        flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
+        flag.addEventListener('blur', () => hideActiveFlag(flag));
+        flag.addEventListener('click', () => openTunerFrequencyActions({
+          ...frequencySelectionForCarrier(carrier), anchorRect: flag.getBoundingClientRect()
+        }));
+      }
       return flag;
     });
     spectrumActiveFlags.replaceChildren(...createFlags());
@@ -14537,7 +14554,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
-  [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
+  if (!basicOperator) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => {
     pageFocused = document.hasFocus();
     sync();
@@ -23391,7 +23408,7 @@ function tunerSettingValue(setting, value) {
 }
 
 function tunerSettingInput(setting, draft = null) {
-  const value = setting.pending_value == null ? setting.value : setting.pending_value;
+  const value = setting.value;
   if (setting.kind === 'boolean') {
     const control = uiToggleField(setting.label, draft === null ? Boolean(value) : Boolean(draft), setting.label);
     return { element: control, input: control.querySelector('input'), read: (input) => input.checked };
@@ -23422,19 +23439,70 @@ function tunerSettingInput(setting, draft = null) {
   return { element: field, input, read: (numberInput) => Number(numberInput.value) };
 }
 
+function tunerOperatorState(tuner) {
+  const state = String(tuner?.operator_state || '').toLowerCase();
+  if (['disabled', 'setup', 'live'].includes(state)) return state;
+  return tuner?.enabled ? 'live' : 'disabled';
+}
+
+function tunerOperatorStateLabel(tuner) {
+  const transition = String(tuner?.transition || '').toLowerCase();
+  const transitions = {
+    disabling: 'Stopping', starting_setup: 'Starting', going_live: 'Going live', restoring: 'Restarting channels'
+  };
+  if (transitions[transition]) return { label: transitions[transition], tone: 'warning' };
+  const state = tunerOperatorState(tuner);
+  if (state === 'setup') return { label: 'Setup', tone: 'warning' };
+  if (state === 'live') return { label: 'Live', tone: 'success' };
+  return { label: 'Disabled', tone: 'neutral' };
+}
+
+function tunerStoppedChannels(tuner) {
+  return (Array.isArray(tuner?.stopped_channels) ? tuner.stopped_channels : [])
+    .filter((channel) => channel && typeof channel.id === 'string')
+    .map((channel) => ({ id: channel.id, name: String(channel.name || channel.id) }));
+}
+
+function tunerSettingDependencyMet(setting, settings) {
+  const dependencies = Array.isArray(setting?.dependencies) ? setting.dependencies : [];
+  return dependencies.every((dependency) => {
+    const source = settings.find((candidate) => candidate?.id === dependency?.setting_id);
+    return source && String(source.value) === String(dependency.equals);
+  });
+}
+
+function tunerSettingUsability(setting, tuner, settings) {
+  if (setting?.editable !== true) {
+    return { enabled: false, reason: String(setting?.unavailable_reason || 'Not available') };
+  }
+  const state = tunerOperatorState(tuner);
+  const setupOnly = String(setting?.availability || '').toLowerCase() === 'setup' ||
+    (setting?.availability == null && setting?.requires_idle === true);
+  if (setupOnly && state === 'live') {
+    return { enabled: false, reason: String(setting?.unavailable_reason || 'Available in Setup') };
+  }
+  if (!tunerSettingDependencyMet(setting, settings)) {
+    return { enabled: false, reason: String(setting?.unavailable_reason || 'Change the related setting first') };
+  }
+  return { enabled: true, reason: '' };
+}
+
+function tunerCenterFrequencyText(value) {
+  const numeric = Math.max(0, Math.min(9_999.99999, Number(value) || 0));
+  const [whole, fraction] = numeric.toFixed(5).split('.');
+  return `${whole.padStart(4, '0')}.${fraction}`;
+}
+
 async function renderTuners() {
   const renderContext = captureRenderContext();
   const listBody = node('div', 'tuners-list');
   const detailsBody = node('div', 'tuners-details');
+  const centerLockBody = node('div', 'tuners-center-lock');
   const spectrumBody = node('div', 'tuners-spectrum');
   const gainBody = node('div', 'tuners-setting-group-body');
-  const calibrationBody = node('div', 'tuners-setting-group-body');
-  const eligibilityBody = node('div', 'tuners-frequency-lane-body');
-  const tuningBody = node('div', 'tuners-frequency-lane-body');
-  const spanBody = node('div', 'tuners-frequency-lane-body');
-  const frequencyOtherBody = node('div', 'tuners-frequency-lane-body');
-  const hardwareBody = node('div', 'tuners-setting-group-body');
-  const otherBody = node('div', 'tuners-setting-group-body');
+  const commonPrimaryBody = node('div', 'tuners-setting-group-body tuners-common-primary');
+  const commonMoreBody = node('div', 'tuners-setting-group-body tuners-common-more');
+  const deviceBody = node('div', 'tuners-setting-group-body');
   const addTunerButton = node('button', 'ui-button ui-button-primary', 'Add tuner');
   addTunerButton.type = 'button';
   addTunerButton.id = 'add-recording-tuner';
@@ -23453,46 +23521,28 @@ async function renderTuners() {
   const signalLayout = node('div', 'tuners-signal-layout');
   const signalControls = node('aside', 'tuners-signal-controls');
   const gainPanel = node('div', 'tuners-signal-control-group');
-  gainPanel.append(node('h3', '', 'Gain controls'), gainBody);
-  const calibrationPanel = node('div', 'tuners-signal-control-group');
-  calibrationPanel.append(node('h3', '', 'Calibration'), calibrationBody);
-  signalControls.append(gainPanel, calibrationPanel);
+  gainPanel.append(node('h3', '', 'Gain'), gainBody);
+  signalControls.append(gainPanel);
   signalLayout.append(spectrumBody, signalControls);
-  const signalSection = section('Live signal & controls', signalLayout);
-  const frequencyBody = node('div', 'tuners-frequency-layout');
-  const frequencyLane = (title, detail, body, className) => {
-    const lane = node('div', `tuners-frequency-lane ${className}`);
-    const header = node('header', 'tuners-frequency-lane-header');
-    header.append(node('h3', '', title), node('p', '', detail));
-    lane.append(header, body);
-    frequencyBody.append(lane);
-    return lane;
-  };
-  const eligibilityLane = frequencyLane('Channel eligibility',
-    'Only channels between these limits can use this tuner.', eligibilityBody, 'tuners-eligibility-lane');
-  const tuningLane = frequencyLane('Center tuning',
-    'Choose a center or let active channels position it.', tuningBody, 'tuners-tuning-lane');
-  const spanLane = frequencyLane('Receive span',
-    'Sample rate sets how much spectrum the tuner receives.', spanBody, 'tuners-span-lane');
-  const frequencyOtherLane = frequencyLane('Other frequency controls',
-    'Additional controls supplied by this tuner.', frequencyOtherBody, 'tuners-frequency-other-lane');
-  const frequencySection = section('Frequency & allocation', frequencyBody);
-  const hardwareSection = section('Hardware controls', hardwareBody);
-  const otherSection = section('Other tuner settings', otherBody);
+  const signalSection = section('Signal', signalLayout);
+  const commonMore = node('details', 'tuners-common-details');
+  commonMore.append(node('summary', '', 'Limits & sample rate'), commonMoreBody);
+  const commonContent = node('div', 'tuners-common-content');
+  commonContent.append(commonPrimaryBody, commonMore);
+  const commonSection = section('Common tuning', commonContent);
+  const deviceSection = section('Device settings', deviceBody);
   const selectedSection = node('section', 'ui-section tuners-selected-section');
   selectedSection.append(detailsBody);
-  right.append(selectedSection, signalSection, frequencySection, hardwareSection, otherSection);
+  right.append(selectedSection, signalSection, commonSection, deviceSection);
   const workspace = node('div', 'tuners-workspace editor-workspace');
   workspace.append(left, right);
   const analyzeButton = node('button', 'ui-button ui-button-secondary tuners-analyze-button',
     'Analyze all tuners at RadioResolve');
   analyzeButton.type = 'button';
   analyzeButton.disabled = true;
-  analyzeButton.title = 'Sends all discovered supported physical tuners, including disabled tuners, and ' +
-    'running channel frequencies to RadioResolve in this tab';
+  analyzeButton.title = 'Send all tuners and running channels';
   analyzeButton.prepend(iconGlyph('icon-share'));
-  const heading = pageHeader('Tuners',
-    'Inspect receiver hardware and adjust tuners with live spectrum feedback');
+  const heading = pageHeader('Tuners', 'Tune and watch receiver signal');
   heading.classList.add('tuners-page-header');
   heading.append(analyzeButton);
   if (!beginPage(renderContext, heading, workspace)) return;
@@ -23505,8 +23555,13 @@ async function renderTuners() {
   let refreshTimer = null;
   let recordingRequest = 0;
   let analyzing = false;
+  let promptedSetupId = '';
+  let centerKeydownCleanup = null;
   const settingDrafts = new Map();
-  pageConnections.add({ close() { if (refreshTimer !== null) window.clearTimeout(refreshTimer); } });
+  pageConnections.add({ close() {
+    if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    centerKeydownCleanup?.();
+  } });
   listBody.append(node('div', 'loading', 'Loading tuners…'));
   detailsBody.append(node('div', 'loading', 'Loading tuner details…'));
   spectrumBody.append(node('div', 'loading', 'Loading spectrum…'));
@@ -23514,8 +23569,7 @@ async function renderTuners() {
   function openAddRecordingTuner() {
     const body = node('div', 'tuners-recordings-body');
     const intro = node('p', 'tuners-recordings-hint',
-      'Place I/Q WAV files in data/recording_tuners/ using local file tools. Files are read on this receiver; ' +
-      'nothing is uploaded.');
+      'Files come from data/recording_tuners/. Nothing is uploaded.');
     const catalogBody = node('div', 'tuners-recordings-catalog');
     const rescanButton = node('button', 'ui-button ui-button-secondary', 'Rescan files');
     rescanButton.type = 'button';
@@ -23642,168 +23696,394 @@ async function renderTuners() {
     return fact;
   };
 
-  function renderSettings(tuner) {
-    const groups = new Map([
-      ['gain', gainBody], ['hardware', hardwareBody], ['calibration', calibrationBody]
-    ]);
-    const frequencyGroups = new Map([
-      ['minimum_frequency_mhz', eligibilityBody], ['maximum_frequency_mhz', eligibilityBody],
-      ['reset_frequency_extents', eligibilityBody], ['frequency_mhz', tuningBody],
-      ['center_frequency_locked', tuningBody], ['sample_rate', spanBody]
-    ]);
-    for (const body of [...groups.values(), eligibilityBody, tuningBody, spanBody,
-      frequencyOtherBody, otherBody]) body.replaceChildren();
-    const settings = Array.isArray(tuner.settings) ? tuner.settings : [];
-    for (const setting of settings) {
-      if (!setting || typeof setting.id !== 'string' || !/^[a-z0-9_]+$/.test(setting.id)) continue;
-      const draftKey = `${tuner.id}:${setting.id}`;
-      const form = node('form', `tuners-setting${setting.pending_value == null ? '' : ' tuners-setting-queued'}`);
-      const actionSetting = setting.kind === 'action';
-      if (actionSetting) form.classList.add('tuners-setting-action');
-      const control = actionSetting ? null : tunerSettingInput(setting,
-        settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
-      const pending = setting.pending_value == null ? null : node('div', 'tuners-setting-transition');
-      if (pending) {
-        pending.append(uiPill('Queued', 'warning'),
-          node('span', '', actionSetting ? `${setting.label} will run when idle` :
-            `Current: ${tunerSettingValue(setting, setting.value)} → ` +
-              `Queued: ${tunerSettingValue(setting, setting.pending_value)}`));
-      }
-      const message = node('div', 'tuners-setting-message');
-      message.setAttribute('role', 'status');
-      const actions = node('div', 'tuners-setting-actions ui-action-row');
-      const save = node('button', `ui-button ${actionSetting ? 'ui-button-secondary' : 'ui-button-primary'}`, actionSetting ?
-        (setting.requires_idle && Number(tuner.channel_count) > 0 ? `Queue: ${setting.label}` : setting.label) :
-        (setting.requires_idle && Number(tuner.channel_count) > 0 ? 'Queue change' : 'Apply'));
-      save.type = 'submit';
-      save.disabled = setting.editable !== true;
-      const baseValue = setting.pending_value == null ? setting.value : setting.pending_value;
-      const isDirty = () => control && String(control.read(control.input)) !== String(baseValue);
-      const updateActions = () => {
-        save.hidden = !actionSetting && !isDirty();
-        actions.hidden = save.hidden && setting.pending_value == null;
-      };
-      if (control) {
-        control.input.disabled = setting.editable !== true;
-        control.input.addEventListener(['integer', 'decimal'].includes(setting.kind) ? 'input' : 'change',
-          () => {
-            const draft = setting.kind === 'boolean' ? control.input.checked : control.input.value;
-            if (String(draft) === String(baseValue)) settingDrafts.delete(draftKey);
-            else settingDrafts.set(draftKey, draft);
-            updateActions();
-          });
-      }
-      actions.append(save);
-      const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
-      if (pending) {
-        const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel queued change');
-        cancel.type = 'button';
-        cancel.addEventListener('click', async () => {
-          cancel.disabled = true;
-          save.disabled = true;
-          try {
-            await requestJson(path, { method: 'DELETE' });
-            settingDrafts.delete(draftKey);
-            await refresh();
-          } catch (error) {
-            message.classList.remove('is-pending');
-            message.textContent = error.message || 'Could not cancel the queued change.';
-            cancel.disabled = false;
-            save.disabled = setting.editable !== true;
-          }
-        });
-        actions.append(cancel);
-      }
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (control && !control.input.reportValidity()) return;
-        save.disabled = true;
-        message.classList.add('is-pending');
-        message.textContent = setting.requires_idle && Number(tuner.channel_count) > 0 ?
-          'Queueing until this tuner is idle…' : 'Applying to the receiver…';
-        try {
-          await requestJson(path, { method: 'PUT', body: { value: actionSetting ? true : control.read(control.input) } });
-          settingDrafts.delete(draftKey);
-          operationNotice = setting.requires_idle && Number(tuner.channel_count) > 0 ?
-            `${setting.label} queued until the tuner is idle. Queued changes are lost on receiver restart.` :
-            `${setting.label} submitted. The receiver will report its updated value shortly.`;
-          await refresh();
-        } catch (error) {
-          message.classList.remove('is-pending');
-          message.textContent = error.message || 'Could not save the tuner setting.';
-          save.disabled = setting.editable !== true;
-        }
-      });
-      if (control) form.append(control.element);
-      if (setting.requires_idle) form.append(node('p', 'tuners-setting-hint',
-        Number(tuner.channel_count) > 0 ? 'Requires idle · this change will queue.' :
-          'Requires an idle tuner.'));
-      if (pending) form.append(pending);
-      if (setting.editable !== true) form.append(node('p', 'tuners-setting-hint',
-        'This setting is shown for reference.'));
-      if (setting.editable === true) form.append(actions);
-      form.append(message);
-      updateActions();
-      const group = String(setting.group || '').toLowerCase();
-      (group === 'frequency' ? frequencyGroups.get(setting.id) || frequencyOtherBody :
-        groups.get(group) || otherBody).append(form);
-    }
-    gainPanel.hidden = gainBody.childElementCount === 0;
-    calibrationPanel.hidden = calibrationBody.childElementCount === 0;
-    signalControls.hidden = gainPanel.hidden && calibrationPanel.hidden;
-    eligibilityLane.hidden = eligibilityBody.childElementCount === 0;
-    tuningLane.hidden = tuningBody.childElementCount === 0;
-    spanLane.hidden = spanBody.childElementCount === 0;
-    frequencyOtherLane.hidden = frequencyOtherBody.childElementCount === 0;
-    frequencySection.hidden = [eligibilityLane, tuningLane, spanLane, frequencyOtherLane]
-      .every((lane) => lane.hidden);
-    hardwareSection.hidden = hardwareBody.childElementCount === 0;
-    otherSection.hidden = otherBody.childElementCount === 0;
-  }
-
-  async function changeEnabled(tuner, enabled) {
-    const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/enabled`;
-    await requestJson(path, { method: 'PUT', body: { enabled } });
-    operationNotice = enabled && String(tuner.status).toLowerCase() === 'error' ?
-      'Restart requested. Refresh to see the latest status.' : enabled ?
-      'Enable requested. Refresh to see the latest status.' :
-      'Disable requested. Refresh to see the latest status.';
+  async function saveTunerSetting(tuner, setting, value, message = null) {
+    const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
+    if (message) message.textContent = 'Saving…';
+    await requestJson(path, { method: 'PUT', body: { value } });
+    settingDrafts.delete(`${tuner.id}:${setting.id}`);
+    if (message) message.textContent = '';
     await refresh();
   }
 
-  function confirmDisable(tuner, returnFocusSelector) {
+  function centerFrequencyControl(tuner, setting, usability) {
+    centerKeydownCleanup?.();
+    centerKeydownCleanup = null;
+    const key = `${tuner.id}:${setting.id}`;
+    let value = Number(settingDrafts.has(key) ? settingDrafts.get(key) : setting.value);
+    const wrapper = node('div', 'tuners-center-frequency');
+    wrapper.setAttribute('role', 'group');
+    wrapper.setAttribute('aria-label', 'Center frequency');
+    wrapper.tabIndex = usability.enabled ? 0 : -1;
+    wrapper.dataset.tunerSetting = setting.id;
+    const label = node('span', 'tuners-center-label', 'Center frequency');
+    const digits = node('div', 'tuners-frequency-digits');
+    const message = node('div', 'tuners-setting-message');
+    message.setAttribute('role', 'status');
+    const positions = [1_000, 100, 10, 1, .1, .01, .001, .0001, .00001];
+    let hoverIndex = -1;
+    let typingStart = -1;
+    let typingValue = '';
+    let saving = false;
+
+    const commit = async (next) => {
+      if (!usability.enabled || saving) return;
+      const minimum = Number(setting.minimum);
+      const maximum = Number(setting.maximum);
+      if ((Number.isFinite(minimum) && next < minimum) || (Number.isFinite(maximum) && next > maximum)) {
+        value = Number(setting.value);
+        settingDrafts.delete(key);
+        draw();
+        message.textContent = 'Out of range';
+        return;
+      }
+      saving = true;
+      draw();
+      digits.setAttribute('aria-busy', 'true');
+      message.textContent = 'Saving…';
+      try {
+        await saveTunerSetting(tuner, setting, Number(next.toFixed(5)), message);
+      } catch (error) {
+        saving = false;
+        value = Number(setting.value);
+        settingDrafts.delete(key);
+        digits.removeAttribute('aria-busy');
+        message.textContent = error.message || 'Could not save';
+        draw();
+      }
+    };
+    const draw = () => {
+      const text = tunerCenterFrequencyText(value);
+      let valueIndex = 0;
+      const parts = [];
+      [...text].forEach((character) => {
+        if (character === '.') {
+          parts.push(node('span', 'tuners-frequency-decimal', '.'));
+          return;
+        }
+        const index = valueIndex++;
+        const column = node('span', `tuners-frequency-digit${index === hoverIndex ? ' is-active' : ''}`);
+        const up = node('button', 'tuners-frequency-step tuners-frequency-step-up');
+        up.type = 'button';
+        up.tabIndex = -1;
+        up.disabled = !usability.enabled || saving;
+        up.setAttribute('aria-label', `Increase ${positions[index]} MHz place`);
+        const shown = node('span', '', character);
+        shown.setAttribute('aria-hidden', 'true');
+        const down = node('button', 'tuners-frequency-step tuners-frequency-step-down');
+        down.type = 'button';
+        down.tabIndex = -1;
+        down.disabled = !usability.enabled || saving;
+        down.setAttribute('aria-label', `Decrease ${positions[index]} MHz place`);
+        column.append(up, shown, down);
+        column.addEventListener('pointerenter', () => { hoverIndex = index; column.classList.add('is-active'); });
+        column.addEventListener('pointerleave', () => column.classList.remove('is-active'));
+        up.addEventListener('click', () => {
+          if (saving) return;
+          value = Math.max(0, Math.min(9_999.99999, value + positions[index]));
+          settingDrafts.set(key, value);
+          draw();
+          void commit(value);
+        });
+        down.addEventListener('click', () => {
+          if (saving) return;
+          value = Math.max(0, Math.min(9_999.99999, value - positions[index]));
+          settingDrafts.set(key, value);
+          draw();
+          void commit(value);
+        });
+        parts.push(column);
+      });
+      digits.replaceChildren(...parts, node('span', 'tuners-frequency-unit', 'MHz'));
+    };
+    const keydown = (event) => {
+      if (event.defaultPrevented) return;
+      if (!wrapper.isConnected || hoverIndex < 0 || !usability.enabled || saving ||
+          event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement ||
+          event.target instanceof HTMLTextAreaElement) return;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        hoverIndex = Math.max(0, Math.min(positions.length - 1,
+          hoverIndex + (event.key === 'ArrowLeft' ? -1 : 1)));
+        draw();
+      } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        value += (event.key === 'ArrowUp' ? 1 : -1) * positions[hoverIndex];
+        settingDrafts.set(key, value);
+        draw();
+        void commit(value);
+      } else if (/^[0-9]$/.test(event.key)) {
+        event.preventDefault();
+        if (typingStart < 0) {
+          typingStart = hoverIndex;
+          typingValue = '';
+        }
+        if (typingStart + typingValue.length >= positions.length) return;
+        typingValue += event.key;
+        const currentDigits = tunerCenterFrequencyText(value).replace('.', '').split('');
+        [...typingValue].forEach((character, offset) => { currentDigits[typingStart + offset] = character; });
+        value = Number(`${currentDigits.slice(0, 4).join('')}.${currentDigits.slice(4).join('')}`);
+        settingDrafts.set(key, value);
+        wrapper.classList.add('is-typing');
+        draw();
+      } else if (event.key === 'Enter' && typingStart >= 0) {
+        event.preventDefault();
+        typingStart = -1;
+        typingValue = '';
+        wrapper.classList.remove('is-typing');
+        void commit(value);
+      } else if (event.key === 'Escape' && typingStart >= 0) {
+        event.preventDefault();
+        typingStart = -1;
+        typingValue = '';
+        value = Number(setting.value);
+        settingDrafts.delete(key);
+        wrapper.classList.remove('is-typing');
+        message.textContent = '';
+        draw();
+      }
+    };
+    const detachKeydown = () => {
+      document.removeEventListener('keydown', keydown);
+      if (centerKeydownCleanup === detachKeydown) centerKeydownCleanup = null;
+    };
+    wrapper.addEventListener('pointerenter', () => {
+      centerKeydownCleanup?.();
+      document.addEventListener('keydown', keydown);
+      centerKeydownCleanup = detachKeydown;
+    });
+    wrapper.addEventListener('pointerleave', () => {
+      hoverIndex = -1;
+      detachKeydown();
+    });
+    wrapper.addEventListener('focus', () => {
+      if (hoverIndex < 0) {
+        hoverIndex = 0;
+        draw();
+      }
+    });
+    wrapper.addEventListener('keydown', keydown);
+    wrapper.append(label, digits);
+    if (!usability.enabled) wrapper.append(node('span', 'tuners-setting-hint', usability.reason));
+    wrapper.append(message);
+    draw();
+    return wrapper;
+  }
+
+  function renderSettings(tuner) {
+    for (const body of [gainBody, centerLockBody, commonPrimaryBody, commonMoreBody, deviceBody]) {
+      body.replaceChildren();
+    }
+    const settings = (Array.isArray(tuner.settings) ? tuner.settings : [])
+      .filter((setting) => setting && typeof setting.id === 'string' && /^[a-z0-9_]+$/.test(setting.id));
+    const center = settings.find((setting) => setting.id === 'frequency_mhz');
+    if (center) detailsBody.querySelector('.tuners-center-host')?.prepend(
+      centerFrequencyControl(tuner, center, tunerSettingUsability(center, tuner, settings)));
+
+    for (const setting of settings) {
+      if (setting.id === 'frequency_mhz') continue;
+      const draftKey = `${tuner.id}:${setting.id}`;
+      const usability = tunerSettingUsability(setting, tuner, settings);
+      const actionSetting = setting.kind === 'action';
+      const form = node('form', `tuners-setting${actionSetting ? ' tuners-setting-action' : ''}`);
+      form.dataset.settingId = setting.id;
+      const control = actionSetting ? null : tunerSettingInput(setting,
+        settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
+      const message = node('div', 'tuners-setting-message');
+      message.setAttribute('role', 'status');
+      const actions = node('div', 'tuners-setting-actions ui-action-row');
+      const save = node('button', `ui-button ${actionSetting ? 'ui-button-secondary' : 'ui-button-primary'}`,
+        actionSetting ? setting.label : 'Save');
+      save.type = 'submit';
+      save.disabled = !usability.enabled;
+      const baseValue = setting.value;
+      const isDirty = () => control && String(control.read(control.input)) !== String(baseValue);
+      const updateActions = () => {
+        save.hidden = !actionSetting && !isDirty();
+        actions.hidden = save.hidden;
+      };
+      if (control) {
+        control.input.disabled = !usability.enabled;
+        control.input.dataset.tunerSetting = setting.id;
+        if (String(setting.group).toLowerCase() === 'gain' &&
+            ['integer', 'decimal'].includes(setting.kind) && Number.isFinite(Number(setting.minimum)) &&
+            Number.isFinite(Number(setting.maximum))) {
+          control.input.type = 'range';
+          control.input.classList.add('tuners-gain-slider');
+          const output = node('output', 'tuners-gain-value', tunerSettingValue(setting, control.input.value));
+          control.element.classList.add('tuners-gain-field');
+          control.element.append(output);
+          control.input.addEventListener('input', () => {
+            output.textContent = tunerSettingValue(setting, control.input.value);
+          });
+        }
+        const inputEvent = ['integer', 'decimal'].includes(setting.kind) ? 'input' : 'change';
+        control.input.addEventListener(inputEvent, () => {
+          const draft = setting.kind === 'boolean' ? control.input.checked : control.input.value;
+          if (String(draft) === String(baseValue)) settingDrafts.delete(draftKey);
+          else settingDrafts.set(draftKey, draft);
+          updateActions();
+          if (setting.kind === 'boolean' && usability.enabled) form.requestSubmit();
+        });
+      }
+      actions.append(save);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!usability.enabled || (control && !control.input.reportValidity())) return;
+        save.disabled = true;
+        try {
+          await saveTunerSetting(tuner, setting, actionSetting ? true : control.read(control.input), message);
+        } catch (error) {
+          message.textContent = error.message || 'Could not save';
+          save.disabled = false;
+        }
+      });
+      if (control) form.append(control.element);
+      if (!usability.enabled && usability.reason) {
+        form.append(node('p', 'tuners-setting-hint', usability.reason));
+      }
+      if (usability.enabled) form.append(actions);
+      form.append(message);
+      updateActions();
+
+      const group = String(setting.group || '').toLowerCase();
+      const commonPrimary = ['frequency_correction_ppm', 'automatic_ppm'].includes(setting.id);
+      const commonMore = ['minimum_frequency_mhz', 'maximum_frequency_mhz',
+        'reset_frequency_extents', 'sample_rate'].includes(setting.id);
+      if (setting.id === 'center_frequency_locked') centerLockBody.append(form);
+      else if (group === 'gain') gainBody.append(form);
+      else if (commonPrimary) commonPrimaryBody.append(form);
+      else if (commonMore) commonMoreBody.append(form);
+      else deviceBody.append(form);
+    }
+    gainPanel.hidden = gainBody.childElementCount === 0;
+    signalControls.hidden = gainPanel.hidden;
+    commonMore.hidden = commonMoreBody.childElementCount === 0;
+    commonSection.hidden = commonPrimaryBody.childElementCount === 0 && commonMoreBody.childElementCount === 0;
+    deviceSection.hidden = deviceBody.childElementCount === 0;
+  }
+
+  async function changeOperatorState(tuner, state) {
+    const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/state`;
+    await requestJson(path, { method: 'PUT', body: { state } });
+    operationNotice = '';
+    await refresh();
+  }
+
+  function openChannelList(title, channels, returnFocusSelector = '#selected-tuner-stopped') {
+    const body = node('div', 'tuners-channel-list');
+    const list = node('ul');
+    channels.forEach((channel) => list.append(node('li', '', channel.name)));
+    body.append(list);
+    openReadOnlyModal(title, body, { id: 'tuner-channel-list', returnFocusSelector, className: 'admin-modal' });
+  }
+
+  async function restoreStoppedChannels(tuner) {
+    operationNotice = '';
+    renderSelection();
+    await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/restore`, {
+      method: 'POST'
+    });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      await refresh(true);
+      if (!renderIsCurrent(renderContext)) throw new Error('Restart status unavailable');
+      const current = rows.find((candidate) => candidate.id === tuner.id);
+      if (!current) throw new Error('Tuner is no longer available');
+      if (String(current.transition || '').toLowerCase() === 'restoring') {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        continue;
+      }
+      if (current.maintenance_error) throw new Error(String(current.maintenance_error));
+      if (!current.restore_result || !Array.isArray(current.restore_result.failed)) {
+        throw new Error('Restart result unavailable');
+      }
+      return current.restore_result.failed.map((channel) => ({
+        id: String(channel.id || ''), name: String(channel.name || channel.id || 'Channel')
+      }));
+    }
+    throw new Error('Restart is still running');
+  }
+
+  function promptRestore(tuner) {
+    const channels = tunerStoppedChannels(tuner);
+    if (!channels.length) return;
+    const body = node('div', 'admin-confirmation');
+    body.append(node('p', '', `Restart ${channels.length} stopped channel${channels.length === 1 ? '' : 's'}?`));
+    const message = node('div', 'admin-form-message');
+    message.setAttribute('role', 'alert');
+    const actions = node('div', 'admin-form-actions');
+    const later = node('button', 'ui-button ui-button-secondary', 'Not now');
+    later.type = 'button';
+    const restore = node('button', 'ui-button ui-button-primary', `Restart ${channels.length}`);
+    restore.type = 'button';
+    actions.append(later, restore);
+    body.append(message, actions);
+    const modal = openReadOnlyModal('Tuner ready', body, {
+      id: 'restore-tuner-channels', returnFocusSelector: '#selected-tuner-restore', className: 'admin-modal'
+    });
+    if (!modal) return;
+    later.addEventListener('click', modal.close);
+    restore.addEventListener('click', () => {
+      later.disabled = true;
+      restore.disabled = true;
+      modal.setBusy(true);
+      message.textContent = 'Restarting…';
+      void restoreStoppedChannels(tuner).then((failed) => {
+        modal.setBusy(false);
+        modal.close();
+        if (failed.length) {
+          window.setTimeout(() => openChannelList('Couldn’t start', failed, '#selected-tuner-restore'), 0);
+        } else {
+          operationNotice = 'Channels restarted';
+          renderSelection();
+        }
+      }).catch((error) => {
+        message.textContent = error.message || 'Could not restart channels';
+        later.disabled = false;
+        restore.disabled = false;
+        modal.setBusy(false);
+      });
+    });
+    restore.focus();
+  }
+
+  function confirmStateChange(tuner, state, returnFocusSelector) {
     const body = node('div', 'admin-confirmation');
     const channelCount = Math.max(0, Number(tuner.channel_count) || 0);
+    const stateLabel = state === 'setup' ? 'Enter Setup' : 'Disable tuner';
     body.append(node('p', '', channelCount > 0 ?
-      `Disable ${tuner.name}? This will stop its ${channelCount} active channel${channelCount === 1 ? '' : 's'}.` :
-      `Disable ${tuner.name}?`));
+      `Stop ${channelCount} channel${channelCount === 1 ? '' : 's'}?` : stateLabel));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
     const actions = node('div', 'admin-form-actions');
     const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
     cancel.type = 'button';
-    const disable = node('button', 'ui-button ui-button-danger', 'Disable tuner');
-    disable.type = 'button';
-    actions.append(cancel, disable);
+    const confirm = node('button', state === 'disabled' ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary',
+      stateLabel);
+    confirm.type = 'button';
+    actions.append(cancel, confirm);
     body.append(message, actions);
-    const modal = openReadOnlyModal('Disable tuner', body, {
-      id: 'disable-tuner', returnFocusSelector, className: 'admin-modal'
+    const modal = openReadOnlyModal(stateLabel, body, {
+      id: 'change-tuner-state', returnFocusSelector, className: 'admin-modal'
     });
     if (!modal) return;
     cancel.addEventListener('click', modal.close);
-    disable.addEventListener('click', () => {
-      disable.disabled = true;
+    confirm.addEventListener('click', () => {
+      confirm.disabled = true;
       cancel.disabled = true;
       modal.setBusy(true);
-      message.textContent = 'Disabling tuner…';
-      void changeEnabled(tuner, false).then(() => modal.close()).catch((error) => {
-        message.textContent = error.message || 'Could not disable the tuner.';
-        disable.disabled = false;
+      message.textContent = state === 'setup' ? 'Entering Setup…' : 'Stopping…';
+      void changeOperatorState(tuner, state).then(() => {
+        modal.setBusy(false);
+        modal.close();
+      }).catch((error) => {
+        message.textContent = error.message || 'Could not change state';
+        confirm.disabled = false;
         cancel.disabled = false;
         modal.setBusy(false);
       });
     });
-    disable.focus();
+    confirm.focus();
   }
 
   function confirmRemoveRecording(tuner) {
@@ -23831,7 +24111,8 @@ async function renderTuners() {
       void requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`, { method: 'DELETE' })
         .then(async () => {
           selectedId = '';
-          operationNotice = 'Recording tuner removed. The WAV file remains on disk.';
+          operationNotice = 'Recording tuner removed';
+          modal.setBusy(false);
           modal.close();
           await refresh();
         }).catch((error) => {
@@ -23848,7 +24129,7 @@ async function renderTuners() {
     const tuner = selectedTuner();
     listBody.replaceChildren();
     if (!rows.length) {
-      listBody.append(node('div', 'empty', 'No tuners have been discovered.'));
+      listBody.append(node('div', 'empty', 'No tuners found'));
     }
     for (const row of rows) {
       const button = node('button', 'tuners-list-item ui-button ui-button-secondary');
@@ -23857,16 +24138,16 @@ async function renderTuners() {
       const main = node('span', 'tuners-list-item-main');
       const copy = node('span', 'tuners-list-item-copy');
       const channelCount = Math.max(0, Number(row.channel_count) || 0);
+      const center = row.frequency_hz ?? row.configured_frequency_hz;
+      const rate = row.sample_rate_hz ?? row.configured_sample_rate_hz;
       copy.append(node('span', 'tuners-list-item-name', row.name),
         node('span', 'tuners-list-item-meta',
-          `${channelCount} active · ${tunerInventoryFrequency(row.frequency_hz)} · ` +
-            tunerInventoryRate(row.sample_rate_hz)));
+          `${channelCount} active · ${tunerInventoryFrequency(center)} · ${tunerInventoryRate(rate)}`));
       main.append(iconGlyph(String(row.tuner_type).toLowerCase() === 'recording' ?
         'icon-recording' : 'icon-tuner'), copy);
-      const status = tunerInventoryStatus(row);
+      const status = tunerOperatorStateLabel(row);
       const indicators = node('span', 'tuners-list-item-indicators');
       indicators.append(uiPill(status.label, status.tone));
-      if (row.pending) indicators.append(uiPill('Queued', 'warning'));
       button.append(main, indicators);
       button.addEventListener('click', () => {
         if (selectedId === row.id) return;
@@ -23879,58 +24160,94 @@ async function renderTuners() {
 
     detailsBody.replaceChildren();
     if (!tuner) {
-      detailsBody.append(node('div', 'empty', 'Select a tuner to see its status.'));
-      if (operationNotice) detailsBody.append(node('div', 'ui-notice ui-notice-warning', operationNotice));
+      detailsBody.append(node('div', 'empty', 'Select a tuner'));
+      if (operationNotice) detailsBody.append(
+        node('div', 'ui-notice ui-notice-warning tuners-detail-message', operationNotice));
       gainBody.replaceChildren();
-      eligibilityBody.replaceChildren();
-      tuningBody.replaceChildren();
-      spanBody.replaceChildren();
-      frequencyOtherBody.replaceChildren();
-      hardwareBody.replaceChildren();
-      calibrationBody.replaceChildren();
-      otherBody.replaceChildren();
+      centerLockBody.replaceChildren();
+      commonPrimaryBody.replaceChildren();
+      commonMoreBody.replaceChildren();
+      deviceBody.replaceChildren();
       gainPanel.hidden = true;
-      calibrationPanel.hidden = true;
       signalControls.hidden = true;
-      frequencySection.hidden = true;
-      hardwareSection.hidden = true;
-      otherSection.hidden = true;
+      commonSection.hidden = true;
+      deviceSection.hidden = true;
       spectrum?.selectTarget('');
       return;
     }
-    const status = tunerInventoryStatus(tuner);
+    const status = tunerOperatorStateLabel(tuner);
+    const state = tunerOperatorState(tuner);
+    const transitioning = Boolean(tuner.transition);
+    const stoppedChannels = tunerStoppedChannels(tuner);
     const title = node('div', 'tuners-detail-heading');
     title.append(node('h2', '', tuner.name), uiPill(status.label, status.tone));
-    if (tuner.pending) title.append(uiPill('Change queued', 'warning'));
+    if (state === 'setup' && !transitioning) title.append(node('span', 'tuners-setup-note',
+      'Not available to channels'));
     const facts = node('dl', 'tuners-detail-facts');
     facts.append(
       detailFact('Type', String(tuner.tuner_class || tuner.tuner_type || 'Unknown')),
       detailFact('Active channels', String(Math.max(0, Number(tuner.channel_count) || 0))),
-      detailFact('Current center', tunerInventoryFrequency(tuner.frequency_hz)),
-      detailFact('Sample rate', tunerInventoryRate(tuner.sample_rate_hz))
+      detailFact('Sample rate', tunerInventoryRate(tuner.sample_rate_hz ?? tuner.configured_sample_rate_hz))
     );
     if (tuner.device_group?.kind && tuner.device_group.kind !== 'single') {
       facts.append(detailFact('Device group', `${tuner.device_group.kind} · ${tuner.device_group.role || 'member'}`));
     }
-    detailsBody.append(title, facts);
+    const centerHost = node('div', 'tuners-center-host');
+    centerHost.append(centerLockBody);
+    detailsBody.append(title, facts, centerHost);
     const actions = node('div', 'tuners-detail-actions ui-action-row');
-    const restartable = tuner.enabled && String(tuner.status).toLowerCase() === 'error';
-    const enabledButton = node('button',
-      `ui-button ${tuner.enabled && !restartable ? 'ui-button-danger-quiet' : 'ui-button-secondary'}`,
-      restartable ? 'Restart tuner' : tuner.enabled ? 'Disable tuner' : 'Enable tuner');
-    enabledButton.type = 'button';
-    enabledButton.id = 'selected-tuner-enabled';
-    enabledButton.addEventListener('click', () => {
-      if (tuner.enabled && !restartable) confirmDisable(tuner, '#selected-tuner-enabled');
-      else {
-        enabledButton.disabled = true;
-        void changeEnabled(tuner, true).catch((error) => {
-          operationNotice = error.message || 'Could not enable the tuner.';
+    if (state === 'disabled') {
+      const start = node('button', 'ui-button ui-button-primary', 'Start Setup');
+      start.type = 'button';
+      start.id = 'selected-tuner-start';
+      start.disabled = transitioning;
+      start.addEventListener('click', () => {
+        start.disabled = true;
+        promptedSetupId = tuner.id;
+        void changeOperatorState(tuner, 'setup').catch((error) => {
+          promptedSetupId = '';
+          operationNotice = error.message || 'Could not start tuner';
           renderSelection();
         });
+      });
+      actions.append(start);
+    } else if (state === 'setup') {
+      const live = node('button', 'ui-button ui-button-primary', 'Go live');
+      live.type = 'button';
+      live.id = 'selected-tuner-live';
+      live.disabled = transitioning;
+      live.addEventListener('click', () => {
+        live.disabled = true;
+        void changeOperatorState(tuner, 'live').catch((error) => {
+          operationNotice = error.message || 'Could not go live';
+          renderSelection();
+        });
+      });
+      actions.append(live);
+      if (stoppedChannels.length) {
+        const restore = node('button', 'ui-button ui-button-secondary', `Restart ${stoppedChannels.length}`);
+        restore.type = 'button';
+        restore.id = 'selected-tuner-restore';
+        restore.disabled = transitioning;
+        restore.addEventListener('click', () => promptRestore(tuner));
+        actions.append(restore);
       }
-    });
-    actions.append(enabledButton);
+    } else {
+      const setup = node('button', 'ui-button ui-button-secondary', 'Setup');
+      setup.type = 'button';
+      setup.id = 'selected-tuner-setup';
+      setup.disabled = transitioning;
+      setup.addEventListener('click', () => confirmStateChange(tuner, 'setup', '#selected-tuner-setup'));
+      actions.append(setup);
+    }
+    if (state !== 'disabled') {
+      const disable = node('button', 'ui-button ui-button-danger-quiet', 'Disable');
+      disable.type = 'button';
+      disable.id = 'selected-tuner-disable';
+      disable.disabled = transitioning;
+      disable.addEventListener('click', () => confirmStateChange(tuner, 'disabled', '#selected-tuner-disable'));
+      actions.append(disable);
+    }
     if (String(tuner.tuner_class).toLowerCase() === 'recording') {
       const remove = node('button', 'ui-button ui-button-danger-quiet', 'Remove recording tuner');
       remove.type = 'button';
@@ -23939,19 +24256,30 @@ async function renderTuners() {
       actions.append(remove);
     }
     detailsBody.append(actions);
-    if (operationNotice) detailsBody.append(node('div', 'ui-notice', operationNotice));
-    if (tuner.pending) detailsBody.append(node('div', 'ui-notice',
-      'A tuner change is pending. Settings that require idle apply when the tuner is no longer in use. ' +
-      'Pending changes are lost if the receiver restarts.'));
-    if (tuner.maintenance_error) detailsBody.append(node('div', 'ui-notice ui-notice-danger',
+    if (stoppedChannels.length) {
+      const stopped = node('button', 'tuners-stopped-channels');
+      stopped.type = 'button';
+      stopped.id = 'selected-tuner-stopped';
+      stopped.textContent = `Stopped ${stoppedChannels.length} channel${stoppedChannels.length === 1 ? '' : 's'} · View`;
+      stopped.addEventListener('click', () => openChannelList('Stopped channels', stoppedChannels));
+      detailsBody.append(stopped);
+    }
+    if (operationNotice) detailsBody.append(node('div', 'ui-notice tuners-detail-message', operationNotice));
+    if (tuner.maintenance_error) detailsBody.append(node('div',
+      'ui-notice ui-notice-danger tuners-detail-message',
       String(tuner.maintenance_error)));
-    if (tuner.error_message) detailsBody.append(node('div', 'error', String(tuner.error_message)));
+    if (tuner.error_message) detailsBody.append(
+      node('div', 'error tuners-detail-message', String(tuner.error_message)));
     renderSettings(tuner);
     signalSection.classList.toggle('tuners-signal-idle', !tuner.spectrum_available);
     spectrum?.selectTarget(tuner.spectrum_target_id || '');
+    if (state === 'setup' && !transitioning && promptedSetupId === tuner.id) {
+      promptedSetupId = '';
+      window.setTimeout(() => promptRestore(tuner), 0);
+    }
   }
 
-  async function refresh() {
+  async function refresh(throwOnError = false) {
     const generation = ++refreshGeneration;
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     refreshTimer = null;
@@ -23959,21 +24287,35 @@ async function renderTuners() {
     try {
       const response = await api('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
       if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
+      const active = right.contains(document.activeElement) ? document.activeElement : null;
+      const activeSetting = active?.dataset?.tunerSetting || '';
+      const selectionStart = active instanceof HTMLInputElement ? active.selectionStart : null;
+      const selectionEnd = active instanceof HTMLInputElement ? active.selectionEnd : null;
+      const typingCenter = Boolean(right.querySelector('.tuners-center-frequency.is-typing'));
       rows = tunerInventoryRows(response);
       analyzeButton.disabled = analyzing;
-      const editing = right.contains(document.activeElement) &&
-        document.activeElement.matches('input, select, textarea');
-      const previousSelectedId = selectedId;
       if (!rows.some((row) => row.id === selectedId)) selectedId = rows[0]?.id || '';
-      if (editing && selectedId === previousSelectedId) {
+      if (typingCenter) {
         spectrum?.selectTarget(selectedTuner()?.spectrum_target_id || '');
-      } else renderSelection();
+      } else {
+        renderSelection();
+        if (activeSetting) {
+          const replacement = right.querySelector(`[data-tuner-setting="${activeSetting}"]`);
+          if (replacement instanceof HTMLElement && !replacement.matches(':disabled')) {
+            replacement.focus({ preventScroll: true });
+            if (replacement instanceof HTMLInputElement && selectionStart != null && selectionEnd != null) {
+              replacement.setSelectionRange(selectionStart, selectionEnd);
+            }
+          }
+        }
+      }
     } catch (error) {
       if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
       listBody.replaceChildren(node('div', 'error', error.message || 'Could not load tuners.'));
       detailsBody.replaceChildren(node('div', 'error', 'Tuner details are unavailable.'));
       analyzeButton.disabled = true;
       spectrum?.selectTarget('');
+      if (throwOnError) throw error;
     } finally {
       if (renderIsCurrent(renderContext) && generation === refreshGeneration) {
         refreshButton.disabled = false;
@@ -24024,6 +24366,7 @@ async function renderTuners() {
     spectrum = tunerSpectrumPanel(snapPresetDocument, {
       managedSelection: true,
       inlineDisplayOptions: true,
+      basicOperator: true,
       targetId: selectedTuner()?.spectrum_target_id || ''
     });
     pageConnections.add(spectrum);

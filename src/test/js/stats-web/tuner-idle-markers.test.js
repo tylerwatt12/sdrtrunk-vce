@@ -49,6 +49,7 @@ function harness(liveAllowed = true) {
   let subscriber;
   let closed = 0;
   const context = {
+    basicOperator: false,
     node: (...args) => new Element(...args),
     uiToggle: (checked, label) => {
       const control = new Element('label', 'ui-toggle');
@@ -108,7 +109,7 @@ function harness(liveAllowed = true) {
   vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
     source.indexOf("  const profilePanel = node('fieldset', 'tuner-spectrum-profile')")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
-    source.indexOf('  [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
+    source.indexOf('  if (!basicOperator) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
   const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, fftOptions, waterfallOptions })', context);
   const toggle = (control, value) => { control.checked = value; control.dispatch('change'); };
   return { context, controls, toggle,

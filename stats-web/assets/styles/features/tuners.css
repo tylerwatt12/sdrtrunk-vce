@@ -6,12 +6,11 @@
   max-width: 100%;
   margin-left: auto;
   white-space: normal;
-  text-align: center;
 }
 
 .tuners-workspace {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 238px) minmax(0, 1fr);
   align-items: start;
   gap: var(--space-3);
 }
@@ -22,11 +21,16 @@
   min-width: 0;
 }
 
+.tuners-main {
+  display: grid;
+  gap: var(--space-3);
+}
+
 .tuners-main > section[hidden],
 .tuners-signal-controls[hidden],
 .tuners-signal-control-group[hidden],
-.tuners-frequency-lane[hidden],
-.tuners-setting-actions[hidden] {
+.tuners-setting-actions[hidden],
+.tuners-common-details[hidden] {
   display: none;
 }
 
@@ -40,29 +44,32 @@
 
 .tuners-sidebar-actions {
   justify-content: flex-start;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   border-bottom: 1px solid var(--line);
 }
 
 .tuners-list {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-1);
 }
 
 .tuners-list-item {
   width: 100%;
-  min-height: 64px;
+  min-height: 54px;
+  padding: var(--space-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   text-align: left;
+  box-shadow: none;
 }
 
 .tuners-list-item[aria-pressed="true"] {
   border-color: var(--focus-ring);
-  box-shadow: var(--shadow-focus);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-selection-inset);
 }
 
 .tuners-list-item-main {
@@ -73,18 +80,19 @@
 }
 
 .tuners-list-item-main svg {
+  width: 17px;
+  height: 17px;
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
 }
 
 .tuners-list-item-copy {
   min-width: 0;
   display: grid;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
-.tuners-list-item-name {
+.tuners-list-item-name,
+.tuners-list-item-meta {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -92,8 +100,7 @@
 .tuners-list-item-meta {
   color: var(--muted);
   font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
-  overflow-wrap: anywhere;
+  line-height: var(--line-height-control);
 }
 
 .tuners-list-item-indicators {
@@ -127,9 +134,13 @@
   overflow-wrap: anywhere;
 }
 
+.tuners-setup-note {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
 .tuners-detail-facts {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  grid-column: 1;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-4);
@@ -154,19 +165,159 @@
 
 .tuners-detail-actions {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 2;
   justify-content: flex-end;
 }
 
-.tuners-details > :not(.tuners-detail-heading):not(.tuners-detail-facts):not(.tuners-detail-actions) {
+.tuners-center-host {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.tuners-center-frequency {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.tuners-center-frequency:focus-visible {
+  border-color: var(--focus-ring);
+  box-shadow: var(--shadow-focus);
+  outline: 0;
+}
+
+.tuners-center-label {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.tuners-frequency-digits {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tuners-frequency-digit {
+  width: clamp(28px, 3.2vw, 44px);
+  height: 62px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  font-size: calc(var(--font-size-dialog-title) * 1.7);
+  font-weight: var(--font-weight-heading);
+  line-height: 1;
+  border-radius: var(--radius-compact);
+}
+
+.tuners-frequency-digit.is-active {
+  background: var(--accent-soft);
+}
+
+.tuners-frequency-step {
+  width: 100%;
+  height: 50%;
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.tuners-frequency-step::after {
+  position: absolute;
+  right: 2px;
+  font-size: var(--font-size-meta);
+  opacity: .45;
+}
+
+.tuners-frequency-step-up {
+  top: 0;
+}
+
+.tuners-frequency-step-up::after {
+  content: "▲";
+  top: 2px;
+}
+
+.tuners-frequency-step-down {
+  bottom: 0;
+}
+
+.tuners-frequency-step-down::after {
+  content: "▼";
+  bottom: 2px;
+}
+
+.tuners-frequency-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-soft) 72%, transparent);
+}
+
+.tuners-frequency-step:disabled {
+  cursor: not-allowed;
+  opacity: .35;
+}
+
+.tuners-frequency-decimal {
+  align-self: end;
+  padding: 0 2px 9px;
+  font-size: calc(var(--font-size-dialog-title) * 1.7);
+  font-weight: var(--font-weight-heading);
+}
+
+.tuners-frequency-unit {
+  align-self: end;
+  padding: 0 0 11px var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.tuners-center-lock {
+  min-width: min(250px, 100%);
+}
+
+.tuners-center-lock .tuners-setting {
+  padding: 0;
+  border: 0;
+}
+
+.tuners-stopped-channels {
+  grid-column: 1 / -1;
+  width: fit-content;
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tuners-stopped-channels:hover {
+  text-decoration: underline;
+}
+
+.tuners-detail-message {
   grid-column: 1 / -1;
 }
 
 .tuners-signal-layout {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 250px);
+  align-items: stretch;
 }
 
 .tuners-signal-layout:has(.tuners-signal-controls[hidden]) {
@@ -175,11 +326,17 @@
 
 .tuners-spectrum {
   min-width: 0;
-  padding: var(--space-3);
+  padding: var(--space-2);
 }
 
-.tuners-spectrum .tuner-spectrum-layout {
+.tuners-spectrum .tuner-spectrum-layout-basic {
   min-height: 0;
+  grid-template-rows: auto minmax(440px, 1fr);
+  gap: var(--space-2);
+}
+
+.tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-canvas {
+  cursor: default;
 }
 
 .tuners-spectrum .tuner-spectrum-toolbar {
@@ -188,7 +345,8 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
+  box-shadow: none;
 }
 
 .tuners-spectrum .tuner-spectrum-selection {
@@ -200,17 +358,8 @@
   flex-wrap: wrap;
 }
 
-.tuners-spectrum .tuner-spectrum-layout-inline-options {
-  grid-template-rows: auto auto auto auto minmax(430px, 1fr);
-}
-
-.tuners-signal-idle .tuner-spectrum-layout-inline-options {
-  grid-template-rows: auto auto auto auto minmax(250px, 1fr);
-}
-
-.tuners-signal-idle .tuner-spectrum-visual-window {
-  grid-template-rows: minmax(120px, .48fr) minmax(130px, .52fr);
-  max-height: 260px;
+.tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
+  grid-template-rows: minmax(105px, .23fr) minmax(330px, .77fr);
 }
 
 .tuners-spectrum .tuner-spectrum-layout-inline-options .tuner-spectrum-options {
@@ -238,28 +387,32 @@
   position: static;
 }
 
+.tuners-signal-idle .tuner-spectrum-layout-basic {
+  grid-template-rows: auto minmax(250px, 1fr);
+}
+
+.tuners-signal-idle .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
+  grid-template-rows: minmax(90px, .35fr) minmax(160px, .65fr);
+  max-height: 270px;
+}
+
 .tuners-signal-controls {
   min-width: 0;
   display: grid;
   align-content: start;
-  gap: var(--space-3);
   padding: var(--space-3);
+  background: var(--surface-2);
   border-left: 1px solid var(--line);
 }
 
 .tuners-signal-control-group {
   min-width: 0;
   display: grid;
+  align-content: start;
   gap: var(--space-2);
 }
 
-.tuners-signal-control-group + .tuners-signal-control-group {
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--line);
-}
-
-.tuners-signal-control-group h3,
-.tuners-frequency-lane-header h3 {
+.tuners-signal-control-group h3 {
   margin: 0;
   font-size: var(--font-size-section-title);
 }
@@ -267,13 +420,12 @@
 .tuners-setting-group-body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: 0 var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-3);
 }
 
 .tuners-signal-controls .tuners-setting-group-body {
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-2);
   padding: 0;
 }
 
@@ -281,30 +433,13 @@
   min-width: 0;
   display: grid;
   align-content: start;
-  gap: var(--space-2);
-}
-
-.tuners-signal-controls .tuners-setting + .tuners-setting {
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .tuners-setting > :first-child {
   min-width: 0;
-}
-
-.tuners-setting-queued {
-  padding-left: var(--space-2);
-  border-left: 3px solid var(--warning);
-}
-
-.tuners-setting-transition {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
 }
 
 .tuners-setting-hint {
@@ -317,72 +452,65 @@
   justify-content: flex-start;
 }
 
-.tuners-setting-actions > [hidden] {
-  display: none;
-}
-
 .tuners-setting-message:not(:empty) {
   color: var(--danger);
   font-size: var(--font-size-meta);
 }
 
-.tuners-setting-message.is-pending {
-  color: var(--muted);
-}
-
-.tuners-frequency-layout {
-  padding: 0 var(--space-4);
-}
-
-.tuners-frequency-lane {
-  min-width: 0;
+.tuners-gain-field {
   display: grid;
-  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
+  grid-template-columns: minmax(0, 1fr) 70px;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.tuners-frequency-lane + .tuners-frequency-lane {
-  border-top: 1px solid var(--line);
-}
-
-.tuners-frequency-lane-header {
-  display: grid;
-  align-content: start;
-  gap: var(--space-1);
-}
-
-.tuners-frequency-lane-header p {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
-}
-
-.tuners-frequency-lane-body {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: var(--space-3);
-}
-
-.tuners-frequency-lane-body .tuners-setting-action {
+.tuners-gain-field > span:first-child {
   grid-column: 1 / -1;
 }
 
-.tuners-frequency-lane-body .tuners-setting-action .tuners-setting-actions {
-  justify-content: flex-start;
+.tuners-gain-slider {
+  width: 100%;
+  min-width: 0;
 }
 
-.tuners-span-lane .tuners-frequency-lane-body {
-  grid-template-columns: minmax(0, min(330px, 100%));
+.tuners-gain-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-medium);
+}
+
+.tuners-common-content {
+  display: grid;
+}
+
+.tuners-common-primary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tuners-common-details {
+  border-top: 1px solid var(--line);
+}
+
+.tuners-common-details > summary {
+  padding: var(--space-3) var(--space-4);
+  color: var(--muted);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.tuners-common-details[open] > summary {
+  color: var(--ink);
+}
+
+.tuners-common-more {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .tuners-recordings-body,
 .tuners-recordings-catalog,
 .tuners-recordings-form,
-.tuners-recordings-files {
+.tuners-recordings-files,
+.tuners-channel-list {
   min-width: 0;
   display: grid;
   gap: var(--space-3);
@@ -391,7 +519,6 @@
 .tuners-recordings-hint {
   margin: 0;
   color: var(--muted);
-  line-height: var(--line-height-body);
 }
 
 .tuners-recordings-files {
@@ -421,20 +548,19 @@
   width: min(var(--modal-size-large), 96vw);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1120px) {
   .tuners-signal-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .tuners-signal-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     border-top: 1px solid var(--line);
     border-left: 0;
   }
 
-  .tuners-signal-control-group + .tuners-signal-control-group {
-    padding-top: 0;
-    border-top: 0;
+  .tuners-signal-controls .tuners-setting-group-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--space-4);
   }
 }
 
@@ -444,7 +570,11 @@
   }
 
   .tuners-list {
-    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  }
+
+  .tuners-common-more {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -454,35 +584,59 @@
     margin-left: 0;
   }
 
-  .tuners-detail-facts {
-    grid-row: auto;
+  .tuners-details {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3);
   }
 
-  .tuners-detail-actions {
-    grid-column: 1 / -1;
+  .tuners-detail-actions,
+  .tuners-detail-facts {
+    grid-column: 1;
     grid-row: auto;
     justify-content: flex-start;
   }
 
-  .tuners-signal-controls {
-    grid-template-columns: minmax(0, 1fr);
+  .tuners-center-host {
+    grid-column: 1;
+    align-items: stretch;
   }
 
-  .tuners-signal-control-group + .tuners-signal-control-group {
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--line);
+  .tuners-center-lock {
+    min-width: 0;
+  }
+
+  .tuners-frequency-digit {
+    width: clamp(24px, 8vw, 34px);
+    height: 54px;
+    font-size: calc(var(--font-size-dialog-title) * 1.35);
+  }
+
+  .tuners-frequency-decimal {
+    padding-bottom: 9px;
+    font-size: calc(var(--font-size-dialog-title) * 1.35);
+  }
+
+  .tuners-frequency-unit {
+    padding-left: var(--space-1);
+    font-size: var(--font-size-meta);
   }
 
   .tuners-spectrum .tuner-spectrum-layout-inline-options .tuner-spectrum-options[open] .tuner-spectrum-options-panel {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .tuners-frequency-lane {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
+  .tuners-spectrum .tuner-spectrum-layout-basic {
+    grid-template-rows: auto minmax(360px, 1fr);
   }
 
-  .tuners-frequency-lane-body {
+  .tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
+    grid-template-rows: minmax(90px, .25fr) minmax(270px, .75fr);
+  }
+
+  .tuners-signal-controls .tuners-setting-group-body,
+  .tuners-common-primary,
+  .tuners-common-more,
+  .tuners-setting-group-body {
     grid-template-columns: minmax(0, 1fr);
   }
 
