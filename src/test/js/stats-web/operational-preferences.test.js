@@ -76,6 +76,15 @@ async function main() {
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);
   assert.match(application, /Administration > Receiver operations/);
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
+
+  const page = functionSource('async function renderAdminOperationalPreferences(');
+  assert.match(page, /lane\('output', 'Calls & audio'/);
+  assert.match(page, /lane\('activity', 'Activity history'/);
+  assert.match(page, /const drafts = new Map\(\)/);
+  assert.match(page, /drafts\.delete\(field\.id\)/);
+  assert.match(page, /state\.textContent = changed \? 'Unsaved change' : ''/);
+  assert.match(page, /actions\.hidden = !changed/);
+  assert.match(page, /drafts\.clear\(\)/);
 }
 
 main().catch((error) => {

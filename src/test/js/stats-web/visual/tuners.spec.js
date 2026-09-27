@@ -7,9 +7,10 @@ function tuner(overrides = {}) {
     id: 'tuner-a', name: 'Airspy R2', tuner_class: 'AIRSPY', tuner_type: 'AIRSPY_R820T',
     status: 'ENABLED', enabled: true, available: true, channel_count: 0,
     frequency_hz: 851_012_500, sample_rate_hz: 10_000_000,
+    planner: { model: 'airspy', rate_hz: 10_000_000 },
     spectrum_target_id: null, spectrum_available: false,
     device_group: { id: 'group-a', kind: 'single', role: 'member' },
-    settings: [{ id: 'lna_gain', label: 'LNA gain', kind: 'integer', value: 8,
+    settings: [{ id: 'lna_gain', label: 'LNA gain', group: 'gain', kind: 'integer', value: 8,
       pending_value: null, minimum: 0, maximum: 15, step: 1, unit: 'dB',
       scope: 'tuner', requires_idle: false, editable: true }],
     ...overrides
@@ -40,6 +41,11 @@ async function mockTuners(page, mutations, state = {}) {
     }
     if (path === '/api/v1/admin/tuners' && request.method() === 'GET') {
       await respond({ tuners: Array.isArray(state.tuners) ? state.tuners : [state.currentTuner || tuner()] });
+      return;
+    }
+    if (path === '/api/v1/admin/tuners/rf-analysis' && request.method() === 'GET') {
+      await respond(state.rfAnalysis || { tuners: [{ id: 'tuner-a', model: 'airspy', rate_hz: 10000000 }],
+        frequencies_hz: [851012500] });
       return;
     }
     if (path === '/api/v1/admin/tuners/rescan' && request.method() === 'POST') {
@@ -117,6 +123,11 @@ test('admin tuner workspace renders generic controls and directory recordings', 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo(0, 0));
+  const analyze = page.getByRole('button', { name: 'Analyze all tuners at RadioResolve' });
+  await expect(analyze).toBeInViewport();
+  const analyzeBounds = await analyze.boundingBox();
+  expect(analyzeBounds.x).toBeGreaterThanOrEqual(0);
+  expect(analyzeBounds.x + analyzeBounds.width).toBeLessThanOrEqual(390);
   await expect(page.locator('main')).toHaveScreenshot('tuners-recordings-light-mobile.png');
 });
 
@@ -141,6 +152,57 @@ test('inventory polling does not discard an unsaved setting draft', async ({ pag
   await page.clock.runFor(5_100);
   await expect(gain).toHaveValue('12');
   await expect(gain).toBeFocused();
+  await gain.blur();
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('12');
+});
+
+test('setting groups come from descriptors and queued values show current versus pending', async ({ page }) => {
+  const currentTuner = tuner({ channel_count: 2, pending: true, settings: [
+    { id: 'sample_rate', label: 'Sample rate', group: 'frequency', kind: 'choice', value: '2.4 MHz',
+      pending_value: '1.2 MHz', options: [{ value: '2.4 MHz', label: '2.4 MHz' },
+        { value: '1.2 MHz', label: '1.2 MHz' }], requires_idle: true, editable: true },
+    { id: 'gain_x', label: 'Custom gain control', group: 'gain', kind: 'integer', value: 8,
+      minimum: 0, maximum: 15, step: 1, pending_value: null, requires_idle: false, editable: true },
+    { id: 'bias_t', label: 'Bias T', group: 'hardware', kind: 'boolean', value: false,
+      pending_value: null, requires_idle: false, editable: true },
+    { id: 'frequency_correction_ppm', label: 'Frequency correction', group: 'calibration',
+      kind: 'decimal', value: 0.1, pending_value: null, requires_idle: false, editable: true }
+  ] });
+  await mockTuners(page, [], { currentTuner });
+  await page.goto('/app.html?view=tuners');
+  await expect(page.getByRole('heading', { name: 'Gain controls' })).toBeVisible();
+  await expect(page.getByText('Frequency & allocation', { exact: true })).toBeVisible();
+  await expect(page.getByText('Hardware controls', { exact: true })).toBeVisible();
+  await expect(page.getByText('Calibration', { exact: true })).toBeVisible();
+  await expect(page.getByText('Current: 2.4 MHz → Queued: 1.2 MHz')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Airspy R2/ })).toContainText('Queued');
+});
+
+test('RF analysis sends all eligible tuners and current running frequencies', async ({ page }) => {
+  const state = { rfAnalysis: { tuners: [
+    { id: 'tuner-a', model: 'airspy', rate_hz: 10000000 },
+    { id: 'tuner-b', model: 'rtl-r8x', rate_hz: 2400000 }
+  ], frequencies_hz: [155070000, 851012500, 155070000] } };
+  await mockTuners(page, [], state);
+  await page.route('https://radioresolve.com/rf-planner/**', (route) => route.fulfill({
+    status: 200, contentType: 'text/html', body: '<title>RadioResolve RF Planner</title>'
+  }));
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Analyze all tuners at RadioResolve' }).click();
+  await page.waitForURL(/^https:\/\/radioresolve\.com\/rf-planner\//);
+  const url = new URL(page.url());
+  expect(url.searchParams.getAll('model')).toEqual(['airspy', 'rtl-r8x']);
+  expect(url.searchParams.getAll('rate')).toEqual(['10000000', '2400000']);
+  expect(url.searchParams.get('frequencies')).toBe('155.07\n851.0125\n155.07');
+});
+
+test('RF analysis gives a clear message when no supported tuner is discovered', async ({ page }) => {
+  await mockTuners(page, [], { tuners: [], rfAnalysis: { tuners: [], frequencies_hz: [] } });
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Analyze all tuners at RadioResolve' }).click();
+  await expect(page.getByText('No supported physical tuners are available for external analysis.'))
+    .toBeVisible();
 });
 
 test('USB rescan and recording removal stay admin-scoped and preserve the file', async ({ page }) => {

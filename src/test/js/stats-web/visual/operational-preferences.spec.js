@@ -72,10 +72,13 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   const workspace = page.locator('.operational-preferences');
   await expect(workspace).toBeVisible();
   await expect(workspace.locator('.settings-card')).toHaveCount(4);
+  await expect(workspace.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
   await patch.locator('select').selectOption('INDIVIDUAL');
+  await expect(patch.getByText('Unsaved change')).toBeVisible();
   await patch.getByRole('button', { name: 'Save' }).click();
   await expect(workspace).toContainText('Stream a patch-group call as saved.');
+  await expect(patch.getByRole('button', { name: 'Save' })).toHaveCount(0);
   expect(app.writes).toEqual([{ field: 'patch_group_streaming_option', value: 'INDIVIDUAL',
     revision: `"${'a'.repeat(64)}"` }]);
   const detailed = workspace.locator('form[data-preference="stats_detailed_history_enabled"]');
@@ -89,6 +92,38 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await expect(workspace.locator('.settings-card').first()).toBeVisible();
   const width = await workspace.locator('.settings-card').first().boundingBox();
   expect(width.x + width.width).toBeLessThanOrEqual(390);
+});
+
+test('receiver settings read as separate output and activity workflows', async ({ page }) => {
+  await openApp(page);
+  const workspace = page.locator('.operational-preferences');
+  await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
+  await expect(workspace.getByText('Calls & audio', { exact: true })).toBeVisible();
+  await expect(workspace.getByText('Activity history', { exact: true })).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page.locator('main')).toHaveScreenshot('admin-operations-light-desktop.png');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page.locator('main')).toHaveScreenshot('admin-operations-dark-mobile.png');
+});
+
+test('saving one preference keeps another unsaved field', async ({ page }) => {
+  const app = await openApp(page);
+  const workspace = page.locator('.operational-preferences');
+  const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
+  const recording = workspace.locator('form[data-preference="audio_record_format"]');
+  await patch.locator('select').selectOption('INDIVIDUAL');
+  await recording.locator('select').selectOption('WAVE');
+  await patch.getByRole('button', { name: 'Save' }).click();
+  await expect(recording.locator('select')).toHaveValue('WAVE');
+  await expect(recording.getByText('Unsaved change')).toBeVisible();
+  await recording.getByRole('button', { name: 'Save' }).click();
+  expect(app.writes.map((write) => write.field)).toEqual([
+    'patch_group_streaming_option', 'audio_record_format'
+  ]);
 });
 
 test('a stale local edit reloads the current saved values', async ({ page }) => {

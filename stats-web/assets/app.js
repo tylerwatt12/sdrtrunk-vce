@@ -14,7 +14,7 @@ import {
 } from './core/receiver-health-alerts.js?v=2';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
 import { createListenMap } from './features/listen-map.js?v=2';
-import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=1';
+import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
   createInlineAliasListCreator as buildInlineAliasListCreator
@@ -21645,7 +21645,9 @@ async function renderAdminSpectrumSnapSettings() {
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(settingsCardGrid(card), footer);
-  body.append(form);
+  body.append(adminWorkflowNote('Spectrum display, not reception',
+    'This catalog changes FFT band indicators and optional cursor snapping for all viewers. It does not retune a ' +
+    'receiver or change channel decoding.'), form);
   content.append(section('Spectrum frequency scopes', body));
 
   let confirmed = null;
@@ -21763,7 +21765,9 @@ async function renderAdminReceiverBehaviorSettings() {
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(settingsCardGrid(group), footer);
-  body.append(form);
+  body.append(adminWorkflowNote('Live display timing only',
+    'This delay changes when a traffic row looks idle to viewers. It does not keep a call, tuner, or channel active.'),
+    form);
   content.append(section('Receiver behavior', body));
 
   let confirmed = null;
@@ -21857,6 +21861,9 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
 
 async function renderAdminOperationalPreferences(renderContext = captureRenderContext()) {
   const body = node('div', 'admin-section-body operational-preferences');
+  const introduction = adminWorkflowNote('Choose the outcome first',
+    'Call output and recording choices affect future calls. Activity collection controls what the receiver saves ' +
+    'from now on. Each change is saved separately.');
   const status = node('div', 'admin-form-message', 'Loading receiver operations…');
   status.setAttribute('role', 'status');
   const reload = node('button', 'ui-button ui-button-secondary', 'Reload current values');
@@ -21864,28 +21871,33 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
   reload.disabled = true;
   const heading = node('div', 'ui-action-row');
   heading.append(reload);
-  const cards = node('div', 'settings-card-grid');
-  body.append(status, heading, cards);
+  const lanes = node('div', 'operational-preference-lanes');
+  body.append(introduction, status, heading, lanes);
   content.append(section('Receiver operations', body));
   let confirmed = null;
   let saving = false;
+  const drafts = new Map();
 
   const groups = [
-    { title: 'Calls', description: 'How patch-group calls are sent to streaming outputs.', fields: [
+    { area: 'output', title: 'Calls', description: 'How patch-group calls are sent to streaming outputs.',
+      effect: 'New calls', fields: [
       { id: 'patch_group_streaming_option', label: 'Stream a patch-group call as', kind: 'select',
         options: 'patch_group_streaming_options' }
     ] },
-    { title: 'Audio recording', description: 'Default format for newly recorded calls.', fields: [
+    { area: 'output', title: 'Audio recording', description: 'Default format for newly recorded calls.',
+      effect: 'New recordings', fields: [
       { id: 'audio_record_format', label: 'Recording format', kind: 'select', options: 'audio_record_formats' }
     ] },
-    { title: 'MP3 encoding', description: 'Settings for new MP3 recordings and streams.', fields: [
+    { area: 'output', title: 'MP3 encoding', description: 'Settings for new MP3 recordings and streams.',
+      effect: 'New audio output', fields: [
       { id: 'mp3_setting', label: 'Encoder setting', kind: 'select', options: 'mp3_settings',
         detail: 'To see more encoder choices, first choose an 8 or 16 kHz input format.' },
       { id: 'mp3_input_audio_format', label: 'Input audio format', kind: 'select',
         detail: 'The available formats depend on the saved encoder setting.' },
       { id: 'mp3_normalize_audio', label: 'Normalize audio before encoding', kind: 'boolean' }
     ] },
-    { title: 'Statistics', description: 'Collection and retention of receiver activity.', fields: [
+    { area: 'activity', title: 'Statistics', description: 'Collection and retention of receiver activity.',
+      effect: 'Future activity', fields: [
       { id: 'stats_logging_enabled', label: 'Collect summary statistics', kind: 'boolean' },
       { id: 'stats_detailed_history_enabled', label: 'Store detailed event history', kind: 'boolean',
         detail: 'New history is saved from the time this is enabled; earlier events cannot be recovered.' },
@@ -21907,24 +21919,27 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
 
   function renderFields() {
     if (!confirmed || !renderIsCurrent(renderContext)) return;
-    cards.replaceChildren(...groups.map((group) => {
+    const rendered = groups.map((group) => {
       const forms = group.fields.map((field) => {
         const form = node('form', 'admin-form operational-preference-form');
         form.dataset.preference = field.id;
         const current = confirmed.settings[field.id];
+        const draft = drafts.has(field.id) ? drafts.get(field.id) : current;
         let input;
         if (field.kind === 'select') {
           input = node('select');
           input.required = true;
-          input.append(...optionsFor(field).map((choice) => {
+          const choices = optionsFor(field);
+          input.append(...choices.map((choice) => {
             const option = node('option', '', choice.label);
             option.value = choice.value;
             return option;
           }));
-          input.value = current;
+          if (draft !== current && !choices.some((choice) => choice.value === draft)) drafts.delete(field.id);
+          input.value = drafts.has(field.id) ? drafts.get(field.id) : current;
           form.append(formField(field.label, input, field.detail || ''));
         } else if (field.kind === 'boolean') {
-          const toggle = uiToggleField(field.label, current, field.label, field.detail || '');
+          const toggle = uiToggleField(field.label, draft, field.label, field.detail || '');
           input = toggle.querySelector('input');
           form.append(toggle);
         } else {
@@ -21934,18 +21949,27 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
           input.step = '1';
           input.min = String(confirmed.options.minimum_stats_logging_retention_days);
           input.max = String(confirmed.options.maximum_stats_logging_retention_days);
-          input.value = String(current);
+          input.value = String(draft);
           form.append(formField(field.label, input));
         }
         const save = node('button', 'ui-button ui-button-primary', 'Save');
         save.type = 'submit';
+        const state = node('span', 'operational-preference-state');
+        const actions = node('div', 'ui-action-row operational-preference-actions');
+        actions.append(state, save);
         const readValue = () => field.kind === 'boolean' ? input.checked :
           field.kind === 'number' ? Number(input.value) : input.value;
-        const updateSave = () => { save.disabled = saving || readValue() === current; };
+        const updateSave = () => {
+          const changed = readValue() !== current;
+          if (changed) drafts.set(field.id, readValue());
+          else drafts.delete(field.id);
+          save.disabled = saving || !changed;
+          form.classList.toggle('is-dirty', changed);
+          state.textContent = changed ? 'Unsaved change' : '';
+          actions.hidden = !changed;
+        };
         updateSave();
         input.addEventListener(field.kind === 'number' ? 'input' : 'change', updateSave);
-        const actions = node('div', 'ui-action-row operational-preference-actions');
-        actions.append(save);
         form.append(actions);
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
@@ -21955,10 +21979,12 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
           status.textContent = `Saving ${field.label.toLowerCase()}…`;
           try {
             confirmed = await requestOperationalPreference('PUT', field.id, readValue(), confirmed.revision);
+            drafts.delete(field.id);
             status.textContent = `${field.label} saved.`;
           } catch (error) {
             if (error.current) {
               confirmed = error.current;
+              drafts.clear();
               status.textContent = 'Receiver operations changed elsewhere. Current values were reloaded.';
             } else {
               status.textContent = error.message || 'Receiver operations could not be saved.';
@@ -21970,14 +21996,30 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         });
         return form;
       });
-      return settingsCard(group.title, group.description, ...forms);
-    }));
+      const card = settingsCard(group.title, group.description, ...forms);
+      card.classList.add('operational-preference-card');
+      card.querySelector('.settings-card-header')?.prepend(node('span', 'operational-card-effect', group.effect));
+      return { area: group.area, card };
+    });
+    const lane = (area, label, description) => {
+      const host = node('div', 'operational-preference-lane');
+      const labelGroup = node('div', 'operational-preference-lane-heading');
+      labelGroup.append(node('strong', '', label), node('p', '', description));
+      host.append(labelGroup, settingsCardGrid(...rendered.filter((entry) => entry.area === area)
+        .map((entry) => entry.card)));
+      return host;
+    };
+    lanes.replaceChildren(
+      lane('output', 'Calls & audio', 'Choose how new calls are streamed, recorded, and encoded.'),
+      lane('activity', 'Activity history', 'Choose what is collected and how long it remains available.')
+    );
   }
 
   reload.addEventListener('click', async () => {
     reload.disabled = true;
     try {
       confirmed = await requestOperationalPreference();
+      drafts.clear();
       status.textContent = '';
       renderFields();
     } catch (error) {
@@ -22228,7 +22270,9 @@ async function renderAdminP25BandplanOverrides() {
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(intro, list, footer);
-  body.append(form);
+  body.append(adminWorkflowNote('Receiver-wide decoding change',
+    'A saved override can change how matching P25 channels resolve frequencies. Verify the replacement bands ' +
+    'before saving; channel-specific choices remain in Channels.'), form);
   content.append(section('P25 band plan overrides', body));
 
   form.addEventListener('submit', async (event) => {
@@ -22779,6 +22823,12 @@ function settingsCard(title, description, ...items) {
   return card;
 }
 
+function adminWorkflowNote(title, description) {
+  const note = node('div', 'admin-workflow-note');
+  note.append(node('strong', '', title), node('p', '', description));
+  return note;
+}
+
 function settingsCardGrid(...cards) {
   const grid = node('div', 'settings-card-grid');
   grid.append(...cards);
@@ -23314,7 +23364,7 @@ function tunerInventoryStatus(tuner) {
   const status = String(tuner.status || 'Unknown');
   if (!tuner.enabled) return { label: 'Disabled', tone: 'neutral' };
   if (status.toUpperCase() === 'ERROR') return { label: 'Error', tone: 'danger' };
-  if (tuner.available) return { label: 'Ready', tone: 'success' };
+  if (tuner.available) return { label: Number(tuner.channel_count) > 0 ? 'In use' : 'Ready', tone: 'success' };
   return { label: status.replaceAll('_', ' '), tone: 'warning' };
 }
 
@@ -23337,10 +23387,10 @@ function tunerSettingValue(setting, value) {
   return option ? String(option.label) : `${value}${setting.unit ? ` ${setting.unit}` : ''}`;
 }
 
-function tunerSettingInput(setting) {
+function tunerSettingInput(setting, draft = null) {
   const value = setting.pending_value == null ? setting.value : setting.pending_value;
   if (setting.kind === 'boolean') {
-    const control = uiToggleField(setting.label, Boolean(value), setting.label);
+    const control = uiToggleField(setting.label, draft === null ? Boolean(value) : Boolean(draft), setting.label);
     return { element: control, input: control.querySelector('input'), read: (input) => input.checked };
   }
   if (setting.kind === 'choice') {
@@ -23350,7 +23400,7 @@ function tunerSettingInput(setting) {
       option.value = String(choice.value);
       input.append(option);
     }
-    input.value = String(value ?? '');
+    input.value = draft === null ? String(value ?? '') : String(draft);
     const field = node('label', 'ui-field');
     field.append(node('span', '', setting.label), uiSelectFrame(input));
     return { element: field, input, read: (select) => select.value };
@@ -23363,7 +23413,7 @@ function tunerSettingInput(setting) {
   if (setting.step != null && Number.isFinite(Number(setting.step)) && Number(setting.step) > 0) {
     input.step = String(setting.step);
   }
-  input.value = value == null ? '' : String(value);
+  input.value = draft === null ? (value == null ? '' : String(value)) : String(draft);
   const field = node('label', 'ui-field');
   field.append(node('span', '', `${setting.label}${setting.unit ? ` (${setting.unit})` : ''}`), input);
   return { element: field, input, read: (numberInput) => Number(numberInput.value) };
@@ -23374,6 +23424,11 @@ async function renderTuners() {
   const listBody = node('div', 'tuners-list');
   const detailsBody = node('div', 'tuners-details');
   const spectrumBody = node('div', 'tuners-spectrum');
+  const gainBody = node('div', 'tuners-setting-group-body');
+  const frequencyBody = node('div', 'tuners-setting-group-body');
+  const hardwareBody = node('div', 'tuners-setting-group-body');
+  const calibrationBody = node('div', 'tuners-setting-group-body');
+  const otherBody = node('div', 'tuners-setting-group-body');
   const refreshButton = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refreshButton.type = 'button';
   refreshButton.prepend(iconGlyph('icon-refresh'));
@@ -23386,15 +23441,35 @@ async function renderTuners() {
   tunerListPanel.append(tunerListActions, listBody);
   const left = section('Receiver tuners', tunerListPanel);
   const right = node('div', 'tuners-main');
-  right.append(section('Selected tuner', detailsBody), section('Spectrum and waterfall', spectrumBody));
+  const signalLayout = node('div', 'tuners-signal-layout');
+  const gainPanel = node('div', 'tuners-gain-panel');
+  gainPanel.append(node('h3', '', 'Gain controls'), gainBody);
+  signalLayout.append(spectrumBody, gainPanel);
+  const signalSection = section('Live signal & gain', signalLayout);
+  const frequencySection = section('Frequency & allocation', frequencyBody);
+  const hardwareSection = section('Hardware controls', hardwareBody);
+  const calibrationSection = section('Calibration', calibrationBody);
+  const otherSection = section('Other tuner settings', otherBody);
+  right.append(section('Selected tuner', detailsBody), signalSection,
+    frequencySection, hardwareSection, calibrationSection, otherSection);
   const recordingPanel = node('details', 'tuners-recordings ui-section');
   recordingPanel.append(node('summary', 'ui-section-title', 'Recording tuner files · debugging'));
   const recordingsBody = node('div', 'tuners-recordings-body');
   recordingPanel.append(recordingsBody);
   const workspace = node('div', 'tuners-workspace editor-workspace');
   workspace.append(left, right, recordingPanel);
-  if (!beginPage(renderContext, pageHeader('Tuners',
-    'Inspect receiver hardware and adjust tuners with live spectrum feedback'), workspace)) return;
+  const analyzeButton = node('button', 'ui-button ui-button-secondary tuners-analyze-button',
+    'Analyze all tuners at RadioResolve');
+  analyzeButton.type = 'button';
+  analyzeButton.disabled = true;
+  analyzeButton.title = 'Sends all discovered supported physical tuners, including disabled tuners, and ' +
+    'running channel frequencies to RadioResolve in this tab';
+  analyzeButton.prepend(iconGlyph('icon-share'));
+  const heading = pageHeader('Tuners',
+    'Inspect receiver hardware and adjust tuners with live spectrum feedback');
+  heading.classList.add('tuners-page-header');
+  heading.append(analyzeButton);
+  if (!beginPage(renderContext, heading, workspace)) return;
 
   let rows = [];
   let selectedId = '';
@@ -23403,6 +23478,8 @@ async function renderTuners() {
   let refreshGeneration = 0;
   let refreshTimer = null;
   let recordingRequest = 0;
+  let analyzing = false;
+  const settingDrafts = new Map();
   pageConnections.add({ close() { if (refreshTimer !== null) window.clearTimeout(refreshTimer); } });
   listBody.append(node('div', 'loading', 'Loading tuners…'));
   detailsBody.append(node('div', 'loading', 'Loading tuner details…'));
@@ -23504,18 +23581,26 @@ async function renderTuners() {
   };
 
   function renderSettings(tuner) {
+    const groups = new Map([
+      ['gain', gainBody], ['frequency', frequencyBody], ['hardware', hardwareBody],
+      ['calibration', calibrationBody]
+    ]);
+    for (const body of [...groups.values(), otherBody]) body.replaceChildren();
     const settings = Array.isArray(tuner.settings) ? tuner.settings : [];
-    if (!settings.length) return null;
-    const wrapper = node('div', 'tuners-settings');
-    wrapper.append(node('h3', '', 'Settings'));
-    const fields = node('div', 'tuners-settings-list');
     for (const setting of settings) {
       if (!setting || typeof setting.id !== 'string' || !/^[a-z0-9_]+$/.test(setting.id)) continue;
-      const form = node('form', 'tuners-setting');
+      const draftKey = `${tuner.id}:${setting.id}`;
+      const form = node('form', `tuners-setting${setting.pending_value == null ? '' : ' tuners-setting-queued'}`);
       const actionSetting = setting.kind === 'action';
-      const control = actionSetting ? null : tunerSettingInput(setting);
-      const pending = setting.pending_value == null ? null :
-        node('p', 'tuners-setting-pending', `Queued: ${tunerSettingValue(setting, setting.pending_value)}`);
+      const control = actionSetting ? null : tunerSettingInput(setting,
+        settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
+      const pending = setting.pending_value == null ? null : node('div', 'tuners-setting-transition');
+      if (pending) {
+        pending.append(uiPill('Queued', 'warning'),
+          node('span', '', actionSetting ? `${setting.label} will run when idle` :
+            `Current: ${tunerSettingValue(setting, setting.value)} → ` +
+              `Queued: ${tunerSettingValue(setting, setting.pending_value)}`));
+      }
       const message = node('div', 'tuners-setting-message');
       message.setAttribute('role', 'status');
       const actions = node('div', 'tuners-setting-actions ui-action-row');
@@ -23524,7 +23609,12 @@ async function renderTuners() {
         (setting.requires_idle && Number(tuner.channel_count) > 0 ? 'Queue change' : 'Apply'));
       save.type = 'submit';
       save.disabled = setting.editable !== true;
-      if (control) control.input.disabled = setting.editable !== true;
+      if (control) {
+        control.input.disabled = setting.editable !== true;
+        control.input.addEventListener(['integer', 'decimal'].includes(setting.kind) ? 'input' : 'change',
+          () => settingDrafts.set(draftKey, setting.kind === 'boolean' ? control.input.checked :
+            control.input.value));
+      }
       actions.append(save);
       const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
       if (pending) {
@@ -23535,6 +23625,7 @@ async function renderTuners() {
           save.disabled = true;
           try {
             await requestJson(path, { method: 'DELETE' });
+            settingDrafts.delete(draftKey);
             await refresh();
           } catch (error) {
             message.textContent = error.message || 'Could not cancel the queued change.';
@@ -23551,6 +23642,7 @@ async function renderTuners() {
         message.textContent = '';
         try {
           await requestJson(path, { method: 'PUT', body: { value: actionSetting ? true : control.read(control.input) } });
+          settingDrafts.delete(draftKey);
           await refresh();
         } catch (error) {
           message.textContent = error.message || 'Could not save the tuner setting.';
@@ -23559,16 +23651,28 @@ async function renderTuners() {
       });
       if (control) form.append(control.element);
       if (setting.requires_idle) form.append(node('p', 'tuners-setting-hint',
-        'Applies when this tuner is no longer in use.'));
+        Number(tuner.channel_count) > 0 ? 'This change will queue until the tuner is idle.' :
+          'Requires an idle tuner.'));
       if (pending) form.append(pending);
       if (setting.editable !== true) form.append(node('p', 'tuners-setting-hint',
         'This setting is shown for reference.'));
       if (setting.editable === true) form.append(actions);
       form.append(message);
-      fields.append(form);
+      (groups.get(String(setting.group || '').toLowerCase()) || otherBody).append(form);
     }
-    wrapper.append(fields);
-    return wrapper;
+    if (gainBody.childElementCount) gainBody.prepend(node('p', 'tuners-group-intro',
+      'Watch the selected tuner’s signal while adjusting gain. Idle tuners have no live samples.'));
+    if (frequencyBody.childElementCount) frequencyBody.prepend(node('p', 'tuners-group-intro',
+      'Frequency limits control which channels this tuner can serve; sample rate controls its receive span.'));
+    if (hardwareBody.childElementCount) hardwareBody.prepend(node('p', 'tuners-group-intro',
+      'Hardware options depend on the connected device.'));
+    if (calibrationBody.childElementCount) calibrationBody.prepend(node('p', 'tuners-group-intro',
+      'Use these controls to correct frequency offset and drift.'));
+    gainPanel.hidden = gainBody.childElementCount === 0;
+    frequencySection.hidden = frequencyBody.childElementCount === 0;
+    hardwareSection.hidden = hardwareBody.childElementCount === 0;
+    calibrationSection.hidden = calibrationBody.childElementCount === 0;
+    otherSection.hidden = otherBody.childElementCount === 0;
   }
 
   async function changeEnabled(tuner, enabled) {
@@ -23665,11 +23769,19 @@ async function renderTuners() {
       button.type = 'button';
       button.setAttribute('aria-pressed', String(row.id === selectedId));
       const main = node('span', 'tuners-list-item-main');
+      const copy = node('span', 'tuners-list-item-copy');
+      const channelCount = Math.max(0, Number(row.channel_count) || 0);
+      copy.append(node('span', 'tuners-list-item-name', row.name),
+        node('span', 'tuners-list-item-meta',
+          `${channelCount} active · ${tunerInventoryFrequency(row.frequency_hz)} · ` +
+            tunerInventoryRate(row.sample_rate_hz)));
       main.append(iconGlyph(String(row.tuner_type).toLowerCase() === 'recording' ?
-        'icon-recording' : 'icon-tuner'),
-        node('span', 'tuners-list-item-name', row.name));
+        'icon-recording' : 'icon-tuner'), copy);
       const status = tunerInventoryStatus(row);
-      button.append(main, uiPill(status.label, status.tone));
+      const indicators = node('span', 'tuners-list-item-indicators');
+      indicators.append(uiPill(status.label, status.tone));
+      if (row.pending) indicators.append(uiPill('Queued', 'warning'));
+      button.append(main, indicators);
       button.addEventListener('click', () => {
         if (selectedId === row.id) return;
         selectedId = row.id;
@@ -23682,16 +23794,28 @@ async function renderTuners() {
     detailsBody.replaceChildren();
     if (!tuner) {
       detailsBody.append(node('div', 'empty', 'Select a tuner to see its status.'));
+      if (operationNotice) detailsBody.append(node('div', 'ui-notice ui-notice-warning', operationNotice));
+      gainBody.replaceChildren();
+      frequencyBody.replaceChildren();
+      hardwareBody.replaceChildren();
+      calibrationBody.replaceChildren();
+      otherBody.replaceChildren();
+      gainPanel.hidden = true;
+      frequencySection.hidden = true;
+      hardwareSection.hidden = true;
+      calibrationSection.hidden = true;
+      otherSection.hidden = true;
       spectrum?.selectTarget('');
       return;
     }
     const status = tunerInventoryStatus(tuner);
     const title = node('div', 'tuners-detail-heading');
     title.append(node('h2', '', tuner.name), uiPill(status.label, status.tone));
-    const facts = node('dl', 'ui-facts');
+    if (tuner.pending) title.append(uiPill('Change queued', 'warning'));
+    const facts = node('dl', 'ui-facts tuners-detail-facts');
     facts.append(
       detailFact('Type', String(tuner.tuner_class || tuner.tuner_type || 'Unknown')),
-      detailFact('Channels', String(Math.max(0, Number(tuner.channel_count) || 0))),
+      detailFact('Active channels', String(Math.max(0, Number(tuner.channel_count) || 0))),
       detailFact('Current center', tunerInventoryFrequency(tuner.frequency_hz)),
       detailFact('Sample rate', tunerInventoryRate(tuner.sample_rate_hz))
     );
@@ -23717,29 +23841,6 @@ async function renderTuners() {
       }
     });
     actions.append(enabledButton);
-    if (tuner.planner) {
-      const analyze = node('button', 'ui-button ui-button-secondary', 'Analyze at RadioResolve');
-      analyze.type = 'button';
-      analyze.prepend(iconGlyph('icon-share'));
-      analyze.addEventListener('click', async () => {
-        analyze.disabled = true;
-        try {
-          const catalog = await requestChannelConfigurationJson('/api/v1/admin/channels', {
-            csrf: false, signal: renderContext.signal
-          });
-          if (!renderIsCurrent(renderContext)) return;
-          window.location.assign(buildRadioResolvePlannerUrl(tuner.planner, catalog));
-        } catch (error) {
-          if (renderIsCurrent(renderContext)) {
-            operationNotice = error.message || 'Could not open external RF analysis.';
-            renderSelection();
-          }
-        } finally {
-          analyze.disabled = false;
-        }
-      });
-      actions.append(analyze);
-    }
     if (String(tuner.tuner_class).toLowerCase() === 'recording') {
       const remove = node('button', 'ui-button ui-button-danger-quiet', 'Remove recording tuner');
       remove.type = 'button';
@@ -23755,8 +23856,7 @@ async function renderTuners() {
     if (tuner.maintenance_error) detailsBody.append(node('div', 'ui-notice ui-notice-danger',
       String(tuner.maintenance_error)));
     if (tuner.error_message) detailsBody.append(node('div', 'error', String(tuner.error_message)));
-    const settings = renderSettings(tuner);
-    if (settings) detailsBody.append(settings);
+    renderSettings(tuner);
     spectrum?.selectTarget(tuner.spectrum_target_id || '');
   }
 
@@ -23769,7 +23869,8 @@ async function renderTuners() {
       const response = await api('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
       if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
       rows = tunerInventoryRows(response);
-      const editing = detailsBody.contains(document.activeElement) &&
+      analyzeButton.disabled = analyzing;
+      const editing = right.contains(document.activeElement) &&
         document.activeElement.matches('input, select, textarea');
       const previousSelectedId = selectedId;
       if (!rows.some((row) => row.id === selectedId)) selectedId = rows[0]?.id || '';
@@ -23780,6 +23881,7 @@ async function renderTuners() {
       if (!renderIsCurrent(renderContext) || generation !== refreshGeneration) return;
       listBody.replaceChildren(node('div', 'error', error.message || 'Could not load tuners.'));
       detailsBody.replaceChildren(node('div', 'error', 'Tuner details are unavailable.'));
+      analyzeButton.disabled = true;
       spectrum?.selectTarget('');
     } finally {
       if (renderIsCurrent(renderContext) && generation === refreshGeneration) {
@@ -23794,6 +23896,23 @@ async function renderTuners() {
   }
 
   refreshButton.addEventListener('click', () => void refresh());
+  analyzeButton.addEventListener('click', async () => {
+    analyzing = true;
+    analyzeButton.disabled = true;
+    try {
+      const snapshot = await api('/api/v1/admin/tuners/rf-analysis', {}, { signal: renderContext.signal });
+      if (!renderIsCurrent(renderContext)) return;
+      window.location.assign(buildRadioResolvePlannerUrl(snapshot));
+    } catch (error) {
+      if (renderIsCurrent(renderContext)) {
+        operationNotice = error.message || 'Could not open external RF analysis.';
+        renderSelection();
+      }
+    } finally {
+      analyzing = false;
+      if (renderIsCurrent(renderContext)) analyzeButton.disabled = false;
+    }
+  });
   rescanUsbButton.addEventListener('click', async () => {
     rescanUsbButton.disabled = true;
     try {
@@ -23858,16 +23977,12 @@ function adminSystemStatusSection() {
 }
 
 function renderAdminSystem() {
-  content.append(adminSystemStatusSection());
-}
-
-function adminProtocolEmptyState(protocolName) {
-  const body = node('div', 'settings-empty-state');
-  body.append(iconGlyph('icon-conventional'), node('h2', '', `${protocolName} receiver-wide settings`),
-    node('p', '', `There are no shared ${protocolName} settings yet. Settings that belong to one channel remain ` +
-      'in Channels.'),
-    anchor('Open Channels', href('channel-setup'), 'ui-button ui-button-secondary'));
-  content.append(body);
+  const note = adminWorkflowNote('Change collection and retention in Receiver operations',
+    'This page shows what is currently being saved. The collection switches and retention period are edited ' +
+    'together with call and audio settings.');
+  note.append(anchor('Open Receiver operations', href('admin', { tab: 'operations' }),
+    'ui-button ui-button-secondary'));
+  content.append(note, adminSystemStatusSection());
 }
 
 function adminSettingsTree(groups, active) {
@@ -23875,27 +23990,15 @@ function adminSettingsTree(groups, active) {
   navigation.setAttribute('aria-label', 'Administration sections');
   groups.forEach((group) => {
     const disclosure = node('details', 'admin-settings-branch');
-    disclosure.open = group.items.some((item) => item.id === active || item.items?.some((child) =>
-      child.id === active)) || group.open === true;
+    disclosure.open = group.items.some((item) => item.id === active) || group.open === true;
     disclosure.append(node('summary', '', group.label));
     const links = node('div', 'admin-settings-branch-items');
-    const appendLeaf = (item, host) => {
+    group.items.forEach((item) => {
       const link = anchor(item.label, href('admin', { tab: item.id }), 'admin-settings-leaf');
       link.classList.toggle('active', item.id === active);
       if (item.id === active) link.setAttribute('aria-current', 'page');
-      if (item.scope) link.append(node('small', 'settings-scope-badge', item.scope));
-      host.append(link);
-    };
-    group.items.forEach((item) => {
-      if (Array.isArray(item.items)) {
-        const nested = node('details', 'admin-settings-nested-branch');
-        nested.open = item.items.some((child) => child.id === active);
-        nested.append(node('summary', '', item.label));
-        const nestedLinks = node('div', 'admin-settings-nested-items');
-        item.items.forEach((child) => appendLeaf(child, nestedLinks));
-        nested.append(nestedLinks);
-        links.append(nested);
-      } else appendLeaf(item, links);
+      if (item.scope && item.id === active) link.append(node('small', 'settings-scope-badge', item.scope));
+      links.append(link);
     });
     disclosure.append(links);
     navigation.append(disclosure);
@@ -24604,49 +24707,42 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
 function adminSettingsGroups() {
   const allowed = (capability) => capabilityAllowed(capability);
   return [
-    { label: 'Receiver status', open: true, items: [
-      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-      { id: 'call-matching', label: 'Call matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-      { id: 'support', label: 'Report a problem', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
+    { label: 'Monitor', items: [
+      { id: 'health', label: 'Current status', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
+        description: 'Check receiver health, workload, and issues that need attention.' },
+      { id: 'call-matching', label: 'Call matching', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Inspect confirmed duplicate calls and the copies used to select a winner.' },
+      { id: 'support', label: 'Report a problem', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Prepare a diagnostic report for a reception or application problem.' }
     ] },
-    { label: 'Accounts & access', items: [
-      { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
-      { id: 'access', label: 'Page access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
-    ] },
-    { label: 'Web interface', items: [
-      { id: 'live-timing', label: 'Receiver-wide Live timing', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide' }
-    ] },
-    { label: 'Receiver', items: [
+    { label: 'Receiving & output', items: [
       { id: 'operations', label: 'Receiver operations', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide' },
+        scope: 'Receiver-wide', description: 'Set call output, audio recording, encoding, and activity collection.' },
       { id: 'spectrum', label: 'Spectrum frequency scopes', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide' },
-      { label: 'Protocols', items: [
-        { id: 'protocol-p25', label: 'P25', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-          scope: 'Receiver-wide' },
-        { id: 'protocol-dmr', label: 'DMR', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-          scope: 'Receiver-wide' },
-        { id: 'protocol-nxdn', label: 'NXDN', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-          scope: 'Receiver-wide' },
-        { id: 'protocol-am', label: 'AM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-          scope: 'Receiver-wide' },
-        { id: 'protocol-nbfm', label: 'NBFM', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-          scope: 'Receiver-wide' }
-      ] }
+        scope: 'Receiver-wide', description: 'Choose FFT frequency indicators and optional cursor snap rules.' },
+      { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Manage receiver-wide P25 band plan overrides.' }
     ] },
     { label: 'Data & storage', items: [
       { id: 'activity', label: 'Activity history', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide' }
+        scope: 'Receiver-wide', description: 'See whether summary and detailed activity are being saved.' }
+    ] },
+    { label: 'Accounts & access', items: [
+      { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS,
+        description: 'Manage accounts that can sign in to this receiver.' },
+      { id: 'access', label: 'Page access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS,
+        description: 'Control which account tiers can open each web page and API.' }
+    ] },
+    { label: 'Web presentation', items: [
+      { id: 'live-timing', label: 'Receiver-wide Live timing', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Control when Live marks a traffic row idle for every viewer.' }
     ] }
-  ].map((group) => ({ ...group, items: group.items.map((item) => Array.isArray(item.items) ?
-    { ...item, items: item.items.filter((child) => allowed(child.capability)) } : item)
-    .filter((item) => Array.isArray(item.items) ? item.items.length : allowed(item.capability)) }))
+  ].map((group) => ({ ...group, items: group.items.filter((item) => allowed(item.capability)) }))
     .filter((group) => group.items.length);
 }
 
 function adminSettingsLeaves(groups) {
-  return groups.flatMap((group) => group.items.flatMap((item) => Array.isArray(item.items) ? item.items : [item]));
+  return groups.flatMap((group) => group.items);
 }
 
 function refreshAdminSystemStatus() {
@@ -24662,14 +24758,13 @@ async function renderAdmin() {
     { status: 403 });
   const requested = route.get('tab') || 'health';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
+  const current = availableTabs.find((item) => item.id === active);
   if (active !== requested) {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
-  if (!beginPage(renderContext, pageHeader(active === 'call-matching' ? 'Call matching monitor' : 'Administration',
-    active === 'call-matching' ?
-      'Confirmed duplicate calls and the receiver copies used to choose each winner.' :
-      'Receiver-wide settings, access, storage, and protocol behavior'))) return;
+  if (!beginPage(renderContext, pageHeader(active === 'call-matching' ? 'Call matching monitor' : current.label,
+    current.description))) return;
   const shell = node('div', 'admin-settings-shell');
   const body = node('div', 'admin-settings-content');
   shell.append(adminSettingsTree(groups, active), body);
@@ -24687,7 +24782,6 @@ async function renderAdmin() {
     pageTitleController.update({ pageTitle: 'P25 receiver settings' });
     await renderAdminP25BandplanOverrides();
   }
-  else if (active.startsWith('protocol-')) adminProtocolEmptyState(active.slice('protocol-'.length).toUpperCase());
   else if (active === 'access') await renderAdminAccess(renderContext);
   else if (active === 'activity') renderAdminSystem();
   else await renderAdminUsers(renderContext);

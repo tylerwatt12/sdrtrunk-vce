@@ -25,10 +25,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"217\">"));
-        assertTrue(html.contains("/assets/app.css?v=189"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"218\">"));
+        assertTrue(html.contains("/assets/app.css?v=190"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=267\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=268\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
@@ -43,7 +43,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("<use href=\"#icon-map\"></use></svg><span>Map</span>"));
         assertFalse(html.contains("data-view=\"rf-planner\""));
         assertFalse(source.contains("renderRfPlanner"));
-        assertTrue(source.contains("buildRadioResolvePlannerUrl(tuner.planner, catalog)"));
+        assertTrue(source.contains("buildRadioResolvePlannerUrl(snapshot)"));
         assertTrue(source.contains("map: renderListenMap"));
         assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
             .contains("{ id: 'map', label: 'Map', title: 'Map', parent: 'map', capability: 'call-audio'"));
@@ -69,8 +69,8 @@ class StatsWebNavigationHeaderUiContractTest
         assertFalse(routes.contains("id: 'rf-planner'"));
         assertFalse(Files.exists(Path.of("stats-web", "assets", "features", "rf-planner.js")));
         assertFalse(Files.exists(Path.of("stats-web", "assets", "styles", "features", "rf-planner.css")));
-        assertTrue(source.contains("Analyze at RadioResolve"));
-        assertTrue(source.contains("'/api/v1/admin/channels'"));
+        assertTrue(source.contains("Analyze all tuners at RadioResolve"));
+        assertTrue(source.contains("'/api/v1/admin/tuners/rf-analysis'"));
     }
 
     @Test

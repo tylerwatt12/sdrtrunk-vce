@@ -11,30 +11,36 @@ async function main() {
   const source = fs.readFileSync(modulePath, 'utf8');
   const { buildRadioResolvePlannerUrl } = await import(
     `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-  const planner = { model: 'rtl-r8x', rate_hz: 2400000 };
-  const catalog = { channels: [
-    { frequencies_hz: [851012500, 851262500] },
-    { frequencies_hz: [854087500, 851012500] }
-  ] };
-  const url = new URL(buildRadioResolvePlannerUrl(planner, catalog));
+  const snapshot = {
+    tuners: [
+      { id: 'rtl-a', model: 'rtl-r8x', rate_hz: 2400000 },
+      { id: 'airspy-a', model: 'airspy', rate_hz: 10000000 },
+      { id: 'rtl-b', model: 'rtl-r8x', rate_hz: 2400000 }
+    ],
+    frequencies_hz: [851012500, 851262500, 854087500, 851012500]
+  };
+  const url = new URL(buildRadioResolvePlannerUrl(snapshot));
   assert.equal(url.origin, 'https://radioresolve.com');
   assert.equal(url.pathname, '/rf-planner/');
-  assert.equal(url.searchParams.get('model'), 'rtl-r8x');
-  assert.equal(url.searchParams.get('rate'), '2400000');
+  assert.deepEqual(url.searchParams.getAll('model'), ['rtl-r8x', 'airspy', 'rtl-r8x']);
+  assert.deepEqual(url.searchParams.getAll('rate'), ['2400000', '10000000', '2400000']);
+  assert.deepEqual([...url.searchParams.keys()], ['model', 'rate', 'model', 'rate', 'model', 'rate',
+    'version', 'frequencies']);
   assert.equal(url.searchParams.get('version'), 'sdrtrunk-vce');
   assert.equal(url.searchParams.get('frequencies'), '851.0125\n851.2625\n854.0875\n851.0125');
-  assert.equal(url.searchParams.getAll('model').length, 1, 'Only the selected tuner is sent');
-  assert.equal(url.searchParams.getAll('rate').length, 1, 'Only the selected tuner is sent');
 
-  const withoutChannels = new URL(buildRadioResolvePlannerUrl(planner, { channels: [] }));
+  const withoutChannels = new URL(buildRadioResolvePlannerUrl({ ...snapshot, frequencies_hz: [] }));
   assert.equal(withoutChannels.searchParams.has('frequencies'), false);
-  assert.throws(() => buildRadioResolvePlannerUrl({ model: '../../other', rate_hz: 2400000 }, catalog),
+  assert.throws(() => buildRadioResolvePlannerUrl({ ...snapshot,
+    tuners: [{ model: '../../other', rate_hz: 2400000 }] }),
     /supported RF analysis profile/);
-  assert.throws(() => buildRadioResolvePlannerUrl(planner, {}),
-    /Configured channel frequencies are unavailable/);
-  assert.throws(() => buildRadioResolvePlannerUrl(planner, { channels: Array.from({ length: 1200 },
-    (_, index) => ({ frequencies_hz: [851000000 + index] })) }),
-  /Too many configured frequencies/);
+  assert.throws(() => buildRadioResolvePlannerUrl({ ...snapshot, tuners: [] }),
+    /No supported physical tuners/);
+  assert.throws(() => buildRadioResolvePlannerUrl({ ...snapshot, frequencies_hz: null }),
+    /Running channel frequencies are unavailable/);
+  assert.throws(() => buildRadioResolvePlannerUrl({ ...snapshot,
+    frequencies_hz: Array.from({ length: 1200 }, (_, index) => 851000000 + index) }),
+  /Too many running frequencies/);
 }
 
 main().catch((error) => {

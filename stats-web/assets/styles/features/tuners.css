@@ -1,3 +1,14 @@
+.tuners-page-header {
+  flex-wrap: wrap;
+}
+
+.tuners-page-header .tuners-analyze-button {
+  max-width: 100%;
+  margin-left: auto;
+  white-space: normal;
+  text-align: center;
+}
+
 .tuners-workspace {
   display: grid;
   grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
@@ -25,9 +36,9 @@
 
 .tuners-list-item {
   width: 100%;
-  min-height: 58px;
+  min-height: 76px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-2);
   text-align: left;
@@ -41,7 +52,7 @@
 .tuners-list-item-main {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
 }
 
@@ -54,6 +65,27 @@
 .tuners-list-item-name {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.tuners-list-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tuners-list-item-meta {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.tuners-list-item-indicators {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
 }
 
 .tuners-detail-heading {
@@ -72,20 +104,64 @@
   padding: 0;
 }
 
-.tuners-settings {
-  display: grid;
-  gap: var(--space-3);
+.tuners-detail-facts {
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
 }
 
-.tuners-settings h3 {
+.tuners-detail-actions {
+  justify-content: flex-start;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.tuners-signal-layout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, .8fr);
+  align-items: start;
+}
+
+.tuners-signal-layout:has(.tuners-gain-panel[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tuners-gain-panel {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-left: 1px solid var(--line);
+}
+
+.tuners-gain-panel[hidden],
+.tuners-main > section[hidden] {
+  display: none;
+}
+
+.tuners-gain-panel h3 {
   margin: 0;
   font-size: var(--font-size-section-title);
 }
 
-.tuners-settings-list {
+.tuners-setting-group-body {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.tuners-gain-panel .tuners-setting-group-body {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+}
+
+.tuners-group-intro {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
 }
 
 .tuners-setting {
@@ -103,16 +179,24 @@
   min-width: 0;
 }
 
+.tuners-setting-queued {
+  border-color: color-mix(in srgb, var(--warning) 50%, var(--line));
+}
+
+.tuners-setting-transition {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
 .tuners-setting-hint,
 .tuners-setting-pending {
   margin: 0;
   color: var(--muted);
   font-size: var(--font-size-meta);
-}
-
-.tuners-setting-pending {
-  color: var(--ink);
-  font-weight: var(--font-weight-medium);
 }
 
 .tuners-setting-actions {
@@ -130,7 +214,20 @@
 }
 
 .tuners-spectrum .tuner-spectrum-layout {
-  min-height: 680px;
+  min-height: 620px;
+}
+
+.tuners-spectrum .tuner-spectrum-toolbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tuners-spectrum .tuner-spectrum-selection {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tuners-spectrum .tuner-spectrum-toolbar-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .tuners-recordings {
@@ -166,7 +263,24 @@
   }
 }
 
+@media (max-width: 850px) {
+  .tuners-signal-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-gain-panel {
+    order: -1;
+    border-bottom: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+
 @media (max-width: 680px) {
+  .tuners-page-header .tuners-analyze-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
   .tuners-spectrum .tuner-spectrum-layout {
     min-height: 620px;
   }

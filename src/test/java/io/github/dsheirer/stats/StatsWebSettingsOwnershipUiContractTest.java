@@ -36,8 +36,8 @@ class StatsWebSettingsOwnershipUiContractTest
         String adminGroups = function(source, "function adminSettingsGroups()");
 
         assertTrue(adminGroups.contains("id: 'live-timing', label: 'Receiver-wide Live timing'"));
-        assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25'"));
-        assertTrue(adminGroups.contains("id: 'protocol-dmr', label: 'DMR'"));
+        assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25 band plans'"));
+        assertFalse(adminGroups.contains("id: 'protocol-dmr'"));
         assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
         assertTrue(request.contains("'/api/v1/admin/receiver-settings'"));
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
