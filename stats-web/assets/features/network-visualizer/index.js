@@ -498,7 +498,7 @@ function createP25Visualizer(dependencies = {}) {
       forward: Number(pressedKeys.has('w')) - Number(pressedKeys.has('s')),
       right: Number(pressedKeys.has('d')) - Number(pressedKeys.has('a')),
       up: Number(pressedKeys.has('e')) - Number(pressedKeys.has('q')),
-      yaw: Number(pressedKeys.has('ArrowRight')) - Number(pressedKeys.has('ArrowLeft')),
+      yaw: Number(pressedKeys.has('ArrowLeft')) - Number(pressedKeys.has('ArrowRight')),
       pitch: Number(pressedKeys.has('ArrowUp')) - Number(pressedKeys.has('ArrowDown'))
     }, delta);
     const cameraState = camera.update(Date.now());

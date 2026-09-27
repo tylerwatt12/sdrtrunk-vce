@@ -15728,7 +15728,7 @@ let p25VisualizerModulePromise = null;
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=23');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=24');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
