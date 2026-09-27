@@ -1,10 +1,11 @@
 'use strict';
 
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
-const SYSTEM_RADIUS = 260;
+const SYSTEM_RADIUS = 300;
 const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
 const FOCUS_FADE_MS = 220;
+const SYSTEM_FOG_DEPTH = 0.83;
 
 let vendorPromise;
 const loadVendor = () => vendorPromise ||= import(new URL(VENDOR_ASSET, import.meta.url).href);
@@ -21,6 +22,22 @@ function clamp(value, minimum, maximum) {
 function ease(value) {
   const progress = clamp(value, 0, 1);
   return progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
+}
+
+function calculateFocusBounds(keys, nodes, movements) {
+  const values = [...new Set(keys)].map((key) => nodes.get(String(key))).filter(Boolean).map((node) => {
+    const target = movements.get(node.id)?.target;
+    return target ? { ...node, x: target.x, y: target.y, z: target.z } : node;
+  });
+  if (!values.length) return null;
+  const center = values.reduce((sum, node) => ({ x: sum.x + node.x, y: sum.y + node.y, z: sum.z + node.z }),
+    { x: 0, y: 0, z: 0 });
+  center.x /= values.length;
+  center.y /= values.length;
+  center.z /= values.length;
+  const radius = Math.max(12, ...values.map((node) => Math.hypot(node.x - center.x, node.y - center.y,
+    node.z - center.z) + finite(node.radius, 8)));
+  return { center, radius };
 }
 
 function element(documentValue, tag, className = '') {
@@ -317,6 +334,7 @@ async function createP25Renderer(options = {}) {
     links.clear();
     nextLinks.forEach((link) => links.set(link.id, link));
     graph.graphData({ nodes: nextNodes, links: nextLinks });
+    updateSystemFog();
     nextNodes.forEach((node) => applyNodeStyle(node));
     nextLinks.forEach((link) => applyLinkStyle(link));
     graph.refresh();
@@ -338,16 +356,27 @@ async function createP25Renderer(options = {}) {
     return scope.level === 'talkgroup' ? nodes.get(scope.groupKey) : null;
   }
 
+  function updateSystemFog() {
+    if (!scene || scope.level === 'overview') return;
+    const radius = finite(systemNode()?.radius, SYSTEM_RADIUS);
+    const density = SYSTEM_FOG_DEPTH / Math.max(SYSTEM_RADIUS, radius);
+    if (scene.fog) scene.fog.density = density;
+    else scene.fog = new library.FogExp2(colors.background, density);
+  }
+
   function containSystemCamera() {
     const system = systemNode();
     if (!system || !controls || !graph) return;
     const center = new library.Vector3(system.x, system.y, system.z);
     const camera = graph.camera();
     const offset = new library.Vector3().copy(camera.position).sub(center);
-    const maximum = finite(system.radius, SYSTEM_RADIUS) * 0.88;
+    const systemRadius = finite(system.radius, SYSTEM_RADIUS);
+    const maximum = systemRadius * 0.88;
     if (offset.length() > maximum) camera.position.copy(center.clone().add(offset.setLength(maximum)));
     const targetOffset = new library.Vector3().copy(controls.target).sub(center);
-    if (targetOffset.length() > maximum * 0.82) controls.target.copy(center.clone().add(targetOffset.setLength(maximum * 0.82)));
+    if (targetOffset.length() > systemRadius * 0.96) {
+      controls.target.copy(center.clone().add(targetOffset.setLength(systemRadius * 0.96)));
+    }
     camera.lookAt(controls.target);
     controls.maxDistance = maximum;
   }
@@ -446,16 +475,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function boundsFor(keys) {
-    const values = [...new Set(keys)].map((key) => nodes.get(String(key))).filter(Boolean);
-    if (!values.length) return null;
-    const center = values.reduce((sum, node) => ({ x: sum.x + node.x, y: sum.y + node.y, z: sum.z + node.z }),
-      { x: 0, y: 0, z: 0 });
-    center.x /= values.length;
-    center.y /= values.length;
-    center.z /= values.length;
-    const radius = Math.max(12, ...values.map((node) => Math.hypot(node.x - center.x, node.y - center.y,
-      node.z - center.z) + finite(node.radius, 8)));
-    return { center, radius };
+    return calculateFocusBounds(keys, nodes, movements);
   }
 
   function focus(keys, duration = 900) {
@@ -468,7 +488,7 @@ async function createP25Renderer(options = {}) {
       system.z - bounds.center.z);
     if (inward.lengthSq() < 0.001) inward.set(0.7, 0.35, 1);
     inward.normalize();
-    const distance = clamp(bounds.radius * 3.2, 58, 125);
+    const distance = clamp(bounds.radius * 3.2, 64, finite(system.radius, SYSTEM_RADIUS) * 0.72);
     return tweenCamera({ x: bounds.center.x + inward.x * distance, y: bounds.center.y + inward.y * distance,
       z: bounds.center.z + inward.z * distance }, bounds.center, duration);
   }
@@ -491,7 +511,7 @@ async function createP25Renderer(options = {}) {
 
   function enterSystem(systemKey, optionsValue = {}) {
     scope = { level: 'system', systemKey: String(systemKey || '') };
-    if (scene) scene.fog = new library.FogExp2(colors.background, 0.0032);
+    updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
     containSystemCamera();
     updateAutoRotate();
@@ -500,7 +520,7 @@ async function createP25Renderer(options = {}) {
 
   function enterTalkgroup(systemKey, groupKey, optionsValue = {}) {
     scope = { level: 'talkgroup', systemKey: String(systemKey || ''), groupKey: String(groupKey || '') };
-    if (scene) scene.fog = new library.FogExp2(colors.background, 0.0032);
+    updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
     containSystemCamera();
     updateAutoRotate();
@@ -770,4 +790,4 @@ async function createP25Renderer(options = {}) {
     showOverview, focus, home, moveManualCamera, enterFullscreen, exitFullscreen, dispose });
 }
 
-export { createP25Renderer };
+export { calculateFocusBounds, createP25Renderer };

@@ -268,7 +268,13 @@ function createP25Visualizer(dependencies = {}) {
       if (!decision.accepted) continue;
       lastCameraPhase = 'focus';
       renderer?.setCameraPhase('focus');
-      renderer?.focus(focusKeys, decision.state.timing.transitionMs);
+      if (!renderer?.focus(focusKeys, decision.state.timing.transitionMs)) {
+        camera.cancel();
+        lastCameraPhase = 'roam';
+        renderer?.setCameraPhase('roam');
+        clearAutoFocus();
+        break;
+      }
       showAutoFocus(event);
       break;
     }

@@ -10,7 +10,11 @@ const MAX_EVENTS = 120;
 const MAX_SEEN_IDS = 30_000;
 const MAX_PRIOR_GROUPS = 3;
 const REPEAT_FOCUS_MS = 60_000;
-const SYSTEM_RADIUS = 260;
+const SYSTEM_RADIUS = 300;
+const GROUP_CLOUD_MARGIN = 76;
+const GROUP_GRID_SPACING = 124;
+const GROUP_GRID_JITTER = 6;
+const MAX_VISIBLE_GROUPS = 220;
 
 const CAMERA_PRIORITY = Object.freeze({
   emergency: 4,
@@ -117,7 +121,13 @@ function stableHash(value) {
 }
 
 function unit(value) {
-  return (stableHash(value) & 0xffff) / 0xffff;
+  let hash = stableHash(value);
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 0xffffffff;
 }
 
 function systemPosition(ordinal) {
@@ -130,10 +140,44 @@ function systemPosition(ordinal) {
 function localPosition(key, minimum, maximum) {
   const vertical = unit(`${key}:y`) * 2 - 1;
   const angle = unit(`${key}:a`) * Math.PI * 2;
-  const radius = minimum + unit(`${key}:r`) * (maximum - minimum);
+  const radius = minimum + Math.cbrt(unit(`${key}:r`)) * (maximum - minimum);
   const horizontal = Math.sqrt(Math.max(0, 1 - vertical * vertical));
   return { x: Math.cos(angle) * horizontal * radius, y: vertical * radius,
     z: Math.sin(angle) * horizontal * radius };
+}
+
+function groupSlot(system, ordinal) {
+  while (system.groupSlots.length <= ordinal) {
+    const shell = system.groupShell + 1;
+    const slots = [];
+    for (let x = -shell; x <= shell; x += 1) {
+      for (let y = -shell; y <= shell; y += 1) {
+        for (let z = -shell; z <= shell; z += 1) {
+          const distance = Math.hypot(x, y, z);
+          if (distance > shell || distance <= shell - 1) continue;
+          slots.push({ x, y, z });
+        }
+      }
+    }
+    slots.sort((left, right) => stableHash(`${system.key}:${left.x}:${left.y}:${left.z}`) -
+      stableHash(`${system.key}:${right.x}:${right.y}:${right.z}`));
+    system.groupSlots.push(...slots);
+    system.groupShell = shell;
+  }
+  return system.groupSlots[ordinal];
+}
+
+function groupPosition(system, key, ordinal) {
+  const slot = groupSlot(system, ordinal);
+  const x = slot.x * GROUP_GRID_SPACING + (unit(`${key}:jx`) * 2 - 1) * GROUP_GRID_JITTER;
+  const y = slot.y * GROUP_GRID_SPACING + (unit(`${key}:jy`) * 2 - 1) * GROUP_GRID_JITTER;
+  const z = slot.z * GROUP_GRID_SPACING + (unit(`${key}:jz`) * 2 - 1) * GROUP_GRID_JITTER;
+  const yaw = unit(`${system.key}:yaw`) * Math.PI * 2;
+  const pitch = (unit(`${system.key}:pitch`) - 0.5) * Math.PI;
+  const yawX = x * Math.cos(yaw) - z * Math.sin(yaw);
+  const yawZ = x * Math.sin(yaw) + z * Math.cos(yaw);
+  return { x: system.x + yawX, y: system.y + y * Math.cos(pitch) - yawZ * Math.sin(pitch),
+    z: system.z + y * Math.sin(pitch) + yawZ * Math.cos(pitch) };
 }
 
 function createP25HistoryState(options = {}) {
@@ -167,7 +211,7 @@ function ensureSystem(state, row) {
     const position = systemPosition(state.systems.size);
     system = { key, label: systemLabel(row), wacn: row.wacn ?? null, systemId: row.system_id ?? null,
       ordinal: state.systems.size, x: position.x, y: position.y, z: position.z, radius: SYSTEM_RADIUS,
-      score: 0, lastAtMs: 0, groupKeys: new Set(), radioKeys: new Set() };
+      score: 0, lastAtMs: 0, groupKeys: new Set(), radioKeys: new Set(), groupSlots: [], groupShell: -1 };
     state.systems.set(key, system);
   } else if (!system.label || system.label.startsWith('P25 ')) {
     system.label = systemLabel(row);
@@ -185,10 +229,10 @@ function ensureGroup(state, system, row, identityKey) {
       state.truncated = true;
       return null;
     }
-    const local = localPosition(key, 72, 160);
+    const position = groupPosition(system, key, system.groupKeys.size);
     group = { key, identityKey, systemKey: system.key, label: groupLabel(row, identityKey),
-      nativeId: nativeId(identityKey, row.target_native_id ?? row.target_id), x: system.x + local.x,
-      y: system.y + local.y, z: system.z + local.z, lastAtMs: 0, radioKeys: new Set(),
+      x: position.x, y: position.y, z: position.z,
+      nativeId: nativeId(identityKey, row.target_native_id ?? row.target_id), lastAtMs: 0, radioKeys: new Set(),
       signalAction: '', highlightUntilMs: 0 };
     state.groups.set(key, group);
     system.groupKeys.add(key);
@@ -420,7 +464,12 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   const focused = focusGroup?.systemKey === systemKey;
   const allGroups = [...system.groupKeys].map((key) => state.groups.get(key)).filter(Boolean)
     .sort((left, right) => right.lastAtMs - left.lastAtMs);
-  const groups = focused ? [focusGroup] : allGroups.slice(0, 220);
+  const layoutGroups = allGroups.slice(0, MAX_VISIBLE_GROUPS);
+  if (focused && !layoutGroups.includes(focusGroup)) layoutGroups.push(focusGroup);
+  const groupPositions = new Map(layoutGroups.map((group) => [group.key, group]));
+  system.radius = Math.max(system.radius, ...layoutGroups.map((group) => Math.hypot(group.x - system.x,
+    group.y - system.y, group.z - system.z) + GROUP_CLOUD_MARGIN));
+  const groups = focused ? [focusGroup] : layoutGroups;
   const groupKeys = new Set(groups.map((group) => group.key));
   const touchesFocus = (radio) => radio.visualGroupKey === focusGroup?.key ||
     radio.priorGroupKeys.includes(focusGroup?.key) ||
@@ -431,8 +480,12 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   const radioKeys = new Set(radios.map((radio) => radio.key));
   const nodes = [{ id: system.key, type: 'system', label: system.label, x: system.x, y: system.y, z: system.z,
     radius: system.radius, systemKey: system.key }];
-  groups.forEach((group) => nodes.push({ id: group.key, type: 'talkgroup', label: group.label,
-    x: group.x, y: group.y, z: group.z, radius: 13, systemKey, signalAction: visibleSignal(group, atMs) }));
+  groups.forEach((group) => {
+    const position = groupPositions.get(group.key);
+    nodes.push({ id: group.key, type: 'talkgroup', label: group.label,
+      x: position.x, y: position.y, z: position.z, radius: 13, systemKey,
+      signalAction: visibleSignal(group, atMs) });
+  });
 
   const groupedRadios = new Map();
   radios.forEach((radio) => {
@@ -441,10 +494,10 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
     groupedRadios.get(parentKey).push(radio);
   });
   groupedRadios.forEach((members, parentKey) => {
-    const parent = state.groups.get(parentKey) || system;
+    const parent = groupPositions.get(parentKey) || system;
     members.forEach((radio) => {
       const offset = localPosition(`${radio.key}:${parentKey || 'unaffiliated'}`,
-        parentKey ? 24 : 48, parentKey ? 64 : 215);
+        parentKey ? 16 : system.radius * 0.72, parentKey ? 40 : system.radius * 0.82);
       radio.x = parent.x + offset.x;
       radio.y = parent.y + offset.y;
       radio.z = parent.z + offset.z;

@@ -14,6 +14,8 @@ function event(key, category, observedAtMs, focusKeys = [`${category}-target`]) 
 async function main() {
   const { CAMERA_PRIORITY, createP25CameraCoordinator } = await import(
     `${pathToFileURL(path.join(feature, 'camera.js')).href}?camera-test=1`);
+  const { calculateFocusBounds } = await import(
+    `${pathToFileURL(path.join(feature, 'renderer.js')).href}?camera-test=1`);
   assert.deepEqual(CAMERA_PRIORITY, {
     emergency: 4,
     movement: 3,
@@ -81,6 +83,14 @@ async function main() {
   const noTarget = createP25CameraCoordinator();
   assert.equal(noTarget.consider(event('emergency:no-target', 'emergency', 30, []), 1).accepted, false,
     'events without a visible focus target cannot move the camera');
+
+  const settledBounds = calculateFocusBounds(['radio'], new Map([
+    ['radio', { id: 'radio', x: 0, y: 0, z: 0, radius: 6.5 }]
+  ]), new Map([
+    ['radio', { target: { x: 100, y: 20, z: -10 } }]
+  ]));
+  assert.deepEqual(settledBounds.center, { x: 100, y: 20, z: -10 },
+    'camera focus must frame a moving radio at its settled destination instead of its old coordinates');
 
   console.log('P25 Visualizer camera checks passed.');
 }

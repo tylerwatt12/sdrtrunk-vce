@@ -81,6 +81,71 @@ async function main() {
   assert.equal(history.buildP25Graph(state, SYSTEM_A, 0).nodes.some((node) => node.signalAction), false,
     'seed history builds the scene without replaying old highlights');
 
+  const cloudRows = Array.from({ length: 220 }, (_, index) => row(100 + index, 'JOIN', {
+    source_identity_key: `v1-r-${8_000 + index}`,
+    source_radio_id: 8_000 + index,
+    source_alias_name: `Unit ${8_000 + index}`,
+    target_identity_key: `v1-g-${300 + index}`,
+    target_id: 300 + index,
+    target_alias_name: `Group ${300 + index}`
+  }));
+  const cloudState = history.createP25HistoryState();
+  history.applyP25ActivityRows(cloudState, cloudRows, { initial: true });
+  const cloudGraph = history.buildP25Graph(cloudState, SYSTEM_A, Number.MAX_SAFE_INTEGER);
+  const cloudGroups = cloudGraph.nodes.filter((node) => node.type === 'talkgroup');
+  const cloudRadios = cloudGraph.nodes.filter((node) => node.type === 'radio');
+  const minimumGroupDistance = Math.min(...cloudGroups.flatMap((left, index) =>
+    cloudGroups.slice(index + 1).map((right) => Math.hypot(left.x - right.x, left.y - right.y,
+      left.z - right.z))));
+  assert.ok(minimumGroupDistance >= 103.99,
+    `talkgroup cloud anchors should remain visibly separated (minimum ${minimumGroupDistance})`);
+  cloudRadios.forEach((cloudRadio) => {
+    const parent = cloudGroups.find((group) => group.id === cloudRadio.groupKey);
+    assert.ok(parent, 'each affiliated radio should retain its talkgroup cloud anchor');
+    assert.ok(Math.hypot(cloudRadio.x - parent.x, cloudRadio.y - parent.y, cloudRadio.z - parent.z) <= 40.001,
+      'affiliated radios should stay in a compact cloud around their talkgroup');
+    const nearest = cloudGroups.slice().sort((left, right) =>
+      Math.hypot(cloudRadio.x - left.x, cloudRadio.y - left.y, cloudRadio.z - left.z) -
+      Math.hypot(cloudRadio.x - right.x, cloudRadio.y - right.y, cloudRadio.z - right.z))[0];
+    assert.equal(nearest.id, parent.id, 'a radio should remain closest to its own talkgroup cloud anchor');
+  });
+  const repeatState = history.createP25HistoryState();
+  history.applyP25ActivityRows(repeatState, cloudRows, { initial: true });
+  const repeatedGroups = history.buildP25Graph(repeatState, SYSTEM_A, Number.MAX_SAFE_INTEGER).nodes
+    .filter((node) => node.type === 'talkgroup').map(({ id, x, y, z }) => ({ id, x, y, z }));
+  assert.deepEqual(repeatedGroups, cloudGroups.map(({ id, x, y, z }) => ({ id, x, y, z })),
+    'the same saved history should always produce the same talkgroup cloud');
+
+  const mixedRows = Array.from({ length: 500 }, (_, index) => row(1_000 + index, 'JOIN', {
+    source_identity_key: `v1-r-${9_000 + index}`,
+    source_radio_id: 9_000 + index,
+    target_identity_key: `v1-g-${1_000 + index}`,
+    target_id: 1_000 + index
+  }));
+  const mixedState = history.createP25HistoryState();
+  history.applyP25ActivityRows(mixedState, mixedRows, { initial: true });
+  const beforeMixedGroups = new Map(history.buildP25Graph(mixedState, SYSTEM_A, Number.MAX_SAFE_INTEGER).nodes
+    .filter((node) => node.type === 'talkgroup').map(({ id, x, y, z }) => [id, { x, y, z }]));
+  history.applyP25ActivityRows(mixedState, [{ ...mixedRows[0], id: 2_000,
+    observed_at_ms: mixedRows[0].observed_at_ms + 10_000 }], { initial: true });
+  const mixedGraph = history.buildP25Graph(mixedState, SYSTEM_A, Number.MAX_SAFE_INTEGER);
+  const mixedGroups = mixedGraph.nodes.filter((node) => node.type === 'talkgroup');
+  const mixedMinimum = Math.min(...mixedGroups.flatMap((left, index) => mixedGroups.slice(index + 1)
+    .map((right) => Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z))));
+  assert.ok(mixedMinimum >= 103.99,
+    'visible talkgroups should retain their separation when older groups become recent again');
+  mixedGroups.filter((group) => beforeMixedGroups.has(group.id)).forEach((group) => {
+    assert.deepEqual({ x: group.x, y: group.y, z: group.z }, beforeMixedGroups.get(group.id),
+      'changing the visible set must not move retained talkgroup cloud anchors');
+  });
+  mixedGraph.nodes.filter((node) => node.type === 'radio' && node.groupKey).forEach((mixedRadio) => {
+    const nearest = mixedGroups.slice().sort((left, right) =>
+      Math.hypot(mixedRadio.x - left.x, mixedRadio.y - left.y, mixedRadio.z - left.z) -
+      Math.hypot(mixedRadio.x - right.x, mixedRadio.y - right.y, mixedRadio.z - right.z))[0];
+    assert.equal(nearest.id, mixedRadio.groupKey,
+      'recency changes must not make a radio appear closer to another talkgroup cloud');
+  });
+
   const ingestionTime = 2_000_000_000_000;
   const denied = history.applyP25ActivityRows(state, [
     row(6, 'DENIAL', {
