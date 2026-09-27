@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class StatsWebPresentationUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
+    private static final Path TABLE_DEFAULTS = Path.of("stats-web", "assets", "core", "table-defaults.js");
 
     @Test
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
@@ -50,7 +51,7 @@ class StatsWebPresentationUiContractTest
         String aliases = function(source, "async function renderAliases()");
         String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
         String channelFrequencies = function(source,
-            "async function renderTrunkedChannelFrequencies(channel, renderContext)");
+            "async function renderTrunkedChannelFrequencies(channel, renderContext, host)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
         String channels = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
 
@@ -103,17 +104,18 @@ class StatsWebPresentationUiContractTest
     void usesTheEstablishedReceiverAndLiveDetailColumnRatiosAsDefaults() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
+        String defaults = readText(TABLE_DEFAULTS);
 
-        assertTrue(source.contains("const TABLE_DEFAULT_COLUMN_WIDTHS = Object.freeze({"));
-        assertTrue(source.contains("'dashboard-receivers': Object.freeze({"));
-        assertTrue(source.contains("name: 442"));
-        assertTrue(source.contains("'live-events': Object.freeze({"));
-        assertTrue(source.contains("details: 864"));
-        assertTrue(source.contains("'live-messages': Object.freeze({"));
-        assertTrue(source.contains("message: 1200"));
+        assertTrue(source.contains("import * as tableDefaults from './core/table-defaults.js?v=9'"));
+        assertTrue(defaults.contains("'dashboard-receivers': { widths: {"));
+        assertTrue(defaults.contains("name: 442"));
+        assertTrue(defaults.contains("'live-events': { widths: {"));
+        assertTrue(defaults.contains("details: 864"));
+        assertTrue(defaults.contains("'live-messages': { widths: {"));
+        assertTrue(defaults.contains("message: 1200"));
+        assertTrue(source.contains("const defaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
         assertTrue(source.contains("const storedLayout = options.layout || " +
-            "activeUserPreferences().tables[tableType] ||"));
-        assertTrue(source.contains("column_widths: defaultColumnWidths"));
+            "activeUserPreferences().tables[tableType] || defaultLayout"));
     }
 
     @Test
@@ -155,10 +157,11 @@ class StatsWebPresentationUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String detail = function(source, "function observedGroupIdentityDetail(row, selectedList)");
 
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr))"));
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr))"));
         assertTrue(css.contains("background: var(--surface-2);\n  border: 1px solid var(--line);\n" +
             "  border-radius: var(--radius-control);"));
-        assertTrue(css.contains(".ui-metric > span {\n  min-height: 0;"));
+        assertTrue(css.contains(".ui-metric-copy {\n  min-width: 0;"));
+        assertTrue(css.contains(".ui-metric-copy > strong {"));
         assertTrue(detail.contains("node('div', 'observed-group-identity-detail-column')"));
         assertTrue(detail.contains("wrapper.append(identityColumn, activityColumn)"));
         assertTrue(css.contains(".observed-group-identity-detail-column {"));

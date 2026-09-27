@@ -281,17 +281,17 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));"));
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));"));
         assertTrue(css.contains(".ui-metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
         assertTrue(css.contains(".ui-data-table.resizable-table th:last-child .column-resizer {\n  right: 0;"));
-        assertTrue(css.contains(".table-column-autofit-measurement {"));
+        assertTrue(css.contains(".ui-data-table.table-column-autofit-measurement {"));
         assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
         assertTrue(css.contains(".ui-table-wrap {"));
         assertTrue(css.contains("overflow-x: auto;"));
         assertTrue(source.contains("wrapper.className = 'table-wrap ui-table-wrap'"));
         assertTrue(source.contains("node('table', 'data-table resizable-table ui-data-table')"));
-        assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths)")
+        assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths, fixed = false)")
             .contains("element.style.minWidth = `${Math.round(total)}px`"));
         assertTrue(function(source, "function addColumnResizers(element, columns, columnElements, headers, tableType,")
             .contains("addEventListener('dblclick'"));
@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"213\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"214\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -340,13 +340,14 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String systems = function(source, "async function renderRadioSystems()");
-        String catalog = function(source, "async function renderModernChannelCatalog(renderContext, editable)");
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext, embedded = false)");
         assertTrue(systems.contains("renderModernChannelCatalog(renderContext, false)"));
-        assertTrue(catalog.contains("'Browse every configured trunked and conventional channel"));
-        assertTrue(catalog.contains("value: 'trunked'"));
-        assertTrue(catalog.contains("value: 'conventional'"));
-        assertTrue(catalog.contains("value: 'running'"));
-        assertTrue(catalog.contains("value: 'stopped'"));
+        assertTrue(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
+        assertTrue(directory.contains("'Browse systems, sites, and conventional channels'"));
+        assertTrue(directory.contains("radioDirectoryTrunkedGroups(directory.catalog, directory.systems)"));
+        assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
+        assertTrue(directory.contains("value: 'running'"));
+        assertTrue(directory.contains("value: 'stopped'"));
         assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));
     }
 
@@ -368,12 +369,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function groupIdentityActivityChart(response, seriesConfigurations, ariaLabel)")
             .contains("const largest = configurations.reduce"));
         assertTrue(source.contains("section('Logical Call Activity'"));
-        assertTrue(source.contains("tableSection('Retained Signaling Observations'"));
+        assertTrue(source.contains("section('Retained Signaling Observations'"));
         assertTrue(source.contains("section('Call Activity'"));
         assertFalse(function(source, "async function renderGroupIdentity()")
             .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(function(source, "async function renderRadio()")
-            .contains("tableSection('Collected Signaling Observations'"));
+            .contains("section('Collected Signaling Observations'"));
         String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters)");
         assertTrue(history.contains("section('Activity History'"));
         assertTrue(history.contains("section('Call Activity'"));
@@ -459,7 +460,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String frequencies = function(source,
-            "async function renderTrunkedChannelFrequencies(channel, renderContext)");
+            "async function renderTrunkedChannelFrequencies(channel, renderContext, host)");
         String neighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
         String channel = function(source,
             "async function renderTrunkedChannel(channel, configurationId, renderContext)");
@@ -477,7 +478,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(neighbors.contains("pagedTableContent(page"));
         assertTrue(neighbors.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(neighbors.contains("controller: directory.tableController"));
-        assertTrue(channel.contains("renderTrunkedChannelFrequencies(channel, renderContext)"));
+        assertTrue(channel.contains("renderTrunkedChannelFrequencies(channel, renderContext, frequencyColumn)"));
         assertTrue(channel.contains("renderChannelNeighbors(channel, renderContext)"));
         assertTrue(system.contains("const tabItems = radioSystemTabItems(system)"));
         assertTrue(system.contains("tabItems.some((item) => item.id === requestedTab)"));
@@ -517,12 +518,13 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String href = function(source, "function exportCsvHref(dataset, context = {})");
-        String helper = function(source, "function exportCsvLink(dataset, context = {}, label = 'Export CSV', options = {})");
+        String helper = function(source, "function exportCsvLink(dataset, context = {}, options = {})");
         assertTrue(href.contains("`/api/v1/exports/${encodeURIComponent(String(dataset))}.csv`"));
         assertTrue(href.contains("['q', 'sort', 'direction']"));
         assertTrue(href.contains("return `${path}${parameters.size ? `?${parameters}` : ''}`"));
         assertFalse(href.contains("parameters.set('dataset'"));
-        assertTrue(helper.contains("anchor(label, exportCsvHref(dataset, context)"));
+        assertTrue(helper.contains("anchor(iconGlyph('icon-share'), exportCsvHref(dataset, context)"));
+        assertTrue(helper.contains("const label = `Export ${dataset.replace(/-/g, ' ')} as CSV`"));
         assertTrue(helper.contains("link.setAttribute('download', '')"));
         assertTrue(helper.contains("link.setAttribute('aria-label'"));
         assertFalse(href.contains("'limit'"));
@@ -535,7 +537,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(system.contains("exportCsvLink('radio-system-talker-aliases', radioSystem)"));
         assertEquals(3, system.split("exportCsvLink\\(", -1).length - 1);
 
-        assertTrue(function(source, "async function renderTrunkedChannelFrequencies(channel, renderContext)")
+        assertTrue(function(source, "async function renderTrunkedChannelFrequencies(channel, renderContext, host)")
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
         assertTrue(function(source, "async function renderChannelNeighbors(channel, renderContext)")
             .contains("exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id })"));
@@ -550,7 +552,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
             .contains("exportCsvLink("));
-        assertTrue(StatsWebStylesheetTestSupport.readAll().contains(".export-csv-action"));
+        assertTrue(helper.contains("'ui-button ui-button-secondary ui-icon-button export-csv-action'"));
     }
 
     @Test
@@ -658,7 +660,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=185"));
+        assertTrue(html.contains("/assets/app.css?v=186"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -694,7 +696,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("class=\"playback-volume-label\" aria-hidden=\"true\">VOL</span>"));
         assertFalse(html.contains("id=\"playback-volume-value\""));
-        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=3';"));
+        assertTrue(application.contains("import { WebCallPlayer } from './web-call-player.js?v=4';"));
         assertFalse(html.contains("/assets/web-call-player.js"));
         assertFalse(source.contains("VOLUME_KEY"));
         assertFalse(source.contains("localStorage"));
@@ -715,7 +717,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(startCurrent.contains("source.connect(this.analyserNode)"));
         String spectrum = function(source, "  readAudioSpectrum(levels, maximumFrequencyHz = 8_000)");
         assertTrue(spectrum.contains("this.analyserNode.getByteFrequencyData(this.spectrumSamples)"));
-        assertTrue(spectrum.contains("Math.ceil(maximum / nyquist * sampleCount)"));
+        assertTrue(spectrum.contains("Math.ceil(Math.min(maximum, sourceNyquist, nyquist) / nyquist * sampleCount)"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
         assertTrue(css.contains(".playback-volume:has(input:focus-visible)"));
         assertTrue(css.contains(".playback-volume input::-webkit-slider-runnable-track"));
@@ -780,9 +782,10 @@ class StatsWebInteractionUiContractTest
             "aria-label=\"Replay last call\""));
         assertTrue(html.contains("<use href=\"#icon-replay\"></use>"));
         assertTrue(html.contains("id=\"playback-control-menu\" class=\"playback-control-menu\" open"));
-        assertTrue(css.contains(".desktop-playback-slot .playback-control-menu[open] > " +
+        assertTrue(css.contains(".playback-control-menu[open] > " +
             ".playback-control-menu-panel"));
-        assertTrue(css.contains(".desktop-playback-slot .playback-control-menu-panel .playback-volume"));
+        assertTrue(css.contains(":is(.desktop-playback-slot, .scanner-player-host) " +
+            ".playback-control-menu-panel .playback-volume"));
         assertFalse(css.contains(".playback-controls .playback-command:not(#playback-play)"));
         assertFalse(html.contains("id=\"playback-capacity\""));
         assertFalse(source.contains("Matching calls are delivered once"));
@@ -805,7 +808,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(togglePause.contains("stopFeed()"));
         assertFalse(togglePause.contains("clearQueuedCalls()"));
         assertFalse(togglePause.contains("stopCurrent()"));
-        assertTrue(function(source(), "function renderScanner()").contains("player.togglePause()"));
+        assertTrue(function(source, "  bindControls()").contains("this.togglePause()"));
         assertTrue(source.contains("this.ui.pause.disabled = this.stopped"));
         assertTrue(togglePlayback.contains("this.stopCurrent()"));
         assertTrue(togglePlayback.contains("if (!this.ensureConnected())"));
@@ -978,11 +981,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Normal"));
         assertTrue(scanner.contains("Advanced"));
         assertTrue(scanner.contains("Engineer"));
-        assertTrue(scanner.contains("Avoid List"));
+        assertTrue(source.contains("openReadOnlyModal('Avoid List'"));
         assertFalse(scanner.contains("Recent Calls"));
-        assertTrue(scanner.contains("Replay Last Call"));
-        assertTrue(scanner.contains("Clear Queue"));
-        assertTrue(scanner.contains("View coverage tree"));
+        assertTrue(html.contains("aria-label=\"Replay last call\""));
+        assertTrue(html.contains("aria-label=\"Clear queued calls\""));
+        assertTrue(scanner.contains("View scan-list coverage"));
         assertTrue(coverageTree.contains("const listId = aliasListId(alias)"));
         assertTrue(coverageTree.contains("if (listId === null) return"));
         assertFalse(coverageTree.contains("alias.alias_list_id ?? alias.alias_list"));
@@ -1018,11 +1021,12 @@ class StatsWebInteractionUiContractTest
         assertFalse(scanner.contains("Squelch"));
         assertFalse(scanner.contains("Tune"));
         assertFalse(scanner.contains("RF Signal"));
-        assertTrue(css.contains(".scanner-player-host > .playback-bar {"));
+        assertTrue(css.contains(".scanner-player-host > .playback-bar.scanner-expanded {"));
         assertTrue(css.contains(".scanner-workspace {"));
         assertTrue(css.contains(".scanner-field-grid {"));
-        assertTrue(css.contains("height: clamp(380px, 46vh, 470px);"));
-        assertTrue(css.contains("scrollbar-gutter: stable;"));
+        assertTrue(css.contains(".scanner-display.is-idle {\n  min-height: 280px;"));
+        assertTrue(css.contains("max-height: clamp(300px, 43vh, 460px);"));
+        assertTrue(css.contains(".scanner-scan-buttons {"));
         assertTrue(css.contains(".scanner-idle {\n  height: 100%;"));
         assertTrue(css.contains(".scanner-call-quality-values {"));
         assertFalse(css.contains(".scanner-quality-meter {"));
@@ -1030,20 +1034,20 @@ class StatsWebInteractionUiContractTest
         assertFalse(voiceMeter.contains("Voice Quality"));
         assertFalse(voiceMeter.contains("Measured from decoded voice frames"));
         assertFalse(voiceMeter.contains("node('strong'"));
-        assertTrue(scannerCall.contains("for (let index = 0; index < 24; index++)"));
+        assertTrue(scannerCall.contains("for (let index = 0; index < 64; index++) wave.append(node('i'))"));
         assertTrue(scannerCall.contains("node('div', 'scanner-call-instruments')"));
         assertTrue(scannerCall.contains("intro.append(copy, instruments)"));
         assertTrue(scannerCall.contains("host.dataset.renderKey === renderKey"));
-        assertTrue(scanner.contains("player.readAudioWaveform(waveformLevels)"));
-        assertTrue(scanner.contains("window.cancelAnimationFrame(waveformFrame)"));
+        assertTrue(scanner.contains("player.readAudioSpectrum(spectrumLevels, 8_000)"));
+        assertTrue(scanner.contains("window.cancelAnimationFrame(spectrumFrame)"));
         assertFalse(css.contains("@keyframes scanner-audio-wave"));
         assertFalse(css.contains("linear-gradient(145deg, #e8e2bd 0%, #d4d1b1 50%, #eee8c5 100%)"));
-        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(160px, 320px);"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
         assertTrue(css.contains("font-size: 14px;"));
-        assertTrue(source.contains("ui-button ${styleClass} scanner-key"));
+        assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
         assertTrue(scanner.contains("ui-choice-card scanner-scan-button"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
         assertTrue(css.contains("body[data-view=\"scanner\"] .page-header {"));

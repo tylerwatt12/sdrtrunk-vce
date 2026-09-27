@@ -26,10 +26,10 @@ class StatsWebNavigationHeaderUiContractTest
         String html = readText(INDEX_HTML);
         String source = readText(APP_JAVASCRIPT);
 
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"213\">"));
-        assertTrue(html.contains("/assets/app.css?v=185"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"214\">"));
+        assertTrue(html.contains("/assets/app.css?v=186"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=263\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=264\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));
@@ -41,7 +41,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("data-view=\"streaming\" href=\"/?view=streaming\""));
         assertTrue(html.contains("data-view=\"tuners\" href=\"/?view=tuners\""));
         assertTrue(html.contains("data-view=\"rf-planner\" href=\"/?view=rf-planner\""));
-        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js?v=2';"));
+        assertTrue(source.contains("import * as rfPlanner from './features/rf-planner.js?v=5';"));
         String hardware = block(source, "function renderHardware()");
         assertTrue(hardware.contains("route.get('tab') === 'rf-planner'"));
         assertTrue(source.contains("function renderRfPlanner()"));
@@ -70,7 +70,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(planner.contains("Loaded ${loaded.length} tuner"));
         assertTrue(planner.contains("target?.usable_bandwidth_hz"));
         assertTrue(planner.contains("if (planBuilt) calculate();"));
-        assertTrue(planner.contains("ui-button ui-button-secondary rfp-small rfp-add-tuner"));
+        assertTrue(planner.contains("ui-button ui-button-secondary rfp-add-tuner"));
         assertTrue(planner.contains("ui-empty-state rfp-empty"));
         assertTrue(planner.contains("ui-notice ui-notice-${tone} rfp-notice"));
         assertFalse(planner.contains("DSheirer"));
@@ -169,8 +169,9 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(indicator.contains("indicator.classList.remove(`receiver-health-${status}`)"));
         assertTrue(indicator.contains("indicator.classList.add(`receiver-health-${className}`)"));
         assertFalse(indicator.contains("indicator.className"));
-        assertTrue(css.contains(".ui-header-indicator {\n  width: 34px;\n  height: 34px;"));
-        assertTrue(css.contains("border-radius: 4px;"));
+        assertTrue(css.contains(".ui-header-indicator {\n  width: var(--icon-action-size);\n" +
+            "  height: var(--icon-action-size);"));
+        assertTrue(css.contains("border-radius: var(--icon-action-radius);"));
         assertTrue(html.contains("theme-toggle icon-button ui-button ui-button-header"));
         assertTrue(html.contains("auth-action ui-button ui-button-header"));
         assertTrue(css.contains(".header-controls .ui-button-header {"));
@@ -179,7 +180,7 @@ class StatsWebNavigationHeaderUiContractTest
     }
 
     @Test
-    void makesOnlyCompactPlaybackPanelsExclusive() throws Exception
+    void keepsPlaybackPanelsExclusiveAndExpandsControlsForTheScanner() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String player = readText(WEB_CALL_PLAYER);
@@ -188,12 +189,14 @@ class StatsWebNavigationHeaderUiContractTest
         String controls = block(player, "  bindControls()");
 
         assertTrue(header.contains("querySelectorAll('details:not(.playback-control-menu)')"));
-        assertTrue(header.contains("bar.classList.contains('scanner-expanded')"));
+        assertTrue(header.contains("if (navigationUsesDrawer() && controlMenu) controlMenu.open = false"));
         assertTrue(header.contains("if (other !== panel) other.open = false"));
         assertTrue(header.contains("if (panel.open && !panel.contains(event.target)) panel.open = false"));
         assertTrue(header.contains("controlMenu.open = !navigationUsesDrawer()"));
         assertTrue(header.contains("controlMenu?.open && !controlMenu.contains(event.target)"));
-        assertTrue(placement.contains("panel.open = Boolean(scannerHost)"));
+        assertTrue(placement.contains("bar.classList.toggle('scanner-expanded', Boolean(scannerHost))"));
+        assertTrue(placement.contains("(scannerHost || slot).append(bar)"));
+        assertTrue(placement.contains("panel.open = false"));
         assertTrue(controls.contains("panel.closest('.playback-bar')?.classList.contains('scanner-expanded')"));
         assertTrue(controls.contains("if (panel.open && !expanded)"));
     }
