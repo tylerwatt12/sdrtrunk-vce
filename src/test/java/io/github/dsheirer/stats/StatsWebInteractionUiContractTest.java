@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"200\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"213\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -559,10 +559,10 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
-        String renderer = function(source, "function activityIdentifier(row, value, kind, reference)");
-        String sourceAlias = function(source, "function activitySourceAlias(row)");
-        String sourceTalkerAlias = function(source, "function activitySourceTalkerAlias(row)");
-        String columns = function(source, "function activityColumns()");
+        String renderer = function(source, "function activityIdentifier(row, value, kind, reference, linked = true)");
+        String sourceAlias = function(source, "function activitySourceAlias(row, linked = true)");
+        String sourceTalkerAlias = function(source, "function activitySourceTalkerAlias(row, linked = true)");
+        String columns = function(source, "function activityColumns(context, filters)");
         assertTrue(labels.contains("0x0000: 'No Talkgroup'"));
         assertTrue(labels.contains("0xFFFF: 'Everyone'"));
         assertTrue(labels.contains("0x000000: 'No Unit'"));
@@ -593,8 +593,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(sourceTalkerAlias.contains("radioLink(row, row.source_radio_id, alias, row.source_entity_ref)"));
         assertTrue(columns.contains("label: 'Src Alias'"));
         assertTrue(columns.contains("label: 'Src OTA Alias'"));
-        assertTrue(columns.contains("render: activitySourceAlias"));
-        assertTrue(columns.contains("render: activitySourceTalkerAlias"));
+        assertTrue(columns.contains("activitySourceAlias(row, false)"));
+        assertTrue(columns.contains("activitySourceTalkerAlias(row, false)"));
     }
 
     @Test
@@ -658,7 +658,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=175"));
+        assertTrue(html.contains("/assets/app.css?v=185"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")

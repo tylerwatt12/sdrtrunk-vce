@@ -303,6 +303,7 @@ let playbackScanListRequest = 0;
 let playbackScanListLoading = false;
 let webCallPlayer = null;
 let activityFilterControlSequence = 0;
+let activityCellActionSequence = 0;
 
 function node(tag, className, textValue) {
   const element = document.createElement(tag);
@@ -16736,7 +16737,7 @@ function specialIdentifierLabel(row, value, kind) {
   return '';
 }
 
-function activityIdentifier(row, value, kind, reference) {
+function activityIdentifier(row, value, kind, reference, linked = true) {
   const identifier = identityNumber(row, value);
   if (identifier === '') return '';
   const specialLabel = specialIdentifierLabel(row, value, kind);
@@ -16749,9 +16750,9 @@ function activityIdentifier(row, value, kind, reference) {
     return result;
   }
   if (['talkgroup', 'patch_group'].includes(kind)) {
-    return groupIdentityLink(row, value, identifier, reference);
+    return linked ? groupIdentityLink(row, value, identifier, reference) : identifier;
   }
-  if (kind === 'radio') return radioLink(row, value, identifier, reference);
+  if (kind === 'radio') return linked ? radioLink(row, value, identifier, reference) : identifier;
   return identifier;
 }
 
@@ -16760,32 +16761,32 @@ function activityTargetKind(row) {
   return ['talkgroup', 'patch_group', 'radio'].includes(kind) ? kind : '';
 }
 
-function activityTargetIdentifier(row) {
+function activityTargetIdentifier(row, linked = true) {
   if (isAnalogChannel(row)) return '';
   const kind = activityTargetKind(row);
-  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref);
+  return activityIdentifier(row, row.target_id, kind, row.target_entity_ref, linked);
 }
 
-function activitySourceAlias(row) {
+function activitySourceAlias(row, linked = true) {
   const alias = row.source_alias_name || '';
   if (!alias) return '';
-  return specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
     alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
 }
 
-function activitySourceTalkerAlias(row) {
+function activitySourceTalkerAlias(row, linked = true) {
   const alias = String(row.source_talker_alias || '').trim();
   if (!alias) return '';
-  return specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+  return !linked || specialIdentifierLabel(row, row.source_radio_id, 'radio') ?
     alias : radioLink(row, row.source_radio_id, alias, row.source_entity_ref);
 }
 
-function activityTargetAlias(row) {
+function activityTargetAlias(row, linked = true) {
   if (isAnalogChannel(row)) return '';
   const alias = row.target_alias_name || '';
   if (!alias) return '';
   const kind = activityTargetKind(row);
-  if (specialIdentifierLabel(row, row.target_id, kind)) return alias;
+  if (!linked || specialIdentifierLabel(row, row.target_id, kind)) return alias;
   if (['talkgroup', 'patch_group'].includes(kind)) {
     return groupIdentityLink(row, row.target_id, alias, row.target_entity_ref);
   }
@@ -16793,10 +16794,10 @@ function activityTargetAlias(row) {
   return alias;
 }
 
-function activityChannel(row) {
+function activityChannel(row, linked = true) {
   const label = String(row.name || '').trim();
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row.entity_ref) : '';
-  const channel = label && target ? anchor(label, target) : label;
+  const channel = label && target && linked ? anchor(label, target) : label;
   const details = [
     Number(row.frequency_hz) ? `${frequency(row.frequency_hz)} MHz` : '',
     row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`,
@@ -16834,7 +16835,8 @@ function activityFilterContext(scopeParameters) {
     kind,
     protocol: String(input.protocol || '').trim().toUpperCase(),
     radioSystemKey: String(input.radio_system_key || scopeParameters?.radio_system_key || '').trim(),
-    configurationId: String(input.configuration_id || scopeParameters?.configuration_id || '').trim()
+    configurationId: String(input.configuration_id || scopeParameters?.configuration_id || '').trim(),
+    radioIdentityKey: activityIdentityKey(input.radio_identity_key || scopeParameters?.radio_identity_key)
   });
 }
 
@@ -17000,6 +17002,73 @@ function activityFilterRouteOverrides(filters) {
     activity_timeslot: filters.timeslot,
     before_id: null
   };
+}
+
+function activityCellFilterPatch(context, row, columnId) {
+  const capabilities = activityContextCapabilities(context);
+  const sourceColumns = new Set(['source', 'source-alias', 'source-ota-alias']);
+  const targetColumns = new Set(['target', 'target-alias']);
+  if (columnId === 'action') {
+    const action = String(row?.action || '').trim().toUpperCase();
+    return ACTIVITY_ACTION_VALUES.includes(action) ? { action } : null;
+  }
+  if (columnId === 'event') {
+    const eventType = String(row?.event_type || '').trim().toUpperCase();
+    return ACTIVITY_EVENT_TYPE_VALUES.includes(eventType) ? { eventType } : null;
+  }
+  const encryptionValue = row?.encrypted;
+  if (columnId === 'encryption' && capabilities.encryption &&
+      (typeof encryptionValue === 'boolean' || encryptionValue === 0 || encryptionValue === 1)) {
+    return { encryption: encryptionValue === true || encryptionValue === 1 ? 'encrypted' : 'clear' };
+  }
+  if (columnId === 'channel') {
+    const configurationId = String(row?.configuration_id || '').trim();
+    return capabilities.channel && configurationId ? { configurationId } : null;
+  }
+  if (sourceColumns.has(columnId)) {
+    const sourceIdentityKey = activityIdentityKey(row?.source_identity_key);
+    const sourceId = activityInteger(row?.source_radio_id, 0, 16_777_215);
+    if (capabilities.rawIdentities && sourceId !== null) {
+      return { sourceIdentityKey: '', sourceId };
+    }
+    if (capabilities.sourceIdentity && sourceIdentityKey) {
+      return { sourceIdentityKey, sourceId: null };
+    }
+    if (!capabilities.radioRole || !sourceIdentityKey || !context?.radioIdentityKey) return null;
+    if (sourceIdentityKey === context.radioIdentityKey) {
+      return { radioRole: 'source', sourceIdentityKey: '', sourceId: null };
+    }
+    return {
+      radioRole: 'target', sourceIdentityKey, sourceId: null,
+      targetIdentityKey: '', targetId: null, targetKind: ''
+    };
+  }
+  if (targetColumns.has(columnId)) {
+    const targetIdentityKey = activityIdentityKey(row?.target_identity_key);
+    const targetId = activityInteger(row?.target_id, 0, 16_777_215);
+    const requestedKind = String(row?.target_kind || '').trim().toLowerCase();
+    const targetKind = ['talkgroup', 'patch_group', 'radio'].includes(requestedKind) ? requestedKind : '';
+    if (capabilities.rawIdentities && targetId !== null && ['talkgroup', 'radio'].includes(targetKind)) {
+      return { targetIdentityKey: '', targetId, targetKind };
+    }
+    if (capabilities.targetIdentity && targetIdentityKey) {
+      return { targetIdentityKey, targetId: null, targetKind };
+    }
+    if (!capabilities.radioRole || !targetIdentityKey || !context?.radioIdentityKey) return null;
+    if (targetIdentityKey === context.radioIdentityKey) {
+      return { radioRole: 'target', targetIdentityKey: '', targetId: null, targetKind: '' };
+    }
+    return {
+      radioRole: 'source', targetIdentityKey, targetId: null, targetKind,
+      sourceIdentityKey: '', sourceId: null
+    };
+  }
+  return null;
+}
+
+function activityCellFilterRouteOverrides(filters, context, row, columnId) {
+  const patch = activityCellFilterPatch(context, row, columnId);
+  return patch ? activityFilterRouteOverrides({ ...filters, ...patch }) : null;
 }
 
 function activityLocalDateTimeValue(milliseconds) {
@@ -17572,33 +17641,134 @@ function activityFilterToolbar(context, initialFilters) {
   return form;
 }
 
-function activityColumns() {
+function activityCellNavigation(row, columnId) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) return null;
+  if (['source', 'source-alias', 'source-ota-alias'].includes(columnId)) {
+    const target = entityTarget(row?.source_entity_ref, { channel: 'radios' });
+    return target ? {
+      target,
+      title: 'Open source details',
+      description: 'Open the radio or saved-channel radio directory for this source.'
+    } : null;
+  }
+  if (['target', 'target-alias'].includes(columnId)) {
+    const kind = activityTargetKind(row);
+    const target = entityTarget(row?.target_entity_ref,
+      { channel: kind === 'radio' ? 'radios' : 'groups' });
+    return target ? {
+      target,
+      title: 'Open target details',
+      description: 'Open the radio, group, or saved-channel directory for this target.'
+    } : null;
+  }
+  if (columnId === 'channel') {
+    const target = entityRefHref(row?.entity_ref);
+    return target ? {
+      target,
+      title: 'Open channel details',
+      description: 'Open this channel or site and its saved details.'
+    } : null;
+  }
+  return null;
+}
+
+function activityCellDimension(columnId) {
+  return ({
+    action: 'action', event: 'event type', source: 'source radio',
+    'source-alias': 'source radio', 'source-ota-alias': 'source radio',
+    target: 'target', 'target-alias': 'target', channel: 'channel',
+    encryption: 'encryption state'
+  })[columnId] || 'value';
+}
+
+function activityCellValue(displayValue, row, columnId, context, filters) {
+  const text = displayValue instanceof Node ? displayValue.textContent.trim() : String(displayValue || '').trim();
+  if (!text) return displayValue;
+  const filterOverrides = activityCellFilterRouteOverrides(filters, context, row, columnId);
+  const filterTarget = filterOverrides ? currentHref(filterOverrides) : '';
+  const navigation = activityCellNavigation(row, columnId);
+  const dimension = activityCellDimension(columnId);
+  if (!filterTarget && !navigation) return displayValue;
+  if (!filterTarget) {
+    const link = anchor(displayValue, navigation.target);
+    link.title = navigation.title;
+    return link;
+  }
+  if (!navigation) {
+    const link = anchor(displayValue, filterTarget, 'activity-cell-filter-link');
+    link.title = `Filter Activity by this ${dimension}`;
+    link.setAttribute('aria-label', `Filter Activity by ${dimension} ${text}`);
+    return link;
+  }
+
+  const rowKey = String(row?.id ?? `new-${++activityCellActionSequence}`).replace(/[^a-z0-9_-]/gi, '-');
+  const triggerId = `activity-cell-action-${rowKey}-${columnId}`;
+  const trigger = anchor(displayValue, navigation.target, 'activity-cell-action-link');
+  trigger.id = triggerId;
+  trigger.title = 'Choose whether to open details or filter Activity';
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  trigger.setAttribute('aria-label', `${dimension} ${text} actions`);
+  trigger.append(iconGlyph('icon-chevron-down'));
+  trigger.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const body = node('div', 'tuner-frequency-action-body');
+    body.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${dimension} ${text}.`));
+    const actions = node('div', 'tuner-frequency-action-list');
+    const filterLink = anchor('', filterTarget, 'ui-button ui-button-secondary tuner-frequency-action');
+    filterLink.append(node('strong', '', 'Filter activity'),
+      node('small', '', `Show only rows with this ${dimension}.`));
+    const detailsLink = anchor('', navigation.target,
+      'ui-button ui-button-secondary tuner-frequency-action');
+    detailsLink.append(node('strong', '', navigation.title),
+      node('small', '', navigation.description));
+    actions.append(filterLink, detailsLink);
+    body.append(actions);
+    openReadOnlyModal(`${text} actions`, body, {
+      id: 'activity-cell-actions', className: 'frequency-action-modal',
+      returnFocusSelector: `#${triggerId}`
+    });
+  });
+  return trigger;
+}
+
+function activityColumns(context, filters) {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
-    { id: 'action', label: 'Action', key: 'action' },
-    { id: 'event', label: 'Event Type', key: 'event_type' },
+    { id: 'action', label: 'Action', render: (row) =>
+      activityCellValue(row.action, row, 'action', context, filters), sortValue: (row) => row.action || '' },
+    { id: 'event', label: 'Event Type', render: (row) =>
+      activityCellValue(row.event_type, row, 'event', context, filters),
+      sortValue: (row) => row.event_type || '' },
     { id: 'source', label: 'Src', fullLabel: 'Source ID',
-      render: (row) => activityIdentifier(row, row.source_radio_id, 'radio', row.source_entity_ref),
+      render: (row) => activityCellValue(activityIdentifier(row, row.source_radio_id, 'radio',
+        row.source_entity_ref, false), row, 'source', context, filters),
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.source_radio_id || 0) },
     { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias',
-      render: activitySourceAlias, className: 'alias-cell',
+      render: (row) => activityCellValue(activitySourceAlias(row, false), row, 'source-alias', context, filters),
+      className: 'alias-cell',
       sortValue: (row) => row.source_alias_name || '' },
     { id: 'source-ota-alias', label: 'Src OTA Alias', fullLabel: 'Source Over-the-Air Talker Alias',
-      render: activitySourceTalkerAlias, className: 'alias-cell',
+      render: (row) => activityCellValue(activitySourceTalkerAlias(row, false), row,
+        'source-ota-alias', context, filters), className: 'alias-cell',
       sortValue: (row) => row.source_talker_alias || '' },
-    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: activityTargetIdentifier,
+    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: (row) =>
+      activityCellValue(activityTargetIdentifier(row, false), row, 'target', context, filters),
       className: 'numeric identifier-cell', sortValue: (row) => Number(row.target_id || 0) },
-    { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: activityTargetAlias,
+    { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: (row) =>
+      activityCellValue(activityTargetAlias(row, false), row, 'target-alias', context, filters),
       className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
-    { id: 'channel', label: 'Channel', render: activityChannel, sortValue: (row) =>
+    { id: 'channel', label: 'Channel', render: (row) =>
+      activityCellValue(activityChannel(row, false), row, 'channel', context, filters), sortValue: (row) =>
       Number(row.frequency_hz || 0) },
-    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: encryptionActivityValue,
+    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) =>
+      activityCellValue(encryptionActivityValue(row), row, 'encryption', context, filters),
       className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') }
   ];
 }
 
-function activityColumnsForContext(context) {
-  const columns = activityColumns();
+function activityColumnsForContext(context, filters) {
+  const columns = activityColumns(context, filters);
   if (context?.kind === 'conventional-analog') {
     const visible = new Set(['time', 'action', 'event', 'channel']);
     return columns.filter((column) => visible.has(column.id));
@@ -17629,7 +17799,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     limit: 200
   });
   if (!renderIsCurrent(renderContext)) return;
-  const columns = activityColumnsForContext(activityContext);
+  const columns = activityColumnsForContext(activityContext, filters);
   const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
   const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
     'Detailed event history is enabled, but no matching activity has been recorded yet.';

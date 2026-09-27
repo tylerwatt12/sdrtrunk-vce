@@ -54,7 +54,7 @@ class StatsWebActivityFiltersUiContractTest
         String toolbar = function(source, "function activityFilterToolbar(context, initialFilters)");
         String chooser = function(source, "function activityIdentityChooser(context, options = {})");
         String capabilities = function(source, "function activityContextCapabilities(context)");
-        String columns = function(source, "function activityColumns()");
+        String columns = function(source, "function activityColumns(context, filters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertTrue(activity.contains("activityFilterToolbar(activityContext, filters)"));
@@ -102,7 +102,7 @@ class StatsWebActivityFiltersUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String filters = function(source,
             "function activityRouteFilters(parameters, context, now = Date.now())");
-        String columns = function(source, "function activityColumnsForContext(context)");
+        String columns = function(source, "function activityColumnsForContext(context, filters)");
         String tableType = function(source, "function activityTableType(context)");
 
         for(String kind: new String[]{"system", "saved-system", "talkgroup", "patch-group", "radio",
@@ -121,13 +121,43 @@ class StatsWebActivityFiltersUiContractTest
     }
 
     @Test
+    void turnsActivityValuesIntoContextAwareFilterAndNavigationActions() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String mapper = function(source, "function activityCellFilterPatch(context, row, columnId)");
+        String routes = function(source,
+            "function activityCellFilterRouteOverrides(filters, context, row, columnId)");
+        String value = function(source,
+            "function activityCellValue(displayValue, row, columnId, context, filters)");
+        String columns = function(source, "function activityColumns(context, filters)");
+        String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+
+        assertTrue(mapper.contains("sourceColumns"));
+        assertTrue(mapper.contains("targetColumns"));
+        assertTrue(mapper.contains("capabilities.rawIdentities"));
+        assertTrue(mapper.contains("context?.radioIdentityKey"));
+        assertTrue(mapper.contains("radioRole: 'source'"));
+        assertTrue(mapper.contains("radioRole: 'target'"));
+        assertTrue(routes.contains("activityFilterRouteOverrides({ ...filters, ...patch })"));
+        assertTrue(value.contains("currentHref(filterOverrides)"));
+        assertTrue(value.contains("aria-haspopup', 'dialog'"));
+        assertTrue(value.contains("event.metaKey || event.ctrlKey || event.shiftKey || event.altKey"));
+        assertTrue(value.contains("openReadOnlyModal"));
+        assertTrue(value.contains("'Filter activity'"));
+        assertTrue(value.contains("returnFocusSelector"));
+        assertTrue(columns.contains("activityCellValue"));
+        assertTrue(activity.contains("activityColumnsForContext(activityContext, filters)"));
+    }
+
+    @Test
     void givesTheToolbarResponsiveFeatureOwnedGeometry() throws Exception
     {
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".activity-filter-toolbar {"));
         assertTrue(css.contains(".activity-filter-primary,"));
         assertTrue(css.contains(".activity-filter-grid,"));
-        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));"));
+        assertTrue(css.contains(".activity-filter-grid {\n  align-items: start;"));
+        assertTrue(css.contains(".activity-cell-action-link {"));
         assertTrue(css.contains(".activity-filter-error[hidden]"));
         assertTrue(css.contains("@media (max-width: 720px)"));
     }

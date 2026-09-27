@@ -31,6 +31,7 @@ const systemContext = context.activityFilterContext({
 });
 assert.equal(systemContext.kind, 'system');
 assert.equal(systemContext.radioSystemKey, 'p25:bee00:49f');
+assert.equal(systemContext.radioIdentityKey, '');
 assert.deepEqual(Object.assign({}, context.activityScopeParameters({
   radio_system_key: 'p25:bee00:49f', ignored: 'no', _activity_context: { kind: 'system' }
 })), { radio_system_key: 'p25:bee00:49f' });
@@ -155,8 +156,10 @@ assert.equal(nxdnDigital.timeslot, null, 'NXDN conventional activity has no prot
 
 const radioContext = context.activityFilterContext({
   radio_system_key: 'p25:bee00:49f',
+  radio_identity_key: 'v1-r-bee00-49f-202',
   _activity_context: { kind: 'radio', protocol: 'P25' }
 });
+assert.equal(radioContext.radioIdentityKey, 'v1-r-bee00-49f-202');
 const maskedRadioCounterpart = context.activityRouteFilters(parameters({
   activity_target_identity_key: 'v1-g-bee00-49f-101'
 }), radioContext);
@@ -178,3 +181,110 @@ assert.equal(routeOverrides.activity_include_grants, null,
 for (const key of Object.keys(routeOverrides)) {
   assert.ok(key === 'before_id' || key.startsWith('activity_'), `Unexpected generic route key ${key}`);
 }
+
+function plain(value) {
+  return value === null ? null : Object.assign({}, value);
+}
+
+function routeParameters(overrides) {
+  return new URLSearchParams(Object.entries(overrides)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => [key, String(value)]));
+}
+
+const activityRow = {
+  action: 'active',
+  event_type: 'radio_inhibit',
+  encrypted: true,
+  configuration_id: 'channel-1',
+  source_radio_id: 202,
+  source_identity_key: 'v1-r-bee00-49f-202',
+  target_id: 101,
+  target_kind: 'talkgroup',
+  target_identity_key: 'v1-g-bee00-49f-101'
+};
+
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'action')),
+  { action: 'ACTIVE' });
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'event')),
+  { eventType: 'RADIO_INHIBIT' });
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'encryption')),
+  { encryption: 'encrypted' });
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, { encrypted: 1 }, 'encryption')),
+  { encryption: 'encrypted' });
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'channel')),
+  { configurationId: 'channel-1' });
+for (const column of ['source', 'source-alias', 'source-ota-alias']) {
+  assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, column)),
+    { sourceIdentityKey: 'v1-r-bee00-49f-202', sourceId: null });
+}
+for (const column of ['target', 'target-alias']) {
+  assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, column)),
+    { targetIdentityKey: 'v1-g-bee00-49f-101', targetId: null, targetKind: 'talkgroup' });
+}
+
+for (const eventType of [
+  'RADIO_UNINHIBIT', 'RADIO_INHIBIT', 'RADIO_UNINHIBIT_ACK', 'RADIO_INHIBIT_ACK'
+]) {
+  assert.deepEqual(plain(context.activityCellFilterPatch(systemContext,
+    { event_type: eventType.toLowerCase() }, 'event')), { eventType });
+}
+
+const grantOverrides = context.activityCellFilterRouteOverrides(rolling, systemContext,
+  { action: 'grant' }, 'action');
+assert.equal(grantOverrides.before_id, null);
+assert.equal(grantOverrides.activity_range, '6h');
+assert.equal(grantOverrides.activity_action, 'GRANT');
+assert.equal(grantOverrides.activity_event_type, 'CALL_GROUP');
+const grantFilters = context.activityRouteFilters(routeParameters(grantOverrides), systemContext);
+assert.equal(grantFilters.includeGrants, true);
+assert.equal(context.activityApiFilterParameters(grantFilters).hide_grants, false);
+
+const conventionalRow = {
+  source_radio_id: 404,
+  source_identity_key: 'v1-r-bee00-49f-404',
+  target_id: 505,
+  target_kind: 'radio',
+  target_identity_key: 'v1-r-bee00-49f-505'
+};
+assert.deepEqual(plain(context.activityCellFilterPatch(digitalContext, conventionalRow, 'source-alias')),
+  { sourceIdentityKey: '', sourceId: 404 });
+assert.deepEqual(plain(context.activityCellFilterPatch(digitalContext, conventionalRow, 'target-alias')),
+  { targetIdentityKey: '', targetId: 505, targetKind: 'radio' });
+
+assert.deepEqual(plain(context.activityCellFilterPatch(radioContext, activityRow, 'source')),
+  { radioRole: 'source', sourceIdentityKey: '', sourceId: null });
+assert.deepEqual(plain(context.activityCellFilterPatch(radioContext, activityRow, 'target')),
+  {
+    radioRole: 'source', targetIdentityKey: 'v1-g-bee00-49f-101', targetId: null,
+    targetKind: 'talkgroup', sourceIdentityKey: '', sourceId: null
+  });
+const selectedRadioAsTarget = {
+  ...activityRow,
+  source_identity_key: 'v1-r-bee00-49f-303',
+  target_identity_key: 'v1-r-bee00-49f-202',
+  target_kind: 'radio'
+};
+assert.deepEqual(plain(context.activityCellFilterPatch(radioContext, selectedRadioAsTarget, 'source')),
+  {
+    radioRole: 'target', sourceIdentityKey: 'v1-r-bee00-49f-303', sourceId: null,
+    targetIdentityKey: '', targetId: null, targetKind: ''
+  });
+assert.deepEqual(plain(context.activityCellFilterPatch(radioContext, selectedRadioAsTarget, 'target')),
+  { radioRole: 'target', targetIdentityKey: '', targetId: null, targetKind: '' });
+
+const talkgroupContext = context.activityFilterContext({
+  radio_system_key: 'p25:bee00:49f', group_identity_key: 'v1-g-bee00-49f-101',
+  _activity_context: { kind: 'talkgroup', protocol: 'P25' }
+});
+const channelContext = context.activityFilterContext({
+  radio_system_key: 'p25:bee00:49f', configuration_id: 'channel-1',
+  _activity_context: { kind: 'trunked-channel', protocol: 'P25' }
+});
+assert.equal(context.activityCellFilterPatch(talkgroupContext, activityRow, 'target'), null,
+  'A group-scoped page must not expose a target filter that its toolbar masks.');
+assert.equal(context.activityCellFilterPatch(channelContext, activityRow, 'channel'), null,
+  'A channel-scoped page must not offer a redundant channel filter.');
+assert.equal(context.activityCellFilterPatch(analogContext, activityRow, 'source'), null);
+assert.equal(context.activityCellFilterPatch(systemContext, { action: 'not-real' }, 'action'), null);
+assert.equal(context.activityCellFilterPatch(systemContext, { event_type: '' }, 'event'), null);
