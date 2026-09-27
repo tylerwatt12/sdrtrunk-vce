@@ -315,32 +315,6 @@ public class JavaFxWindowManager extends Application
         execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService).openStreaming(null));
     }
 
-    /** Opens the Alias catalog or an exact Alias without constructing the retired Java UI. */
-    @Subscribe
-    public void process(ViewWebAliasRequest request)
-    {
-        execute(() -> {
-            WebAdministratorNavigator navigator =
-                new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService);
-            if(request.hasAlias())
-            {
-                navigator.openAlias(null, request.getAliasListId(), request.getAliasId());
-            }
-            else
-            {
-                navigator.openAliases(null);
-            }
-        });
-    }
-
-    /** Opens one site-scoped P25 bandplan override draft in the authenticated web editor. */
-    @Subscribe
-    public void process(ViewWebP25BandplanOverrideRequest request)
-    {
-        execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService)
-            .openP25BandplanOverride(null, request.getIdentity(), request.getConfigurationId()));
-    }
-
     /**
      * User Preferences Editor
      */

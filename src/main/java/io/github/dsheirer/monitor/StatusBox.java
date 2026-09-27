@@ -44,27 +44,28 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 
 /**
- * Compact JavaFX status footer. Each item has a fixed width so changing values cannot shift adjacent items.
+ * Two-row JavaFX status footer sized for the compact desktop shell.
  */
-public class StatusBox extends HBox
+public class StatusBox extends VBox
 {
-    private static final double FOOTER_HEIGHT = 24;
-    private static final double METER_WIDTH = 56;
+    private static final double ROW_HEIGHT = 24;
+    private static final double METER_WIDTH = 42;
     private static final double METER_HEIGHT = 10;
     private static final double CELL_HORIZONTAL_PADDING = 8;
-    private static final double CPU_CELL_WIDTH = 124;
-    private static final double METER_CELL_WIDTH = 94;
-    private static final double STORAGE_CELL_WIDTH = 134;
+    private static final double CPU_CELL_WIDTH = 120;
+    private static final double METER_CELL_WIDTH = 88;
+    private static final double STORAGE_CELL_WIDTH = 118;
     private static final double DATABASE_CELL_WIDTH = 76;
-    private static final double STATS_CELL_WIDTH = 76;
-    private static final double WEB_CELL_WIDTH = 88;
-    private static final double VAULT_CELL_WIDTH = 80;
+    private static final double STATS_CELL_WIDTH = 62;
+    private static final double WEB_CELL_WIDTH = 74;
+    private static final double VAULT_CELL_WIDTH = 70;
     private static final double UPDATE_CELL_WIDTH = 30;
     private static final Color ACTIVE_COLOR = Color.FORESTGREEN;
     private static final Color INACTIVE_COLOR = Color.DIMGRAY;
@@ -74,6 +75,8 @@ public class StatusBox extends HBox
     private final Supplier<StatsWebNavigationState> mNavigationStateSupplier;
     private final Supplier<UpdateCheckResult> mUpdateResultSupplier;
     private final Consumer<URI> mUpdateReleasePageConsumer;
+    private final HBox mPrimaryRow = new HBox();
+    private final HBox mSecondaryRow = new HBox();
     private HBox mVaultStatusBox;
     private Tooltip mVaultTooltip;
     private Label mStatsStatusLabel;
@@ -128,9 +131,12 @@ public class StatusBox extends HBox
         setAlignment(Pos.CENTER_LEFT);
         setPadding(new Insets(1, 4, 1, 4));
         setSpacing(0);
-        setMinHeight(FOOTER_HEIGHT);
-        setPrefHeight(FOOTER_HEIGHT);
-        setMaxHeight(FOOTER_HEIGHT);
+        setMinHeight(ROW_HEIGHT * 2 + 2);
+        setPrefHeight(ROW_HEIGHT * 2 + 2);
+        setMaxHeight(ROW_HEIGHT * 2 + 2);
+        mPrimaryRow.setAlignment(Pos.CENTER_LEFT);
+        mSecondaryRow.setAlignment(Pos.CENTER_LEFT);
+        getChildren().addAll(mPrimaryRow, mSecondaryRow);
         addResourceStatusCells();
 
         if(mNavigationStateSupplier != null)
@@ -168,7 +174,7 @@ public class StatusBox extends HBox
         Label cpuValueLabel = fixedLabel(null, 30, Pos.CENTER_RIGHT);
         cpuValueLabel.textProperty().bind(mResourceMonitor.cpuLabelProperty());
         cpuCell.getChildren().add(cpuValueLabel);
-        addCell(cpuCell);
+        addCell(mPrimaryRow, cpuCell);
 
         HBox allocatedCell = createCell(METER_CELL_WIDTH);
         allocatedCell.getChildren().add(fixedLabel("Alloc", 28, Pos.CENTER_LEFT));
@@ -179,7 +185,7 @@ public class StatusBox extends HBox
             .concat(" JVM heap committed out of max heap"));
         memoryBar.setTooltip(memoryTooltip);
         allocatedCell.getChildren().add(memoryBar);
-        addCell(allocatedCell);
+        addCell(mPrimaryRow, allocatedCell);
 
         HBox heapCell = createCell(METER_CELL_WIDTH);
         heapCell.getChildren().add(fixedLabel("Heap", 28, Pos.CENTER_LEFT));
@@ -190,7 +196,7 @@ public class StatusBox extends HBox
             .concat(" JVM heap used out of committed heap"));
         javaMemoryBar.setTooltip(javaMemoryTooltip);
         heapCell.getChildren().add(javaMemoryBar);
-        addCell(heapCell);
+        addCell(mPrimaryRow, heapCell);
 
         HBox eventLogsCell = createCell(STORAGE_CELL_WIDTH);
         eventLogsCell.getChildren().add(fixedLabel("Logs", 24, Pos.CENTER_LEFT));
@@ -198,10 +204,10 @@ public class StatusBox extends HBox
         eventLogsBar.progressProperty().bind(mResourceMonitor.directoryUsePercentEventLogsProperty());
         eventLogsBar.setTooltip(new Tooltip("Event-log storage usage relative to the configured limit"));
         eventLogsCell.getChildren().add(eventLogsBar);
-        Label eventLogsSizeLabel = fixedLabel(null, 42, Pos.CENTER_RIGHT);
+        Label eventLogsSizeLabel = fixedLabel(null, 40, Pos.CENTER_RIGHT);
         eventLogsSizeLabel.textProperty().bind(mResourceMonitor.fileSizeEventLogsProperty());
         eventLogsCell.getChildren().add(eventLogsSizeLabel);
-        addCell(eventLogsCell);
+        addCell(mSecondaryRow, eventLogsCell);
 
         HBox recordingsCell = createCell(STORAGE_CELL_WIDTH);
         recordingsCell.getChildren().add(fixedLabel("Rec", 24, Pos.CENTER_LEFT));
@@ -209,10 +215,10 @@ public class StatusBox extends HBox
         recordingsBar.progressProperty().bind(mResourceMonitor.directoryUsePercentRecordingsProperty());
         recordingsBar.setTooltip(new Tooltip("Recording storage usage relative to the configured limit"));
         recordingsCell.getChildren().add(recordingsBar);
-        Label recordingsSizeLabel = fixedLabel(null, 42, Pos.CENTER_RIGHT);
+        Label recordingsSizeLabel = fixedLabel(null, 40, Pos.CENTER_RIGHT);
         recordingsSizeLabel.textProperty().bind(mResourceMonitor.fileSizeRecordingsProperty());
         recordingsCell.getChildren().add(recordingsSizeLabel);
-        addCell(recordingsCell);
+        addCell(mSecondaryRow, recordingsCell);
 
         HBox databaseCell = createCell(DATABASE_CELL_WIDTH);
         databaseCell.getChildren().add(fixedLabel("DB", 18, Pos.CENTER_LEFT));
@@ -220,7 +226,7 @@ public class StatusBox extends HBox
         databaseSizeLabel.textProperty().bind(mResourceMonitor.fileSizeDatabaseProperty());
         databaseSizeLabel.setTooltip(new Tooltip("SQLite database size including WAL and shared-memory side files"));
         databaseCell.getChildren().add(databaseSizeLabel);
-        addCell(databaseCell);
+        addCell(mPrimaryRow, databaseCell);
     }
 
     private void addNavigationStatusCells()
@@ -230,14 +236,14 @@ public class StatusBox extends HBox
         mStatsStatusTooltip = new Tooltip();
         mStatsStatusLabel.setTooltip(mStatsStatusTooltip);
         statsCell.getChildren().add(mStatsStatusLabel);
-        addCell(statsCell);
+        addCell(mSecondaryRow, statsCell);
 
         HBox webCell = createCell(WEB_CELL_WIDTH);
         mWebStatusLabel = fixedLabel(null, WEB_CELL_WIDTH - CELL_HORIZONTAL_PADDING, Pos.CENTER_LEFT);
         mWebStatusTooltip = new Tooltip();
         mWebStatusLabel.setTooltip(mWebStatusTooltip);
         webCell.getChildren().add(mWebStatusLabel);
-        addCell(webCell);
+        addCell(mSecondaryRow, webCell);
 
         updateNavigationStatus();
     }
@@ -259,10 +265,11 @@ public class StatusBox extends HBox
     {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        getChildren().add(spacer);
+        mPrimaryRow.getChildren().add(spacer);
         mUpdateStatusSeparator = createSeparator();
-        getChildren().add(mUpdateStatusSeparator);
+        mPrimaryRow.getChildren().add(mUpdateStatusSeparator);
         mUpdateStatusBox = createCell(UPDATE_CELL_WIDTH);
+        mPrimaryRow.getChildren().add(mUpdateStatusBox);
         mUpdateStatusBox.setAlignment(Pos.CENTER);
         IconNode updateIcon = new IconNode(FontAwesome.DOWNLOAD);
         updateIcon.setIconSize(14);
@@ -313,8 +320,8 @@ public class StatusBox extends HBox
     private void addVaultStatusCell()
     {
         Separator separator = createSeparator();
-        getChildren().add(separator);
-        getChildren().add(getVaultStatusBox());
+        mSecondaryRow.getChildren().add(separator);
+        mSecondaryRow.getChildren().add(getVaultStatusBox());
         boolean moduleLoaded = mModuleManager == null || mModuleManager.isLoaded();
         separator.setVisible(moduleLoaded);
         separator.setManaged(moduleLoaded);
@@ -345,20 +352,20 @@ public class StatusBox extends HBox
         cell.setMinWidth(width);
         cell.setPrefWidth(width);
         cell.setMaxWidth(width);
-        cell.setMinHeight(FOOTER_HEIGHT - 2);
-        cell.setPrefHeight(FOOTER_HEIGHT - 2);
-        cell.setMaxHeight(FOOTER_HEIGHT - 2);
+        cell.setMinHeight(ROW_HEIGHT - 2);
+        cell.setPrefHeight(ROW_HEIGHT - 2);
+        cell.setMaxHeight(ROW_HEIGHT - 2);
         return cell;
     }
 
-    private void addCell(HBox cell)
+    private void addCell(HBox row, HBox cell)
     {
-        if(!getChildren().isEmpty())
+        if(!row.getChildren().isEmpty())
         {
-            getChildren().add(createSeparator());
+            row.getChildren().add(createSeparator());
         }
 
-        getChildren().add(cell);
+        row.getChildren().add(cell);
     }
 
     private static Separator createSeparator()
@@ -417,7 +424,7 @@ public class StatusBox extends HBox
 
         boolean statsActive = state != null && state.summaryLoggingActive();
         boolean webActive = state != null && state.running();
-        updateStateLabel(mStatsStatusLabel, "Stats", statsActive);
+        updateStateLabel(mStatsStatusLabel, "Stat", statsActive);
         mStatsStatusTooltip.setText("Summary statistics logging is " + (statsActive ? "active" : "inactive"));
 
         mWebStatusLabel.setText(webActive ? "Web:" + state.port() : "Web OFF");
@@ -459,7 +466,7 @@ public class StatusBox extends HBox
         IconNode lockIcon = new IconNode(state == EncryptionKeyVaultState.UNLOCKED ? FontAwesome.UNLOCK : FontAwesome.LOCK);
         lockIcon.setIconSize(14);
         lockIcon.setFill(state == EncryptionKeyVaultState.UNLOCKED ? Color.FORESTGREEN : Color.DARKGRAY);
-        Label label = fixedLabel("Keys", 30, Pos.CENTER_LEFT);
+        Label label = fixedLabel("Keys", 26, Pos.CENTER_LEFT);
         mVaultStatusBox.getChildren().setAll(label, lockIcon);
 
         if(mVaultService.hasSavedPassword())

@@ -49,10 +49,10 @@ import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
 public final class SetupWizard extends JDialog
 {
     public record Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels,
-                         SqliteDatabaseImportDialog.PreparedImport replacement)
+                         SqliteDatabaseImportDialog.PreparedImport replacement, boolean openWebAfterSetup)
     {
         public Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels)
-        { this(preferences, lock, startChannels, null); }
+        { this(preferences, lock, startChannels, null, false); }
     }
     private record CurrentMigrationInspection(DatabaseMigrationChain.PreflightReport plan,
                                               ApplicationMigrationService.ApprovedMigrationPlan approval)
@@ -193,7 +193,8 @@ public final class SetupWizard extends JDialog
                 }
                 wizard.setVisible(true);
             });
-            return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels, wizard.replacement) : null;
+            return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels,
+                wizard.replacement, wizard.replacement == null) : null;
         }
         finally
         {
@@ -1026,7 +1027,9 @@ public final class SetupWizard extends JDialog
         append(summary); append(Box.createVerticalStrut(24));
         if(!selectedScope.isBlank()) paragraph(selectedScope);
         var dirs = preferences.getDirectoryPreference();
-        details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() + "\nScreenshots: " + dirs.getDirectoryScreenCapture() + "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " + dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
+        details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() +
+            "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " +
+            dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
         var app = preferences.getApplicationPreference();
         paragraph("Web address: " + (app.isStatsWebServerHttpsEnabled() ? "https" : "http") + "://localhost:" + app.getStatsWebServerPort() + "/" +
             (app.isStatsWebServerAnyIpEnabled() ? "\nOther devices: use this computer's reachable address; host firewall restrictions still apply." : " — this computer only"));

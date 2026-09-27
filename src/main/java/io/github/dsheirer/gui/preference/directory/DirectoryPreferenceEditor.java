@@ -32,11 +32,15 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
@@ -70,11 +74,6 @@ public class DirectoryPreferenceEditor extends HBox
     private Button mResetRecordingButton;
     private Label mRecordingPathLabel;
 
-    private Label mScreenCaptureLabel;
-    private Button mChangeScreenCaptureButton;
-    private Button mResetScreenCaptureButton;
-    private Label mScreenCapturePathLabel;
-
     private Label mStreamingLabel;
     private Button mChangeStreamingButton;
     private Button mResetStreamingButton;
@@ -90,8 +89,11 @@ public class DirectoryPreferenceEditor extends HBox
         //Register to receive directory preference update notifications so we can update the path labels
         MyEventBus.getGlobalEventBus().register(this);
 
-        HBox.setHgrow(getEditorPane(), Priority.ALWAYS);
-        getChildren().add(getEditorPane());
+        ScrollPane content = new ScrollPane(getEditorPane());
+        content.setFitToWidth(true);
+        content.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        HBox.setHgrow(content, Priority.ALWAYS);
+        getChildren().add(content);
     }
 
     public void dispose()
@@ -105,111 +107,52 @@ public class DirectoryPreferenceEditor extends HBox
         {
             mEditorPane = new GridPane();
             mEditorPane.setPadding(new Insets(10, 10, 10, 10));
+            mEditorPane.setVgap(6);
+            mEditorPane.setMaxWidth(Double.MAX_VALUE);
+            ColumnConstraints column = new ColumnConstraints();
+            column.setHgrow(Priority.ALWAYS);
+            column.setFillWidth(true);
+            mEditorPane.getColumnConstraints().add(column);
 
             int row = 0;
+            Label foldersHeading = new Label("Local output folders");
+            foldersHeading.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
+            mEditorPane.add(foldersHeading, 0, row++);
+            row = addDirectoryRow(row, getApplicationLogsLabel(), getApplicationLogsPathLabel(),
+                getChangeApplicationLogsButton(), getResetApplicationLogsButton());
+            row = addDirectoryRow(row, getEventLogsLabel(), getEventLogsPathLabel(),
+                getChangeEventLogsButton(), getResetEventLogsButton());
+            row = addDirectoryRow(row, getJmbeLabel(), getJmbePathLabel(),
+                getChangeJmbeButton(), getResetJmbeButton());
+            row = addDirectoryRow(row, getRecordingLabel(), getRecordingPathLabel(),
+                getChangeRecordingButton(), getResetRecordingButton());
+            row = addDirectoryRow(row, getStreamingLabel(), getStreamingPathLabel(),
+                getChangeStreamingButton(), getResetStreamingButton());
 
-            Label itemLabel = new Label("Item");
-            GridPane.setMargin(itemLabel, new Insets(0, 10, 0, 0));
-            mEditorPane.add(itemLabel, 0, row);
-
-            Label directoryLabel = new Label("Directory");
-            GridPane.setMargin(directoryLabel, new Insets(0, 10, 0, 0));
-            mEditorPane.add(directoryLabel, 1, row++);
-
-            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, row++, 4, 1);
-
-            GridPane.setMargin(getApplicationLogsLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getApplicationLogsLabel(), 0, row);
-
-            GridPane.setMargin(getApplicationLogsPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getApplicationLogsPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeApplicationLogsButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeApplicationLogsButton(), 2, row);
-
-            GridPane.setMargin(getResetApplicationLogsButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetApplicationLogsButton(), 3, row++);
-
-
-            GridPane.setMargin(getEventLogsLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getEventLogsLabel(), 0, row);
-
-            GridPane.setMargin(getEventLogsPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getEventLogsPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeEventLogsButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeEventLogsButton(), 2, row);
-
-            GridPane.setMargin(getResetEventLogsButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetEventLogsButton(), 3, row++);
-
-
-            GridPane.setMargin(getJmbeLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getJmbeLabel(), 0, row);
-
-            GridPane.setMargin(getJmbePathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getJmbePathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeJmbeButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeJmbeButton(), 2, row);
-
-            GridPane.setMargin(getResetJmbeButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetJmbeButton(), 3, row++);
-
-
-            GridPane.setMargin(getRecordingLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getRecordingLabel(), 0, row);
-
-            GridPane.setMargin(getRecordingPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getRecordingPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeRecordingButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeRecordingButton(), 2, row);
-
-            GridPane.setMargin(getResetRecordingButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetRecordingButton(), 3, row++);
-
-
-            GridPane.setMargin(getScreenCaptureLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getScreenCaptureLabel(), 0, row);
-
-            GridPane.setMargin(getScreenCapturePathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getScreenCapturePathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeScreenCaptureButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeScreenCaptureButton(), 2, row);
-
-            GridPane.setMargin(getResetScreenCaptureButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetScreenCaptureButton(), 3, row++);
-
-
-            GridPane.setMargin(getStreamingLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getStreamingLabel(), 0, row);
-
-            GridPane.setMargin(getStreamingPathLabel(), new Insets(0, 10, 0, 0));
-            mEditorPane.add(getStreamingPathLabel(), 1, row);
-
-            GridPane.setMargin(getChangeStreamingButton(), new Insets(2, 10, 2, 0));
-            mEditorPane.add(getChangeStreamingButton(), 2, row);
-
-            GridPane.setMargin(getResetStreamingButton(), new Insets(2, 0, 2, 0));
-            mEditorPane.add(getResetStreamingButton(), 3, row++);
-
-            Label monitorLabel = new Label("File storage usage monitoring - maximum size thresholds (MB)");
-            GridPane.setMargin(monitorLabel, new Insets(15, 0, 2, 0));
-            mEditorPane.add(monitorLabel, 0, row++, 4, 1);
-            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, row++, 4, 1);
-
-            mEditorPane.add(new Label("Event Logs"), 0, row);
-            GridPane.setMargin(getEventLogSpinner(), new Insets(2, 2, 2, 0));
-            mEditorPane.add(getEventLogSpinner(), 1, row++);
-
-            mEditorPane.add(new Label("Recordings"), 0, row);
-            GridPane.setMargin(getRecordingSpinner(), new Insets(2, 2, 2, 0));
-            mEditorPane.add(getRecordingSpinner(), 1, row);
+            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, row++);
+            Label monitorLabel = new Label("Storage warning thresholds (MB)");
+            monitorLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
+            mEditorPane.add(monitorLabel, 0, row++);
+            mEditorPane.add(new HBox(8, new Label("Event logs"), getEventLogSpinner()), 0, row++);
+            mEditorPane.add(new HBox(8, new Label("Recordings"), getRecordingSpinner()), 0, row);
         }
 
         return mEditorPane;
+    }
+
+    private int addDirectoryRow(int row, Label title, Label path, Button change, Button reset)
+    {
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox controls = new HBox(8, title, spacer, change, reset);
+        controls.setMaxWidth(Double.MAX_VALUE);
+        path.setWrapText(true);
+        path.setMinWidth(0);
+        path.setMaxWidth(Double.MAX_VALUE);
+        path.setTooltip(new Tooltip(path.getText()));
+        mEditorPane.add(controls, 0, row++);
+        mEditorPane.add(path, 0, row++);
+        return row;
     }
 
     /**
@@ -409,47 +352,6 @@ public class DirectoryPreferenceEditor extends HBox
         return mRecordingPathLabel;
     }
 
-    private Label getScreenCaptureLabel()
-    {
-        if(mScreenCaptureLabel == null)
-        {
-            mScreenCaptureLabel = new Label("Screen Captures");
-        }
-
-        return mScreenCaptureLabel;
-    }
-
-    private Button getChangeScreenCaptureButton()
-    {
-        if(mChangeScreenCaptureButton == null)
-        {
-            mChangeScreenCaptureButton = createChangeButton("Select Screen Capture Folder",
-                mDirectoryPreference::getDirectoryScreenCapture, mDirectoryPreference::setDirectoryScreenCapture);
-        }
-
-        return mChangeScreenCaptureButton;
-    }
-
-    private Button getResetScreenCaptureButton()
-    {
-        if(mResetScreenCaptureButton == null)
-        {
-            mResetScreenCaptureButton = createResetButton(mDirectoryPreference::resetDirectoryScreenCapture);
-        }
-
-        return mResetScreenCaptureButton;
-    }
-
-    private Label getScreenCapturePathLabel()
-    {
-        if(mScreenCapturePathLabel == null)
-        {
-            mScreenCapturePathLabel = new Label(mDirectoryPreference.getDirectoryScreenCapture().toString());
-        }
-
-        return mScreenCapturePathLabel;
-    }
-
     private Label getStreamingLabel()
     {
         if(mStreamingLabel == null)
@@ -523,9 +425,14 @@ public class DirectoryPreferenceEditor extends HBox
         {
             getApplicationLogsPathLabel().setText(mDirectoryPreference.getDirectoryApplicationLog().toString());
             getEventLogsPathLabel().setText(mDirectoryPreference.getDirectoryEventLog().toString());
+            getJmbePathLabel().setText(mDirectoryPreference.getDirectoryJmbe().toString());
             getRecordingPathLabel().setText(mDirectoryPreference.getDirectoryRecording().toString());
-            getScreenCapturePathLabel().setText(mDirectoryPreference.getDirectoryScreenCapture().toString());
             getStreamingPathLabel().setText(mDirectoryPreference.getDirectoryStreaming().toString());
+            for(Label label: new Label[]{getApplicationLogsPathLabel(), getEventLogsPathLabel(), getJmbePathLabel(),
+                getRecordingPathLabel(), getStreamingPathLabel()})
+            {
+                label.getTooltip().setText(label.getText());
+            }
         }
     }
 }

@@ -23,12 +23,12 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.VBox;
 
 /**
  * Local-only statistics database maintenance. Operational collection and retention settings live in the web UI.
@@ -47,10 +47,11 @@ public class StatsServerPreferenceEditor extends HBox
     {
         mUserPreferences = userPreferences;
         setMaxWidth(Double.MAX_VALUE);
-        VBox vbox = new VBox(getEditorPane());
-        vbox.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
-        HBox.setHgrow(vbox, Priority.ALWAYS);
-        getChildren().add(vbox);
+        ScrollPane content = new ScrollPane(getEditorPane());
+        content.setFitToWidth(true);
+        content.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        HBox.setHgrow(content, Priority.ALWAYS);
+        getChildren().add(content);
     }
 
     private GridPane getEditorPane()
@@ -60,27 +61,27 @@ public class StatsServerPreferenceEditor extends HBox
             int row = 0;
             mEditorPane = new GridPane();
             mEditorPane.setMaxWidth(Double.MAX_VALUE);
-            mEditorPane.setVgap(10);
-            mEditorPane.setHgap(8);
+            mEditorPane.setVgap(8);
             mEditorPane.setPadding(new Insets(10));
-            mEditorPane.add(new Label("Local Statistics Database Maintenance"), 0, row++, 3, 1);
+            Label heading = new Label("Local statistics database");
+            heading.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
+            mEditorPane.add(heading, 0, row++);
             Label settingsNote = new Label("Collection and retention settings are available in the web interface.");
             settingsNote.setWrapText(true);
-            mEditorPane.add(settingsNote, 0, row++, 3, 1);
-            mEditorPane.add(new Label("Database file"), 0, row);
+            settingsNote.setMinWidth(0);
+            mEditorPane.add(settingsNote, 0, row++);
+            mEditorPane.add(new Label("Database file"), 0, row++);
             Label path = new Label(ReceiverActivityPath.getDatabasePath(mUserPreferences).toString());
             path.setWrapText(true);
-            mEditorPane.add(path, 1, row++, 2, 1);
-            mEditorPane.add(new Label("Database maintenance"), 0, row);
-            mEditorPane.add(new HBox(8, getMaintainButton(), getShrinkButton(), getCheckButton(), getResetButton()),
-                1, row++, 2, 1);
-            mEditorPane.add(getMaintenanceStatusLabel(), 1, row, 2, 1);
-
-            ColumnConstraints labelColumn = new ColumnConstraints();
-            labelColumn.setPercentWidth(30);
-            ColumnConstraints valueColumn = new ColumnConstraints();
-            valueColumn.setHgrow(Priority.ALWAYS);
-            mEditorPane.getColumnConstraints().addAll(labelColumn, valueColumn);
+            path.setMinWidth(0);
+            path.setTooltip(new Tooltip(path.getText()));
+            mEditorPane.add(path, 0, row++);
+            mEditorPane.add(new Label("Maintenance actions"), 0, row++);
+            FlowPane actions = new FlowPane(8, 8, getMaintainButton(), getCheckButton(), getShrinkButton(),
+                getResetButton());
+            actions.setPrefWrapLength(320);
+            mEditorPane.add(actions, 0, row++);
+            mEditorPane.add(getMaintenanceStatusLabel(), 0, row);
         }
 
         return mEditorPane;

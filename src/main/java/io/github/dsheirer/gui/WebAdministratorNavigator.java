@@ -8,7 +8,6 @@ package io.github.dsheirer.gui;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -17,7 +16,6 @@ import java.awt.Desktop;
 import java.io.IOException;
 import java.net.URI;
 import java.sql.SQLException;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -29,7 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * One desktop boundary for opening authenticated administrator web editors.
+ * Standalone configuration-editor entry point for the authenticated Streaming page.
  */
 public final class WebAdministratorNavigator
 {
@@ -43,51 +41,10 @@ public final class WebAdministratorNavigator
         mStatsWebServerService = statsWebServerService;
     }
 
-    /**
-     * Opens the Alias catalog after a one-use local administrator handoff.
-     */
-    public void openAliases(Window owner)
-    {
-        openAlias(owner, 0, 0);
-    }
-
-    /**
-     * Opens one persisted Alias after a one-use local administrator handoff.
-     */
-    public void openAlias(Window owner, long aliasListId, long aliasId)
-    {
-        if(aliasListId < 0 || aliasId < 0 || (aliasListId == 0) != (aliasId == 0))
-        {
-            throw new IllegalArgumentException("Alias List and Alias IDs must both be zero or both be positive");
-        }
-
-        boolean exactAlias = aliasListId > 0 && aliasId > 0;
-        open(owner, "Alias editor", navigation -> exactAlias ?
-                navigation.aliasEditorUri(aliasListId, aliasId) : navigation.aliasEditorUri(),
-            () -> exactAlias ?
-                mStatsWebServerService.createDesktopAdministratorAliasHandoffUri(aliasListId, aliasId) :
-                mStatsWebServerService.createDesktopAdministratorAliasHandoffUri());
-    }
-
     public void openStreaming(Window owner)
     {
         open(owner, "Streaming", navigation -> navigation.baseUri().resolve("?view=streaming"),
             () -> mStatsWebServerService.createDesktopAdministratorStreamingHandoffUri());
-    }
-
-    /** Opens a new site-scoped P25 bandplan override draft. */
-    public void openP25BandplanOverride(Window owner, P25SiteIdentity identity, String configurationId)
-    {
-        if(identity == null)
-        {
-            throw new IllegalArgumentException("P25 site identity cannot be null");
-        }
-
-        open(owner, "P25 bandplan override editor", navigation -> navigation.baseUri().resolve(String.format(
-                Locale.ROOT, "?view=admin&tab=protocol-p25&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
-                identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId)),
-            () -> mStatsWebServerService.createDesktopAdministratorP25BandplanOverrideHandoffUri(identity,
-                configurationId));
     }
 
     private void open(Window owner, String editorName, Function<StatsWebNavigationState,URI> editorUriFactory,

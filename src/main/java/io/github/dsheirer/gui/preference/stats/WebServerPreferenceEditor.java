@@ -25,9 +25,7 @@ import io.github.dsheirer.web.network.WebCertificateIdentity;
 import io.github.dsheirer.web.network.WebNetworkAddressDiscovery;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
-import java.awt.Desktop;
 import java.net.Inet4Address;
-import java.net.URI;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -94,7 +92,6 @@ public class WebServerPreferenceEditor extends HBox
     private Label mRuntimeStatusLabel;
     private Label mLocalUrlLabel;
     private Label mNetworkUrlLabel;
-    private Button mOpenButton;
     private Button mCopyButton;
     private Label mTlsStatusLabel;
     private Button mManageCertificateButton;
@@ -168,7 +165,7 @@ public class WebServerPreferenceEditor extends HBox
             mEditorPane.add(new Label("Access"), 0, row);
             mEditorPane.add(new HBox(12, getLocalOnlyRadioButton(), getNetworkRadioButton()), 1, row++, 2, 1);
             mEditorPane.add(new Label("This computer"), 0, row);
-            mEditorPane.add(new HBox(8, getLocalUrlLabel(), getOpenButton()), 1, row++, 2, 1);
+            mEditorPane.add(getLocalUrlLabel(), 1, row++, 2, 1);
             mEditorPane.add(new Label("Other devices"), 0, row);
             HBox networkAddressBox = new HBox(8, getNetworkUrlLabel(), getCopyButton());
             HBox.setHgrow(getNetworkUrlLabel(), Priority.ALWAYS);
@@ -319,17 +316,6 @@ public class WebServerPreferenceEditor extends HBox
         }
 
         return mNetworkUrlLabel;
-    }
-
-    private Button getOpenButton()
-    {
-        if(mOpenButton == null)
-        {
-            mOpenButton = new Button("Open");
-            mOpenButton.setOnAction(event -> openLocalUrl());
-        }
-
-        return mOpenButton;
     }
 
     private Button getCopyButton()
@@ -731,7 +717,6 @@ public class WebServerPreferenceEditor extends HBox
 
         mLocalUrl = scheme + "://127.0.0.1:" + displayPort + "/";
         getLocalUrlLabel().setText(mLocalUrl);
-        getOpenButton().setDisable(!running);
         updateNetworkAddresses(runtimeState, configuredNetwork, configuredPort);
         getManageCertificateButton().setDisable(mAdminOperationRunning);
     }
@@ -834,29 +819,6 @@ public class WebServerPreferenceEditor extends HBox
         getNetworkRadioButton().setSelected(network);
         getLocalOnlyRadioButton().setSelected(!network);
         mUpdatingControls = previouslyUpdating;
-    }
-
-    private void openLocalUrl()
-    {
-        if(mLocalUrl == null)
-        {
-            return;
-        }
-
-        try
-        {
-            if(!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
-            {
-                throw new IllegalStateException("Desktop browser integration is unavailable");
-            }
-
-            Desktop.getDesktop().browse(URI.create(mLocalUrl));
-        }
-        catch(Exception exception)
-        {
-            mLog.warn("Unable to open the embedded web interface", exception);
-            showError("Open Web Interface", "The web address could not be opened in a browser.");
-        }
     }
 
     private void copyPreferredNetworkUrl()

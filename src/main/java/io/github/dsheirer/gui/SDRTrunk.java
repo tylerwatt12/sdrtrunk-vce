@@ -40,7 +40,6 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
-import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.diagnostic.BasebandRecordingDialog;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
@@ -69,27 +68,24 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
-import io.github.dsheirer.util.TimeStamp;
+import io.github.dsheirer.web.network.WebNetworkAddressDiscovery;
+import io.github.dsheirer.stats.WebServerRuntimeState;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
-import java.awt.AWTException;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
-import java.awt.Robot;
 import java.awt.Toolkit;
 import java.awt.desktop.QuitResponse;
-import java.awt.event.ActionEvent;
-import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.net.Inet4Address;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -107,7 +103,6 @@ import net.miginfocom.swing.MigLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.imageio.ImageIO;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JFrame;
@@ -116,8 +111,11 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JLabel;
+import javax.swing.JTextField;
 import javax.swing.JSeparator;
-import javax.swing.KeyStroke;
+import javax.swing.Timer;
+import java.awt.datatransfer.StringSelection;
 import javax.swing.WindowConstants;
 
 public class SDRTrunk
@@ -161,9 +159,15 @@ public class SDRTrunk
     private final AtomicBoolean mUpdateCheckInProgress = new AtomicBoolean();
     private volatile boolean mManualUpdateFeedbackRequested;
     private JMenuItem mCheckForUpdatesMenuItem;
-    private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
     private JButton mWebInterfaceButton;
+    private JTextField mNetworkAccessUrlField;
+    private JButton mCopyNetworkAccessUrlButton;
+    private JLabel mNetworkAccessWarningLabel;
+    private Timer mNetworkAccessRefreshTimer;
+    private final AtomicBoolean mNetworkAccessRefreshInProgress = new AtomicBoolean();
+    private String mDisplayedNetworkAccessUrl;
+    private boolean mOpenWebAfterSetup;
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
     private volatile boolean mDatabaseReplacementInProgress;
@@ -171,11 +175,13 @@ public class SDRTrunk
     private final boolean mStartConfiguredChannels;
     private final boolean mGuiAvailable;
 
-    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock, boolean startConfiguredChannels)
+    private SDRTrunk(UserPreferences userPreferences, PortableDataRootLock dataRootLock,
+                     boolean startConfiguredChannels, boolean openWebAfterSetup)
     {
         mUserPreferences = userPreferences;
         mDataRootLock = dataRootLock;
         mStartConfiguredChannels = startConfiguredChannels;
+        mOpenWebAfterSetup = openWebAfterSetup;
         mGuiAvailable = !GraphicsEnvironment.isHeadless();
         mPreferences = Preferences.userNodeForPackage(SDRTrunk.class);
         mUpdateCheckService = new UpdateCheckService();
@@ -257,6 +263,7 @@ public class SDRTrunk
             {
                 if(!io.github.dsheirer.gui.setup.SetupWizard.ensureListener(mUserPreferences, mStatsWebServerService))
                     throw new io.github.dsheirer.gui.setup.SetupWizard.Cancelled();
+                mOpenWebAfterSetup = true;
             }
             catch(io.github.dsheirer.gui.setup.SetupWizard.Cancelled e) { throw e; }
             catch(Exception e) { throw new IllegalStateException("Web listener setup could not complete", e); }
@@ -342,6 +349,10 @@ public class SDRTrunk
                         startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
                     }
                 }
+                if(mOpenWebAfterSetup)
+                {
+                    openWebInterface(false);
+                }
             });
         }
     }
@@ -405,7 +416,7 @@ public class SDRTrunk
      */
     private void initGUI()
     {
-        mMainGui.setLayout(new MigLayout("insets 6 6 6 6", "[grow,fill]", "[]0[shrink 0]"));
+        mMainGui.setLayout(new MigLayout("insets 6 6 6 6, fillx", "[grow,fill]", "[][][shrink 0]"));
         ApplicationIcon.apply(mMainGui);
 
         /**
@@ -425,9 +436,9 @@ public class SDRTrunk
         }
         else
         {
-            mMainGui.setSize(new Dimension(680, 180));
+            mMainGui.setSize(new Dimension(680, 210));
         }
-        mMainGui.setMinimumSize(new Dimension(480, 120));
+        mMainGui.setMinimumSize(new Dimension(480, 190));
 
         //Center only after the first-use size is known. Centering a zero-sized frame places its upper-left corner at
         //the screen center and leaves most of the expanded window off-screen.
@@ -445,12 +456,16 @@ public class SDRTrunk
             mMainGui.setExtendedState(Frame.MAXIMIZED_BOTH);
         }
         mMainGui.add(getMainControlPanel(), "cell 0 0,growx");
+        mMainGui.add(getNetworkAccessPanel(), "cell 0 1,growx");
+        mNetworkAccessRefreshTimer = new Timer(30_000, event -> refreshNetworkAccessStatus());
+        mNetworkAccessRefreshTimer.start();
+        refreshNetworkAccessStatus();
 
         mResourceMonitor.start();
         mResourceStatusVisible = initializeResourceStatusVisibility();
         if(mResourceStatusVisible)
         {
-            mMainGui.add(getResourceStatusPanel(), "cell 0 1,growx");
+            mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
         }
 
         /**
@@ -476,11 +491,6 @@ public class SDRTrunk
         fileMenu.add(exitMenu);
 
         JMenu viewMenu = new JMenu("View");
-
-        JMenuItem viewConfigurationItem = new JMenuItem("Streaming (Web)");
-        viewConfigurationItem.setIcon(IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 12));
-        viewConfigurationItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
-        viewMenu.add(viewConfigurationItem);
 
         mEncryptionKeysItem = new JMenuItem("Encryption Keys");
         mEncryptionKeysItem.setIcon(IconFontSwing.buildIcon(FontAwesome.KEY, 12));
@@ -522,12 +532,6 @@ public class SDRTrunk
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
         viewMenu.add(recordingViewerMenu);
 
-        JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
-        viewScreenCapturesMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
-        viewScreenCapturesMenu.addActionListener(arg0 ->
-                openFileExplorer(mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().toFile()));
-        viewMenu.add(viewScreenCapturesMenu);
-
         JMenuItem preferencesItem = new JMenuItem("User Preferences");
         preferencesItem.setIcon(IconFontSwing.buildIcon(FontAwesome.COG, 12));
         preferencesItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest()));
@@ -558,41 +562,6 @@ public class SDRTrunk
         });
         diagnosticsMenu.add(basebandRecordingItem);
         menuBar.add(diagnosticsMenu);
-
-        JMenuItem screenCaptureItem = new JMenuItem("Screen Capture");
-        screenCaptureItem.setIcon(IconFontSwing.buildIcon(FontAwesome.CAMERA, 12));
-        screenCaptureItem.setMnemonic(KeyEvent.VK_C);
-        screenCaptureItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C, ActionEvent.ALT_MASK));
-        screenCaptureItem.setMaximumSize(screenCaptureItem.getPreferredSize());
-        screenCaptureItem.addActionListener(arg0 -> {
-            try
-            {
-                Robot robot = new Robot();
-
-                final BufferedImage image = robot.createScreenCapture(mMainGui.getBounds());
-
-                String filename = TimeStamp.getTimeStamp("_") + "_screen_capture.png";
-
-                final Path captureFile = mUserPreferences.getDirectoryPreference().getDirectoryScreenCapture().resolve(filename);
-
-                ThreadPool.CACHED.submit(() -> {
-                    try
-                    {
-                        ImageIO.write(image, "png", captureFile.toFile());
-                    }
-                    catch(IOException e)
-                    {
-                        mLog.error("Couldn't write screen capture to file [" + captureFile + "]", e);
-                    }
-                });
-            }
-            catch(AWTException e)
-            {
-                mLog.error("Exception while taking screen capture", e);
-            }
-        });
-
-        menuBar.add(screenCaptureItem);
 
         JMenu helpMenu = new JMenu("Help");
         JMenuItem setupWizardItem = new JMenuItem("Setup Wizard…");
@@ -628,6 +597,20 @@ public class SDRTrunk
         creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
         helpMenu.add(creditsItem);
         menuBar.add(helpMenu);
+        ensureShellFitsContent();
+    }
+
+    private void ensureShellFitsContent()
+    {
+        Dimension insets = new Dimension(mMainGui.getInsets().left + mMainGui.getInsets().right,
+            mMainGui.getInsets().top + mMainGui.getInsets().bottom);
+        int preferredHeight = mMainGui.getRootPane().getPreferredSize().height + insets.height;
+        int minimumHeight = Math.max(190, preferredHeight);
+        mMainGui.setMinimumSize(new Dimension(480, minimumHeight));
+        if(mMainGui.getHeight() < minimumHeight)
+        {
+            mMainGui.setSize(mMainGui.getWidth(), minimumHeight);
+        }
     }
 
     private boolean initializeResourceStatusVisibility()
@@ -924,6 +907,10 @@ public class SDRTrunk
         }
         if(mGuiAvailable)
         {
+            if(mNetworkAccessRefreshTimer != null)
+            {
+                mNetworkAccessRefreshTimer.stop();
+            }
             MyEventBus.getGlobalEventBus().unregister(this);
             mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
             mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
@@ -1102,28 +1089,135 @@ public class SDRTrunk
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill]", "[]"));
-        panel.add(getConfigurationEditorShortcutButton());
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill]", "[]"));
         panel.add(getUserPreferencesShortcutButton());
         panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
         return panel;
     }
 
-    private JButton getConfigurationEditorShortcutButton()
+    private JPanel getNetworkAccessPanel()
     {
-        if(mConfigurationEditorShortcutButton == null)
+        JPanel panel = new JPanel(new MigLayout("insets 0 6 2 6, fillx, hidemode 3", "[][grow,fill][]", "[][]"));
+        panel.add(new JLabel("Other devices:"), "cell 0 0");
+        mNetworkAccessUrlField = new JTextField("Checking network access…");
+        mNetworkAccessUrlField.setEditable(false);
+        mNetworkAccessUrlField.setToolTipText("Active listener and network address will appear here.");
+        panel.add(mNetworkAccessUrlField, "cell 1 0, growx");
+        mCopyNetworkAccessUrlButton = new JButton("Copy");
+        mCopyNetworkAccessUrlButton.setEnabled(false);
+        mCopyNetworkAccessUrlButton.addActionListener(event -> {
+            if(mDisplayedNetworkAccessUrl != null)
+            {
+                try
+                {
+                    Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
+                        new StringSelection(mDisplayedNetworkAccessUrl), null);
+                }
+                catch(IllegalStateException exception)
+                {
+                    JOptionPane.showMessageDialog(mMainGui, "The clipboard is currently unavailable.",
+                        "Copy Web Address", JOptionPane.WARNING_MESSAGE);
+                }
+            }
+        });
+        panel.add(mCopyNetworkAccessUrlButton, "cell 2 0");
+        mNetworkAccessWarningLabel = new JLabel();
+        mNetworkAccessWarningLabel.setVisible(false);
+        panel.add(mNetworkAccessWarningLabel, "cell 0 1, span 3, growx");
+        return panel;
+    }
+
+    private void refreshNetworkAccessStatus()
+    {
+        if(!mNetworkAccessRefreshInProgress.compareAndSet(false, true))
         {
-            mConfigurationEditorShortcutButton = new JButton("Streaming",
-                IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 14));
-            mConfigurationEditorShortcutButton.setFocusable(false);
-            mConfigurationEditorShortcutButton.setToolTipText("Streaming (Web)");
-            mConfigurationEditorShortcutButton.addActionListener(e ->
-                MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
+            return;
         }
 
-        return mConfigurationEditorShortcutButton;
+        ThreadPool.CACHED.execute(() -> {
+            NetworkAccessPresentation presentation;
+            try
+            {
+                presentation = inspectNetworkAccessStatus();
+            }
+            catch(Exception exception)
+            {
+                presentation = new NetworkAccessPresentation("Network address unavailable", null,
+                    "Unable to inspect the active web listener or local network addresses.", null);
+            }
+            finally
+            {
+                mNetworkAccessRefreshInProgress.set(false);
+            }
+
+            NetworkAccessPresentation status = presentation;
+            EventQueue.invokeLater(() -> {
+                if(mNetworkAccessUrlField != null && !mShutdownProcessed)
+                {
+                    mDisplayedNetworkAccessUrl = status.url();
+                    mNetworkAccessUrlField.setText(status.display());
+                    mNetworkAccessUrlField.setCaretPosition(0);
+                    mNetworkAccessUrlField.setToolTipText(status.explanation());
+                    mCopyNetworkAccessUrlButton.setEnabled(status.url() != null);
+                    mNetworkAccessWarningLabel.setText(status.warning());
+                    mNetworkAccessWarningLabel.setVisible(status.warning() != null);
+                    mMainGui.revalidate();
+                    ensureShellFitsContent();
+                }
+            });
+        });
     }
+
+    private NetworkAccessPresentation inspectNetworkAccessStatus() throws Exception
+    {
+        WebServerRuntimeState state = mStatsWebServerService.getRuntimeState();
+        if(state == null || !state.running())
+        {
+            return new NetworkAccessPresentation("Web server is not running", null,
+                "Other devices cannot connect until the web listener is running.", null);
+        }
+        if(!state.anyIpEnabled())
+        {
+            return new NetworkAccessPresentation("Cannot connect (local only)", null,
+                "Other devices cannot connect while access is set to This computer only.", null);
+        }
+        if(!state.https())
+        {
+            return new NetworkAccessPresentation("Remote HTTPS is not active", null,
+                "The active listener is not using HTTPS; verify Web Server settings.", null);
+        }
+
+        String warning = null;
+        try
+        {
+            if(!mStatsWebServerService.isPrimaryAdminConfigured())
+            {
+                warning = "Admin password required to sign in.";
+            }
+        }
+        catch(Exception exception)
+        {
+            warning = "Admin status unavailable; check settings.";
+        }
+
+        String adminWarning = warning;
+        return WebNetworkAddressDiscovery.discover().stream()
+            .filter(address -> address.address() instanceof Inet4Address)
+            .findFirst()
+            .map(address -> {
+                String url = address.url("https", state.port());
+                return new NetworkAccessPresentation(url, url,
+                    "Active HTTPS listener on " + address.interfaceDisplayName() +
+                        ". Firewall, routing, and certificate trust may still affect access. " +
+                        "Other LAN/VPN addresses are listed in Web Server settings.", adminWarning);
+            })
+            .orElseGet(() -> new NetworkAccessPresentation("No LAN/VPN IPv4 address found", null,
+                "The web listener is active, but no usable address for another device was discovered.",
+                adminWarning));
+    }
+
+    private record NetworkAccessPresentation(String display, String url, String explanation, String warning) {}
 
     private JButton getUserPreferencesShortcutButton()
     {
@@ -1155,6 +1249,11 @@ public class SDRTrunk
 
     private void openWebInterface()
     {
+        openWebInterface(true);
+    }
+
+    private void openWebInterface(boolean showFeedback)
+    {
         if(!mUserPreferences.getApplicationPreference().isStatsWebServerEnabled())
         {
             return;
@@ -1164,8 +1263,11 @@ public class SDRTrunk
 
         if(!navigation.running())
         {
-            JOptionPane.showMessageDialog(mMainGui, "The web server is enabled but is not currently running.",
-                "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+            if(showFeedback)
+            {
+                JOptionPane.showMessageDialog(mMainGui, "The web server is enabled but is not currently running.",
+                    "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+            }
             return;
         }
 
@@ -1180,21 +1282,27 @@ public class SDRTrunk
 
             if(handoffUri == null)
             {
-                JOptionPane.showMessageDialog(mMainGui,
-                    "Set the primary administrator password in Web Server settings before opening the web interface.",
-                    "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+                if(showFeedback)
+                {
+                    JOptionPane.showMessageDialog(mMainGui,
+                        "Set the primary administrator password in Web Server settings before opening the web interface.",
+                        "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+                }
                 return;
             }
 
             Desktop.getDesktop().browse(handoffUri);
         }
-        catch(IOException | SecurityException | UnsupportedOperationException exception)
+        catch(IOException | RuntimeException exception)
         {
             mStatsWebServerService.cancelDesktopAdministratorHandoff();
             mLog.warn("Unable to open the web interface", exception);
-            JOptionPane.showMessageDialog(mMainGui,
-                "Unable to open the web browser. Open " + navigation.baseUri() + " manually.",
-                "Web Interface", JOptionPane.WARNING_MESSAGE);
+            if(showFeedback)
+            {
+                JOptionPane.showMessageDialog(mMainGui,
+                    "Unable to open the web browser. Open " + navigation.baseUri() + " manually.",
+                    "Web Interface", JOptionPane.WARNING_MESSAGE);
+            }
         }
     }
 
@@ -1204,6 +1312,7 @@ public class SDRTrunk
         if(preferenceType == PreferenceType.APPLICATION)
         {
             EventQueue.invokeLater(this::updateWebInterfaceButton);
+            refreshNetworkAccessStatus();
         }
     }
 
@@ -1231,6 +1340,8 @@ public class SDRTrunk
                 mUserPreferences.getVoiceDecryptionModulePreference().getModuleManager(),
                 mStatsWebServerService::getNavigationState, () -> mUpdateCheckResult,
                 this::openUpdateReleasePage);
+            //The JavaFX scene is assigned asynchronously; reserve its two-row height in Swing immediately.
+            mResourceStatusPanel.setPreferredSize(new Dimension(1, 50));
         }
 
         return mResourceStatusPanel;
@@ -1259,7 +1370,7 @@ public class SDRTrunk
                 EventQueue.invokeLater(() -> {
                     if(mResourceStatusVisible)
                     {
-                        mMainGui.add(getResourceStatusPanel(), "cell 0 1,growx");
+                        mMainGui.add(getResourceStatusPanel(), "cell 0 2,growx");
                     }
                     else
                     {
@@ -1294,6 +1405,7 @@ public class SDRTrunk
 
             UserPreferences userPreferences;
             boolean startConfiguredChannels = true;
+            boolean openWebAfterSetup = false;
             if(!GraphicsEnvironment.isHeadless())
             {
                 var setup = io.github.dsheirer.gui.setup.SetupWizard.run(args, dataRoot, dataRootLock);
@@ -1312,6 +1424,7 @@ public class SDRTrunk
                 }
                 userPreferences = setup.preferences();
                 startConfiguredChannels = setup.startChannels();
+                openWebAfterSetup = setup.openWebAfterSetup();
             }
             else
             {
@@ -1343,7 +1456,7 @@ public class SDRTrunk
                 }
             }
 
-            new SDRTrunk(userPreferences, dataRootLock, startConfiguredChannels);
+            new SDRTrunk(userPreferences, dataRootLock, startConfiguredChannels, openWebAfterSetup);
             dataRootLock = null;
         }
         catch(Exception e)

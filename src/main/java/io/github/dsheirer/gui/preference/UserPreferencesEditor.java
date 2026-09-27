@@ -19,8 +19,6 @@
 
 package io.github.dsheirer.gui.preference;
 
-import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
 import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -254,11 +252,6 @@ public class UserPreferencesEditor extends BorderPane
 
             mMenuBar.getMenus().add(fileMenu);
 
-            Menu viewMenu = new Menu("View");
-            MenuItem configurationEditorItem = new MenuItem("Streaming (Web)");
-            configurationEditorItem.setOnAction(event -> MyEventBus.getGlobalEventBus().post(new ViewConfigurationRequest()));
-            viewMenu.getItems().add(configurationEditorItem);
-            mMenuBar.getMenus().add(viewMenu);
         }
 
         return mMenuBar;

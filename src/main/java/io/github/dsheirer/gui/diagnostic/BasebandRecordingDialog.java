@@ -15,6 +15,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.awt.EventQueue;
 import java.awt.Frame;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
@@ -22,6 +23,7 @@ import javax.swing.JComboBox;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JTextField;
 import net.miginfocom.swing.MigLayout;
 
 /**
@@ -34,8 +36,12 @@ public final class BasebandRecordingDialog extends JDialog
     private final TunerManager mTunerManager;
     private final JComboBox<TunerChoice> mTuners = new JComboBox<>();
     private final JButton mRecordButton = new JButton("Start Recording");
+    private final JButton mCloseButton = new JButton("Close");
     private final JLabel mStatus = new JLabel("No recording active");
-    private final AtomicReference<String> mLatestStatus = new AtomicReference<>();
+    private final JLabel mSize = new JLabel("Size: —");
+    private final JLabel mFileLabel = new JLabel("Local file:");
+    private final JTextField mFile = new JTextField();
+    private final AtomicReference<RecordingProgress> mLatestStatus = new AtomicReference<>();
     private final AtomicBoolean mStatusUpdatePending = new AtomicBoolean();
     private final IRecordingStatusListener mRecordingStatusListener = new IRecordingStatusListener()
     {
@@ -66,19 +72,25 @@ public final class BasebandRecordingDialog extends JDialog
         mUserPreferences = userPreferences;
         ApplicationIcon.apply(this);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
-        setLayout(new MigLayout("insets 12, fillx", "[][grow,fill]", "[][][]"));
-        add(new JLabel("Running physical tuner:"));
-        add(mTuners, "wrap");
+        setLayout(new MigLayout("insets 12, fillx", "[][grow,fill]", ""));
+        add(new JLabel("Running physical tuner:"), "span 2, wrap");
+        add(mTuners, "span 2, growx, wrap");
+        add(mStatus, "span 2, wrap");
+        add(mSize, "span 2, wrap");
+        add(mFileLabel, "span 2, wrap");
+        mFile.setEditable(false);
+        mFile.setFocusable(true);
+        add(mFile, "span 2, growx, wrap");
+        add(new JLabel("Close stops capture; WAV finalization may continue briefly."),
+            "span 2, wrap, gapbottom 8");
         add(mRecordButton, "span 2, split 2");
-        JButton closeButton = new JButton("Close");
-        add(closeButton, "wrap");
-        add(mStatus, "span 2, growx");
-        mStatus.setToolTipText("The recording is saved in the configured local recordings directory.");
+        add(mCloseButton, "wrap");
         mRecordButton.addActionListener(event -> toggleRecording());
-        closeButton.addActionListener(event -> dispose());
+        mCloseButton.addActionListener(event -> dispose());
         refreshTuners();
         pack();
-        setMinimumSize(getSize());
+        setSize(Math.max(520, getWidth()), getHeight());
+        setMinimumSize(new java.awt.Dimension(440, getHeight()));
         setLocationRelativeTo(owner);
     }
 
@@ -127,23 +139,32 @@ public final class BasebandRecordingDialog extends JDialog
         try
         {
             mLatestStatus.set(null);
+            mStatus.setText("Starting recording…");
+            mSize.setText("Size: waiting for first update");
+            mFileLabel.setText("Local file:");
+            mFile.setText("");
+            mFile.setToolTipText(null);
             controller.startRecorder(mUserPreferences, mRecordingStatusListener, selected.getTunerClass().name());
             if(!controller.isRecording() || mLatestStatus.get() == null)
             {
                 controller.stopRecorder();
                 controller.removeRecordingStatusListener(mRecordingStatusListener);
                 mStatus.setText("Recording could not be started.");
+                mSize.setText("Size: —");
                 return;
             }
             mOwnedController = controller;
             mTuners.setEnabled(false);
             mRecordButton.setText("Stop Recording");
+            mCloseButton.setText("Stop & Close");
             mStatus.setText("Recording locally…");
+            showProgress(mLatestStatus.get());
         }
         catch(RuntimeException exception)
         {
             controller.stopRecorder();
             controller.removeRecordingStatusListener(mRecordingStatusListener);
+            mSize.setText("Size: —");
             JOptionPane.showMessageDialog(this, "Unable to start baseband recording: " +
                 exception.getClass().getSimpleName(), "Baseband Recording", JOptionPane.ERROR_MESSAGE);
         }
@@ -166,22 +187,60 @@ public final class BasebandRecordingDialog extends JDialog
         }
         mTuners.setEnabled(true);
         mRecordButton.setText("Start Recording");
-        mStatus.setText("No recording active");
+        mCloseButton.setText("Close");
+        if(controller != null)
+        {
+            mStatus.setText("Stopped. WAV finalization may continue briefly.");
+            mFileLabel.setText("Last local file:");
+            RecordingProgress progress = mLatestStatus.get();
+            mSize.setText(progress == null ? "Last reported size: —" :
+                "Last reported size: " + readableSize(progress.size()) + " (" + progress.size() + " bytes)");
+        }
     }
 
     private void recordingStatusUpdated(int fileCount, String file, long size)
     {
-        mLatestStatus.set("File " + fileCount + ": " + file + " (" + size + " bytes)");
+        mLatestStatus.set(new RecordingProgress(fileCount, file, size));
         if(mStatusUpdatePending.compareAndSet(false, true))
         {
             EventQueue.invokeLater(() -> {
                 mStatusUpdatePending.set(false);
                 if(mOwnedController != null && isDisplayable())
                 {
-                    mStatus.setText(mLatestStatus.get());
+                    showProgress(mLatestStatus.get());
                 }
             });
         }
+    }
+
+    private void showProgress(RecordingProgress progress)
+    {
+        if(progress != null)
+        {
+            mStatus.setText("Recording file " + progress.fileCount());
+            mSize.setText("Size: " + readableSize(progress.size()) + " (" + progress.size() + " bytes)");
+            mFile.setText(progress.file());
+            mFile.setCaretPosition(0);
+            mFile.setToolTipText(progress.file());
+        }
+    }
+
+    private static String readableSize(long bytes)
+    {
+        if(bytes < 1_024)
+        {
+            return bytes + " B";
+        }
+
+        double value = bytes;
+        String[] units = {"B", "KiB", "MiB", "GiB", "TiB"};
+        int unit = 0;
+        while(value >= 1_024 && unit < units.length - 1)
+        {
+            value /= 1_024;
+            unit++;
+        }
+        return String.format(Locale.ROOT, "%.1f %s", value, units[unit]);
     }
 
     @Override
@@ -190,6 +249,8 @@ public final class BasebandRecordingDialog extends JDialog
         stopOwnedRecording();
         super.dispose();
     }
+
+    private record RecordingProgress(int fileCount, String file, long size) {}
 
     private record TunerChoice(DiscoveredTuner tuner)
     {
