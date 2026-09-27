@@ -24,6 +24,7 @@ import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
+import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
 import io.github.dsheirer.util.ThreadPool;
@@ -462,6 +463,32 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
         try
         {
             mTunerConfigurations.remove(tunerConfiguration);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        saveConfigurations();
+    }
+
+    /**
+     * Removes a managed recording tuner's saved configuration and any disabled marker together. The recording file
+     * itself is deliberately outside this manager's ownership and is never removed here.
+     */
+    public void removeRecordingTunerConfiguration(DiscoveredRecordingTuner recording)
+    {
+        Objects.requireNonNull(recording);
+        TunerConfiguration configuration = recording.getRecordingTunerConfiguration();
+        String uniqueId = configuration.getUniqueID();
+        mLock.lock();
+
+        try
+        {
+            mTunerConfigurations.removeIf(saved -> saved == configuration ||
+                uniqueId != null && saved.getTunerType() == TunerType.RECORDING &&
+                    uniqueId.equalsIgnoreCase(saved.getUniqueID()));
+            mDisabledTunerList.removeIf(disabled -> disabled.matches(recording));
         }
         finally
         {

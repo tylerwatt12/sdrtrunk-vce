@@ -45,9 +45,8 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
-import java.awt.EventQueue;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -63,9 +62,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -91,7 +88,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public static final int USB_RESCAN_UNAVAILABLE = -1;
     public static final int USB_RESCAN_FAILED = -2;
     private final UserPreferences mUserPreferences;
-    private final DiscoveredTunerModel mDiscoveredTunerModel;
+    private final DiscoveredTunerRegistry mDiscoveredTunerRegistry;
+    private volatile DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
@@ -124,15 +122,25 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = Objects.requireNonNull(tunerConfigurationManager);
-        mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
+        mDiscoveredTunerRegistry = new DiscoveredTunerRegistry(mTunerConfigurationManager);
     }
 
     /**
      * Discovered tuner model
      */
-    public DiscoveredTunerModel getDiscoveredTunerModel()
+    public synchronized DiscoveredTunerModel getDiscoveredTunerModel()
     {
+        if(mDiscoveredTunerModel == null)
+        {
+            mDiscoveredTunerModel = new DiscoveredTunerModel(mDiscoveredTunerRegistry);
+        }
         return mDiscoveredTunerModel;
+    }
+
+    /** Receiver-owned tuner inventory, independent of the desktop UI. */
+    public DiscoveredTunerRegistry getDiscoveredTunerRegistry()
+    {
+        return mDiscoveredTunerRegistry;
     }
 
     /**
@@ -141,6 +149,77 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public TunerConfigurationManager getTunerConfigurationManager()
     {
         return mTunerConfigurationManager;
+    }
+
+    /** Registers a locally managed I/Q recording as an initially disabled debugging tuner. */
+    public synchronized void addRecordingTuner(Path validatedFile, long centerFrequencyHz)
+    {
+        Objects.requireNonNull(validatedFile);
+        if(centerFrequencyHz <= 0 || centerFrequencyHz > Integer.MAX_VALUE)
+        {
+            throw new IllegalArgumentException("Recording center frequency is out of range");
+        }
+        Path file = validatedFile.toAbsolutePath().normalize();
+        if(mDiscoveredTunerRegistry.find(file.toString()) != null)
+        {
+            throw new IllegalArgumentException("A tuner already uses this recording");
+        }
+        RecordingTunerConfiguration configuration = RecordingTunerConfiguration.createWithUniqueId();
+        configuration.setFrequency(centerFrequencyHz);
+        configuration.setPath(file.toString());
+        DiscoveredRecordingTuner discovered = new DiscoveredRecordingTuner(configuration);
+        mTunerConfigurationManager.addTunerConfiguration(configuration);
+        discovered.addTunerStatusListener(this);
+        mDiscoveredTunerRegistry.add(discovered);
+    }
+
+    /** Removes a registered recording tuner, its saved state, and no files. Never interrupts an active channel. */
+    public RecordingTunerRemovalResult removeRecordingTuner(DiscoveredTuner tuner)
+    {
+        if(tuner == null || !mDiscoveredTunerRegistry.contains(tuner))
+        {
+            return RecordingTunerRemovalResult.NOT_FOUND;
+        }
+        if(!(tuner instanceof DiscoveredRecordingTuner recording))
+        {
+            return RecordingTunerRemovalResult.NOT_RECORDING;
+        }
+        if(!recording.tryAcquireForAllocation())
+        {
+            return RecordingTunerRemovalResult.BUSY;
+        }
+
+        try
+        {
+            if(!mDiscoveredTunerRegistry.contains(recording))
+            {
+                return RecordingTunerRemovalResult.NOT_FOUND;
+            }
+            if(recording.hasTuner() && recording.getTuner().getChannelSourceManager().getTunerChannelCount() > 0)
+            {
+                return RecordingTunerRemovalResult.IN_USE;
+            }
+
+            recording.stop();
+            mDiscoveredTunerRegistry.remove(recording);
+            recording.removeTunerStatusListener(this);
+            mTunerConfigurationManager.removeRecordingTunerConfiguration(recording);
+            return RecordingTunerRemovalResult.REMOVED;
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.warn("Unable to remove recording tuner ({})", exception.getClass().getSimpleName());
+            return RecordingTunerRemovalResult.FAILED;
+        }
+        finally
+        {
+            recording.releaseAfterAllocation();
+        }
+    }
+
+    public enum RecordingTunerRemovalResult
+    {
+        REMOVED, NOT_FOUND, NOT_RECORDING, IN_USE, BUSY, FAILED
     }
 
     /**
@@ -228,7 +307,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         //Stop all tuners and prevent a pending USB tuner from entering the model after this point.
         synchronized(mUsbModelLock)
         {
-            mDiscoveredTunerModel.releaseDiscoveredTuners();
+            mDiscoveredTunerRegistry.release();
         }
 
         //Shutdown SDRplay API instance
@@ -443,7 +522,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         synchronized(mUsbAttachLock)
         {
             if(!mStopping && mLibUsbInitialized &&
-                    !mDiscoveredTunerModel.hasUsbTuner(discoveredUSBTuner.getBus(), discoveredUSBTuner.getPortAddress()))
+                    !mDiscoveredTunerRegistry.hasUsbTuner(discoveredUSBTuner.getBus(), discoveredUSBTuner.getPortAddress()))
             {
                 return startAndConfigureTuner(discoveredUSBTuner);
             }
@@ -475,49 +554,20 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
         if(discoveredTuner instanceof DiscoveredUSBTuner)
         {
-            AtomicBoolean added = new AtomicBoolean();
-            Runnable add = () ->
+            synchronized(mUsbModelLock)
             {
-                synchronized(mUsbModelLock)
+                if(!mStopping)
                 {
-                    if(!mStopping)
-                    {
-                        mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
-                        added.set(true);
-                    }
-                }
-            };
-
-            try
-            {
-                if(EventQueue.isDispatchThread())
-                {
-                    add.run();
-                }
-                else
-                {
-                    SwingUtilities.invokeAndWait(add);
+                    mDiscoveredTunerRegistry.add(discoveredTuner);
+                    return true;
                 }
             }
-            catch(InterruptedException ie)
-            {
-                Thread.currentThread().interrupt();
-            }
-            catch(InvocationTargetException ite)
-            {
-                mLog.error("Unable to add discovered USB tuner", ite);
-            }
-
-            if(!added.get())
-            {
-                discoveredTuner.removeTunerStatusListener(this);
-                discoveredTuner.stop();
-            }
-
-            return added.get();
+            discoveredTuner.removeTunerStatusListener(this);
+            discoveredTuner.stop();
+            return false;
         }
 
-        mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+        mDiscoveredTunerRegistry.add(discoveredTuner);
         return true;
     }
 
@@ -604,7 +654,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 discoveredRecordingTuner.addTunerStatusListener(this);
                 discoveredRecordingTuner.setEnabled(false);
                 mLog.info("Tuner Added: " + discoveredRecordingTuner);
-                mDiscoveredTunerModel.addDiscoveredTuner(discoveredRecordingTuner);
+                mDiscoveredTunerRegistry.add(discoveredRecordingTuner);
             }
         }
     }
@@ -631,7 +681,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         {
             String id = rspDuoTuner1.getId();
             id = id.replace(DiscoveredRspDuoTuner1.RSP_DUO_ID_PREFIX + "1", DiscoveredRspDuoTuner1.RSP_DUO_ID_PREFIX + "2");
-            DiscoveredTuner rspDuoTuner2 = getDiscoveredTunerModel().getDiscoveredTuner(id);
+            DiscoveredTuner rspDuoTuner2 = mDiscoveredTunerRegistry.find(id);
 
             if(rspDuoTuner2 != null)
             {
@@ -671,7 +721,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     {
         if(preferredTunerName != null)
         {
-            for(DiscoveredTuner discoveredTuner : getDiscoveredTunerModel().getAvailableTuners())
+            for(DiscoveredTuner discoveredTuner : mDiscoveredTunerRegistry.availableTuners())
             {
                 if(discoveredTuner.isAvailable() &&
                    discoveredTuner.getTuner().getPreferredName().equalsIgnoreCase(preferredTunerName))
@@ -712,7 +762,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public List<DiscoveredTuner> getAvailableTuners()
     {
-        return mDiscoveredTunerModel.getAvailableTuners();
+        return mDiscoveredTunerRegistry.availableTuners();
     }
 
     /**
@@ -845,7 +895,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     private List<DiscoveredTuner> getAllocationCandidates(String preferredTuner)
     {
-        List<DiscoveredTuner> availableTuners = mDiscoveredTunerModel.getAvailableTuners();
+        List<DiscoveredTuner> availableTuners = mDiscoveredTunerRegistry.availableTuners();
         LinkedHashSet<DiscoveredTuner> candidates = new LinkedHashSet<>();
 
         if(preferredTuner != null)
@@ -1154,7 +1204,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         {
             synchronized(mUsbAttachLock)
             {
-                return mDiscoveredTunerModel.removeUsbTuner(bus, portAddress);
+                return mDiscoveredTunerRegistry.removeUsbTuner(bus, portAddress);
             }
         }
 

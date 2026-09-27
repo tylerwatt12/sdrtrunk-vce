@@ -1,550 +1,198 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2025 Dennis Sheirer
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
- * ****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ * *****************************************************************************
  */
 package io.github.dsheirer.source.tuner.ui;
 
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerEvent;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
-import io.github.dsheirer.source.tuner.manager.DiscoveredUSBTuner;
-import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
-import io.github.dsheirer.source.tuner.manager.TunerStatus;
-import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
-import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
-import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.source.tuner.manager.DiscoveredTunerRegistry;
 import java.awt.EventQueue;
-import java.lang.reflect.InvocationTargetException;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-import javax.swing.SwingUtilities;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.table.AbstractTableModel;
 
-/**
- * Model for discovered tuners
- */
-public class DiscoveredTunerModel extends AbstractTableModel implements Listener<TunerEvent>,
-        IDiscoveredTunerStatusListener
+/** Swing projection of the receiver-owned tuner registry. Discovery never waits for the event dispatch thread. */
+public class DiscoveredTunerModel extends AbstractTableModel
 {
     private static final long serialVersionUID = 1L;
-    private static final Logger mLog = LoggerFactory.getLogger(DiscoveredTunerModel.class);
-
-    //Model columns
     public static final int COLUMN_TUNER_STATUS = 0;
     public static final int COLUMN_TUNER_CLASS = 1;
     public static final int COLUMN_TUNER_TYPE = 2;
     public static final int COLUMN_FREQUENCY = 3;
     public static final int COLUMN_CHANNEL_COUNT = 4;
-    private static final String MHZ = " MHz";
-    private static final String[] COLUMN_HEADERS = {"Status","Class", "Type", "Frequency", "Channels"};
+    private static final String[] COLUMN_HEADERS = {"Status", "Class", "Type", "Frequency", "Channels"};
+    private final DiscoveredTunerRegistry mRegistry;
+    private final DecimalFormat mFrequencyFormat = new DecimalFormat("0.00000");
+    private final CopyOnWriteArrayList<Listener<TunerEvent>> mEventListeners = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean mRefreshPending = new AtomicBoolean();
+    private final AtomicBoolean mRowsRefreshPending = new AtomicBoolean();
+    private final AtomicBoolean mLockEventPending = new AtomicBoolean();
+    private final AtomicReference<TunerEvent> mLatestLockEvent = new AtomicReference<>();
 
-    private List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
-    private List<Listener<TunerEvent>> mTunerEventListeners = new ArrayList<>();
-    private DecimalFormat mFrequencyFormat = new DecimalFormat("0.00000");
-    private transient Lock mLock = new ReentrantLock();
-    private TunerConfigurationManager mTunerConfigurationManager;
-
-    /**
-     * Constructs an instance
-     * @param tunerConfigurationManager to update tuner configurations from tuners.
-     */
-    public DiscoveredTunerModel(TunerConfigurationManager tunerConfigurationManager)
+    /** Standalone constructor retained for existing desktop callers. */
+    public DiscoveredTunerModel(TunerConfigurationManager configurations)
     {
-        mTunerConfigurationManager = tunerConfigurationManager;
+        this(new DiscoveredTunerRegistry(configurations));
     }
 
-    /**
-     * List of currently enabled and available tuners
-     */
-    public List<DiscoveredTuner> getAvailableTuners()
+    public DiscoveredTunerModel(DiscoveredTunerRegistry registry)
     {
-        return mDiscoveredTuners.stream()
-            .filter(discoveredTuner -> discoveredTuner.isAvailable() && discoveredTuner.hasTuner())
-            .toList();
-    }
-
-    /**
-     * Immutable snapshot of every discovered tuner, including disabled and error-state devices.
-     */
-    public List<DiscoveredTuner> getTunersSnapshot()
-    {
-        return List.copyOf(mDiscoveredTuners);
-    }
-
-    /**
-     * Find the discovered tuner that matches the instantiated tuner
-     * @param tuner to match
-     * @return matching discovered tuner
-     */
-    private DiscoveredTuner getDiscoveredTuner(Tuner tuner)
-    {
-        DiscoveredTuner match = null;
-
-        mLock.lock();
-
-        try
+        mRegistry = registry;
+        // Registry changes can outpace the EDT. Row indexes from discovery threads would already be stale by the
+        // time a queued Swing notification runs, so one bounded refresh always reads the latest registry snapshot.
+        mRegistry.addChangeListener((change, tuner, index) ->
         {
-            for(DiscoveredTuner discoveredTuner: mDiscoveredTuners)
+            if(change == DiscoveredTunerRegistry.Change.UPDATED)
             {
-                if(discoveredTuner.hasTuner() && discoveredTuner.getTuner().equals(tuner))
-                {
-                    match = discoveredTuner;
-                    break;
-                }
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return match;
-    }
-
-    /**
-     * Access the discovered tuner at the specified row index
-     * @param index to lookup
-     * @return discovered tuner or null
-     */
-    public DiscoveredTuner getDiscoveredTuner(int index)
-    {
-        mLock.lock();
-
-        try
-        {
-            if(index < mDiscoveredTuners.size())
-            {
-                return mDiscoveredTuners.get(index);
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return null;
-    }
-
-    /**
-     * Find a discovered tuner by ID
-     * @param id of the tuner to search for
-     * @return discovered tuner with matching ID or null.
-     */
-    public DiscoveredTuner getDiscoveredTuner(String id)
-    {
-        DiscoveredTuner discoveredTuner = null;
-
-        mLock.lock();
-
-        try
-        {
-            Optional<DiscoveredTuner> result = mDiscoveredTuners.stream().filter(tuner -> tuner.getId().equals(id)).findFirst();
-
-            if(result.isPresent())
-            {
-                discoveredTuner = result.get();
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return discoveredTuner;
-    }
-
-
-    /**
-     * Adds the Tuner to this model
-     */
-    public void addDiscoveredTuner(DiscoveredTuner discoveredTuner)
-    {
-        Runnable add = () -> {
-            mLock.lock();
-
-            try
-            {
-                if(!mDiscoveredTuners.contains(discoveredTuner))
-                {
-                    mDiscoveredTuners.add(discoveredTuner);
-                    int index = mDiscoveredTuners.indexOf(discoveredTuner);
-                    fireTableRowsInserted(index, index);
-                    if(discoveredTuner.hasTuner())
-                    {
-                        discoveredTuner.getTuner().addTunerEventListener(this);
-                    }
-                    discoveredTuner.addTunerStatusListener(this);
-                }
-            }
-            finally
-            {
-                mLock.unlock();
-            }
-        };
-
-        if(EventQueue.isDispatchThread())
-        {
-            add.run();
-        }
-        else
-        {
-            try
-            {
-                SwingUtilities.invokeAndWait(add);
-            }
-            catch(InterruptedException e)
-            {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("Error adding discovered tuner on EDT", e);
-            }
-            catch(InvocationTargetException e)
-            {
-                throw new IllegalStateException("Error adding discovered tuner on EDT", e);
-            }
-        }
-    }
-
-    /**
-     * Notifies the model that a discovered tuner that was previously added without a constructed tuner instance now
-     * has an active tuner. This supports asynchronous tuner startup flows.
-     */
-    public void tunerBecameAvailable(DiscoveredTuner discoveredTuner)
-    {
-        if(discoveredTuner == null || !discoveredTuner.hasTuner())
-        {
-            return;
-        }
-
-        discoveredTuner.getTuner().addTunerEventListener(this);
-        int row;
-
-        mLock.lock();
-
-        try
-        {
-            row = mDiscoveredTuners.indexOf(discoveredTuner);
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        if(row >= 0)
-        {
-            EventQueue.invokeLater(() -> fireTableRowsUpdated(row, row));
-        }
-    }
-
-    /**
-     * Stops and removes all discovered tuners, in preparation for shutdown.
-     */
-    public void releaseDiscoveredTuners()
-    {
-        mLock.lock();
-
-        List<DiscoveredTuner> discoveredTuners = new ArrayList<>(mDiscoveredTuners);
-
-        try
-        {
-            mDiscoveredTuners.clear();
-            fireTableDataChanged();
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        for(DiscoveredTuner discoveredTuner: discoveredTuners)
-        {
-            discoveredTuner.stop();
-            discoveredTuner.removeTunerStatusListener(this);
-        }
-    }
-
-    /**
-     * Fires table rows deleted notification, logging any exception without propagating it.
-     */
-    private void fireTableRowsDeletedSafely(int index)
-    {
-        try
-        {
-            fireTableRowsDeleted(index, index);
-        }
-        catch(Exception e)
-        {
-            mLog.info("Exception firing table rows deleted for index [" + index + "]", e);
-        }
-    }
-
-    /**
-     * Removes the Tuner from this model
-     */
-    public void removeDiscoveredTuner(DiscoveredTuner discoveredTuner)
-    {
-        mLog.info("Removing discovered tuner: " + discoveredTuner.getId());
-        Runnable remove = () -> {
-            boolean removed = false;
-
-            mLock.lock();
-
-            try
-            {
-                if(mDiscoveredTuners.contains(discoveredTuner))
-                {
-                    int index = mDiscoveredTuners.indexOf(discoveredTuner);
-                    mDiscoveredTuners.remove(discoveredTuner);
-                    fireTableRowsDeletedSafely(index);
-                    removed = true;
-                }
-            }
-            catch(Exception e)
-            {
-                mLog.error("Unexpected error while shutting down discovered tuner", e);
-            }
-            finally
-            {
-                mLock.unlock();
-            }
-
-            if(removed)
-            {
-                ThreadPool.CACHED.execute(discoveredTuner::stop);
-            }
-        };
-
-        if(EventQueue.isDispatchThread())
-        {
-            remove.run();
-        }
-        else
-        {
-            EventQueue.invokeLater(remove);
-        }
-    }
-
-    /**
-     * Indicates if the discovered tuner is still being managed by this tuner model and hasn't been removed.
-     */
-    public boolean hasTuner(DiscoveredTuner discoveredTuner)
-    {
-        return mDiscoveredTuners.contains(discoveredTuner);
-    }
-
-    /**
-     * Indicates if this model currently has the discovered tuner that is plugged into the specified bus and port.
-     * @param bus number
-     * @param portAddress number
-     * @return true if it already has the discovered device
-     */
-    public boolean hasUsbTuner(int bus, String portAddress)
-    {
-        boolean hasDevice;
-        mLock.lock();
-
-        try
-        {
-            hasDevice = mDiscoveredTuners.stream()
-                    .filter(tuner -> tuner instanceof DiscoveredUSBTuner usbTuner && usbTuner.isAt(bus, portAddress))
-                    .findFirst()
-                    .isPresent();
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return hasDevice;
-    }
-
-    /**
-     * Removes the USB tuner at bus and port number
-     * @param bus usb
-     * @param portAddress usb
-     */
-    public DiscoveredTuner removeUsbTuner(int bus, String portAddress)
-    {
-        DiscoveredTuner removed = null;
-
-        mLock.lock();
-
-        try
-        {
-            DiscoveredTuner discoveredTuner = mDiscoveredTuners.stream()
-                    .filter(tuner -> tuner instanceof DiscoveredUSBTuner usbTuner &&
-                            usbTuner.isAt(bus, portAddress)).findFirst().get();
-
-            if(discoveredTuner != null)
-            {
-                removeDiscoveredTuner(discoveredTuner);
-                removed = discoveredTuner;
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return removed;
-    }
-
-    /**
-     * Adds a tuner event listener
-     */
-    public void addListener(Listener<TunerEvent> listener)
-    {
-        mTunerEventListeners.add(listener);
-    }
-
-    /**
-     * Removes a tuner event listener
-     */
-    public void removeListener(Listener<TunerEvent> listener)
-    {
-        mTunerEventListeners.remove(listener);
-    }
-
-    public void broadcast(TunerEvent event)
-    {
-        for(Listener<TunerEvent> listener : mTunerEventListeners)
-        {
-            listener.receive(event);
-        }
-    }
-
-    @Override
-    public void tunerStatusUpdated(DiscoveredTuner discoveredTuner, TunerStatus previous, TunerStatus current)
-    {
-        if(current == TunerStatus.ENABLED && discoveredTuner.hasTuner())
-        {
-            tunerBecameAvailable(discoveredTuner);
-            return;
-        }
-        else if(current == TunerStatus.DISABLED)
-        {
-            int row = mDiscoveredTuners.indexOf(discoveredTuner);
-            EventQueue.invokeLater(() -> fireTableRowsUpdated(row, row));
-            return;
-        }
-
-        if(current == TunerStatus.REMOVED)
-        {
-            mLog.info("Tuner removal detected - stopping and removing: " + discoveredTuner);
-
-            //Note: RSPduo only gets device removal indication if the device is streaming.  There may be situation where
-            //master only is streaming, or slave only is streaming.  Ensure we remove both devices when detected.
-
-            //Special handling for RSPduo Tuner 1 configured as master - remove the slave tuner also
-            if(discoveredTuner instanceof DiscoveredRspDuoTuner1 master1 &&
-               master1.getDeviceInfo().getDeviceSelectionMode().isMasterMode())
-            {
-                DiscoveredTuner slave2 = getDiscoveredTuner(master1.getSlaveId());
-
-                if(slave2 != null)
-                {
-                    removeDiscoveredTuner(slave2);
-                }
-
-                removeDiscoveredTuner(discoveredTuner);
-            }
-            //Special handling for RSPduo Tuner 2 configured as slave - remove the master tuner also
-            else if(discoveredTuner instanceof DiscoveredRspDuoTuner2 slave2 &&
-                    slave2.getDeviceInfo().getDeviceSelectionMode().isSlaveMode())
-            {
-                String masterId = slave2.getMasterId();
-
-                removeDiscoveredTuner(slave2);
-
-                DiscoveredTuner master1 = getDiscoveredTuner(masterId);
-
-                if(master1 != null)
-                {
-                    removeDiscoveredTuner(master1);
-                }
+                scheduleRowsRefresh();
             }
             else
             {
-                removeDiscoveredTuner(discoveredTuner);
+                scheduleRefresh();
             }
+        });
+        mRegistry.addTunerEventListener(event ->
+        {
+            if(event.getEvent() != TunerEvent.Event.UPDATE_LOCK_STATE)
+            {
+                return;
+            }
+            mLatestLockEvent.set(event);
+            dispatchPendingLockEvent();
+        });
+    }
+
+    private void dispatchPendingLockEvent()
+    {
+        if(mLockEventPending.compareAndSet(false, true))
+        {
+            EventQueue.invokeLater(() ->
+            {
+                TunerEvent latest = mLatestLockEvent.getAndSet(null);
+                mLockEventPending.set(false);
+                if(latest != null)
+                {
+                    for(Listener<TunerEvent> listener: mEventListeners)
+                    {
+                        listener.receive(latest);
+                    }
+                }
+                if(mLatestLockEvent.get() != null)
+                {
+                    dispatchPendingLockEvent();
+                }
+            });
         }
     }
 
-    @Override
-    public void receive(TunerEvent event)
+    private void scheduleRefresh()
     {
-        if(event.hasTuner())
+        if(mRefreshPending.compareAndSet(false, true))
         {
-            mLock.lock();
-
-            try
+            EventQueue.invokeLater(() ->
             {
-                DiscoveredTuner matchingTuner = getDiscoveredTuner(event.getTuner());
-                int index = mDiscoveredTuners.indexOf(matchingTuner);
+                mRefreshPending.set(false);
+                fireTableDataChanged();
+            });
+        }
+    }
 
-                if(index >= 0)
+    private void scheduleRowsRefresh()
+    {
+        if(mRowsRefreshPending.compareAndSet(false, true))
+        {
+            EventQueue.invokeLater(() ->
+            {
+                mRowsRefreshPending.set(false);
+                int rowCount = getRowCount();
+                if(rowCount > 0)
                 {
-                    switch(event.getEvent())
-                    {
-                        case UPDATE_CHANNEL_COUNT:
-                            EventQueue.invokeLater(() -> fireTableCellUpdated(index, COLUMN_CHANNEL_COUNT));
-                            break;
-                        case UPDATE_FREQUENCY:
-                            EventQueue.invokeLater(() -> fireTableCellUpdated(index, COLUMN_FREQUENCY));
-                            break;
-                        case NOTIFICATION_ERROR_STATE:
-                            EventQueue.invokeLater(() -> fireTableRowsUpdated(index, index));
-                            break;
-                        case UPDATE_FREQUENCY_ERROR:
-                            if(mTunerConfigurationManager != null)
-                            {
-                                mTunerConfigurationManager.updateTunerPPM(matchingTuner);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
+                    fireTableRowsUpdated(0, rowCount - 1);
                 }
-            }
-            finally
-            {
-                mLock.unlock();
-            }
+            });
         }
-        else
-        {
-            mLog.error("Got a tuner event without a tuner - " + event);
-        }
+    }
 
-        broadcast(event);
+    public List<DiscoveredTuner> getAvailableTuners()
+    {
+        return mRegistry.availableTuners();
+    }
+
+    public List<DiscoveredTuner> getTunersSnapshot()
+    {
+        return mRegistry.snapshot();
+    }
+
+    public DiscoveredTuner getDiscoveredTuner(int index)
+    {
+        List<DiscoveredTuner> snapshot = mRegistry.snapshot();
+        return index >= 0 && index < snapshot.size() ? snapshot.get(index) : null;
+    }
+
+    public DiscoveredTuner getDiscoveredTuner(String id)
+    {
+        return mRegistry.find(id);
+    }
+
+    public void addDiscoveredTuner(DiscoveredTuner tuner)
+    {
+        mRegistry.add(tuner);
+    }
+
+    public void removeDiscoveredTuner(DiscoveredTuner tuner)
+    {
+        mRegistry.remove(tuner);
+    }
+
+    public void tunerBecameAvailable(DiscoveredTuner tuner)
+    {
+        if(tuner != null && tuner.hasTuner())
+        {
+            mRegistry.tunerStatusUpdated(tuner, tuner.getTunerStatus(), tuner.getTunerStatus());
+        }
+    }
+
+    public void releaseDiscoveredTuners()
+    {
+        mRegistry.release();
+    }
+
+    public boolean hasTuner(DiscoveredTuner tuner)
+    {
+        return mRegistry.contains(tuner);
+    }
+
+    public boolean hasUsbTuner(int bus, String portAddress)
+    {
+        return mRegistry.hasUsbTuner(bus, portAddress);
+    }
+
+    public DiscoveredTuner removeUsbTuner(int bus, String portAddress)
+    {
+        return mRegistry.removeUsbTuner(bus, portAddress);
+    }
+
+    public void addListener(Listener<TunerEvent> listener)
+    {
+        mEventListeners.addIfAbsent(listener);
+    }
+
+    public void removeListener(Listener<TunerEvent> listener)
+    {
+        mEventListeners.remove(listener);
     }
 
     @Override
     public int getRowCount()
     {
-        return mDiscoveredTuners.size();
+        return mRegistry.snapshot().size();
     }
 
     @Override
@@ -554,77 +202,41 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     }
 
     @Override
-    public Object getValueAt(int rowIndex, int columnIndex)
+    public String getColumnName(int column)
     {
-        if(rowIndex < mDiscoveredTuners.size())
-        {
-            DiscoveredTuner discoveredTuner = mDiscoveredTuners.get(rowIndex);
-
-            switch(columnIndex)
-            {
-                case COLUMN_TUNER_STATUS:
-                    return discoveredTuner.getTunerStatus();
-                case COLUMN_TUNER_CLASS:
-                    return discoveredTuner.getTunerClass().toString();
-                case COLUMN_TUNER_TYPE:
-                    if(discoveredTuner.hasTuner())
-                    {
-                        return discoveredTuner.getTuner().getTunerType().getLabel();
-                    }
-                    else
-                    {
-                        return "";
-                    }
-                case COLUMN_FREQUENCY:
-                    if(discoveredTuner.hasTuner())
-                    {
-                        long frequency = discoveredTuner.getTuner().getTunerController().getFrequency();
-                        return mFrequencyFormat.format(frequency / 1E6D) + MHZ;
-                    }
-                    else
-                    {
-                        return "";
-                    }
-                case COLUMN_CHANNEL_COUNT:
-                    if(discoveredTuner.hasTuner())
-                    {
-                        int channelCount = discoveredTuner.getTuner().getChannelSourceManager().getTunerChannelCount();
-                        return channelCount + " (" + (discoveredTuner.getTuner().getTunerController().isLockedSampleRate() ? "LOCKED)" : "UNLOCKED)");
-                    }
-                    else
-                    {
-                        return "";
-                    }
-                default:
-                    break;
-            }
-        }
-
-        return null;
+        return COLUMN_HEADERS[column];
     }
 
     @Override
-    public String getColumnName(int columnIndex)
+    public Object getValueAt(int row, int column)
     {
-        return COLUMN_HEADERS[columnIndex];
+        DiscoveredTuner discovered = getDiscoveredTuner(row);
+        if(discovered == null)
+        {
+            return null;
+        }
+        return switch(column)
+        {
+            case COLUMN_TUNER_STATUS -> discovered.getTunerStatus();
+            case COLUMN_TUNER_CLASS -> discovered.getTunerClass().toString();
+            case COLUMN_TUNER_TYPE -> discovered.hasTuner() ? discovered.getTuner().getTunerType().getLabel() : "";
+            case COLUMN_FREQUENCY -> discovered.hasTuner() ?
+                mFrequencyFormat.format(discovered.getTuner().getTunerController().getFrequency() / 1E6D) + " MHz" : "";
+            case COLUMN_CHANNEL_COUNT -> discovered.hasTuner() ?
+                discovered.getTuner().getChannelSourceManager().getTunerChannelCount() + " (" +
+                    (discovered.getTuner().getTunerController().isLockedSampleRate() ? "LOCKED)" : "UNLOCKED)") : "";
+            default -> null;
+        };
     }
 
-    /**
-     * Generates a diagnostic report for all discovered tuners.
-     */
     public String getDiagnosticReport()
     {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Discovered Tuner Model Diagnostic Report\n");
-
-        List<DiscoveredTuner> tunersCopy = new ArrayList<>(mDiscoveredTuners);
-
-        for(DiscoveredTuner tuner: tunersCopy)
+        StringBuilder report = new StringBuilder("Discovered Tuner Model Diagnostic Report\n");
+        for(DiscoveredTuner tuner: mRegistry.snapshot())
         {
-            sb.append("\n\n--------------- DISCOVERED TUNER --------------------\n\n");
-            sb.append(tuner.getDiagnosticReport()).append("\n");
+            report.append("\n\n--------------- DISCOVERED TUNER --------------------\n\n")
+                .append(tuner.getDiagnosticReport()).append('\n');
         }
-
-        return sb.toString();
+        return report.toString();
     }
 }

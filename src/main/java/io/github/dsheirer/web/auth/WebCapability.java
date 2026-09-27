@@ -37,6 +37,7 @@ public enum WebCapability
     ADMIN_ALIASES("admin-aliases", "Alias and scan-list management", AccessTier.ADMIN, false),
     ADMIN_STREAMING("admin-streaming", "Streaming management", AccessTier.ADMIN, false),
     ADMIN_CHANNELS("admin-channels", "Channel management", AccessTier.ADMIN, false),
+    ADMIN_TUNERS("admin-tuners", "Tuner management", AccessTier.ADMIN, false),
     ADMIN_SETTINGS("admin-settings", "Receiver settings", AccessTier.ADMIN, false),
     RECEIVER_HEALTH("receiver-health", "Receiver status", AccessTier.ADMIN, false);
 

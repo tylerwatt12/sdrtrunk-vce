@@ -50,7 +50,6 @@ import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowSorter;
 import javax.swing.SortOrder;
-import javax.swing.event.TableModelEvent;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableRowSorter;
@@ -148,12 +147,10 @@ public class TunerViewPanel extends JPanel
         mTunerTable.setComponentPopupMenu(popupMenu);
         ThemeManager.getInstance().registerSwing(popupMenu);
 
-        //Monitor for tuner removal events so we can update the editor when our selected tuner is removed
+        //The table coalesces registry changes; check the selected editor against the current inventory on refresh.
         mDiscoveredTunerModel.addTableModelListener(e ->
         {
-            //Detect when status is for the currently selected tuner
-            if(e.getType() == TableModelEvent.DELETE &&
-                mDiscoveredTunerEditor.hasItem() &&
+            if(mDiscoveredTunerEditor.hasItem() &&
                 !mDiscoveredTunerModel.hasTuner(mDiscoveredTunerEditor.getItem()))
             {
                 mDiscoveredTunerEditor.setItem(null);

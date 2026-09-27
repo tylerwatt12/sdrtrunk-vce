@@ -49,7 +49,7 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
     private IFrameLocationListener mFrameLocationListener;
     private int mBufferSampleCount = 65536; //Complex samples per buffer
     private int mBytesPerFrame;
-    private int mFrameCounter = 0;
+    private long mFrameCounter = 0;
     private long mFrequency = 0;
     private Listener<INativeBuffer> mListener;
     private AudioInputStream mInputStream;
@@ -273,17 +273,17 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         	/* Fill the buffer with samples from the file */
             int samplesRead = mInputStream.read(buffer);
 
+            if(samplesRead < 0)
+            {
+                throw new IOException("End of file reached");
+            }
+
             mFrameCounter += samplesRead;
 
             broadcast(mFrameCounter);
 
             if(broadcast && mListener != null)
             {
-                if(samplesRead < 0)
-                {
-                    throw new IOException("End of file reached");
-                }
-
                 if(samplesRead < buffer.length)
                 {
                     buffer = Arrays.copyOf(buffer, samplesRead);
@@ -319,13 +319,13 @@ public class ComplexWaveSource extends Source implements IControllableFileSource
         return mFile;
     }
 
-    private void broadcast(int byteLocation)
+    private void broadcast(long byteLocation)
     {
-        int frameLocation = (byteLocation / mBytesPerFrame);
-
         if(mFrameLocationListener != null)
         {
-            mFrameLocationListener.frameLocationUpdated(frameLocation);
+            // WAV files near 4 GB exceed an int byte offset, though their stereo I/Q frame count still fits.
+            long frameLocation = byteLocation / mBytesPerFrame;
+            mFrameLocationListener.frameLocationUpdated((int)Math.min(frameLocation, Integer.MAX_VALUE));
         }
     }
 

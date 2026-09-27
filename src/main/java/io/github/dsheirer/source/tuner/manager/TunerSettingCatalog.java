@@ -1,0 +1,726 @@
+package io.github.dsheirer.source.tuner.manager;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.dsheirer.source.tuner.TunerController;
+import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
+import io.github.dsheirer.source.tuner.airspy.AirspyTunerController;
+import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerConfiguration;
+import io.github.dsheirer.source.tuner.airspy.hf.AirspyHfTunerController;
+import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import io.github.dsheirer.source.tuner.hackrf.HackRFTunerConfiguration;
+import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.HackRFSampleRate;
+import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController;
+import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerConfiguration;
+import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController;
+import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.RTL2832TunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.e4k.E4KEmbeddedTuner;
+import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013EmbeddedTuner;
+import io.github.dsheirer.source.tuner.rtl.r8x.R8xTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.r8x.R8xEmbeddedTuner;
+import io.github.dsheirer.source.tuner.sdrplay.RspSampleRate;
+import io.github.dsheirer.source.tuner.sdrplay.RspTunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrplay.RspTunerController;
+import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
+import io.github.dsheirer.source.tuner.sdrplay.rsp1a.Rsp1aTunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrplay.rsp1b.Rsp1bTunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrplay.rsp2.Rsp2TunerConfiguration;
+import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner1Configuration;
+import io.github.dsheirer.source.tuner.sdrplay.rspDuo.RspDuoTuner2Configuration;
+import io.github.dsheirer.source.tuner.sdrplay.rspDuo.IControlRspDuo;
+import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
+import io.github.dsheirer.source.tuner.sdrplay.rspDx.RspDxTunerConfiguration;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+/**
+ * Device-specific tuner settings described in Java.  The browser renders these descriptors without knowing tuner
+ * families, controller classes, or hardware validation rules.  No method in this class writes to a tuner.
+ */
+public final class TunerSettingCatalog
+{
+    private TunerSettingCatalog()
+    {
+    }
+
+    public record Option(Object value, String label)
+    {
+    }
+
+    public record SettingDescriptor(String id, String label, String kind, Object value,
+                                    @JsonProperty("pending_value") Object pendingValue, List<Option> options,
+                                    Number minimum, Number maximum, Number step, String unit, String scope,
+                                    @JsonProperty("requires_idle") boolean requiresIdle, boolean editable)
+    {
+    }
+
+    /** Stable planner identifier, or null for sources the external planner cannot model. */
+    public static String plannerModel(TunerType type)
+    {
+        if(type == null)
+        {
+            return null;
+        }
+
+        return switch(type)
+        {
+            case AIRSPY_R820T, HYDRASDR_R828D -> "airspy";
+            case AIRSPY_HF_PLUS -> "airspy-hf";
+            case ELONICS_E4000 -> "rtl-e4k";
+            case FITIPOWER_FC0013 -> "rtl-fc0013";
+            case RAFAELMICRO_R820T, RAFAELMICRO_R828D -> "rtl-r8x";
+            case HACKRF_ONE, HACKRF_JAWBREAKER, HACKRF_RAD1O -> "hackrf";
+            case RSP_DUO_1, RSP_DUO_2 -> "sdrplay-duo";
+            case RSP_1, RSP_1A, RSP_1B, RSP_2, RSP_DX -> "sdrplay";
+            default -> null;
+        };
+    }
+
+    public static List<SettingDescriptor> describe(DiscoveredTuner discovered)
+    {
+        return describe(discovered, Map.of());
+    }
+
+    public static List<SettingDescriptor> describe(DiscoveredTuner discovered, Map<String,Object> pending)
+    {
+        TunerConfiguration configuration = discovered.getTunerConfiguration();
+
+        if(configuration == null || configuration instanceof RecordingTunerConfiguration)
+        {
+            return List.of();
+        }
+
+        TunerController controller = discovered.hasTuner() ? discovered.getTuner().getTunerController() : null;
+        List<SettingDescriptor> descriptors = new ArrayList<>();
+
+        for(Spec spec: specs(configuration))
+        {
+            try
+            {
+                List<Option> options = options(spec, configuration, controller, discovered);
+                boolean editable = (!spec.dynamicOptions() || !options.isEmpty()) &&
+                    !("lna".equals(spec.id()) && configuration instanceof RspTunerConfiguration &&
+                        !(controller instanceof RspTunerController<?>)) &&
+                    editableForConfiguration(configuration, spec) &&
+                    !("device".equals(spec.scope()) && isRspDuoSlave(discovered));
+                descriptors.add(new SettingDescriptor(spec.id(), spec.label(), kind(spec, configuration),
+                    read(configuration, spec), publicValue(spec, pending.get(spec.id())), options,
+                    publicBound(spec, spec.minimum()),
+                    "lna".equals(spec.id()) && controller instanceof RspTunerController<?> rsp ?
+                        rsp.getControlRsp().getMaximumLNASetting() : publicBound(spec, spec.maximum()),
+                    spec.step(), spec.unit(), spec.scope(), requiresIdle(configuration, spec.id()), editable));
+            }
+            catch(ReflectiveOperationException e)
+            {
+                throw new IllegalStateException("Invalid tuner setting provider: " + spec.id(), e);
+            }
+        }
+
+        return List.copyOf(descriptors);
+    }
+
+    /** Validate and normalize a submitted value before queuing it for the hardware worker. */
+    public static Object validate(DiscoveredTuner discovered, String settingId, Object rawValue)
+    {
+        TunerConfiguration configuration = discovered.getTunerConfiguration();
+        TunerController controller = discovered.hasTuner() ? discovered.getTuner().getTunerController() : null;
+        Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+
+        try
+        {
+            if(!editableForConfiguration(configuration, spec))
+            {
+                throw new IllegalArgumentException("Setting is not editable in the current tuner mode");
+            }
+
+            Class<?> type = getter(configuration, spec).getReturnType();
+            List<Option> options = options(spec, configuration, controller, discovered);
+
+            if(spec.dynamicOptions() && options.isEmpty())
+            {
+                throw new IllegalArgumentException("This setting requires the tuner to be available");
+            }
+
+            Object value = "frequency_mhz".equals(spec.id()) ? parseFrequencyMHz(rawValue) :
+                coerce(rawValue, type);
+
+            if("lna".equals(spec.id()) && configuration instanceof RspTunerConfiguration)
+            {
+                if(!(controller instanceof RspTunerController<?> rsp) ||
+                    ((Number)value).intValue() < 0 ||
+                    ((Number)value).intValue() > rsp.getControlRsp().getMaximumLNASetting())
+                {
+                    throw new IllegalArgumentException("LNA setting is unavailable or out of range");
+                }
+            }
+
+            if(type.isEnum())
+            {
+                if(options.stream().noneMatch(option -> Objects.equals(option.value(), ((Enum<?>)value).name())))
+                {
+                    throw new IllegalArgumentException("Unsupported tuner option");
+                }
+            }
+            else if(!options.isEmpty() && options.stream().noneMatch(option ->
+                Objects.equals(String.valueOf(option.value()), String.valueOf(value))))
+            {
+                throw new IllegalArgumentException("Unsupported tuner option");
+            }
+
+            if(value instanceof Number number)
+            {
+                double numeric = number.doubleValue();
+
+                if((spec.minimum() != null && numeric < spec.minimum().doubleValue()) ||
+                    (spec.maximum() != null && numeric > spec.maximum().doubleValue()))
+                {
+                    throw new IllegalArgumentException("Tuner setting is out of range");
+                }
+            }
+
+            return value;
+        }
+        catch(ReflectiveOperationException e)
+        {
+            throw new IllegalStateException("Invalid tuner setting provider: " + settingId, e);
+        }
+    }
+
+    static String scope(TunerConfiguration configuration, String settingId)
+    {
+        return specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId))
+            .map(Spec::scope).findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+    }
+
+    static boolean requiresIdle(TunerConfiguration configuration, String settingId)
+    {
+        if(configuration instanceof AirspyTunerConfiguration || configuration instanceof HydraSdrTunerConfiguration)
+        {
+            return !Set.of("gain", "if_gain", "mixer_gain", "lna_gain", "mixer_agc", "lna_agc")
+                .contains(settingId);
+        }
+        if(configuration instanceof AirspyHfTunerConfiguration)
+        {
+            return !Set.of("agc", "lna", "attenuation").contains(settingId);
+        }
+        if(configuration instanceof HackRFTunerConfiguration)
+        {
+            return !Set.of("lna_gain", "vga_gain", "amplifier").contains(settingId);
+        }
+        if(configuration instanceof RTL2832TunerConfiguration)
+        {
+            return !Set.of("master_gain", "mixer_gain", "lna_gain", "vga_gain", "if_gain", "agc")
+                .contains(settingId);
+        }
+        if(configuration instanceof RspTunerConfiguration)
+        {
+            return !Set.of("lna", "baseband_gain_reduction", "agc_mode").contains(settingId);
+        }
+        return true;
+    }
+
+    static boolean isEditableInCurrentMode(TunerConfiguration configuration, String settingId)
+    {
+        Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+        return editableForConfiguration(configuration, spec);
+    }
+
+    static boolean isRspDuoSlave(DiscoveredTuner tuner)
+    {
+        return tuner instanceof DiscoveredRspDuoTuner2 duo &&
+            duo.getDeviceInfo().getDeviceSelectionMode().isSlaveMode();
+    }
+
+    private static boolean editableForConfiguration(TunerConfiguration configuration, Spec spec)
+    {
+        if(configuration instanceof AirspyHfTunerConfiguration && "sample_rate".equals(spec.id()))
+        {
+            // The desktop editor deliberately fixes the HF+ rate because alternatives were unreliable.
+            return false;
+        }
+        if(configuration instanceof AirspyTunerConfiguration airspy)
+        {
+            return editableForPreset(spec.id(), airspy.getGain().name(), airspy.isMixerAGC(), airspy.isLNAAGC());
+        }
+        if(configuration instanceof HydraSdrTunerConfiguration hydra)
+        {
+            return editableForPreset(spec.id(), hydra.getGain().name(), hydra.isMixerAGC(), hydra.isLNAAGC());
+        }
+        if(configuration instanceof E4KTunerConfiguration e4k &&
+            Set.of("if_gain", "mixer_gain", "lna_gain").contains(spec.id()))
+        {
+            return "MANUAL".equals(e4k.getMasterGain().name());
+        }
+        if(configuration instanceof R8xTunerConfiguration r8x &&
+            Set.of("mixer_gain", "lna_gain", "vga_gain").contains(spec.id()))
+        {
+            return "MANUAL".equals(r8x.getMasterGain().name());
+        }
+        if(configuration instanceof FC0013TunerConfiguration fc0013 && "lna_gain".equals(spec.id()))
+        {
+            return !fc0013.getAGC();
+        }
+        return true;
+    }
+
+    private static boolean editableForPreset(String id, String preset, boolean mixerAgc, boolean lnaAgc)
+    {
+        boolean manualField = Set.of("if_gain", "mixer_gain", "lna_gain", "mixer_agc", "lna_agc").contains(id);
+
+        if(manualField && !"CUSTOM".equals(preset))
+        {
+            return false;
+        }
+
+        return !("mixer_gain".equals(id) && mixerAgc) && !("lna_gain".equals(id) && lnaAgc);
+    }
+
+    static Object read(TunerConfiguration configuration, String settingId)
+    {
+        Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+
+        try
+        {
+            return read(configuration, spec);
+        }
+        catch(ReflectiveOperationException e)
+        {
+            throw new IllegalStateException("Invalid tuner setting provider: " + settingId, e);
+        }
+    }
+
+    static Object readRaw(TunerConfiguration configuration, String settingId)
+    {
+        Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+
+        try
+        {
+            return getter(configuration, spec).invoke(configuration);
+        }
+        catch(ReflectiveOperationException e)
+        {
+            throw new IllegalStateException("Invalid tuner setting provider: " + settingId, e);
+        }
+    }
+
+    static void write(TunerConfiguration configuration, String settingId, Object value)
+    {
+        Spec spec = specs(configuration).stream().filter(candidate -> candidate.id().equals(settingId)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Unknown tuner setting"));
+
+        try
+        {
+            Method getter = getter(configuration, spec);
+            Method setter = configuration.getClass().getMethod(spec.setter(), getter.getReturnType());
+            setter.invoke(configuration, value);
+        }
+        catch(InvocationTargetException e)
+        {
+            throw new IllegalArgumentException("Tuner rejected setting", e.getCause());
+        }
+        catch(ReflectiveOperationException e)
+        {
+            throw new IllegalStateException("Invalid tuner setting provider: " + settingId, e);
+        }
+    }
+
+    private static String kind(Spec spec, TunerConfiguration configuration) throws ReflectiveOperationException
+    {
+        if("frequency_mhz".equals(spec.id()))
+        {
+            return "decimal";
+        }
+        Class<?> type = getter(configuration, spec).getReturnType();
+        return type == boolean.class || type == Boolean.class ? "boolean" :
+            type.isEnum() || spec.dynamicOptions() ? "choice" :
+                type == double.class || type == Double.class ? "decimal" : "integer";
+    }
+
+    private static Object read(TunerConfiguration configuration, Spec spec) throws ReflectiveOperationException
+    {
+        Object value = getter(configuration, spec).invoke(configuration);
+        return publicValue(spec, value);
+    }
+
+    private static Object publicValue(Spec spec, Object value)
+    {
+        if("frequency_mhz".equals(spec.id()) && value instanceof Number frequency)
+        {
+            return frequency.doubleValue() / 1_000_000.0;
+        }
+        return publicValue(value);
+    }
+
+    private static Number publicBound(Spec spec, Number value)
+    {
+        return "frequency_mhz".equals(spec.id()) && value != null ?
+            value.doubleValue() / 1_000_000.0 : value;
+    }
+
+    private static long parseFrequencyMHz(Object raw)
+    {
+        try
+        {
+            double mhz = Double.parseDouble(String.valueOf(raw));
+            double hertz = mhz * 1_000_000.0;
+            if(Double.isFinite(hertz) && hertz >= 0 && hertz <= Long.MAX_VALUE &&
+                Math.abs(hertz - Math.rint(hertz)) < 0.01)
+            {
+                return Math.round(hertz);
+            }
+        }
+        catch(NumberFormatException ignored)
+        {
+        }
+        throw new IllegalArgumentException("Frequency must have no more than six decimal places in MHz");
+    }
+
+    private static Object publicValue(Object value)
+    {
+        return value instanceof Enum<?> option ? option.name() : value;
+    }
+
+    private static Method getter(TunerConfiguration configuration, Spec spec) throws NoSuchMethodException
+    {
+        return configuration.getClass().getMethod(spec.getter());
+    }
+
+    private static Object coerce(Object raw, Class<?> type)
+    {
+        if(type == boolean.class || type == Boolean.class)
+        {
+            if(raw instanceof Boolean value)
+            {
+                return value;
+            }
+        }
+        else if(type == int.class || type == Integer.class)
+        {
+            try
+            {
+                return Integer.parseInt(String.valueOf(raw));
+            }
+            catch(NumberFormatException ignored)
+            {
+            }
+        }
+        else if(type == long.class || type == Long.class)
+        {
+            try
+            {
+                return Long.parseLong(String.valueOf(raw));
+            }
+            catch(NumberFormatException ignored)
+            {
+            }
+        }
+        else if(type == double.class || type == Double.class)
+        {
+            try
+            {
+                double value = Double.parseDouble(String.valueOf(raw));
+                if(Double.isFinite(value))
+                {
+                    return value;
+                }
+            }
+            catch(NumberFormatException ignored)
+            {
+            }
+        }
+        else if(type.isEnum() && raw instanceof String name)
+        {
+            try
+            {
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                Object value = Enum.valueOf((Class<? extends Enum>)type, name);
+                return value;
+            }
+            catch(IllegalArgumentException ignored)
+            {
+            }
+        }
+
+        throw new IllegalArgumentException("Invalid tuner setting value");
+    }
+
+    private static List<Option> options(Spec spec, TunerConfiguration configuration, TunerController controller,
+                                        DiscoveredTuner discovered)
+        throws ReflectiveOperationException
+    {
+        Class<?> type = getter(configuration, spec).getReturnType();
+
+        if(type == RspSampleRate.class)
+        {
+            Set<RspSampleRate> supported;
+
+            if(configuration instanceof RspDuoTuner1Configuration ||
+                configuration instanceof RspDuoTuner2Configuration)
+            {
+                if(controller instanceof RspTunerController<?> rsp &&
+                    rsp.getControlRsp() instanceof IControlRspDuo duo)
+                {
+                    supported = duo.getSupportedSampleRates();
+                }
+                else if(discovered instanceof DiscoveredRspTuner<?> discoveredRsp)
+                {
+                    if(discoveredRsp.getDeviceInfo().getDeviceSelectionMode().isSlaveMode())
+                    {
+                        return List.of();
+                    }
+
+                    supported = discoveredRsp.getDeviceInfo().getDeviceSelectionMode().isMasterMode() ?
+                        RspSampleRate.getDualTunerSampleRates() : RspSampleRate.getSingleTunerSampleRates();
+                }
+                else
+                {
+                    return List.of();
+                }
+            }
+            else
+            {
+                supported = RspSampleRate.getSingleTunerSampleRates();
+            }
+
+            return supported.stream().map(rate -> new Option(rate.name(), rate.toString())).toList();
+        }
+
+        if(type.isEnum())
+        {
+            return Arrays.stream(type.getEnumConstants()).map(option -> (Enum<?>)option)
+                .filter(option -> !option.name().equals("UNDEFINED"))
+                .filter(option -> !(option instanceof HackRFSampleRate rate) || rate.isValidSampleRate())
+                .map(option -> new Option(option.name(), option.toString())).toList();
+        }
+
+        if(!spec.dynamicOptions() || controller == null)
+        {
+            return List.of();
+        }
+
+        if(controller instanceof AirspyTunerController airspy)
+        {
+            return airspy.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
+        }
+        if(controller instanceof HydraSdrTunerController hydra)
+        {
+            return hydra.getSampleRates().stream().map(rate -> new Option(rate.getRate(), rate.getLabel())).toList();
+        }
+        if(controller instanceof AirspyHfTunerController hf)
+        {
+            return hf.getAvailableSampleRates().stream().map(rate -> new Option(rate.getSampleRate(), rate.toString()))
+                .toList();
+        }
+
+        return List.of();
+    }
+
+    private static List<Spec> specs(TunerConfiguration configuration)
+    {
+        List<Spec> specs = new ArrayList<>();
+
+        if(configuration instanceof RecordingTunerConfiguration)
+        {
+            return specs;
+        }
+
+        specs.add(spec("frequency_correction_ppm", "Frequency correction", "getFrequencyCorrection",
+            "setFrequencyCorrection", -200.0, 200.0, 0.1, "ppm"));
+        long hardwareMinimum = hardwareMinimum(configuration);
+        long hardwareMaximum = hardwareMaximum(configuration);
+        if(hardwareMinimum > 0 && hardwareMaximum > hardwareMinimum)
+        {
+            long minimum = Math.max(hardwareMinimum, configuration.getMinimumFrequency());
+            long maximum = configuration.getMaximumFrequency() > 0 ?
+                Math.min(hardwareMaximum, configuration.getMaximumFrequency()) : hardwareMaximum;
+            if(maximum > minimum)
+            {
+                specs.add(spec("frequency_mhz", "Center frequency", "getFrequency", "setFrequency",
+                    minimum, maximum, 0.000001, "MHz"));
+            }
+        }
+        specs.add(spec("automatic_ppm", "Automatic PPM correction", "getAutoPPMCorrectionEnabled",
+            "setAutoPPMCorrectionEnabled"));
+        specs.add(spec("center_frequency_locked", "Lock center frequency", "isCenterFrequencyLocked",
+            "setCenterFrequencyLocked"));
+
+        if(configuration instanceof AirspyTunerConfiguration || configuration instanceof HydraSdrTunerConfiguration)
+        {
+            specs.add(dynamicRate());
+            specs.add(spec("gain", "Gain preset", "getGain", "setGain"));
+            specs.add(spec("if_gain", "IF gain", "getIFGain", "setIFGain", 0, 15, 1, null));
+            specs.add(spec("mixer_gain", "Mixer gain", "getMixerGain", "setMixerGain", 0, 15, 1, null));
+            specs.add(spec("lna_gain", "LNA gain", "getLNAGain", "setLNAGain", 0, 14, 1, null));
+            specs.add(spec("mixer_agc", "Mixer AGC", "isMixerAGC", "setMixerAGC"));
+            specs.add(spec("lna_agc", "LNA AGC", "isLNAAGC", "setLNAAGC"));
+            if(configuration instanceof HydraSdrTunerConfiguration)
+            {
+                specs.add(spec("bias_t", "Bias T", "isBiasT", "setBiasT"));
+            }
+        }
+        else if(configuration instanceof AirspyHfTunerConfiguration)
+        {
+            specs.add(dynamicRate());
+            specs.add(spec("agc", "AGC", "isAgc", "setAgc"));
+            specs.add(spec("lna", "LNA", "isLna", "setLna"));
+            specs.add(spec("attenuation", "Attenuation", "getAttenuationValue", "setAttenuationValue",
+                0, 8, 1, "step"));
+        }
+        else if(configuration instanceof RTL2832TunerConfiguration)
+        {
+            specs.add(spec("sample_rate", "Sample rate", "getSampleRate", "setSampleRate"));
+            specs.add(spec("bias_t", "Bias T", "isBiasT", "setBiasT"));
+            if(configuration instanceof E4KTunerConfiguration)
+            {
+                specs.add(spec("master_gain", "Master gain", "getMasterGain", "setMasterGain"));
+                specs.add(spec("mixer_gain", "Mixer gain", "getMixerGain", "setMixerGain"));
+                specs.add(spec("lna_gain", "LNA gain", "getLNAGain", "setLNAGain"));
+                specs.add(spec("if_gain", "IF gain", "getIFGain", "setIFGain"));
+            }
+            else if(configuration instanceof FC0013TunerConfiguration)
+            {
+                specs.add(spec("lna_gain", "LNA gain", "getLnaGain", "setLnaGain"));
+                specs.add(spec("agc", "AGC", "getAGC", "setAGC"));
+            }
+            else if(configuration instanceof R8xTunerConfiguration)
+            {
+                specs.add(spec("master_gain", "Master gain", "getMasterGain", "setMasterGain"));
+                specs.add(spec("mixer_gain", "Mixer gain", "getMixerGain", "setMixerGain"));
+                specs.add(spec("lna_gain", "LNA gain", "getLNAGain", "setLNAGain"));
+                specs.add(spec("vga_gain", "VGA gain", "getVGAGain", "setVGAGain"));
+            }
+        }
+        else if(configuration instanceof HackRFTunerConfiguration)
+        {
+            specs.add(spec("sample_rate", "Sample rate", "getSampleRate", "setSampleRate"));
+            specs.add(spec("lna_gain", "LNA gain", "getLNAGain", "setLNAGain"));
+            specs.add(spec("vga_gain", "VGA gain", "getVGAGain", "setVGAGain"));
+            specs.add(spec("amplifier", "RF amplifier", "getAmplifierEnabled", "setAmplifierEnabled"));
+        }
+        else if(configuration instanceof RspTunerConfiguration)
+        {
+            if(configuration instanceof RspDuoTuner1Configuration ||
+                configuration instanceof RspDuoTuner2Configuration)
+            {
+                specs.add(new Spec("sample_rate", "Sample rate", "getSampleRate", "setSampleRate",
+                    null, null, null, "Hz", "device", true));
+            }
+            else
+            {
+                specs.add(spec("sample_rate", "Sample rate", "getSampleRate", "setSampleRate"));
+            }
+            specs.add(spec("baseband_gain_reduction", "Baseband gain reduction", "getBasebandGainReduction",
+                "setBasebandGainReduction", 20, 59, 1, "dB"));
+            specs.add(spec("lna", "LNA state", "getLNA", "setLNA", 0, null, 1, null));
+            specs.add(spec("agc_mode", "AGC mode", "getAgcMode", "setAgcMode"));
+            if(configuration instanceof Rsp1aTunerConfiguration || configuration instanceof Rsp1bTunerConfiguration ||
+                configuration instanceof Rsp2TunerConfiguration || configuration instanceof RspDuoTuner1Configuration ||
+                configuration instanceof RspDuoTuner2Configuration || configuration instanceof RspDxTunerConfiguration)
+            {
+                specs.add(spec("rf_notch", "RF notch", "isRfNotch", "setRfNotch"));
+            }
+            if(configuration instanceof Rsp1aTunerConfiguration || configuration instanceof Rsp1bTunerConfiguration ||
+                configuration instanceof RspDuoTuner1Configuration || configuration instanceof RspDuoTuner2Configuration ||
+                configuration instanceof RspDxTunerConfiguration)
+            {
+                specs.add(spec("dab_notch", "DAB notch", "isRfDabNotch", "setRfDabNotch"));
+            }
+            if(configuration instanceof Rsp1aTunerConfiguration || configuration instanceof Rsp1bTunerConfiguration ||
+                configuration instanceof Rsp2TunerConfiguration || configuration instanceof RspDuoTuner2Configuration ||
+                configuration instanceof RspDxTunerConfiguration)
+            {
+                specs.add(spec("bias_t", "Bias T", "isBiasT", "setBiasT"));
+            }
+            if(configuration instanceof Rsp2TunerConfiguration)
+            {
+                specs.add(spec("antenna", "Antenna", "getAntennaSelection", "setAntennaSelection"));
+                specs.add(spec("external_reference", "External reference", "isExternalReferenceOutput",
+                    "setExternalReferenceOutput", "device"));
+            }
+            if(configuration instanceof RspDuoTuner1Configuration)
+            {
+                specs.add(spec("am_port", "AM port", "getAmPort", "setAmPort"));
+                specs.add(spec("am_notch", "AM notch", "isAmNotch", "setAmNotch"));
+            }
+            if(configuration instanceof RspDuoTuner1Configuration || configuration instanceof RspDuoTuner2Configuration)
+            {
+                specs.add(spec("external_reference", "External reference", "isExternalReferenceOutput",
+                    "setExternalReferenceOutput", "device"));
+            }
+            if(configuration instanceof RspDxTunerConfiguration)
+            {
+                specs.add(spec("antenna", "Antenna", "getAntenna", "setAntenna"));
+                specs.add(spec("hdr_mode", "HDR mode", "isHdrMode", "setHdrMode"));
+                specs.add(spec("hdr_bandwidth", "HDR bandwidth", "getHdrModeBandwidth", "setHdrModeBandwidth"));
+            }
+        }
+
+        return specs;
+    }
+
+    private static long hardwareMinimum(TunerConfiguration configuration)
+    {
+        if(configuration instanceof AirspyTunerConfiguration) return AirspyTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof HydraSdrTunerConfiguration) return HydraSdrTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof AirspyHfTunerConfiguration) return AirspyHfTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof HackRFTunerConfiguration) return HackRFTunerController.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof E4KTunerConfiguration) return E4KEmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof FC0013TunerConfiguration) return FC0013EmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof R8xTunerConfiguration) return R8xEmbeddedTuner.MINIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof RspTunerConfiguration) return 100_000L;
+        return 0;
+    }
+
+    private static long hardwareMaximum(TunerConfiguration configuration)
+    {
+        if(configuration instanceof AirspyTunerConfiguration) return AirspyTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof HydraSdrTunerConfiguration) return HydraSdrTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof AirspyHfTunerConfiguration) return AirspyHfTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof HackRFTunerConfiguration) return HackRFTunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof E4KTunerConfiguration) return E4KEmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof FC0013TunerConfiguration) return FC0013EmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof R8xTunerConfiguration) return R8xEmbeddedTuner.MAXIMUM_TUNABLE_FREQUENCY_HZ;
+        if(configuration instanceof RspTunerConfiguration) return 2_000_000_000L;
+        return 0;
+    }
+
+    private static Spec dynamicRate()
+    {
+        return new Spec("sample_rate", "Sample rate", "getSampleRate", "setSampleRate", null, null,
+            null, "Hz", "tuner", true);
+    }
+
+    private static Spec spec(String id, String label, String getter, String setter)
+    {
+        return new Spec(id, label, getter, setter, null, null, null, null, "tuner", false);
+    }
+
+    private static Spec spec(String id, String label, String getter, String setter, String scope)
+    {
+        return new Spec(id, label, getter, setter, null, null, null, null, scope, false);
+    }
+
+    private static Spec spec(String id, String label, String getter, String setter, Number minimum, Number maximum,
+                             Number step, String unit)
+    {
+        return new Spec(id, label, getter, setter, minimum, maximum, step, unit, "tuner", false);
+    }
+
+    private record Spec(String id, String label, String getter, String setter, Number minimum, Number maximum,
+                        Number step, String unit, String scope, boolean dynamicOptions)
+    {
+    }
+}

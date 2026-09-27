@@ -22,6 +22,7 @@ package io.github.dsheirer.source.tuner.recording;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import java.util.UUID;
 
 /**
  * Recording tuner configuration for using baseband I/Q recordings as a tuner source
@@ -68,5 +69,14 @@ public class RecordingTunerConfiguration extends TunerConfiguration
     public static RecordingTunerConfiguration create()
     {
         return new RecordingTunerConfiguration("Recording " + System.currentTimeMillis());
+    }
+
+    /**
+     * Creates a recording configuration with an ID that cannot collide when several tuners are added rapidly.
+     * Existing saved IDs and the legacy desktop creation path are unchanged.
+     */
+    public static RecordingTunerConfiguration createWithUniqueId()
+    {
+        return new RecordingTunerConfiguration("Recording " + UUID.randomUUID());
     }
 }

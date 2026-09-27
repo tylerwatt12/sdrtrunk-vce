@@ -67,7 +67,6 @@ public final class TunerDiagnosticService implements AutoCloseable
     private static final int MAXIMUM_DECIMATION = 32;
     private static final int QUANTIZATION_BITS = 8;
     private static final int MAXIMUM_PROFILE_FRAMES_PER_SECOND = 20;
-    private static final long DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS = 400;
     /** Keeps the requested view out of the anti-alias filter transition band. */
     private static final double USABLE_LENS_FRACTION = 0.80;
 
@@ -95,10 +94,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         mProcessorFactory = Objects.requireNonNull(processorFactory, "Diagnostic processor factory cannot be null");
     }
 
-    /**
-     * Lists enabled tuner targets without starting sample transfer.  IDs are opaque and stable for the lifetime of
-     * the underlying tuner object; names and serials identify the administrator-selected hardware.
-     */
+    /** Lists tuners already serving at least one channel, without starting sample transfer. */
     public List<Target> targets()
     {
         synchronized(mLifecycleLock)
@@ -109,8 +105,24 @@ public final class TunerDiagnosticService implements AutoCloseable
             }
 
             return snapshotsLocked().stream().map(TargetSnapshot::target)
+                .filter(target -> target.activeChannelCount() > 0)
                 .sorted(Comparator.comparing(Target::label, String.CASE_INSENSITIVE_ORDER)
                     .thenComparing(Target::targetId)).toList();
+        }
+    }
+
+    /** Exact target identity for the inventory API. Never attaches a hardware or sample listener. */
+    public String targetIdFor(Tuner tuner)
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mClosed || tuner == null)
+            {
+                return null;
+            }
+            return snapshotsLocked().stream()
+                .filter(snapshot -> snapshot.identity() == tuner && snapshot.target().activeChannelCount() > 0)
+                .map(snapshot -> snapshot.target().targetId()).findFirst().orElse(null);
         }
     }
 
@@ -167,6 +179,11 @@ public final class TunerDiagnosticService implements AutoCloseable
             if(target == null)
             {
                 return new OpenResult(OpenStatus.NOT_FOUND, null);
+            }
+
+            if(target.target().activeChannelCount() <= 0)
+            {
+                return new OpenResult(OpenStatus.UNAVAILABLE, null);
             }
 
             try
@@ -260,7 +277,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 .filter(candidate -> session.targetId().equals(candidate.target().targetId()))
                 .findFirst().orElse(null);
 
-            if(current == null || !session.matches(current))
+            if(current == null || current.target().activeChannelCount() <= 0 || !session.matches(current))
             {
                 mActiveSession = null;
                 session.markUnavailable("Tuner is no longer available.");
@@ -530,7 +547,6 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final AtomicLong mObservedSampleRateHz = new AtomicLong();
         private final AtomicLong mDroppedIngressBuffers = new AtomicLong();
         private final FrameProcessor mProcessor;
-        private final long mOriginalIqQueueDurationMilliseconds;
         private volatile Target mMetadata;
         private final AtomicReference<AnalysisSelection> mAnalysis;
         private volatile long mMetadataStateRevision;
@@ -547,8 +563,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             mGeneration = generation;
             mMetadata = target.target();
             mAnalysis = new AtomicReference<>(new AnalysisSelection(viewport, profile));
-            ReceiverQueueSnapshot originalQueue = target.receiverQueueControl().status();
-            mOriginalIqQueueDurationMilliseconds = originalQueue.requestedDurationMilliseconds();
             mMetadataStateRevision = nextStateRevision();
             mViewportStateRevision = nextStateRevision();
             mObservedCenterFrequencyHz.set(target.target().centerFrequencyHz());
@@ -560,9 +574,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             {
                 mProcessor.updateMetadata(target.target().centerFrequencyHz(), target.target().sampleRateHz());
                 mProcessor.updateConfiguration(viewport, profile);
-                target.receiverQueueControl().request(Math.max(mOriginalIqQueueDurationMilliseconds,
-                    DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS));
-
                 if(!target.controller().getLock().tryLock())
                 {
                     throw new IllegalStateException("Selected tuner is busy changing configuration");
@@ -945,22 +956,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             try
             {
                 mProcessor.close();
-            }
-            catch(RuntimeException exception)
-            {
-                if(cleanupFailure == null)
-                {
-                    cleanupFailure = exception;
-                }
-                else
-                {
-                    cleanupFailure.addSuppressed(exception);
-                }
-            }
-
-            try
-            {
-                mTarget.receiverQueueControl().request(mOriginalIqQueueDurationMilliseconds);
             }
             catch(RuntimeException exception)
             {
@@ -1549,19 +1544,9 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return ReceiverQueueSnapshot.UNSUPPORTED;
             }
 
-            @Override
-            public void request(long durationMilliseconds)
-            {
-                if(durationMilliseconds != DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS)
-                {
-                    throw new IllegalStateException("The selected tuner does not expose an adjustable IQ queue");
-                }
-            }
         };
 
         ReceiverQueueSnapshot status();
-
-        void request(long durationMilliseconds);
     }
 
     private record PolyphaseReceiverQueueControl(PolyphaseChannelSourceManager manager)
@@ -1576,11 +1561,6 @@ public final class TunerDiagnosticService implements AutoCloseable
                 status.droppedMilliseconds());
         }
 
-        @Override
-        public void request(long durationMilliseconds)
-        {
-            manager.requestNativeBufferQueueDuration(durationMilliseconds);
-        }
     }
 
     record ReceiverQueueSnapshot(boolean supported, long appliedDurationMilliseconds,
@@ -1588,8 +1568,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                                  long droppedBuffers, long droppedMilliseconds)
     {
         private static final ReceiverQueueSnapshot UNSUPPORTED =
-            new ReceiverQueueSnapshot(false, DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS,
-                DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS, 0, 0, 0);
+            new ReceiverQueueSnapshot(false, 0, 0, 0, 0, 0);
     }
 
     @FunctionalInterface

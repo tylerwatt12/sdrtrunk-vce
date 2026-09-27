@@ -90,26 +90,36 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void listsEnabledIdleTunersAndStartsSamplesOnlyWhenSelected()
+    void rejectsIdleTunersAndDetachesWhenTheLastReceiverChannelStops()
     {
         FakeController noChannels = new FakeController(100_000_000L, 2_500_000.0);
         FakeController noExistingListener = new FakeController(200_000_000L, 2_500_000.0, false);
+        AtomicInteger channelCount = new AtomicInteger(1);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, noChannels, 0),
+            new TunerDiagnosticService.AvailableTarget(new Object(), TunerClass.AIRSPY,
+                noChannels, channelCount::get),
             target(new Object(), TunerClass.RTL2832, noExistingListener, 1)), processors);
 
         List<TunerDiagnosticService.Target> targets = service.targets();
         assertEquals(2, targets.size());
-        assertEquals(0, targets.getFirst().activeChannelCount());
         assertEquals(0, noChannels.addCount.get());
         assertEquals(0, noExistingListener.addCount.get());
         assertEquals(0, processors.createCount.get());
 
+        channelCount.set(0);
+        assertEquals(1, service.targets().size());
+        assertEquals(TunerDiagnosticService.OpenStatus.UNAVAILABLE,
+            service.tryOpen(targets.getFirst().targetId()).status());
+        assertEquals(0, noChannels.addCount.get());
+
+        channelCount.set(1);
         TunerDiagnosticService.Session session = service.tryOpen(targets.getFirst().targetId()).session();
         assertNotNull(session);
         assertEquals(1, noChannels.addCount.get());
         assertEquals(1, processors.createCount.get());
+        channelCount.set(0);
+        assertEquals("unavailable", session.state().state());
         session.close();
         assertEquals(1, noChannels.removeCount.get());
         service.close();
@@ -153,7 +163,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void appliesSpectrumProfilesAndRestoresTheReceiverQueueOnClose()
+    void appliesSpectrumProfilesWithoutChangingTheReceiverQueue()
     {
         FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
@@ -168,26 +178,26 @@ class TunerDiagnosticServiceTest
         assertEquals(32_768, state.fftSize());
         assertEquals(20, state.framesPerSecond());
         assertEquals(32, state.maximumDecimation());
-        assertEquals(400, state.iqQueueDurationMilliseconds());
+        assertEquals(100, state.iqQueueDurationMilliseconds());
         assertEquals(8, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
         assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.initialProfile.get());
         assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.lastProfile.get());
-        assertEquals(List.of(400L), queue.requests);
+        assertTrue(queue.requests.isEmpty());
 
         session.updateProfile(TunerDiagnosticService.SpectrumProfile.EFFICIENT);
         assertEquals(TunerDiagnosticService.SpectrumProfile.EFFICIENT, processors.lastProfile.get());
         assertEquals(2_048, session.state().fftSize());
-        assertEquals(List.of(400L), queue.requests);
+        assertTrue(queue.requests.isEmpty());
 
         session.close();
-        assertEquals(List.of(400L, 100L), queue.requests);
+        assertTrue(queue.requests.isEmpty());
         service.close();
     }
 
     @Test
-    void preservesProfileRatesAndNeverReducesTheReceiverQueue()
+    void preservesProfileRatesAndLeavesTheReceiverQueueUntouched()
     {
         assertEquals(20, TunerDiagnosticService.SpectrumProfile.HIGH_DETAIL.framesPerSecond());
         assertEquals(20, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL.framesPerSecond());
@@ -200,10 +210,10 @@ class TunerDiagnosticServiceTest
 
         assertNotNull(session);
         assertEquals(800, session.state().iqQueueDurationMilliseconds());
-        assertEquals(List.of(800L), queue.requests);
+        assertTrue(queue.requests.isEmpty());
 
         session.close();
-        assertEquals(List.of(800L, 800L), queue.requests);
+        assertTrue(queue.requests.isEmpty());
         service.close();
     }
 
@@ -803,7 +813,6 @@ class TunerDiagnosticServiceTest
                 droppedBuffers, droppedMilliseconds);
         }
 
-        @Override
         public void request(long durationMilliseconds)
         {
             duration = durationMilliseconds;

@@ -50,6 +50,8 @@ import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
+import io.github.dsheirer.source.tuner.recording.RecordingTunerFileCatalog;
 import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
@@ -70,6 +72,7 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
+import io.github.dsheirer.web.http.RecordingTunerHttpController;
 import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.http.WebSessionHttpController;
@@ -77,11 +80,13 @@ import io.github.dsheirer.web.http.WebReceiverSettingsHttpController;
 import io.github.dsheirer.web.http.P25BandplanOverrideHttpController;
 import io.github.dsheirer.web.http.SpectrumSnapPresetHttpController;
 import io.github.dsheirer.web.http.SupportReportHttpController;
+import io.github.dsheirer.web.http.TunerAdminHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
 import io.github.dsheirer.web.settings.SpectrumSnapSettingsService;
 import io.github.dsheirer.web.settings.WebReceiverSettingsService;
+import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -170,6 +175,9 @@ public class StatsWebServerService implements AutoCloseable
     private final DiagnosticFftScheduler mDiagnosticFftScheduler;
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
+    private final TunerAdministrationService mTunerAdministrationService;
+    private final TunerSettingsService mTunerSettingsService;
+    private final TunerManager mTunerManager;
     private final FrequencyListenService mFrequencyListenService;
     private final ReceiverHealthService mReceiverHealthService;
     private final SupportBundleService mSupportBundleService;
@@ -307,6 +315,7 @@ public class StatsWebServerService implements AutoCloseable
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
         mChannelAdministrationService = channelAdministrationService;
+        mTunerManager = tunerManager;
         mDecodeEventViewService = decodeEventViewService;
         mDecodeMessageViewService = channelProcessingManager != null ?
             new DecodeMessageViewService(channelProcessingManager) : null;
@@ -315,6 +324,9 @@ public class StatsWebServerService implements AutoCloseable
             new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
         mTunerDiagnosticService = tunerManager != null ?
             new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
+        mTunerSettingsService = tunerManager != null ? new TunerSettingsService(tunerManager) : null;
+        mTunerAdministrationService = tunerManager != null ?
+            new TunerAdministrationService(tunerManager, mTunerDiagnosticService, mTunerSettingsService) : null;
         mFrequencyListenService = mTunerDiagnosticService != null ?
             new FrequencyListenService(mTunerDiagnosticService) : null;
         mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog);
@@ -808,6 +820,19 @@ public class StatsWebServerService implements AutoCloseable
             () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator);
         server.createContext(CallMatchingHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, callMatchingController::handle));
+
+        if(mTunerAdministrationService != null)
+        {
+            TunerAdminHttpController tunerController = new TunerAdminHttpController(
+                mTunerAdministrationService, mTunerSettingsService, mTunerManager);
+            server.createContext(TunerAdminHttpController.PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_TUNERS, tunerController::handle));
+            RecordingTunerHttpController recordingController = new RecordingTunerHttpController(
+                new RecordingTunerFileCatalog(RecordingTunerFileCatalog.defaultDirectory()),
+                mTunerManager::addRecordingTuner);
+            server.createContext(RecordingTunerHttpController.PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_TUNERS, recordingController::handle));
+        }
 
         new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
@@ -2394,6 +2419,10 @@ public class StatsWebServerService implements AutoCloseable
         {
             mFrequencyListenService.close();
             mTunerDiagnosticService.close();
+        }
+        if(mTunerSettingsService != null)
+        {
+            mTunerSettingsService.close();
         }
         mDiagnosticFftScheduler.close();
         mWebCallService.close();

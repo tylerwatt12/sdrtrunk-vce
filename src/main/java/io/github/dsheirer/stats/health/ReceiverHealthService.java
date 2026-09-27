@@ -296,7 +296,7 @@ public final class ReceiverHealthService implements AutoCloseable
         List<Map<String,Object>> channelRows = new ArrayList<>();
         Set<String> activeUsbScopes = new HashSet<>();
         List<DiscoveredTuner> tuners = mTunerManager != null ?
-            mTunerManager.getDiscoveredTunerModel().getTunersSnapshot() : List.of();
+            mTunerManager.getDiscoveredTunerRegistry().snapshot() : List.of();
 
         for(DiscoveredTuner discovered: tuners)
         {
