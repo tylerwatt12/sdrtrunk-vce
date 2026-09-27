@@ -16,6 +16,8 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.call.AudioCallCoordinator;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -26,6 +28,8 @@ import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.web.http.WebSessionHttpController;
+import io.github.dsheirer.web.http.CallMatchingHttpController;
+import io.github.dsheirer.web.http.WebRequestSecurity;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
 import java.net.InetAddress;
@@ -40,6 +44,7 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
@@ -58,6 +63,115 @@ class StatsWebServerServiceLifecycleTest
         assertEquals("image/svg+xml", StatsWebServerService.contentType(Path.of("vce-favicon.svg")));
         assertEquals("image/png", StatsWebServerService.contentType(Path.of("vce-icon-32.png")));
         assertEquals("application/manifest+json", StatsWebServerService.contentType(Path.of("site.webmanifest")));
+    }
+
+    @Test
+    void callMatchingRouteEnforcesAdminAndClearsLateBoundSourcesOnClose() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("call-matching-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = mTemporaryDirectory.resolve("call-matching-assets");
+        Files.createDirectories(assets);
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        TestUserPreferences preferences = new TestUserPreferences(
+            new TestApplicationPreference(0, false, false, true),
+            new TestDirectoryPreference(dataRoot));
+        StatsWebServerService web = null;
+        LogicalCallDiagnosticService diagnostic = null;
+        AudioCallCoordinator coordinator = null;
+
+        try
+        {
+            web = new StatsWebServerService(preferences);
+            assertTrue(web.getRuntimeState().running(), web.getRuntimeState().statusMessage());
+            URI endpoint = origin(web.getRuntimeState().port()).resolve(CallMatchingHttpController.PATH);
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            assertEquals(401, client.send(HttpRequest.newBuilder(endpoint).GET().build(),
+                HttpResponse.BodyHandlers.ofString()).statusCode());
+
+            char[] adminPassword = "call-matching-admin-password".toCharArray();
+            try
+            {
+                web.provisionOrResetPrimaryAdmin(adminPassword);
+            }
+            finally
+            {
+                Arrays.fill(adminPassword, '\u0000');
+            }
+            String adminCookie = login(client, origin(web.getRuntimeState().port()),
+                "call-matching-admin-password");
+            HttpRequest adminRequest = HttpRequest.newBuilder(endpoint).header("Cookie", adminCookie).GET().build();
+            HttpResponse<String> unavailable = client.send(adminRequest, HttpResponse.BodyHandlers.ofString());
+            assertEquals(503, unavailable.statusCode(), unavailable.body());
+
+            URI serverOrigin = origin(web.getRuntimeState().port());
+            HttpResponse<String> adminSession = client.send(HttpRequest.newBuilder(
+                serverOrigin.resolve(WebSessionHttpController.SESSION_PATH))
+                .header("Cookie", adminCookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+            String csrf = OBJECT_MAPPER.readTree(adminSession.body()).at("/data/csrf_token").textValue();
+            HttpResponse<String> createdUser = client.send(HttpRequest.newBuilder(
+                serverOrigin.resolve("/api/v1/admin/users"))
+                .header("Cookie", adminCookie)
+                .header("Origin", serverOrigin.toString())
+                .header(WebRequestSecurity.CSRF_HEADER_NAME, csrf)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\"listener\",\"password\":\"call-matching-user-password\",\"tier\":\"user\"}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(201, createdUser.statusCode(), createdUser.body());
+            String userCookie = login(client, origin(web.getRuntimeState().port()), "listener",
+                "call-matching-user-password");
+            HttpResponse<String> denied = client.send(HttpRequest.newBuilder(endpoint)
+                .header("Cookie", userCookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(403, denied.statusCode(), denied.body());
+
+            diagnostic = new LogicalCallDiagnosticService(mTemporaryDirectory.resolve("call-matching-logs"));
+            coordinator = new AudioCallCoordinator(null, null, null, null, diagnostic);
+            web.setLogicalCallDiagnostics(diagnostic, coordinator);
+            HttpResponse<String> accepted = client.send(adminRequest, HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, accepted.statusCode(), accepted.body());
+            JsonNode data = OBJECT_MAPPER.readTree(accepted.body()).path("data");
+            assertTrue(data.path("available").booleanValue());
+            assertTrue(data.path("duplicates").isArray());
+
+            web.setLogicalCallDiagnostics(null, null);
+            assertEquals(503, client.send(adminRequest, HttpResponse.BodyHandlers.ofString()).statusCode());
+            web.setLogicalCallDiagnostics(diagnostic, coordinator);
+            web.close();
+            var serviceField = StatsWebServerService.class.getDeclaredField("mLogicalCallDiagnosticService");
+            var coordinatorField = StatsWebServerService.class.getDeclaredField("mAudioCallCoordinator");
+            serviceField.setAccessible(true);
+            coordinatorField.setAccessible(true);
+            assertNull(serviceField.get(web));
+            assertNull(coordinatorField.get(web));
+        }
+        finally
+        {
+            if(web != null)
+            {
+                web.close();
+            }
+            if(coordinator != null)
+            {
+                coordinator.disposeAndAwait(2, TimeUnit.SECONDS);
+            }
+            if(diagnostic != null)
+            {
+                diagnostic.close();
+            }
+            if(previousAssetOverride == null)
+            {
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            }
+            else
+            {
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+            }
+        }
     }
 
     @Test
@@ -390,13 +504,18 @@ class StatsWebServerServiceLifecycleTest
 
     private static String login(HttpClient client, URI origin, String password) throws Exception
     {
+        return login(client, origin, "admin", password);
+    }
+
+    private static String login(HttpClient client, URI origin, String username, String password) throws Exception
+    {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(origin.resolve(
                 WebSessionHttpController.LOGIN_PATH))
             .timeout(Duration.ofSeconds(30))
             .header("Origin", origin.toString())
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(
-                "{\"username\":\"admin\",\"password\":\"" + password + "\"}"))
+                "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
             .build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode(), response.body());
         String setCookie = response.headers().firstValue("Set-Cookie").orElseThrow();

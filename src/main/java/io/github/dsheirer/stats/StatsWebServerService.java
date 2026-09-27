@@ -29,6 +29,7 @@ import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
 import io.github.dsheirer.web.http.StreamingAdminHttpController;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -63,6 +64,7 @@ import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
 import io.github.dsheirer.web.http.ChannelAdminHttpController;
+import io.github.dsheirer.web.http.CallMatchingHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
@@ -188,6 +190,8 @@ public class StatsWebServerService implements AutoCloseable
     private final AliasAdministrationService mAliasAdministrationService;
     private final ChannelAdministrationService mChannelAdministrationService;
     private final StreamingAdministrationService mStreamingAdministrationService;
+    private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
+    private volatile AudioCallCoordinator mAudioCallCoordinator;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final RadioReferenceImportService mRadioReferenceImportService;
@@ -799,6 +803,11 @@ public class StatsWebServerService implements AutoCloseable
             mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));
         server.createContext(WebUserPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.USER_SETTINGS, userPreferencesController::handle));
+
+        CallMatchingHttpController callMatchingController = new CallMatchingHttpController(
+            () -> mLogicalCallDiagnosticService, () -> mAudioCallCoordinator);
+        server.createContext(CallMatchingHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, callMatchingController::handle));
 
         new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
@@ -2159,6 +2168,18 @@ public class StatsWebServerService implements AutoCloseable
             broadcastModel != null ? broadcastModel::getRadioResolveAcceptedCallCount : null);
     }
 
+    /** Attaches the application-owned bounded diagnostic sources after the coordinator is constructed. */
+    public synchronized void setLogicalCallDiagnostics(LogicalCallDiagnosticService service,
+                                                       AudioCallCoordinator coordinator)
+    {
+        if(mClosed)
+        {
+            return;
+        }
+        mLogicalCallDiagnosticService = service;
+        mAudioCallCoordinator = coordinator;
+    }
+
     private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException
     {
         WebRequestSecurity.prepareSecurityHeaders(exchange);
@@ -2347,6 +2368,8 @@ public class StatsWebServerService implements AutoCloseable
         mTlsMaintenanceExecutor.shutdownNow();
         MyEventBus.getGlobalEventBus().unregister(this);
         stopActiveListener();
+        mAudioCallCoordinator = null;
+        mLogicalCallDiagnosticService = null;
         mRuntimeState = stoppedState("Web server is stopped.");
 
         if(mWebRequestSecurity != null)

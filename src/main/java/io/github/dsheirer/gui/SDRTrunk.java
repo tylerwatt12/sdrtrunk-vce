@@ -48,7 +48,6 @@ import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.theme.ThemeManager;
-import io.github.dsheirer.gui.viewer.ViewLogicalCallMonitorRequest;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -172,7 +171,6 @@ public class SDRTrunk
     private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
-    private JButton mCallMatchingMonitorShortcutButton;
     private JButton mWebInterfaceButton;
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
@@ -282,12 +280,7 @@ public class SDRTrunk
         mAudioCallCoordinator = new AudioCallCoordinator(mAudioRecordingManager, mAudioStreamingManager,
             mStatsWebServerService::receive, mReceiverActivityService::receiveResolvedCall,
             mLogicalCallDiagnosticService);
-
-        if(mJavaFxWindowManager != null)
-        {
-            mJavaFxWindowManager.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator,
-                path -> EventQueue.invokeLater(() -> openFileExplorer(path.toFile())));
-        }
+        mStatsWebServerService.setLogicalCallDiagnostics(mLogicalCallDiagnosticService, mAudioCallCoordinator);
 
         mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
             mAudioStreamingManager, mConfigurationManager.getBroadcastModel());
@@ -565,13 +558,6 @@ public class SDRTrunk
         recordingViewerMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.BRAILLE, 12));
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
         viewMenu.add(recordingViewerMenu);
-
-        JMenuItem logicalCallMonitorMenu = new JMenuItem("Call Matching Monitor");
-        logicalCallMonitorMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.SITEMAP, 12));
-        logicalCallMonitorMenu.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_M, ActionEvent.ALT_MASK));
-        logicalCallMonitorMenu.addActionListener(e ->
-            MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
-        viewMenu.add(logicalCallMonitorMenu);
 
         JMenuItem viewScreenCapturesMenu = new JMenuItem("Screen Captures");
         viewScreenCapturesMenu.setIcon(IconFontSwing.buildIcon(FontAwesome.FOLDER_OPEN_O, 12));
@@ -1132,10 +1118,9 @@ public class SDRTrunk
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][][grow,fill]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
-        panel.add(getCallMatchingMonitorShortcutButton());
         panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
         return panel;
@@ -1182,21 +1167,6 @@ public class SDRTrunk
         }
 
         return mWebInterfaceButton;
-    }
-
-    private JButton getCallMatchingMonitorShortcutButton()
-    {
-        if(mCallMatchingMonitorShortcutButton == null)
-        {
-            mCallMatchingMonitorShortcutButton = new JButton("Call Monitor",
-                IconFontSwing.buildIcon(FontAwesome.SITEMAP, 14));
-            mCallMatchingMonitorShortcutButton.setFocusable(false);
-            mCallMatchingMonitorShortcutButton.setToolTipText("Call Matching Monitor");
-            mCallMatchingMonitorShortcutButton.addActionListener(event ->
-                MyEventBus.getGlobalEventBus().post(new ViewLogicalCallMonitorRequest()));
-        }
-
-        return mCallMatchingMonitorShortcutButton;
     }
 
     private void openWebInterface()
