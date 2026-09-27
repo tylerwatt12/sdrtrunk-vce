@@ -4,6 +4,7 @@ const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
 const SYSTEM_RADIUS = 260;
 const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
+const FOCUS_FADE_MS = 220;
 
 let vendorPromise;
 const loadVendor = () => vendorPromise ||= import(new URL(VENDOR_ASSET, import.meta.url).href);
@@ -108,6 +109,11 @@ async function createP25Renderer(options = {}) {
   let interactionUntil = 0;
   let programmatic = false;
   let reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
+  let focusKeys = new Set();
+  let focusAmount = 0;
+  let focusTarget = 0;
+  let focusFrom = 0;
+  let focusStartedAt = 0;
   const nodes = new Map();
   const links = new Map();
   const nodeObjects = new Map();
@@ -124,11 +130,16 @@ async function createP25Renderer(options = {}) {
   function material(state, optionsValue = {}) {
     const side = optionsValue.side === library.BackSide ? 'back' : 'front';
     const clear = optionsValue.clear === true;
-    const key = `${state}:${side}:${clear}`;
+    const dimmed = optionsValue.dimmed === true;
+    const key = `${state}:${side}:${clear}:${dimmed}`;
     if (materials.has(key)) return materials.get(key);
+    const baseOpacity = state === 'system' ? 0.48 : clear ? 0.98 : 0.76;
+    const dimOpacity = dimmed ? state === 'system' ? 0.12 : 0.05 : baseOpacity;
     const value = new library.MeshBasicMaterial({ color: colorFor(state), wireframe: true, transparent: true,
-      opacity: state === 'system' ? 0.48 : clear ? 0.98 : 0.76, depthTest: true, depthWrite: false,
+      opacity: baseOpacity + (dimOpacity - baseOpacity) * focusAmount, depthTest: true, depthWrite: false,
       fog: !clear, side: optionsValue.side });
+    value.userData.p25BaseOpacity = baseOpacity;
+    value.userData.p25DimOpacity = dimOpacity;
     materials.set(key, value);
     return value;
   }
@@ -146,11 +157,12 @@ async function createP25Renderer(options = {}) {
     if (!object) return;
     const state = nodeState(node);
     const clear = Boolean(node.signalAction);
+    const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && node.type !== 'system';
     object.userData.p25Node = node;
     if (node.type === 'system') {
-      object.children[0].material = material('system');
-      object.children[1].material = material('system', { side: library.BackSide });
-    } else object.material = material(state, { clear });
+      object.children[0].material = material('system', { dimmed });
+      object.children[1].material = material('system', { side: library.BackSide, dimmed });
+    } else object.material = material(state, { clear, dimmed });
     object.scale.setScalar(finite(node.radius, node.type === 'talkgroup' ? 13 : 6.5));
   }
 
@@ -169,13 +181,18 @@ async function createP25Renderer(options = {}) {
     return object;
   }
 
-  function lineMaterial(kind) {
-    const key = `line:${kind}`;
+  function lineMaterial(kind, dimmed = false) {
+    const key = `line:${kind}:${dimmed}`;
     if (materials.has(key)) return materials.get(key);
     const historical = kind === 'history';
+    const baseOpacity = historical ? 0.18 : 0.58;
+    const dimOpacity = dimmed ? 0.012 : baseOpacity;
     const value = new library.LineMaterial({ color: colorFor(kind), linewidth: historical ? 1.25 : 2.5,
-      transparent: true, opacity: historical ? 0.18 : 0.58, dashed: historical, dashSize: 6, gapSize: 5,
+      transparent: true, opacity: baseOpacity + (dimOpacity - baseOpacity) * focusAmount,
+      dashed: historical, dashSize: 6, gapSize: 5,
       depthTest: true, depthWrite: false });
+    value.userData.p25BaseOpacity = baseOpacity;
+    value.userData.p25DimOpacity = dimOpacity;
     value.resolution?.set(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight));
     materials.set(key, value);
     return value;
@@ -184,10 +201,60 @@ async function createP25Renderer(options = {}) {
   function createLinkObject(link) {
     const geometryValue = new library.LineGeometry();
     geometryValue.setPositions([0, 0, 0, 0, 0, 0]);
-    const object = new library.Line2(geometryValue, lineMaterial(link.kind));
+    const object = new library.Line2(geometryValue, lineMaterial(link.kind, linkIsDimmed(link)));
     if (link.kind === 'history') object.computeLineDistances?.();
     linkObjects.set(link.id, object);
     return object;
+  }
+
+  function linkIsDimmed(link) {
+    const source = typeof link.source === 'object' ? link.source.id : link.source;
+    const target = typeof link.target === 'object' ? link.target.id : link.target;
+    return focusKeys.size > 0 && !(focusKeys.has(String(source)) && focusKeys.has(String(target)));
+  }
+
+  function applyLinkStyle(link, object = linkObjects.get(link.id)) {
+    if (object) object.material = lineMaterial(link.kind, linkIsDimmed(link));
+  }
+
+  function updateFocusOpacity() {
+    materials.forEach((value) => {
+      const base = Number(value.userData?.p25BaseOpacity);
+      const dim = Number(value.userData?.p25DimOpacity);
+      if (Number.isFinite(base) && Number.isFinite(dim)) value.opacity = base + (dim - base) * focusAmount;
+    });
+  }
+
+  function applyFocusStyles() {
+    nodes.forEach((node) => applyNodeStyle(node));
+    links.forEach((link) => applyLinkStyle(link));
+    graph?.refresh();
+  }
+
+  function transitionFocus(value) {
+    const target = value ? 1 : 0;
+    if (focusTarget === target) return;
+    focusFrom = focusAmount;
+    focusTarget = target;
+    focusStartedAt = performance.now();
+    if (reducedMotion) {
+      focusAmount = focusTarget;
+      updateFocusOpacity();
+      if (!focusTarget) {
+        focusKeys.clear();
+        applyFocusStyles();
+      }
+    }
+  }
+
+  function setFocus(keys) {
+    focusKeys = new Set(keys.map(String));
+    applyFocusStyles();
+    transitionFocus(true);
+  }
+
+  function clearFocus() {
+    transitionFocus(false);
   }
 
   function updateLinkPosition(object, start, end, link) {
@@ -251,6 +318,7 @@ async function createP25Renderer(options = {}) {
     nextLinks.forEach((link) => links.set(link.id, link));
     graph.graphData({ nodes: nextNodes, links: nextLinks });
     nextNodes.forEach((node) => applyNodeStyle(node));
+    nextLinks.forEach((link) => applyLinkStyle(link));
     graph.refresh();
   }
 
@@ -371,6 +439,7 @@ async function createP25Renderer(options = {}) {
   function home(duration = 900) {
     const system = systemNode();
     if (!system) return false;
+    clearFocus();
     const group = talkgroupNode();
     const pose = group ? talkgroupHomePose(group, system) : homePose(system);
     return tweenCamera(pose.position, pose.target, duration);
@@ -394,6 +463,7 @@ async function createP25Renderer(options = {}) {
     const bounds = boundsFor(Array.isArray(keys) ? keys : [keys]);
     const system = systemNode();
     if (!bounds || !system) return false;
+    setFocus(Array.isArray(keys) ? keys : [keys]);
     const inward = new library.Vector3(system.x - bounds.center.x, system.y - bounds.center.y,
       system.z - bounds.center.z);
     if (inward.lengthSq() < 0.001) inward.set(0.7, 0.35, 1);
@@ -439,6 +509,7 @@ async function createP25Renderer(options = {}) {
 
   function showOverview(optionsValue = {}) {
     scope = { level: 'overview', systemKey: '' };
+    clearFocus();
     if (scene) scene.fog = null;
     if (controls) controls.maxDistance = Infinity;
     updateAutoRotate();
@@ -447,12 +518,16 @@ async function createP25Renderer(options = {}) {
 
   function setMode(value) {
     mode = value === 'manual' ? 'manual' : 'auto';
-    if (mode === 'manual') stopCamera();
+    if (mode === 'manual') {
+      stopCamera();
+      clearFocus();
+    }
     updateAutoRotate();
   }
 
   function setCameraPhase(value) {
     cameraPhase = ['focus', 'hold', 'return', 'roam'].includes(value) ? value : 'roam';
+    if (cameraPhase === 'return' || cameraPhase === 'roam') clearFocus();
     updateAutoRotate();
   }
 
@@ -482,7 +557,7 @@ async function createP25Renderer(options = {}) {
     const camera = graph.camera();
     const system = systemNode();
     const candidates = [...nodes.values()].sort((left, right) => {
-      const priority = (node) => node.signalAction ? 5 : node.type === 'system' ? 4 :
+      const priority = (node) => focusKeys.has(node.id) ? 6 : node.signalAction ? 5 : node.type === 'system' ? 4 :
         node.type === 'talkgroup' ? 3 : 1;
       return priority(right) - priority(left);
     }).slice(0, LABEL_LIMIT);
@@ -510,8 +585,10 @@ async function createP25Renderer(options = {}) {
       const depth = system ? camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)) /
         (finite(system.radius, SYSTEM_RADIUS) * 1.55) : 0;
       const haze = clear ? 0 : clamp((depth - 0.28) * 1.45, 0, 0.82);
-      label.style.opacity = String(1 - haze * 0.72);
-      label.style.filter = haze ? `blur(${(haze * 2.8).toFixed(2)}px)` : '';
+      const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && node.type !== 'system';
+      label.style.opacity = String((1 - haze * 0.72) * (dimmed ? 1 - focusAmount * 0.96 : 1));
+      const blur = haze * 2.8 + (dimmed ? focusAmount * 2 : 0);
+      label.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
     }
     for (const [key, label] of labelElements) label.hidden = !visible.has(key);
   }
@@ -519,6 +596,15 @@ async function createP25Renderer(options = {}) {
   function animate(at) {
     frame = 0;
     if (disposed) return;
+    if (focusAmount !== focusTarget) {
+      const progress = clamp((at - focusStartedAt) / FOCUS_FADE_MS, 0, 1);
+      focusAmount = focusFrom + (focusTarget - focusFrom) * ease(progress);
+      updateFocusOpacity();
+      if (progress >= 1 && !focusTarget) {
+        focusKeys.clear();
+        applyFocusStyles();
+      }
+    }
     for (const [key, movement] of movements) {
       const node = nodes.get(key);
       if (!node) {
@@ -610,7 +696,7 @@ async function createP25Renderer(options = {}) {
   themeObserver = new MutationObserver(() => {
     colors = palette();
     materials.forEach((value, key) => {
-      const state = key.startsWith('line:') ? key.slice(5) : key.split(':')[0];
+      const state = key.startsWith('line:') ? key.split(':')[1] : key.split(':')[0];
       value.color?.set?.(colorFor(state));
       value.needsUpdate = true;
     });
@@ -621,6 +707,14 @@ async function createP25Renderer(options = {}) {
   const media = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
   const onMotion = () => {
     reducedMotion = Boolean(media?.matches);
+    if (reducedMotion && focusAmount !== focusTarget) {
+      focusAmount = focusTarget;
+      updateFocusOpacity();
+      if (!focusTarget) {
+        focusKeys.clear();
+        applyFocusStyles();
+      }
+    }
     updateAutoRotate();
   };
   media?.addEventListener?.('change', onMotion);
