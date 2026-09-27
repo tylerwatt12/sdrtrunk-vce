@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -64,6 +65,18 @@ public final class DatabaseMigrationChain
     /** Builds the ordered plan from the checked catalog identity without scanning every source subsystem. */
     static PreflightReport plan(DatabaseFormatCatalog.DetectedFormat source) throws SQLException
     {
+        return plan(source, true);
+    }
+
+    /** Builds the exact adjacent plan for the no-backup path, excluding optional direct-source repairs. */
+    static PreflightReport planFast(DatabaseFormatCatalog.DetectedFormat source) throws SQLException
+    {
+        return plan(source, false);
+    }
+
+    private static PreflightReport plan(DatabaseFormatCatalog.DetectedFormat source,
+                                        boolean includeDirectSourceRepairs) throws SQLException
+    {
         List<StepPreflight> steps = new ArrayList<>();
         int version = source.version();
 
@@ -72,7 +85,8 @@ public final class DatabaseMigrationChain
             DatabaseMigrationStep step = requireStep(version);
             requireAdjacent(step);
             steps.add(new StepPreflight(step.id(), step.description(), step.sourceVersion(), step.targetVersion(),
-                List.copyOf(step.declaredEffects(step.sourceVersion() == source.version()))));
+                List.copyOf(step.declaredEffects(includeDirectSourceRepairs &&
+                    step.sourceVersion() == source.version()))));
             version = step.targetVersion();
         }
 
@@ -194,6 +208,22 @@ public final class DatabaseMigrationChain
     /** Runs every required adjacent step on the caller-provided staged connection. */
     public static MigrationReport migrate(Connection connection) throws SQLException
     {
+        return migrate(connection, true, ignored -> { });
+    }
+
+    /**
+     * Runs the exact adjacent chain without the optional direct-source repair sweep. This is used only by the
+     * operator-selected no-backup upgrade path, which trades those deep checks for shorter downtime.
+     */
+    static MigrationReport migrateFast(Connection connection, Consumer<StepDescriptor> progress)
+        throws SQLException
+    {
+        return migrate(connection, false, progress == null ? ignored -> { } : progress);
+    }
+
+    private static MigrationReport migrate(Connection connection, boolean repairSelectedSource,
+                                           Consumer<StepDescriptor> progress) throws SQLException
+    {
         DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
         List<StepReport> reports = new ArrayList<>();
         DatabaseFormatCatalog.DetectedFormat detected = source;
@@ -202,8 +232,11 @@ public final class DatabaseMigrationChain
         {
             DatabaseMigrationStep step = requireStep(detected.version());
             requireAdjacent(step);
+            progress.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
+                step.targetVersion(), List.copyOf(step.declaredEffects(false))));
             List<DatabaseMigrationEffect> effects = List.copyOf(
-                step.migrateAndReport(connection, step.sourceVersion() == source.version()));
+                step.migrateAndReport(connection,
+                    repairSelectedSource && step.sourceVersion() == source.version()));
             requireObservedCounts(step, effects);
             DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
             DatabaseFormatCatalog.DetectedFormat target = DatabaseFormatCatalog.inspectForMigration(connection);

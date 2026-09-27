@@ -464,7 +464,7 @@ public final class ApplicationMigrationService
         FileAccessAttributeSnapshot liveDatabaseAttributes = FileAccessAttributeSnapshot.capture(database);
         listener.update("Checking previous data");
         ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
-            readMigrationApproval(database, database.getParent());
+            readMigrationApproval(database, database.getParent(), listener);
         listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
         listener.update("Migration scope: existing portable-profile database; external artifacts remain in place " +
             "and stored paths are not remapped.");
@@ -575,6 +575,32 @@ public final class ApplicationMigrationService
     }
 
     /**
+     * Applies the required adjacent steps directly to the inactive application database. The operator explicitly
+     * chooses this path to skip the recovery copy, approval digest, source repair sweep, and whole-file checks.
+     */
+    public MigrationResult migrateCurrentWithoutBackup(Path dataRoot, ProgressListener progress)
+        throws IOException, SQLException
+    {
+        ProgressListener listener = progress == null ? ignored -> { } : progress;
+        Path normalizedRoot = dataRoot.toAbsolutePath().normalize();
+        Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
+        SqliteDatabaseSnapshot.requireSourceUsable(database);
+        if(Files.isRegularFile(Path.of(database + "-journal"), LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("The database has a recovery journal. Use the safe update path instead.");
+        }
+
+        listener.update("No-backup update selected — changes cannot be rolled back after commit");
+        listener.update("Checking temporary disk space");
+        ensureFreeSpace(database.getParent(), safeAdd(safeMultiply(sqliteFootprint(database), 2),
+            FREE_SPACE_MARGIN_BYTES));
+        ApplicationDatabaseMigrator.FastMigrationResult result =
+            ApplicationDatabaseMigrator.migrateCurrentFast(database, listener::update);
+        return new MigrationResult(false, null, result.sourcePlan(), result.helperOutput(),
+            PreviousBuildLocator.InputScope.DATABASE_FILE);
+    }
+
+    /**
      * Accepts an exact current-format database without a full-file quick check or derived-state scan. Older formats
      * and databases that fail the bounded current-format checks still receive the full preflight for migration or
      * repair. Damage detectable only by the omitted scans is deferred until an explicit full inspection.
@@ -597,7 +623,15 @@ public final class ApplicationMigrationService
                 }
                 catch(SQLException ignored)
                 {
-                    //The full preflight distinguishes an older format from repairable current-format data.
+                    DatabaseFormatCatalog.DetectedFormat source =
+                        DatabaseFormatCatalog.inspectForMigration(connection);
+                    if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                    {
+                        //Show setup immediately for a recognized older format. The operator-selected safe path does
+                        //the full source inspection; the no-backup path deliberately skips it.
+                        return DatabaseMigrationChain.plan(source);
+                    }
+                    //The full preflight distinguishes repairable current-format data from an invalid database.
                 }
             }
         }
@@ -651,6 +685,15 @@ public final class ApplicationMigrationService
     public static ApprovedMigrationPlan readMigrationApproval(Path database, Path scratchDirectory)
         throws IOException, SQLException
     {
+        return readMigrationApproval(database, scratchDirectory, null);
+    }
+
+    /** Creates approval scratch data while reporting honest whole-file phases to the setup UI. */
+    public static ApprovedMigrationPlan readMigrationApproval(Path database, Path scratchDirectory,
+                                                               ProgressListener progress)
+        throws IOException, SQLException
+    {
+        ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path normalized = database.toAbsolutePath().normalize();
         Path scratch = Objects.requireNonNull(scratchDirectory, "Migration scratch directory cannot be null")
             .toAbsolutePath().normalize();
@@ -668,8 +711,12 @@ public final class ApplicationMigrationService
         try
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(previewDirectory);
+            listener.update("Creating a temporary safety copy");
             SqliteDatabaseSnapshot.createExternal(normalized, previewDatabase);
-            return readPrivateApprovedMigrationPlan(previewDatabase);
+            listener.update("Checking the copied database");
+            DatabaseMigrationChain.PreflightReport plan = readPrivateMigrationPlan(previewDatabase);
+            listener.update("Fingerprinting the copied database");
+            return new ApprovedMigrationPlan(plan, SqliteDatabaseSnapshot.sha256(previewDatabase));
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -680,6 +727,7 @@ public final class ApplicationMigrationService
         {
             try
             {
+                listener.update("Cleaning temporary review files");
                 deleteTreeIfExists(previewDirectory);
             }
             catch(IOException cleanupFailure)
@@ -1480,7 +1528,7 @@ public final class ApplicationMigrationService
 
         if(usable < required)
         {
-            throw new IOException("Not enough free space for a safe migration. Required approximately " +
+            throw new IOException("Not enough free space for the database update. Required approximately " +
                 humanSize(required) + "; available " + humanSize(usable) + ".");
         }
     }

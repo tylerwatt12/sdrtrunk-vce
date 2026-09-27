@@ -352,7 +352,7 @@ release notes additionally summarize the user-visible policy for each format int
 ## Safe Execution
 
 The bundled Application Migrator is the only component allowed to change an existing supported database schema. Its
-single execution pipeline is:
+default safe execution pipeline is:
 
 1. Open the source read-only, fingerprint it, resolve its format, and run a quick physical integrity check. Source
    checks do not apply row `CHECK` rules that staged repair can fix; final validation remains strict. The selected
@@ -370,6 +370,29 @@ single execution pipeline is:
 6. Promote the staged result atomically only after every validation succeeds. Freed pages remain reusable by SQLite;
    migration does not run a temporary-space-intensive compaction pass.
 
+The one execution exception is an explicitly confirmed no-backup update of the current installation's inactive
+database at the pre-receiver startup boundary. It is offered only when bounded startup inspection has identified an
+older supported format; it is not a current-format repair path, an import/replacement path, or a route for an unknown,
+mixed, newer, physically suspect, or recovery-journal-bearing database. The update writes the application database
+directly. It deliberately omits the recovery backup, staged copy and promotion, approval digest, full source and final
+SQLite integrity scans, foreign-key scan, and optional direct-source repair sweeps. Required adjacent-step
+transformations and their declared preserve, reset, default, drop, or skip behavior still apply, but this path does not
+first repair damage merely because the safe staged path could isolate it.
+
+The shortcut does not create another migration route. Inside one `BEGIN IMMEDIATE` transaction it runs the same exact
+registered `N -> N+1 -> ... -> current` chain, stamps and verifies the exact target after every step, restores strict
+row `CHECK` enforcement, and retains final validation of the current global format, exact schema contracts, required
+settings, and startup configuration before `COMMIT`. Any failure before a successful commit attempts `ROLLBACK`, so
+the adjacent steps have no independent durability or resume boundary. After commit, there is no retained prior copy
+or automatic rollback; the previous application version cannot reopen the upgraded database, and a power or storage
+failure can require manual recovery.
+
+No-backup progress is descriptive status rather than a percentage or durable progress journal. The wizard shows
+elapsed time and emits `Step X of Y — description` immediately before each adjacent step, followed by explicit
+validation and commit phases. Those messages are not per-step commits or restart checkpoints, and the commit-phase
+message is not success; success is reported only after `COMMIT` returns. A connection-cleanup problem after that point
+is a warning about an already committed update, not a reason to present the operation as safely retryable.
+
 For an import, the selected source database and previous installation remain unchanged. For an in-place upgrade, the
 live database is replaced only after the staged result passes every check, and the pre-migration safety backup is
 retained. On cancellation, a crash before promotion, failed conversion, or failed validation, the staged result is
@@ -378,10 +401,11 @@ validation restores the retained backup on failure. Normal application startup a
 validation-only and never creates, repairs, or migrates an existing schema.
 
 For ordinary launches of an exact current-format database, startup checks the format, schema, and bounded required
-settings without running a full SQLite quick check or scanning all receiver-derived tables. An older database, or one
-that fails those bounded checks, still receives the full read-only preflight before setup offers migration or repair.
-Damage detectable only by the omitted scans may surface later or during explicit maintenance. Migration and import
-continue to perform the full integrity and staged-result checks above.
+settings without running a full SQLite quick check or scanning all receiver-derived tables. A recognized older format
+can enter setup after that bounded inspection so the operator can choose the default safe inspection/update or the
+explicit no-backup exception above. A database that fails bounded format admission still receives the full read-only
+preflight before setup offers migration or repair. Damage detectable only by omitted scans may surface later or during
+explicit maintenance. Safe migration and import continue to perform the full integrity and staged-result checks above.
 
 After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
 restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.

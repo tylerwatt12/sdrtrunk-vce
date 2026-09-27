@@ -2,6 +2,7 @@ package io.github.dsheirer.gui.setup;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,6 +47,22 @@ class SetupStartupBoundaryTest
         assertTrue(wizard.contains("The original is unchanged. Use Copy error when reporting this problem."));
         assertFalse(wizard.contains("Copy the technical details below"));
         assertFalse(wizard.contains("make sure there is enough free space"));
+    }
+
+    @Test void migrationChoicesAndElapsedStatusRemainExplicit() throws Exception
+    {
+        assertEquals("0:00 elapsed", SetupWizard.elapsedLabel(-1));
+        assertEquals("0:59 elapsed", SetupWizard.elapsedLabel(TimeUnit.SECONDS.toNanos(59)));
+        assertEquals("1:01 elapsed", SetupWizard.elapsedLabel(TimeUnit.SECONDS.toNanos(61)));
+
+        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
+        String sourcePage = wizard.substring(wizard.indexOf("private void sourcePage()"),
+            wizard.indexOf("private void existingSourcePage()"));
+        assertTrue(sourcePage.contains("next.setText(\"Check safely\")"));
+        assertTrue(sourcePage.contains(
+            "button(\"Skip backup & safety checks\", this::confirmFastMigration)"));
+        assertTrue(wizard.contains("service.migrateCurrentWithoutBackup(root, this::migrationProgress)"));
+        assertTrue(wizard.contains("elapsedLabel(System.nanoTime() - operationStartedNanos)"));
     }
 
     @Test void replacementReviewIsDurableAndNeverMarksHardwareAsDetected() throws Exception

@@ -22,6 +22,7 @@ import io.github.dsheirer.configuration.ConfigurationSnapshotValidator;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -41,15 +42,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
  * The single application-owned database migration entry point.
  *
- * <p>The application creates a safety backup, makes a staged copy, and launches this class in a child process. This
- * migrator accepts only an exact format-catalog signature, runs the complete adjacent global-format chain, optionally
- * rebases portable paths for a full-profile import, and validates the staged database before the application can
- * promote it. It must never be aimed directly at a live database.</p>
+ * <p>The normal path creates a safety backup, makes a staged copy, and launches this class in a child process. The
+ * explicitly selected fast-update path may instead call the package-private in-process entry point while receiver
+ * services are stopped. Both paths accept only an exact catalog signature and run the adjacent global-format chain.</p>
  */
 public final class ApplicationDatabaseMigrator
 {
@@ -165,6 +166,78 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
+    /**
+     * Updates the inactive application database directly. This deliberately omits the safety copy, source repair
+     * sweep, and whole-file integrity/relationship checks; the adjacent migration and targeted schema/configuration
+     * validation still complete inside one transaction before commit.
+     */
+    static FastMigrationResult migrateCurrentFast(Path database, Consumer<String> progress)
+        throws IOException, SQLException
+    {
+        Path normalized = database.toAbsolutePath().normalize();
+        Consumer<String> listener = progress == null ? ignored -> { } : progress;
+        if(Files.isSymbolicLink(normalized) || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("Application database not found or is a symbolic link: " + normalized);
+        }
+        requireSingleFilesystemLinkWhenSupported(normalized);
+
+        listener.accept("Opening the inactive database");
+        Connection connection = open(normalized);
+        Throwable primaryFailure = null;
+        try(ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            PrintStream output = new PrintStream(bytes, true, StandardCharsets.UTF_8))
+        {
+            DatabaseFormatCatalog.DetectedFormat source;
+            try
+            {
+                source = requireSupportedFormat(connection);
+            }
+            catch(UnsupportedDatabaseFormatException exception)
+            {
+                throw new SQLException(exception.getMessage(), exception);
+            }
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planFast(source);
+            if(!plan.requiresMigration())
+            {
+                throw new SQLException("The database is already current; no fast update is required.");
+            }
+
+            output.println("WARNING: Safety backup and full-file integrity checks were skipped by operator choice.");
+            printPreflight(output, plan, null);
+            MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener);
+            printCompletion(output, migration);
+            output.println("RESULT: In-place application database migration complete without a safety backup.");
+            return new FastMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
+        }
+        catch(IOException | SQLException | RuntimeException | Error failure)
+        {
+            primaryFailure = failure;
+            throw failure;
+        }
+        finally
+        {
+            try
+            {
+                connection.close();
+            }
+            catch(SQLException closeFailure)
+            {
+                if(primaryFailure != null)
+                {
+                    primaryFailure.addSuppressed(closeFailure);
+                }
+                else
+                {
+                    //All validation and COMMIT already succeeded. Do not misreport a committed live update as a
+                    //retryable failure solely because JDBC cleanup reported an error.
+                    listener.accept("Database update committed; connection cleanup reported a warning");
+                }
+            }
+        }
+    }
+
     private static void migrate(Path database, DataRootRelocation relocation, PrintStream output)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
@@ -209,7 +282,8 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            MigrationSummary migration = migrateInTransaction(connection, source, relocation, database);
+            MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, false,
+                ignored -> { });
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
@@ -289,7 +363,8 @@ public final class ApplicationDatabaseMigrator
     }
 
     private static MigrationSummary migrateInTransaction(Connection connection,
-            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database)
+            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database,
+            boolean fast, Consumer<String> progress)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -320,13 +395,13 @@ public final class ApplicationDatabaseMigrator
                 CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair =
                     CurrentDatabaseDerivedStateRepair.Inspection.none();
                 SqliteIdentityRepair.Inspection identityRepair = SqliteIdentityRepair.Inspection.none();
-                if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                if(!fast && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
                 {
                     //Historical steps can seed factory configuration. Normalize exhausted allocator state and
                     //isolate JSON-unsafe configuration identities before any such insert occurs.
                     identityRepair = SqliteIdentityRepair.repair(connection);
                 }
-                if(expectedSource.version() == DatabaseFormatCatalog.CURRENT_VERSION)
+                if(!fast && expectedSource.version() == DatabaseFormatCatalog.CURRENT_VERSION)
                 {
                     //A current-format source has the final schema already. Repair its bounded components before the
                     //chain performs strict current-format validation or adopts a missing global marker.
@@ -337,7 +412,12 @@ public final class ApplicationDatabaseMigrator
                     identityRepair = SqliteIdentityRepair.repair(connection);
                 }
 
-                DatabaseMigrationChain.MigrationReport chainReport = DatabaseMigrationChain.migrate(connection);
+                int totalSteps = Math.max(1, DatabaseFormatCatalog.CURRENT_VERSION - expectedSource.version());
+                int[] stepNumber = {0};
+                DatabaseMigrationChain.MigrationReport chainReport = fast ?
+                    DatabaseMigrationChain.migrateFast(connection, step -> progress.accept(
+                        "Step " + (++stepNumber[0]) + " of " + totalSteps + " — " + step.description())) :
+                    DatabaseMigrationChain.migrate(connection);
                 if(checkConstraintsRelaxed)
                 {
                     statement.execute("PRAGMA ignore_check_constraints=OFF");
@@ -351,21 +431,30 @@ public final class ApplicationDatabaseMigrator
                         expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
                         chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
                 }
-                if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                if(!fast && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
                 {
                     portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                 }
 
+                progress.accept("Validating the updated schema and configuration");
                 validateCurrentDatabase(connection);
-                requireForeignKeysValid(connection);
-                requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                if(!fast)
+                {
+                    requireForeignKeysValid(connection);
+                    requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                }
                 validateConfiguration(connection, database);
+                progress.accept("Committing the database update");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                MigrationSummary summary = new MigrationSummary(portablePreferences.rebasedDirectories(),
+                progress.accept("Database update committed");
+                MigrationSummary summary = new MigrationSummary(!fast &&
+                    (expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION ||
+                        portablePreferences.rebasedDirectories() > 0 || portablePreferences.resetEntries() > 0),
+                    portablePreferences.rebasedDirectories(),
                     portablePreferences.resetEntries(), administrativeRepair, currentRepair, derivedStateRepair,
                     identityRepair, chainReport);
-                if(foreignKeysRelaxed)
+                if(foreignKeysRelaxed && !fast)
                 {
                     statement.execute("PRAGMA foreign_keys=ON");
                 }
@@ -375,6 +464,7 @@ public final class ApplicationDatabaseMigrator
             {
                 if(transactionOpen)
                 {
+                    progress.accept("Rolling back the incomplete database update");
                     try
                     {
                         statement.execute("ROLLBACK");
@@ -776,8 +866,7 @@ public final class ApplicationDatabaseMigrator
     private static void printCompletion(PrintStream output, MigrationSummary migration)
     {
         DatabaseMigrationChain.MigrationReport report = migration.chainReport();
-        boolean portableRepairRan = report.source().version() < DatabaseFormatCatalog.CURRENT_VERSION ||
-            migration.resetPortablePreferenceEntries() > 0 || migration.rebasedDirectories() > 0;
+        boolean portableRepairRan = migration.portableRepairRan();
         long recoveryChanges = recoveryChangeCount(migration, portableRepairRan);
         if(recoveryChanges > 0)
         {
@@ -1120,12 +1209,17 @@ public final class ApplicationDatabaseMigrator
     {
     }
 
-    private record MigrationSummary(int rebasedDirectories, int resetPortablePreferenceEntries,
+    private record MigrationSummary(boolean portableRepairRan, int rebasedDirectories,
+                                    int resetPortablePreferenceEntries,
                                     CurrentDatabaseAdministrativeRepair.Inspection administrativeRepair,
                                     CurrentDatabaseBestEffortRepair.Inspection currentRepair,
                                     CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair,
                                     SqliteIdentityRepair.Inspection identityRepair,
                                     DatabaseMigrationChain.MigrationReport chainReport)
+    {
+    }
+
+    record FastMigrationResult(DatabaseMigrationChain.PreflightReport sourcePlan, String helperOutput)
     {
     }
 

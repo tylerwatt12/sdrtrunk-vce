@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -993,12 +994,20 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void startupStillFullyInspectsOlderAndSuspectFormats() throws Exception
+    void startupUsesLightweightPlanForOlderFormatsAndFullyInspectsSuspectFormats() throws Exception
     {
         Path older = Format1TestDatabase.create(
             SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("older-startup")));
-        assertEquals(ApplicationMigrationService.readMigrationPlan(older),
-            ApplicationMigrationService.readStartupPlan(older));
+        DatabaseMigrationChain.PreflightReport startupPlan =
+            ApplicationMigrationService.readStartupPlan(older);
+        DatabaseMigrationChain.PreflightReport reviewPlan =
+            ApplicationMigrationService.readMigrationPlan(older);
+        assertFormat(startupPlan.source(), 1, "alpha8-shared", false);
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, startupPlan.steps().size());
+        assertFalse(startupPlan.steps().stream().anyMatch(step ->
+            "repair-portable-preferences".equals(step.id())));
+        assertTrue(reviewPlan.steps().stream().anyMatch(step ->
+            "repair-portable-preferences".equals(step.id())));
 
         Path markerless = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("markerless-startup"));
         Format25TestDatabase.create(markerless);
@@ -1021,11 +1030,17 @@ class ApplicationMigrationServiceTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("approval-source"));
         SdrTrunkTestDatabase.create(database);
         Path scratch = mTemporaryFolder.resolve("destination-adjacent-scratch");
+        List<String> progress = new ArrayList<>();
 
         ApplicationMigrationService.ApprovedMigrationPlan approval =
-            ApplicationMigrationService.readMigrationApproval(database, scratch);
+            ApplicationMigrationService.readMigrationApproval(database, scratch, progress::add);
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, approval.plan().source().version());
+        assertEquals(List.of(
+            "Creating a temporary safety copy",
+            "Checking the copied database",
+            "Fingerprinting the copied database",
+            "Cleaning temporary review files"), progress);
         assertTrue(Files.isDirectory(scratch));
         try(var children = Files.list(scratch))
         {
@@ -1137,6 +1152,57 @@ class ApplicationMigrationServiceTest
         assertEquals(1, count(database, "alias"));
         assertCurrentFormat(database);
         assertEquals("wal", journalMode(database));
+    }
+
+    @Test
+    void fastCurrentMigrationPreservesDataAndFormatWithoutCreatingABackup() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("fast-current-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Format24TestDatabase.create(database);
+        insertAlias(database, "Retained by fast migration");
+        int aliasesBefore = count(database, "alias");
+        List<String> progress = new ArrayList<>();
+
+        ApplicationMigrationService.MigrationResult result =
+            new ApplicationMigrationService().migrateCurrentWithoutBackup(dataRoot, progress::add);
+
+        assertFalse(result.importedPreviousProfile());
+        assertEquals(24, result.sourceFormat().version());
+        assertNull(result.safetyBackup());
+        assertEquals(aliasesBefore, count(database, "alias"));
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM alias WHERE name='Retained by fast migration'"));
+        assertCurrentFormat(database);
+        assertTrue(result.helperOutput().contains(
+            "Safety backup and full-file integrity checks were skipped by operator choice"));
+        assertFalse(result.helperOutput().contains("repair-portable-preferences"));
+        assertTrue(progress.contains(
+            "Step 1 of 2 — Add opt-in encrypted traffic-channel suppression"));
+        assertTrue(progress.contains(
+            "Step 2 of 2 — Retain exact P25 radio inhibit and uninhibit activity"));
+        assertEquals("Database update committed", progress.getLast());
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
+    }
+
+    @Test
+    void fastCurrentMigrationRefusesAnAlreadyCurrentDatabase() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("fast-already-current");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        insertAlias(database, "Current database remains unchanged");
+        int aliasesBefore = count(database, "alias");
+
+        SQLException exception = assertThrows(SQLException.class,
+            () -> new ApplicationMigrationService().migrateCurrentWithoutBackup(dataRoot, null));
+
+        assertTrue(exception.getMessage().contains("already current"), exception::getMessage);
+        assertEquals(aliasesBefore, count(database, "alias"));
+        assertEquals("1", scalar(database,
+            "SELECT COUNT(*) FROM alias WHERE name='Current database remains unchanged'"));
+        assertCurrentFormat(database);
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
     @Test

@@ -108,6 +108,7 @@ public final class SetupWizard extends JDialog
     private String errorReport = "";
     private String selectedScope = "";
     private volatile String operation = "";
+    private volatile long operationStartedNanos;
     private volatile int completed;
     private volatile int total;
     private List<String> autoStart = List.of();
@@ -117,6 +118,7 @@ public final class SetupWizard extends JDialog
     private boolean restartRequired;
     private SqliteDatabaseImportDialog.PreparedImport replacement;
     private StatsWebServerService liveServer;
+    private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -159,7 +161,11 @@ public final class SetupWizard extends JDialog
             Throwable inspectionFailure = null;
             if(Files.isRegularFile(wizard.database))
             {
-                try { current = !ApplicationMigrationService.readStartupPlan(wizard.database).requiresMigration(); }
+                try
+                {
+                    wizard.startupMigrationPlan = ApplicationMigrationService.readStartupPlan(wizard.database);
+                    current = !wizard.startupMigrationPlan.requiresMigration();
+                }
                 catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
             if(current)
@@ -324,7 +330,9 @@ public final class SetupWizard extends JDialog
             String value = output.snapshot();
             if(!console.getText().equals(value)) { console.setText(value); console.setCaretPosition(console.getDocument().getLength()); }
             meter.setIndeterminate(total <= 0); meter.setMaximum(Math.max(1,total)); meter.setValue(completed);
-            meter.setString(operation);
+            String elapsed = busy && operationStartedNanos > 0 ?
+                " · " + elapsedLabel(System.nanoTime() - operationStartedNanos) : "";
+            meter.setString(operation + elapsed);
         });
         refresh.start();
     }
@@ -479,22 +487,40 @@ public final class SetupWizard extends JDialog
         {
             paragraph("Your settings were saved by an earlier version. We’ll check them before making any changes.");
             notice("Your existing settings are protected", "The update keeps a recovery copy and checks the updated data before using it.", false);
+            if(startupMigrationPlan != null && startupMigrationPlan.requiresMigration())
+            {
+                migrationDetails(startupMigrationPlan);
+            }
+            if(startupMigrationPlan != null && startupMigrationPlan.source().requiresMigration())
+            {
+                notice("Need the receiver back sooner?", "Skip backup and safety checks updates this database " +
+                    "directly. It is faster, but after it commits there is no automatic recovery copy and the " +
+                    "previous VCE version cannot reopen this database. The required schema update still runs and " +
+                    "may take several minutes.", false);
+                button("Skip backup & safety checks", this::confirmFastMigration);
+            }
             Runnable inspect = () -> job("Checking your saved settings…", null, () -> {
-                DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
-                ApplicationMigrationService.ApprovedMigrationPlan approval = plan.requiresMigration() ?
-                    ApplicationMigrationService.readMigrationApproval(database, database.getParent()) : null;
-                return new CurrentMigrationInspection(approval != null ? approval.plan() : plan, approval);
+                ApplicationMigrationService.ApprovedMigrationPlan approval =
+                    ApplicationMigrationService.readMigrationApproval(database, database.getParent(),
+                        this::migrationProgress);
+                return new CurrentMigrationInspection(approval.plan(), approval);
             }, inspection -> {
                     DatabaseMigrationChain.PreflightReport plan = inspection.plan();
                     page.removeAll();
                     paragraph("Your saved settings can be used with this version. Before updating, we’ll save a recovery copy. Your recorded audio files will stay unchanged.");
                     migrationDetails(plan);
+                    if(plan.source().requiresMigration())
+                    {
+                        notice("Faster update available", "You can still skip the backup and full safety checks. " +
+                            "The database update itself remains transactional.", false);
+                        button("Skip backup & safety checks", this::confirmFastMigration);
+                    }
                     next.setText(plan.requiresMigration() ? "Back up & update" : "Continue setup");
                     accept = plan.requiresMigration() ? () -> migrate(null, false, false, inspection.approval()) :
                         () -> job("Loading your settings…", null, () -> { initialize(false); return true; }, ignored -> showPage(initialStep()));
                     page.revalidate();
                 });
-            next.setText("Check my settings"); accept = inspect;
+            next.setText("Check safely"); accept = inspect;
             return;
         }
         paragraph("Welcome! Is this your first time using VCE, or are you bringing settings from an older installation?");
@@ -556,6 +582,12 @@ public final class SetupWizard extends JDialog
     private void migrate(Path source, boolean fresh, boolean xml,
                          ApplicationMigrationService.ApprovedMigrationPlan approved)
     {
+        migrate(source, fresh, xml, approved, false);
+    }
+
+    private void migrate(Path source, boolean fresh, boolean xml,
+                         ApplicationMigrationService.ApprovedMigrationPlan approved, boolean withoutBackup)
+    {
         job("Preparing your profile…", null, () -> {
             String report;
             if(fresh) { SdrTrunkDatabaseBootstrap.createFresh(database); report = "New profile created."; }
@@ -564,7 +596,9 @@ public final class SetupWizard extends JDialog
             {
                 ApplicationMigrationService service = new ApplicationMigrationService();
                 if(source == null)
-                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(service.migrateCurrent(root, approved, output::accept));
+                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(withoutBackup ?
+                        service.migrateCurrentWithoutBackup(root, this::migrationProgress) :
+                        service.migrateCurrent(root, approved, this::migrationProgress));
                 else
                 {
                     var selected = PreviousBuildLocator.resolveSelection(source).orElseThrow();
@@ -594,6 +628,21 @@ public final class SetupWizard extends JDialog
                 countdown.start();
             }
         });
+    }
+
+    private void confirmFastMigration()
+    {
+        int selected = JOptionPane.showOptionDialog(this,
+            "This updates the active database without making a recovery copy or running full-file checks. " +
+                "If the computer loses power or storage fails during the update, manual recovery may be required. " +
+                "After commit, this database cannot be opened by the previous VCE version. The required schema " +
+                "update still runs and may take several minutes.",
+            "Update without a backup?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+            new Object[]{"Update without backup", "Cancel"}, "Cancel");
+        if(selected == 0)
+        {
+            migrate(null, false, false, null, true);
+        }
     }
 
     /** Same first step and lineage; replacement is an explicit action, never a side effect of Back. */
@@ -1031,7 +1080,8 @@ public final class SetupWizard extends JDialog
         busy=true; cancellation=cancelAction; long attempt=++generation;
         if(progress != null) { progress.set(step,RUNNING); persist(); }
         danger.setVisible(false); errorReport=""; copyError.setVisible(false); copyError.setText("Copy error");
-        operation=description; completed=0; total=0; output.clear(); output.accept(description);
+        operation=description; operationStartedNanos=System.nanoTime(); completed=0; total=0;
+        output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancelAction!=null); cancel.setEnabled(true); updateNavigation();
         cancel.setText(step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation");
         diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
@@ -1080,6 +1130,25 @@ public final class SetupWizard extends JDialog
                 }
             });
         });
+    }
+
+    private void migrationProgress(String value)
+    {
+        if(value == null || value.isBlank())
+        {
+            return;
+        }
+        output.accept(value);
+        if(!value.startsWith("Migration plan:") && !value.startsWith("Migration scope:"))
+        {
+            operation = value.lines().findFirst().orElse(value);
+        }
+    }
+
+    static String elapsedLabel(long elapsedNanos)
+    {
+        long seconds = Math.max(0, TimeUnit.NANOSECONDS.toSeconds(elapsedNanos));
+        return String.format("%d:%02d elapsed", seconds / 60, seconds % 60);
     }
 
     private String safeFailure(Throwable failure)

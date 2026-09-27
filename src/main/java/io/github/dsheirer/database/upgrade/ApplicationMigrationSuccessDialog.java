@@ -154,8 +154,10 @@ public final class ApplicationMigrationSuccessDialog
             "Your database was updated successfully. Some items were repaired, reset, or skipped. " +
                 "Details are listed below." :
             "Your database was updated successfully.";
-        return result + "\n\n" + migration.helperOutput() +
-            "\n\nBackup of your previous database:\n" + migration.safetyBackup();
+        String recovery = migration.safetyBackup() != null ?
+            "\n\nBackup of your previous database:\n" + migration.safetyBackup() :
+            "\n\nNo recovery copy was created because backup and full safety checks were skipped.";
+        return result + "\n\n" + migration.helperOutput() + recovery;
     }
 
     public static String previousImportReport(ApplicationMigrationService.MigrationResult migration)
