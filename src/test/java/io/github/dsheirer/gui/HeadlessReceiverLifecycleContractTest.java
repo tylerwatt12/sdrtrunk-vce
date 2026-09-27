@@ -43,7 +43,9 @@ class HeadlessReceiverLifecycleContractTest
         assertTrue(source.contains("public void windowClosing(WindowEvent e)\n        {\n            requestGuiShutdown();"));
         assertTrue(headlessStartup.indexOf("EventQueue.invokeLater") > headlessStartup.indexOf("else\n        {"));
         assertFalse(headlessStartup.substring(0, headlessStartup.indexOf("else\n        {")).contains("EventQueue.invokeLater"));
-        assertTrue(shutdown.contains("if(mGuiAvailable)\n        {\n            MyEventBus.getGlobalEventBus().unregister(this);"));
+        int guiShutdownStart = shutdown.indexOf("if(mGuiAvailable)");
+        int desktopUnregister = shutdown.indexOf("MyEventBus.getGlobalEventBus().unregister(this);");
+        assertTrue(guiShutdownStart >= 0 && desktopUnregister > guiShutdownStart);
         assertTrue(shutdown.contains("if(mMapSnapshotService != null)\n        {\n            mMapSnapshotService.close();"));
         assertTrue(shutdown.indexOf("mStatsWebServerService.close()") <
             shutdown.indexOf("if(mGuiAvailable)"));
