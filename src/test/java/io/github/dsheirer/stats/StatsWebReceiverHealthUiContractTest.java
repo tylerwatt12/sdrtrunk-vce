@@ -38,6 +38,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
         assertTrue(adminGroups.contains("id: 'health', label: 'Current status', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
+        assertFalse(adminGroups.contains("id: 'activity', label: 'Activity history'"));
         assertTrue(desktopEnabled.contains("return this.authorized()"));
     }
 
@@ -88,6 +89,11 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(page.contains("'Service-impact alerts'"));
         assertFalse(page.contains("summary.diagnostic_count"));
         assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
+        assertTrue(page.contains("receiverHealthSavedActivitySection()"));
+        int unavailableReturn = page.indexOf("return;", page.indexOf("if (!snapshot)"));
+        assertTrue(page.indexOf("receiverHealthSavedActivitySection()", page.indexOf("if (!snapshot)")) <
+            unavailableReturn);
+        assertTrue(page.lastIndexOf("receiverHealthSavedActivitySection()") > unavailableReturn);
         assertTrue(page.contains("'Detailed measurements'"));
         assertTrue(page.contains("Live status is delayed. Showing the last update received."));
         assertTrue(page.contains("'Status out of date'"));
@@ -158,7 +164,7 @@ class StatsWebReceiverHealthUiContractTest
 
         assertTrue(source.contains("const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;"));
         assertTrue(controller.contains("this.openHealthSections = new Set(['host-overview', 'current', " +
-            "'active', 'resolved'])"));
+            "'saved-activity', 'active', 'resolved'])"));
         assertFalse(controller.contains("this.openHealthSections = new Set(['resolved'])"));
         assertTrue(controller.contains("if (this.pageHost !== host)"));
         assertTrue(controller.contains("this.resolvedPage = 0"));

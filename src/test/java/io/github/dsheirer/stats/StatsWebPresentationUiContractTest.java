@@ -27,6 +27,7 @@ class StatsWebPresentationUiContractTest
 
         assertFalse(receiver.contains("Traffic-row idle delay"));
         assertTrue(receiver.contains("formField('Mark a traffic row idle after (milliseconds)'"));
+        assertTrue(receiver.contains("Applies to traffic rows on the Live page."));
         assertFalse(receiver.contains("receiver-wide presentation timing"));
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
         assertFalse(receiver.contains("retain_idle_call_details"));

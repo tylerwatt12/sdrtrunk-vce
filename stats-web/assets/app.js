@@ -8166,7 +8166,7 @@ class ReceiverHealthController {
     this.pageHost = null;
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
-    this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
+    this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
     this.expandedResolvedIncidents = new Set();
   }
 
@@ -8191,7 +8191,7 @@ class ReceiverHealthController {
       this.stale = false;
       this.lastError = '';
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
       this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
@@ -8228,7 +8228,7 @@ class ReceiverHealthController {
   bindPage(host) {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
-      this.openHealthSections = new Set(['host-overview', 'current', 'active', 'resolved']);
+      this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active', 'resolved']);
     }
     this.pageHost = host;
     this.updatePage();
@@ -21681,7 +21681,8 @@ async function renderAdminReceiverBehaviorSettings() {
   actions.append(save);
   const group = node('div', 'settings-card');
   const groupBody = node('div', 'settings-card-body');
-  groupBody.append(formField('Mark a traffic row idle after (milliseconds)', grantAge));
+  groupBody.append(formField('Mark a traffic row idle after (milliseconds)', grantAge,
+    'Applies to traffic rows on the Live page.'));
   group.append(groupBody);
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
@@ -21819,10 +21820,12 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
     { area: 'activity', title: 'Saved activity',
       description: '', fields: [
       { id: 'stats_logging_enabled', label: 'Save activity summaries', kind: 'boolean',
-        detail: 'Required for individual activity events.' },
+        detail: 'When off: Main charts and saved system, channel, talkgroup, radio, and signal data stop updating. ' +
+          'Activity tabs, P25 Visualizer, and activity in problem reports stop receiving new data.' },
       { id: 'stats_detailed_history_enabled', label: 'Save individual activity events', kind: 'boolean',
-        detail: 'Used by Activity, P25 Visualizer, and troubleshooting. Requires activity summaries and uses more ' +
-          'storage.' },
+        detail: 'Requires activity summaries. When off: Activity tabs, source-radio lists, P25 Visualizer, and ' +
+          'event history in problem reports stop receiving new events. Main charts and other saved summaries ' +
+          'keep updating.' },
       { id: 'stats_logging_retention_days', label: 'Keep activity history for (days)', kind: 'number',
         detail: 'Automatically removes activity older than this many days. Lowering the value can permanently ' +
           'remove older saved activity.' }
@@ -22120,8 +22123,8 @@ async function renderAdminP25BandplanOverrides() {
   const body = node('div', 'admin-section-body');
   const form = node('form', 'admin-form settings-page-form p25-overrides-form');
   const intro = node('p', 'p25-overrides-intro',
-    'An override replaces the over-the-air band plan for matching P25 channels. ' +
-    'Site overrides take priority over system overrides. Verify replacement bands before saving.');
+    'Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. ' +
+      'Site overrides take priority over system overrides.');
   const list = node('div', 'p25-override-profile-list');
   const message = node('div', 'admin-form-message', 'Loading P25 band plan overrides…');
   message.setAttribute('role', 'status');
@@ -22501,7 +22504,7 @@ function receiverHealthRefreshButton() {
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
     refresh.disabled = true;
-    await receiverHealthController.refresh();
+    await Promise.all([receiverHealthController.refresh(), loadStatus(true)]);
     if (refresh.isConnected) refresh.disabled = false;
   });
   return refresh;
@@ -22547,7 +22550,8 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     const body = node('div', 'admin-section-body');
     body.append(node('div', stale ? 'ui-notice ui-notice-warning' :
       'ui-feedback ui-feedback-loading receiver-health-loading-message', message));
-    host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()));
+    host.append(receiverHealthSection('current', 'Summary', body, receiverHealthRefreshButton()),
+      receiverHealthSavedActivitySection());
     receiverHealthRestoreFocus(host, focusedControl);
     return;
   }
@@ -22579,6 +22583,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
 
   host.append(receiverHealthHostResourceOverview(snapshot),
     receiverHealthSection('current', 'Summary', overview, receiverHealthRefreshButton()),
+    receiverHealthSavedActivitySection(),
     receiverHealthAccountSettingNotice(snapshot),
     receiverHealthSection('active', 'Issues needing attention', receiverHealthIncidentList(snapshot.active)),
     receiverHealthResolvedSection(snapshot.resolved));
@@ -24258,7 +24263,7 @@ async function renderTuners() {
   }
 }
 
-function adminSystemStatusSection(includeControls = false) {
+function receiverHealthSavedActivitySection() {
   const database = serviceStatus?.database;
   const logging = statsLoggingState();
   const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
@@ -24271,22 +24276,20 @@ function adminSystemStatusSection(includeControls = false) {
   const databaseDisplay = adminDatabaseDisplay(database);
   const body = node('div', 'admin-section-body');
   let actions = null;
-  if (includeControls) {
-    actions = sectionActionHost(anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
-      'ui-button ui-button-secondary'));
+  if (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+    const settingsLink = anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
+      'ui-button ui-button-secondary');
+    settingsLink.dataset.receiverHealthFocus = 'saved-activity-settings';
+    actions = sectionActionHost(settingsLink);
   }
   body.append(metrics([
     ['Activity summaries', logging.summaryActive, summaryState],
     ['Individual events', logging.historyActive, historyState],
     ['Activity storage', database?.database_bytes, databaseDisplay]
   ], true));
-  const result = section('Status', body, actions);
-  result.id = 'admin-system-status';
+  const result = receiverHealthSection('saved-activity', 'Saved activity', body, actions);
+  result.id = 'receiver-health-saved-activity';
   return result;
-}
-
-function renderAdminSystem() {
-  content.append(adminSystemStatusSection(true));
 }
 
 function adminSettingsTree(groups, active) {
@@ -25085,10 +25088,6 @@ function adminSettingsGroups() {
       { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Configure P25 band plan overrides.' }
     ] },
-    { label: 'Data & storage', items: [
-      { id: 'activity', label: 'Activity history', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Check whether activity history is being saved.' }
-    ] },
     { label: 'Accounts & access', items: [
       { id: 'users', label: 'Web accounts', capability: ACCESS_CAPABILITIES.ADMIN_USERS,
         description: 'Manage accounts that can sign in.' },
@@ -25107,10 +25106,13 @@ function adminSettingsLeaves(groups) {
   return groups.flatMap((group) => group.items);
 }
 
-function refreshAdminSystemStatus() {
-  const current = document.getElementById('admin-system-status');
-  if (current) current.replaceWith(adminSystemStatusSection(
-    route.get('view') === 'admin' && route.get('tab') === 'activity'));
+function refreshReceiverHealthSavedActivityStatus() {
+  const current = document.getElementById('receiver-health-saved-activity');
+  if (!current) return;
+  const focusedControl = receiverHealthFocusedControl(current);
+  const replacement = receiverHealthSavedActivitySection();
+  current.replaceWith(replacement);
+  receiverHealthRestoreFocus(replacement, focusedControl);
 }
 
 async function renderAdmin() {
@@ -25145,7 +25147,6 @@ async function renderAdmin() {
     await renderAdminP25BandplanOverrides();
   }
   else if (active === 'access') await renderAdminAccess(renderContext);
-  else if (active === 'activity') renderAdminSystem();
   else await renderAdminUsers(renderContext);
   if (!renderIsCurrent(renderContext)) return;
   while (shell.nextSibling) body.append(shell.nextSibling);
@@ -25329,8 +25330,8 @@ async function loadStatus(refreshCurrentView = false) {
   }
 
   const currentView = route.get('view') || 'dashboard';
-  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'activity') {
-    refreshAdminSystemStatus();
+  if (refreshCurrentView && currentView === 'admin' && (route.get('tab') || 'health') === 'health') {
+    refreshReceiverHealthSavedActivityStatus();
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&

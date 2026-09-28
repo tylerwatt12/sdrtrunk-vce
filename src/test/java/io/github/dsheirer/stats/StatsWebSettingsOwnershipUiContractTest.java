@@ -35,6 +35,7 @@ class StatsWebSettingsOwnershipUiContractTest
 
         assertTrue(adminGroups.contains("id: 'live-timing', label: 'Live timing'"));
         assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25 band plans'"));
+        assertFalse(adminGroups.contains("id: 'activity', label: 'Activity history'"));
         assertFalse(adminGroups.contains("id: 'protocol-dmr'"));
         assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
         assertTrue(request.contains("'/api/v1/admin/receiver-settings'"));
@@ -44,6 +45,9 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(bandplanPage.contains("list.append(...documentValue.profiles.map(p25OverrideProfileCard))"));
         assertTrue(bandplanPage.contains("const add = node('button', 'ui-button ui-button-secondary', " +
             "'Add P25 override')"));
+        assertTrue(bandplanPage.contains("Some P25 trunked systems do not transmit their band plan."));
+        assertTrue(bandplanPage.contains("Add an override to define it manually."));
+        assertTrue(bandplanPage.contains("Site overrides take priority over system overrides."));
         assertFalse(source.contains("createP25Override"));
         assertFalse(source.contains("p25OverrideCreateRoute"));
         assertFalse(source.contains("clearP25OverrideCreateRoute"));
@@ -57,6 +61,7 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
         assertFalse(receiver.contains("Traffic-row idle delay"));
         assertTrue(receiver.contains("Mark a traffic row idle after (milliseconds)"));
+        assertTrue(receiver.contains("Applies to traffic rows on the Live page."));
         assertFalse(receiver.contains("does not keep ' +"));
         assertFalse(receiver.contains("show_encryption_details"));
         assertFalse(receiver.contains("show_control_decode_quality"));

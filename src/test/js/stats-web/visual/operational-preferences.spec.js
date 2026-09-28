@@ -68,6 +68,37 @@ async function openApp(page, tier = 'admin') {
   } };
 }
 
+async function openCurrentStatus(page, tab = 'health') {
+  const requests = { status: 0, health: 0 };
+  await page.route('**/api/v1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/v1/auth/session') {
+      await route.fulfill({ json: { data: { configured: true, authenticated: true,
+        username: 'admin', tier: 'admin', primary: true,
+        capabilities: { dashboard: true, 'admin-settings': true, 'receiver-health': true,
+          'admin-users': true, 'admin-access': true, credits: true } } } });
+    } else if (pathname === '/api/v1/me/preferences') {
+      await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
+    } else if (pathname === '/api/v1/status') {
+      requests.status += 1;
+      await route.fulfill({ json: { data: {
+        stats_logging: { summary_configured: true, detailed_history_configured: true,
+          summary_active: true, detailed_history_active: true, state: 'RUNNING' },
+        database: { database_bytes: 1_048_576, detailed_history_available: true, logger: [] }
+      } } });
+    } else if (pathname === '/api/v1/receiver-health') {
+      requests.health += 1;
+      await route.fulfill({ json: { data: { started_at_ms: Date.now() - 60_000,
+        generated_at_ms: Date.now(), summary: { severity: 'healthy', active_count: 0,
+          warning_count: 0, critical_count: 0 }, active: [], resolved: [], measurements: [] } } });
+    } else {
+      await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
+    }
+  });
+  await page.goto(`/app.html?view=admin&tab=${tab}`);
+  return requests;
+}
+
 test('administrator edits one receiver preference at a time', async ({ page }) => {
   const app = await openApp(page);
   const workspace = page.locator('.operational-preferences');
@@ -139,11 +170,24 @@ test('administration navigation becomes a complete compact picker on mobile', as
   await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
     .toEqual(['health', 'call-matching', 'support', 'operations', 'spectrum', 'protocol-p25',
-      'activity', 'users', 'access', 'live-timing']);
+      'users', 'access', 'live-timing']);
 
   await select.selectOption('support');
   await expect(page).toHaveURL(/view=admin&tab=support/);
   await expect(page.getByRole('heading', { level: 1, name: 'Report a problem' })).toBeVisible();
+});
+
+test('current status owns saved activity and refreshes both status sources', async ({ page }) => {
+  const requests = await openCurrentStatus(page, 'activity');
+  await expect(page).toHaveURL(/view=admin&tab=health/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Current status' })).toBeVisible();
+  await expect(page.locator('#receiver-health-saved-activity')).toContainText('Saved activity');
+  await expect(page.locator('#receiver-health-saved-activity')).toContainText('Activity summaries');
+  const initialStatusRequests = requests.status;
+  const initialHealthRequests = requests.health;
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await expect.poll(() => requests.status).toBeGreaterThan(initialStatusRequests);
+  await expect.poll(() => requests.health).toBeGreaterThan(initialHealthRequests);
 });
 
 test('saving one preference keeps another unsaved field', async ({ page }) => {

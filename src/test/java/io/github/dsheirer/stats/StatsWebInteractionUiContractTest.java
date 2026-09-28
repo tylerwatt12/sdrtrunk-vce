@@ -164,8 +164,8 @@ class StatsWebInteractionUiContractTest
         String javascript = source();
         String statusBytes = function(javascript, "function adminStatusBytes(value)");
         String databaseDisplay = function(javascript, "function adminDatabaseDisplay(database)");
-        String system = function(javascript, "function adminSystemStatusSection(includeControls = false)");
-        String refresh = function(javascript, "function refreshAdminSystemStatus()");
+        String system = function(javascript, "function receiverHealthSavedActivitySection()");
+        String refresh = function(javascript, "function refreshReceiverHealthSavedActivityStatus()");
         String loadStatus = function(javascript, "async function loadStatus(refreshCurrentView = false)");
 
         assertTrue(statusBytes.contains("typeof value === 'number' ? value : Number.NaN"));
@@ -189,10 +189,16 @@ class StatsWebInteractionUiContractTest
         assertFalse(system.contains("logging.historyConfigured ? `Configured · ${inactiveState}`"));
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
-        assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection("));
-        assertTrue(refresh.contains("route.get('view') === 'admin' && route.get('tab') === 'activity'"));
-        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'activity'"));
-        assertTrue(loadStatus.contains("refreshAdminSystemStatus();"));
+        assertTrue(system.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)"));
+        assertTrue(system.contains("receiverHealthSection('saved-activity', 'Saved activity'"));
+        assertTrue(system.contains("settingsLink.dataset.receiverHealthFocus = 'saved-activity-settings'"));
+        assertTrue(refresh.contains("const focusedControl = receiverHealthFocusedControl(current)"));
+        assertTrue(refresh.contains("current.replaceWith(replacement)"));
+        assertTrue(refresh.contains("receiverHealthRestoreFocus(replacement, focusedControl)"));
+        assertTrue(loadStatus.contains("currentView === 'admin' && (route.get('tab') || 'health') === 'health'"));
+        assertTrue(loadStatus.contains("refreshReceiverHealthSavedActivityStatus();"));
+        String refreshButton = function(javascript, "function receiverHealthRefreshButton()");
+        assertTrue(refreshButton.contains("Promise.all([receiverHealthController.refresh(), loadStatus(true)])"));
     }
 
     @Test

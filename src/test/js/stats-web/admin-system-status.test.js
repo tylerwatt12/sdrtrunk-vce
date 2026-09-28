@@ -87,7 +87,9 @@ const status = context.metrics([
 assert.deepStrictEqual(status.children.map((metric) => metric.children[1].children[1].textContent),
   ['On', 'On · Not running', '1.0 MB']);
 
-const systemStatus = functionSource('function adminSystemStatusSection(includeControls = false)');
+const systemStatus = functionSource('function receiverHealthSavedActivitySection()');
 assert.match(systemStatus, /\['Activity summaries'/);
 assert.match(systemStatus, /\['Individual events'/);
 assert.match(systemStatus, /\['Activity storage'/);
+assert.match(systemStatus, /receiverHealthSection\('saved-activity', 'Saved activity'/);
+assert.match(systemStatus, /capabilityAllowed\(ACCESS_CAPABILITIES\.ADMIN_SETTINGS\)/);

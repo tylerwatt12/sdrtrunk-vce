@@ -93,7 +93,13 @@ async function main() {
   assert.match(page, /label: 'Recording format'/);
   assert.match(page, /label: 'MP3 sample rate and bit depth'/);
   assert.match(page, /label: 'Save activity summaries'/);
-  assert.match(page, /Required for individual activity events/);
+  assert.match(page, /Main charts and saved system, channel, talkgroup, radio, and signal data stop updating/);
+  assert.match(page, /Activity tabs, P25 Visualizer, and activity in problem reports stop receiving new data/);
+  assert.match(page, /Requires activity summaries/);
+  assert.match(page, /source-radio lists/);
+  assert.match(page, /Main charts and other saved summaries/);
+  assert.match(page, /P25 Visualizer/);
+  assert.match(page, /event history in problem reports/);
   assert.match(page, /Lowering the value can permanently/);
   assert.match(page, /remove older saved activity/);
   assert.match(page, /const drafts = new Map\(\)/);

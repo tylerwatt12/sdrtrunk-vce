@@ -499,6 +499,19 @@
       </div>
     </section>
 
+    <section class="section ui-section receiver-health-section">
+      <div class="section-title ui-section-title"><button class="receiver-health-section-toggle" type="button" aria-expanded="true">Saved activity</button><div class="section-title-actions ui-section-actions"><button class="ui-button ui-button-secondary" type="button">Open Call output &amp; activity</button></div></div>
+      <div class="receiver-health-section-body">
+        <div class="admin-section-body">
+          <div class="summary-band ui-metric-grid">
+            <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Activity summaries</span><strong>On</strong></div></div>
+            <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Individual events</span><strong>On</strong></div></div>
+            <div class="metric ui-metric ui-metric-blue"><span class="ui-metric-icon"><svg aria-hidden="true"><use href="#visual-icon-live"></use></svg></span><div class="ui-metric-copy"><span class="ui-metric-label">Activity storage</span><strong>84 MB</strong></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <aside class="receiver-health-account-setting"><a href="#status-icon">Choose status icon issues</a></aside>
 
     <section class="section ui-section receiver-health-section">
@@ -526,7 +539,7 @@
     <section class="section ui-section">
       <div class="section-title ui-section-title"><h2>P25 band plan overrides</h2></div>
       <form class="admin-form settings-page-form p25-overrides-form">
-        <p class="p25-overrides-intro">An override replaces the over-the-air band plan for matching P25 channels. Site overrides take priority over system overrides. Verify replacement bands before saving.</p>
+        <p class="p25-overrides-intro">Some P25 trunked systems do not transmit their band plan. Add an override to define it manually. Site overrides take priority over system overrides.</p>
         <div class="p25-override-profile-list">
           <details class="settings-card p25-override-profile" open>
             <summary class="settings-card-header p25-override-profile-header"><h3 class="settings-card-title">BEE00-49F · 01-01</h3><button class="ui-button ui-button-danger-quiet ui-icon-button p25-override-profile-delete" type="button" aria-label="Delete override"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></summary>
@@ -562,10 +575,9 @@
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Report a problem</h1><p>Create and submit a support report.</p></div></header>
     <div class="admin-settings-shell">
       <nav class="admin-settings-tree" aria-label="Administration settings">
-        <label class="admin-settings-picker"><span class="admin-settings-picker-label">Administration section</span><select class="ui-select" aria-label="Administration section"><optgroup label="Monitor"><option>Current status</option><option>Call matching</option><option selected>Report a problem</option></optgroup><optgroup label="Receiving &amp; output"><option>Call output &amp; activity</option><option>Spectrum country</option><option>P25 band plans</option></optgroup><optgroup label="Data &amp; storage"><option>Activity history</option></optgroup><optgroup label="Accounts &amp; access"><option>Web accounts</option><option>Page access</option></optgroup><optgroup label="Display"><option>Live timing</option></optgroup></select></label>
+        <label class="admin-settings-picker"><span class="admin-settings-picker-label">Administration section</span><select class="ui-select" aria-label="Administration section"><optgroup label="Monitor"><option>Current status</option><option>Call matching</option><option selected>Report a problem</option></optgroup><optgroup label="Receiving &amp; output"><option>Call output &amp; activity</option><option>Spectrum country</option><option>P25 band plans</option></optgroup><optgroup label="Accounts &amp; access"><option>Web accounts</option><option>Page access</option></optgroup><optgroup label="Display"><option>Live timing</option></optgroup></select></label>
         <details class="admin-settings-branch" open><summary>Monitor</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Current status</a><a class="admin-settings-leaf" href="#">Call matching</a><a class="admin-settings-leaf active" href="#" aria-current="page">Report a problem</a></div></details>
         <details class="admin-settings-branch"><summary>Receiving &amp; output</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Call output &amp; activity</a><a class="admin-settings-leaf" href="#">Spectrum country</a><a class="admin-settings-leaf" href="#">P25 band plans</a></div></details>
-        <details class="admin-settings-branch"><summary>Data &amp; storage</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Activity history</a></div></details>
         <details class="admin-settings-branch"><summary>Accounts &amp; access</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Web accounts</a><a class="admin-settings-leaf" href="#">Page access</a></div></details>
         <details class="admin-settings-branch"><summary>Display</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Live timing</a></div></details>
       </nav>
@@ -720,7 +732,7 @@
         <form class="admin-form settings-page-form receiver-settings-form">
           <div class="settings-card-grid">
             <div class="settings-card">
-              <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Mark a traffic row idle after (milliseconds)</span><input class="ui-input" type="number" value="1200"></label></div>
+              <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Mark a traffic row idle after (milliseconds)</span><input class="ui-input" type="number" value="1200"><small class="ui-field-detail">Applies to traffic rows on the Live page.</small></label></div>
             </div>
           </div>
           <footer class="settings-form-footer"><div class="admin-form-message" role="status"></div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button">Save Live timing</button></div></footer>
