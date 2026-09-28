@@ -52,6 +52,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveDetailsPanelPercent')}
   ${functionSource('liveIdentityHasDisplayLabel')}
+  ${functionSource('liveRemoteOriginLabel')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -61,6 +62,7 @@ const behavior = vm.runInNewContext(`(() => {
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
+    liveRemoteOriginLabel,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
@@ -92,6 +94,10 @@ assert.equal(behavior.activityTargetKind({ target_kind: 'patch_group' }), 'patch
 assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgroup');
 assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');
 assert.equal(behavior.activityTargetKind({ target_kind: 'channel' }), '');
+assert.equal(behavior.liveRemoteOriginLabel({ remote: true, sender_id: 'private-sender',
+  feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Remote source');
+assert.equal(behavior.liveRemoteOriginLabel({ remote: false }), '');
+assert.equal(behavior.liveRemoteOriginLabel(null), '');
 
 const sourceIdentity = {
   source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1, alias_list_id: 2 }],
@@ -255,7 +261,7 @@ assert.match(channels,
   /const remote = liveRemoteOriginBadge\(value\.remote_origin\);[\s\S]*if \(remote\) title\.append\(remote\)/,
   'A remote Live system must carry its cloud badge in the picker title');
 assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
-  'Remote provenance must remain available in pointer and accessible picker labels');
+  'A generic remote marker must remain available in pointer and accessible picker labels');
 assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
   'Conventional tables stay sortable while active-only trunked tables retain activation order');
 assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)/,

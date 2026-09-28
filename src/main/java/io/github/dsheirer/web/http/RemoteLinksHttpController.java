@@ -40,10 +40,10 @@ public final class RemoteLinksHttpController
     private static final Pattern FEED_PATH = Pattern.compile("^" + PATH + "/senders/([^/]+)/feeds/([^/]+)$");
     private static final Pattern ADOPT_PATH = Pattern.compile(
         "^" + PATH + "/senders/([^/]+)/feeds/([^/]+)/adopt$");
-    private static final int MAXIMUM_ID_CHARACTERS = 128;
-    private static final int MAXIMUM_NAME_CHARACTERS = 160;
-    private static final int MAXIMUM_HOST_CHARACTERS = 253;
-    private static final int MAXIMUM_SECRET_CHARACTERS = 1024;
+    private static final int MAXIMUM_ID_CHARACTERS = 36;
+    private static final int MAXIMUM_NAME_CHARACTERS = 120;
+    private static final int MAXIMUM_HOST_CHARACTERS = 255;
+    private static final int MAXIMUM_SECRET_CHARACTERS = 256;
     private static final int MAXIMUM_EXPORT_CHANNELS = 256;
     private static final long MAXIMUM_JAVASCRIPT_INTEGER = 9_007_199_254_740_991L;
     private final RemoteLinkAdministrationService mService;

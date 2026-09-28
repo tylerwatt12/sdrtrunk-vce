@@ -191,6 +191,14 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
             exportedChannelConfigurationIds = exportedChannelConfigurationIds != null ?
                 List.copyOf(exportedChannelConfigurationIds) : List.of();
         }
+
+        @Override
+        public String toString()
+        {
+            return "SenderConnectionUpdate[enabled=" + enabled + ", destinationHost=" + destinationHost +
+                ", destinationPort=" + destinationPort + ", senderId=" + senderId + ", secret=<redacted>" +
+                ", exportedChannelConfigurationIds=" + exportedChannelConfigurationIds + "]";
+        }
     }
 
     record CreateSenderRequest(String displayName)
@@ -200,6 +208,12 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     /** The secret is returned once and must not be retained by the web layer after the response is written. */
     record CreateSenderResult(long revision, String senderId, String displayName, String secret)
     {
+        @Override
+        public String toString()
+        {
+            return "CreateSenderResult[revision=" + revision + ", senderId=" + senderId + ", displayName=" +
+                displayName + ", secret=<redacted>]";
+        }
     }
 
     record UpdateSenderRequest(String displayName, boolean autoAdopt, Long defaultAliasListId)

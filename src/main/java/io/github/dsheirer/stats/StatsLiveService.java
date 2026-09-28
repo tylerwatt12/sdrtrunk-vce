@@ -798,20 +798,9 @@ final class StatsLiveService implements AutoCloseable
             return;
         }
 
-        LinkedHashMap<String,Object> remote = new LinkedHashMap<>();
-        putText(remote, "sender_id", origin.senderId(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(remote, "sender_name", origin.senderName(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(remote, "feed_id", origin.feedId(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(remote, "feed_name", origin.feedName(), MAXIMUM_LIVE_TEXT_LENGTH);
-        if(origin.state() != null)
-        {
-            remote.put("state", origin.state().name());
-        }
-        if(origin.dependencyState() != null)
-        {
-            remote.put("dependency_state", origin.dependencyState().name());
-        }
-        values.put("remote_origin", Map.copyOf(remote));
+        // Live can be available without administrator authentication. Keep sender/feed identities and link health in
+        // the administrator-only Remote Links API while retaining the generic marker used for the cloud badge.
+        values.put("remote_origin", Map.of("remote", true));
     }
 
     private static void putText(Map<String,Object> values, String key, Object value, int maximumLength)

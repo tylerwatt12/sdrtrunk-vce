@@ -55,6 +55,22 @@ class RemoteLinksHttpControllerTest
     }
 
     @Test
+    void secretBearingWebDtosRedactTheirStringRepresentations()
+    {
+        RemoteLinkAdministrationService.SenderConnectionUpdate update =
+            new RemoteLinkAdministrationService.SenderConnectionUpdate(true, "vpn-host", 35_300, "sender-a",
+                "private-update-secret", List.of("channel-a"));
+        RemoteLinkAdministrationService.CreateSenderResult result =
+            new RemoteLinkAdministrationService.CreateSenderResult(8L, "sender-a", "Hilltop",
+                "private-result-secret");
+
+        assertTrue(update.toString().contains("secret=<redacted>"));
+        assertFalse(update.toString().contains("private-update-secret"));
+        assertTrue(result.toString().contains("secret=<redacted>"));
+        assertFalse(result.toString().contains("private-result-secret"));
+    }
+
+    @Test
     void outboundCredentialIsWriteOnlyAndExportSelectionIsBounded() throws Exception
     {
         FakeService service = new FakeService();
@@ -77,6 +93,39 @@ class RemoteLinksHttpControllerTest
                 "[\"channel-a\",\"channel-a\"]");
             assertEquals(400, server.send(server.jsonRequest("/sender-connection")
                 .PUT(HttpRequest.BodyPublishers.ofString(duplicate))).statusCode());
+        }
+    }
+
+    @Test
+    void rejectsValuesLargerThanThePersistedSettingsCanStore() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            String boundaryConnection = MAPPER.writeValueAsString(Map.of(
+                "revision", 7, "enabled", true, "destination_host", "h".repeat(255),
+                "destination_port", 35_300, "sender_id", "i".repeat(36), "secret", "s".repeat(256),
+                "exported_channel_configuration_ids", List.of("channel-a")));
+            assertEquals(200, server.send(server.jsonRequest("/sender-connection")
+                .PUT(HttpRequest.BodyPublishers.ofString(boundaryConnection))).statusCode());
+
+            String longHost = boundaryConnection.replace("h".repeat(255), "h".repeat(256));
+            assertEquals(400, server.send(server.jsonRequest("/sender-connection")
+                .PUT(HttpRequest.BodyPublishers.ofString(longHost))).statusCode());
+            String longSenderId = boundaryConnection.replace("i".repeat(36), "i".repeat(37));
+            assertEquals(400, server.send(server.jsonRequest("/sender-connection")
+                .PUT(HttpRequest.BodyPublishers.ofString(longSenderId))).statusCode());
+            String longSecret = boundaryConnection.replace("s".repeat(256), "s".repeat(257));
+            assertEquals(400, server.send(server.jsonRequest("/sender-connection")
+                .PUT(HttpRequest.BodyPublishers.ofString(longSecret))).statusCode());
+
+            String boundaryName = MAPPER.writeValueAsString(Map.of(
+                "revision", 7, "display_name", "n".repeat(120)));
+            assertEquals(201, server.send(server.jsonRequest("/senders")
+                .POST(HttpRequest.BodyPublishers.ofString(boundaryName))).statusCode());
+            String longName = boundaryName.replace("n".repeat(120), "n".repeat(121));
+            assertEquals(400, server.send(server.jsonRequest("/senders")
+                .POST(HttpRequest.BodyPublishers.ofString(longName))).statusCode());
         }
     }
 

@@ -199,7 +199,7 @@ class StatsLiveServiceTest
     }
 
     @Test
-    void projectsRemoteOriginWithoutNetworkOrCredentialDetailsAndRefreshesItsHealth() throws Exception
+    void projectsOnlyAGenericRemoteOriginIntoPublicLiveData() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
         String configurationId = "00000000-0000-0000-0000-000000000017";
@@ -223,11 +223,14 @@ class StatsLiveServiceTest
             Map<String,Object> tableOrigin = (Map<String,Object>)table.get("remote_origin");
             @SuppressWarnings("unchecked")
             Map<String,Object> rowOrigin = (Map<String,Object>)firstRow(event).get("remote_origin");
-            assertEquals("Hilltop", tableOrigin.get("sender_name"));
-            assertEquals("North", rowOrigin.get("feed_name"));
-            assertEquals("CONNECTED", rowOrigin.get("state"));
-            assertEquals("READY", rowOrigin.get("dependency_state"));
+            assertEquals(Map.of("remote", true), tableOrigin);
+            assertEquals(Map.of("remote", true), rowOrigin);
             String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            assertFalse(encoded.contains("sender_id"));
+            assertFalse(encoded.contains("sender_name"));
+            assertFalse(encoded.contains("feed_id"));
+            assertFalse(encoded.contains("feed_name"));
+            assertFalse(encoded.contains("dependency_state"));
             assertFalse(encoded.contains("destination_host"));
             assertFalse(encoded.contains("secret"));
 
@@ -238,8 +241,11 @@ class StatsLiveServiceTest
             StatsLiveEventHub.LiveEvent refresh = subscription.poll(1, TimeUnit.SECONDS);
             assertNotNull(refresh);
             assertEquals("activity_resync", refresh.name());
-            String refreshed = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
-            assertTrue(refreshed.contains("\"state\":\"disconnected\""), refreshed);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> refreshedOrigin = (Map<String,Object>)tables(service).stream()
+                .filter(item -> "p25-unresolved".equals(item.get("table_id"))).findFirst().orElseThrow()
+                .get("remote_origin");
+            assertEquals(Map.of("remote", true), refreshedOrigin);
         }
         finally
         {

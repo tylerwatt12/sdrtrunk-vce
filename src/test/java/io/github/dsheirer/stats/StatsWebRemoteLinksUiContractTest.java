@@ -37,12 +37,17 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(feature.contains("'Copy this credential now. The shared secret will not be shown again.'"));
         assertTrue(feature.contains("exported_channel_configuration_ids"));
         assertTrue(feature.contains("default_alias_list_id"));
+        assertTrue(feature.contains("address.required = true; address.maxLength = 255"));
+        assertTrue(feature.contains("destination.maxLength = 255"));
+        assertTrue(feature.contains("senderId.maxLength = 36"));
+        assertTrue(feature.contains("secret.maxLength = 256"));
+        assertTrue(feature.contains("name.required = true; name.maxLength = 120"));
         assertFalse(feature.contains("innerHTML"));
         assertFalse(feature.contains("style="));
     }
 
     @Test
-    void marksRemoteLiveSystemsAndSurfacesDependencyHealth() throws Exception
+    void marksRemoteLiveSystemsWhileKeepingDetailedHealthInTheAdminWorkspace() throws Exception
     {
         String app = Files.readString(APP);
         String feature = Files.readString(FEATURE);
@@ -52,8 +57,16 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(app.contains("function liveRemoteOriginBadge(origin, showLabel = false)"));
         assertTrue(app.contains("row.remote_origin"));
         assertTrue(app.contains("value?.remote_origin"));
-        assertTrue(app.contains("origin.dependency_state"));
+        assertTrue(app.contains("origin?.remote === true ? 'Remote source' : ''"));
         assertTrue(feature.contains("listener.dependencies"));
+        assertTrue(feature.contains("sender.sender_id"));
+        assertTrue(feature.contains("status(feed.state)"));
+        assertFalse(app.contains("origin.sender_id"));
+        assertFalse(app.contains("origin.sender_name"));
+        assertFalse(app.contains("origin.feed_id"));
+        assertFalse(app.contains("origin.feed_name"));
+        assertFalse(app.contains("origin.state"));
+        assertFalse(app.contains("origin.dependency_state"));
         assertFalse(app.contains("remote_origin.destination_host"));
         assertFalse(app.contains("remote_origin.secret"));
     }

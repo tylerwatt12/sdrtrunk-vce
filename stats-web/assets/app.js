@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=2';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=3';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -15175,22 +15175,13 @@ function liveConventionalChannelValue(row) {
 }
 
 function liveRemoteOriginLabel(origin) {
-  if (!origin || typeof origin !== 'object') return '';
-  const sender = String(origin.sender_name || origin.sender_id || 'remote sender').trim();
-  const feed = String(origin.feed_name || origin.feed_id || '').trim();
-  const state = String(origin.state || 'UNKNOWN').replaceAll('_', ' ').toLowerCase();
-  const dependency = String(origin.dependency_state || 'UNKNOWN').replaceAll('_', ' ').toLowerCase();
-  return `Remote via ${sender}${feed ? ` · ${feed}` : ''} · ${state} · dependency ${dependency}`;
+  return origin?.remote === true ? 'Remote source' : '';
 }
 
 function liveRemoteOriginBadge(origin, showLabel = false) {
   const label = liveRemoteOriginLabel(origin);
   if (!label) return null;
-  const state = String(origin.state || '').toUpperCase();
-  const dependency = String(origin.dependency_state || '').toUpperCase();
-  const tone = state === 'CONNECTED' && dependency === 'READY' ? 'success' :
-    (state === 'UNSUPPORTED' || dependency === 'MISSING' ? 'danger' : 'warning');
-  const badge = node('span', `live-remote-origin live-remote-origin-${tone}`);
+  const badge = node('span', 'live-remote-origin');
   badge.title = label;
   badge.setAttribute('aria-label', label);
   badge.append(iconGlyph('icon-cloud'));
@@ -15224,8 +15215,8 @@ function liveChannelViewMeta(value, label = '') {
       candidate.toLowerCase() === item.toLowerCase()) === index)
     .filter((item) => item.toLowerCase() !== normalizedLabel);
   const local = values.slice(0, 2).join(' · ') || 'Trunked channel';
-  const sender = String(value?.remote_origin?.sender_name || value?.remote_origin?.sender_id || '').trim();
-  return sender ? `${local} · Remote via ${sender}` : local;
+  const remote = liveRemoteOriginLabel(value?.remote_origin);
+  return remote ? `${local} · ${remote}` : local;
 }
 
 function liveRequestedChannelMatch(tableValue, configurationId) {

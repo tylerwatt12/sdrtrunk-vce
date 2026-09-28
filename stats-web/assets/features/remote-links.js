@@ -308,7 +308,7 @@ export function createRemoteLinksWorkspace(deps) {
     const enabled = uiToggleField('Listen for remote senders', Boolean(current.enabled),
       'Listen for remote senders', 'Starts an authenticated listener for decoded P25 traffic.');
     const address = input('text', current.bind_address || '0.0.0.0');
-    address.required = true; address.maxLength = 253;
+    address.required = true; address.maxLength = 255;
     const port = input('number', current.port || 53800);
     port.required = true; port.min = '1'; port.max = '65535'; port.step = '1';
     submitModal('Remote listener', [enabled, formField('Bind address', address,
@@ -322,13 +322,13 @@ export function createRemoteLinksWorkspace(deps) {
     const enabled = uiToggleField('Send selected P25 systems', Boolean(current.enabled),
       'Send selected P25 systems', 'Connects this installation to one trusted host.');
     const destination = input('text', current.destination_host || '');
-    destination.maxLength = 253;
+    destination.maxLength = 255;
     const port = input('number', current.destination_port || 53800);
     port.required = true; port.min = '1'; port.max = '65535'; port.step = '1';
     const senderId = input('text', current.sender_id || '');
-    senderId.maxLength = 128; senderId.autocomplete = 'off';
+    senderId.maxLength = 36; senderId.autocomplete = 'off';
     const secret = input('password', '');
-    secret.maxLength = 1024; secret.autocomplete = 'new-password';
+    secret.maxLength = 256; secret.autocomplete = 'new-password';
     secret.placeholder = current.credential_configured ? 'Leave blank to keep saved secret' : 'Paste host-issued secret';
     const choices = node('fieldset', 'remote-links-export-list');
     choices.append(node('legend', '', 'P25 trunked systems to export'));
@@ -365,7 +365,7 @@ export function createRemoteLinksWorkspace(deps) {
 
   function openCreateSender() {
     const name = input('text');
-    name.required = true; name.maxLength = 160; name.placeholder = 'Example: Mountain receiver';
+    name.required = true; name.maxLength = 120; name.placeholder = 'Example: Mountain receiver';
     const editor = submitModal('Add trusted sender', [formField('Sender name', name,
       'Use a name that identifies the remote installation.')], 'Create credential', async () => {
       const result = await write('/senders', 'POST', { revision: snapshot.revision, display_name: name.value.trim() });
@@ -392,7 +392,7 @@ export function createRemoteLinksWorkspace(deps) {
 
   function openSender(sender) {
     const name = input('text', sender.display_name || '');
-    name.required = true; name.maxLength = 160;
+    name.required = true; name.maxLength = 120;
     const auto = uiToggleField('Adopt newly advertised feeds automatically', Boolean(sender.auto_adopt),
       'Adopt newly advertised feeds automatically', 'Uses the Alias List selected below.');
     const alias = selectAlias(sender.default_alias_list_id, true);
@@ -424,7 +424,7 @@ export function createRemoteLinksWorkspace(deps) {
   function openFeed(sender, feed) {
     if (!feedAction(feed).allowed) return;
     const name = input('text', feed.display_name || feed.advertised_name || '');
-    name.required = true; name.maxLength = 160;
+    name.required = true; name.maxLength = 120;
     const alias = selectAlias(feed.alias_list_id, false);
     alias.required = true;
     const enabled = uiToggleField('Enable this remote channel', feed.adopted ? Boolean(feed.enabled) : true,
