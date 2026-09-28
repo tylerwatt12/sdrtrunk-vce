@@ -28,8 +28,8 @@ function operatorSettings(overrides = {}) {
     setting('lna_gain', 'LNA gain', 'gain', 'integer', 8,
       { minimum: 0, maximum: 15, step: 1, unit: 'dB' }),
     setting('automatic_ppm', 'Automatic PPM', 'calibration', 'boolean', false),
-    setting('frequency_correction_ppm', 'Frequency correction', 'calibration', 'decimal', 0.1,
-      { minimum: -200, maximum: 200, step: 0.1, unit: 'ppm',
+    setting('frequency_correction_ppm', 'Frequency correction', 'calibration', 'decimal', 0,
+      { minimum: -200, maximum: 200, step: 1, unit: 'ppm',
         dependencies: [{ setting_id: 'automatic_ppm', equals: false }],
         unavailable_reason: 'Turn off Auto PPM' }),
     setting('minimum_frequency_mhz', 'Minimum frequency', 'frequency', 'decimal', 24,
@@ -41,7 +41,7 @@ function operatorSettings(overrides = {}) {
       { minimum: 24, maximum: 1800, step: 0.00001, unit: 'MHz',
         dependencies: [{ setting_id: 'center_frequency_locked', equals: false }],
         unavailable_reason: 'Unlock center' }),
-    setting('center_frequency_locked', 'Lock center frequency', 'frequency', 'boolean', false),
+    setting('center_frequency_locked', 'Lock center', 'frequency', 'boolean', false),
     setting('sample_rate', 'Sample rate', 'frequency', 'choice', '10 MHz',
       { options: [{ value: '10 MHz', label: '10.00 MHz' }, { value: '2.5 MHz', label: '2.50 MHz' }],
         availability: 'setup', unavailable_reason: 'Available in Setup' }),
@@ -259,8 +259,8 @@ test('embedded signal view reuses cursor, zoom, and selectable quality without t
   await expect(profile.locator('option')).toHaveText([
     'Efficient · 2,048 bins / 5 FPS',
     'Balanced · 8,192 bins / 10 FPS',
-    'High detail · 16,384 bins / 20 FPS',
-    'Maximum detail · 32,768 bins / 20 FPS'
+    'High detail · 16,384 bins / 20 FPS · high load',
+    'Maximum detail · 32,768 bins / 20 FPS · highest load'
   ]);
   await expect(profile).toHaveValue('efficient');
   for (const value of ['efficient', 'balanced', 'high-detail', 'maximum-detail']) {
@@ -321,13 +321,30 @@ test('inventory polling preserves a focused draft while updating the selected pa
 test('descriptor availability and dependencies control common and device settings', async ({ page }) => {
   const settings = operatorSettings({
     automatic_ppm: { value: true },
+    frequency_correction_ppm: { value: -0.017398311918371955 },
     center_frequency_locked: { value: true }
   });
   await mockTuners(page, [], { currentTuner: operatorTuner({ settings }) });
   await page.goto('/app.html?view=tuners');
 
-  await expect(page.getByLabel('Frequency correction (ppm)')).toBeDisabled();
+  const automaticPpm = page.getByLabel('Automatic PPM');
+  const manualPpm = page.getByLabel('Frequency correction (ppm)');
+  await expect(manualPpm).toBeDisabled();
+  await expect(manualPpm).toHaveValue('0');
+  await expect(page.locator('[data-setting-id="frequency_correction_ppm"]')).toHaveAttribute(
+    'aria-disabled', 'true');
   await expect(page.getByText('Turn off Auto PPM')).toBeVisible();
+  const [automaticBox, manualBox] = await Promise.all([
+    page.locator('[data-setting-id="automatic_ppm"] .ui-toggle').boundingBox(),
+    manualPpm.boundingBox()
+  ]);
+  expect(automaticBox).not.toBeNull();
+  expect(manualBox).not.toBeNull();
+  expect(Math.abs(automaticBox.y - manualBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(automaticBox.height - manualBox.height)).toBeLessThanOrEqual(1);
+  expect(await automaticPpm.evaluate((control) => control.compareDocumentPosition(
+    document.querySelector('[data-tuner-setting="frequency_correction_ppm"]')) & Node.DOCUMENT_POSITION_FOLLOWING))
+    .toBeTruthy();
   await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '-1');
   await expect(page.getByText('Unlock center')).toBeVisible();
   await page.getByText('Limits & sample rate').click();
@@ -335,6 +352,58 @@ test('descriptor availability and dependencies control common and device setting
   await expect(page.getByText('Available in Setup')).toBeVisible();
   await expect(page.getByLabel('Bias T')).toBeEnabled();
   await expect(page.locator('.tuners-main').getByText(/queued/i)).toHaveCount(0);
+});
+
+test('manual PPM presents and applies whole-number steps', async ({ page }) => {
+  const mutations = [];
+  const settings = operatorSettings({
+    frequency_correction_ppm: { value: -0.017398311918371955 }
+  });
+  await mockTuners(page, mutations, { currentTuner: operatorTuner({ settings }) });
+  await page.goto('/app.html?view=tuners');
+
+  const manualPpm = page.getByLabel('Frequency correction (ppm)');
+  await expect(manualPpm).toHaveAttribute('step', '1');
+  await expect(manualPpm).toHaveValue('0');
+  await manualPpm.press('Enter');
+  await page.waitForTimeout(50);
+  expect(mutations).toEqual([]);
+  await manualPpm.press('ArrowUp');
+  await expect(manualPpm).toHaveValue('1');
+  await page.locator('[data-setting-id="frequency_correction_ppm"]').getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => mutations.at(-1)).toEqual({
+    type: 'setting', setting: 'frequency_correction_ppm', value: 1
+  });
+});
+
+test('preset gain hides controls the descriptor marks unusable and keeps Signal compact', async ({ page }) => {
+  const settings = operatorSettings({
+    lna_gain: { editable: false, unavailable_reason: 'Use manual gain' }
+  });
+  settings.unshift(setting('gain', 'Gain preset', 'gain', 'choice', 'LINEARITY_14', {
+    options: [{ value: 'LINEARITY_14', label: 'LINEARITY_14' }, { value: 'CUSTOM', label: 'CUSTOM' }]
+  }));
+  settings.push(setting('mixer_agc', 'Mixer AGC', 'gain', 'boolean', false, {
+    editable: false, unavailable_reason: 'Unavailable'
+  }));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await mockTuners(page, [], { currentTuner: operatorTuner({ settings, spectrum_available: true,
+    spectrum_target_id: 'diagnostic-a' }),
+    targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2',
+      center_frequency_hz: 851_012_500, sample_rate_hz: 10_000_000 }] });
+  await page.goto('/app.html?view=tuners');
+
+  await expect(page.getByLabel('Gain preset')).toBeVisible();
+  await expect(page.getByLabel('LNA gain (dB)')).toHaveCount(0);
+  await expect(page.getByLabel('Mixer AGC')).toHaveCount(0);
+  await expect(page.locator('.tuners-signal-controls .tuners-setting')).toHaveCount(1);
+  const [spectrumBox, signalBox] = await Promise.all([
+    page.locator('.tuners-spectrum').boundingBox(),
+    page.locator('.tuners-signal-layout').boundingBox()
+  ]);
+  expect(spectrumBox).not.toBeNull();
+  expect(signalBox).not.toBeNull();
+  expect(Math.abs((spectrumBox.y + spectrumBox.height) - (signalBox.y + signalBox.height))).toBeLessThanOrEqual(1);
 });
 
 test('Setup unlocks setup-only controls and remains unavailable to channels', async ({ page }) => {
@@ -359,6 +428,12 @@ test('center frequency digit zones and hover typing commit exact values', async 
   await mockTuners(page, mutations, state);
   await page.goto('/app.html?view=tuners');
   await expect(page.locator('.tuners-frequency-digits')).toContainText('0852.16250MHz');
+  await expect(page.locator('.tuners-center-frequency .tuners-center-lock')).toHaveCount(1);
+  expect(await page.locator('.tuners-frequency-step').evaluateAll((buttons) => buttons.every((button) => {
+    const arrow = getComputedStyle(button, '::after');
+    return Math.abs(parseFloat(arrow.left) - button.getBoundingClientRect().width / 2) < 0.5 &&
+      arrow.transform !== 'none';
+  }))).toBeTruthy();
 
   await page.getByRole('button', { name: 'Increase 100 MHz place' }).click();
   await expect.poll(() => mutations.at(-1)).toEqual({ type: 'setting', setting: 'frequency_mhz', value: 952.1625 });

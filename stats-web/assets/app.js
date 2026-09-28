@@ -12906,8 +12906,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   [
     ['efficient', 'Efficient · 2,048 bins / 5 FPS'],
     ['balanced', 'Balanced · 8,192 bins / 10 FPS'],
-    ['high-detail', 'High detail · 16,384 bins / 20 FPS'],
-    ['maximum-detail', 'Maximum detail · 32,768 bins / 20 FPS']
+    ['high-detail', 'High detail · 16,384 bins / 20 FPS · high load'],
+    ['maximum-detail', 'Maximum detail · 32,768 bins / 20 FPS · highest load']
   ].forEach(([value, text]) => {
     const option = node('option', '', text);
     option.value = value;
@@ -23423,11 +23423,26 @@ function tunerSettingValue(setting, value) {
   return option ? String(option.label) : `${value}${setting.unit ? ` ${setting.unit}` : ''}`;
 }
 
+function tunerSettingInputValue(setting, value) {
+  if (value == null) return '';
+  const numeric = Number(value);
+  const step = Number(setting?.step);
+  if (Number.isFinite(numeric) && Number.isFinite(step) && step > 0) {
+    const [coefficient, exponentText = '0'] = String(step).toLowerCase().split('e');
+    const fractionDigits = (coefficient.split('.')[1] || '').length;
+    const decimalPlaces = Math.min(12, Math.max(0, fractionDigits - Number(exponentText)));
+    const rounded = Number(numeric.toFixed(decimalPlaces));
+    return String(Object.is(rounded, -0) ? 0 : rounded);
+  }
+  return String(value);
+}
+
 function tunerSettingInput(setting, draft = null) {
   const value = setting.value;
   if (setting.kind === 'boolean') {
     const control = uiToggleField(setting.label, draft === null ? Boolean(value) : Boolean(draft), setting.label);
-    return { element: control, input: control.querySelector('input'), read: (input) => input.checked };
+    return { element: control, input: control.querySelector('input'), read: (input) => input.checked,
+      confirmedValue: Boolean(value) };
   }
   if (setting.kind === 'choice') {
     const input = node('select', 'ui-select');
@@ -23439,7 +23454,8 @@ function tunerSettingInput(setting, draft = null) {
     input.value = draft === null ? String(value ?? '') : String(draft);
     const field = node('label', 'ui-field');
     field.append(node('span', '', setting.label), uiSelectFrame(input));
-    return { element: field, input, read: (select) => select.value };
+    return { element: field, input, read: (select) => select.value,
+      confirmedValue: String(value ?? '') };
   }
   const input = node('input', 'ui-input');
   input.type = 'number';
@@ -23449,10 +23465,12 @@ function tunerSettingInput(setting, draft = null) {
   if (setting.step != null && Number.isFinite(Number(setting.step)) && Number(setting.step) > 0) {
     input.step = String(setting.step);
   }
-  input.value = draft === null ? (value == null ? '' : String(value)) : String(draft);
+  const confirmedValue = tunerSettingInputValue(setting, value);
+  input.value = draft === null ? confirmedValue : String(draft);
   const field = node('label', 'ui-field');
   field.append(node('span', '', `${setting.label}${setting.unit ? ` (${setting.unit})` : ''}`), input);
-  return { element: field, input, read: (numberInput) => Number(numberInput.value) };
+  return { element: field, input, read: (numberInput) => Number(numberInput.value),
+    confirmedValue: confirmedValue === '' ? '' : Number(confirmedValue) };
 }
 
 function tunerOperatorState(tuner) {
@@ -23891,18 +23909,31 @@ async function renderTuners() {
     const settings = (Array.isArray(tuner.settings) ? tuner.settings : [])
       .filter((setting) => setting && typeof setting.id === 'string' && /^[a-z0-9_]+$/.test(setting.id));
     const center = settings.find((setting) => setting.id === 'frequency_mhz');
-    if (center) detailsBody.querySelector('.tuners-center-host')?.prepend(
-      centerFrequencyControl(tuner, center, tunerSettingUsability(center, tuner, settings)));
+    if (center) {
+      const centerControl = centerFrequencyControl(tuner, center,
+        tunerSettingUsability(center, tuner, settings));
+      detailsBody.querySelector('.tuners-center-host')?.prepend(centerControl);
+      centerControl.append(centerLockBody);
+    }
 
     for (const setting of settings) {
       if (setting.id === 'frequency_mhz') continue;
       const draftKey = `${tuner.id}:${setting.id}`;
       const usability = tunerSettingUsability(setting, tuner, settings);
+      const group = String(setting.group || '').toLowerCase();
+      if (group === 'gain' && !usability.enabled) continue;
       const actionSetting = setting.kind === 'action';
       const form = node('form', `tuners-setting${actionSetting ? ' tuners-setting-action' : ''}`);
       form.dataset.settingId = setting.id;
       const control = actionSetting ? null : tunerSettingInput(setting,
         settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
+      if (control && setting.id === 'automatic_ppm') {
+        control.element.classList.add('tuners-auto-ppm-field');
+        control.element.querySelector('.ui-toggle-copy')?.classList.add('tuners-auto-ppm-copy');
+        control.element.querySelector('.ui-toggle')?.classList.add('tuners-auto-ppm-control');
+      } else if (control && setting.id === 'center_frequency_locked') {
+        control.element.classList.add('tuners-center-lock-field');
+      }
       const message = node('div', 'tuners-setting-message');
       message.setAttribute('role', 'status');
       const actions = node('div', 'tuners-setting-actions ui-action-row');
@@ -23910,7 +23941,7 @@ async function renderTuners() {
         actionSetting ? setting.label : 'Save');
       save.type = 'submit';
       save.disabled = !usability.enabled;
-      const baseValue = setting.value;
+      const baseValue = control ? control.confirmedValue : setting.value;
       const isDirty = () => control && String(control.read(control.input)) !== String(baseValue);
       const updateActions = () => {
         save.hidden = !actionSetting && !isDirty();
@@ -23943,7 +23974,8 @@ async function renderTuners() {
       actions.append(save);
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (!usability.enabled || (control && !control.input.reportValidity())) return;
+        if (!usability.enabled || (!actionSetting && !isDirty()) ||
+            (control && !control.input.reportValidity())) return;
         save.disabled = true;
         try {
           await saveTunerSetting(tuner, setting, actionSetting ? true : control.read(control.input), message);
@@ -23954,18 +23986,19 @@ async function renderTuners() {
       });
       if (control) form.append(control.element);
       if (!usability.enabled && usability.reason) {
+        form.setAttribute('aria-disabled', 'true');
         form.append(node('p', 'tuners-setting-hint', usability.reason));
       }
       if (usability.enabled) form.append(actions);
       form.append(message);
       updateActions();
 
-      const group = String(setting.group || '').toLowerCase();
       const commonPrimary = ['frequency_correction_ppm', 'automatic_ppm'].includes(setting.id);
       const commonMore = ['minimum_frequency_mhz', 'maximum_frequency_mhz',
         'reset_frequency_extents', 'sample_rate'].includes(setting.id);
       if (setting.id === 'center_frequency_locked') centerLockBody.append(form);
       else if (group === 'gain') gainBody.append(form);
+      else if (setting.id === 'automatic_ppm') commonPrimaryBody.prepend(form);
       else if (commonPrimary) commonPrimaryBody.append(form);
       else if (commonMore) commonMoreBody.append(form);
       else deviceBody.append(form);

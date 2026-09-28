@@ -70,6 +70,15 @@
   box-shadow: var(--shadow-focus);
 }
 
+.ui-input:disabled,
+.ui-textarea:disabled {
+  color: var(--muted);
+  background-color: var(--surface-2);
+  border-color: var(--line);
+  cursor: not-allowed;
+  opacity: .62;
+}
+
 .ui-button {
   min-height: var(--ui-control-height, var(--control-height-comfortable));
   display: inline-flex;

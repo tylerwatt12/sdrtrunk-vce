@@ -182,6 +182,12 @@
 .tuners-center-frequency {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label lock"
+    "digits digits"
+    "message message";
+  align-items: center;
   gap: var(--space-1);
   padding: var(--space-2);
   background: var(--surface-2);
@@ -196,11 +202,13 @@
 }
 
 .tuners-center-label {
+  grid-area: label;
   color: var(--muted);
   font-size: var(--font-size-meta);
 }
 
 .tuners-frequency-digits {
+  grid-area: digits;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -239,7 +247,8 @@
 
 .tuners-frequency-step::after {
   position: absolute;
-  right: 2px;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: var(--font-size-meta);
   opacity: .45;
 }
@@ -286,12 +295,24 @@
 }
 
 .tuners-center-lock {
-  min-width: min(250px, 100%);
+  min-width: 0;
+  grid-area: lock;
 }
 
 .tuners-center-lock .tuners-setting {
   padding: 0;
   border: 0;
+}
+
+.tuners-center-lock-field {
+  gap: var(--space-2);
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.tuners-center-frequency > .tuners-setting-message {
+  grid-area: message;
 }
 
 .tuners-stopped-channels {
@@ -326,6 +347,7 @@
 
 .tuners-spectrum {
   min-width: 0;
+  display: grid;
   padding: var(--space-2);
 }
 
@@ -452,7 +474,6 @@
   align-content: start;
   gap: var(--space-1);
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--line);
 }
 
 .tuners-setting > :first-child {
@@ -502,6 +523,27 @@
 
 .tuners-common-primary {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tuners-common-primary [data-setting-id="automatic_ppm"] {
+  gap: var(--space-2);
+}
+
+.tuners-auto-ppm-field {
+  display: contents;
+}
+
+.tuners-auto-ppm-copy strong {
+  font-weight: inherit;
+}
+
+.tuners-auto-ppm-control {
+  min-height: var(--control-height-comfortable);
+  justify-content: flex-end;
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--radius-control);
 }
 
 .tuners-common-details {
@@ -618,6 +660,15 @@
     align-items: stretch;
   }
 
+  .tuners-center-frequency {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "label"
+      "digits"
+      "lock"
+      "message";
+  }
+
   .tuners-center-lock {
     min-width: 0;
   }
@@ -654,6 +705,10 @@
 
   .tuners-spectrum .tuner-spectrum-layout-basic {
     grid-template-rows: auto minmax(360px, 1fr);
+  }
+
+  .tuners-signal-idle .tuner-spectrum-layout-basic {
+    grid-template-rows: auto minmax(250px, 270px);
   }
 
   .tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {

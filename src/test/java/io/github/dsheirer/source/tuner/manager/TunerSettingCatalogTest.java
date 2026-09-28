@@ -143,7 +143,9 @@ class TunerSettingCatalogTest
         assertEquals("MHz", minimum.unit());
         assertEquals("live", minimum.availability());
         assertEquals("live", maximum.availability());
-        assertEquals("live", setting(tuner, "frequency_correction_ppm").availability());
+        TunerSettingCatalog.SettingDescriptor ppm = setting(tuner, "frequency_correction_ppm");
+        assertEquals("live", ppm.availability());
+        assertEquals(1.0, ppm.step().doubleValue());
         assertEquals("live", setting(tuner, "center_frequency_locked").availability());
         assertEquals("setup", setting(tuner, "sample_rate").availability());
         assertTrue(minimum.editable());

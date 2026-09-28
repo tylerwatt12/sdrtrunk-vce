@@ -669,7 +669,7 @@ public final class TunerSettingCatalog
         }
 
         specs.add(spec("frequency_correction_ppm", "Frequency correction", "getFrequencyCorrection",
-            "setFrequencyCorrection", -200.0, 200.0, 0.1, "ppm"));
+            "setFrequencyCorrection", -200.0, 200.0, 1.0, "ppm"));
         long hardwareMinimum = hardwareMinimum(configuration);
         long hardwareMaximum = hardwareMaximum(configuration);
         if(hardwareMinimum > 0 && hardwareMaximum > hardwareMinimum)
@@ -689,7 +689,7 @@ public final class TunerSettingCatalog
         }
         specs.add(spec("automatic_ppm", "Automatic PPM correction", "getAutoPPMCorrectionEnabled",
             "setAutoPPMCorrectionEnabled"));
-        specs.add(spec("center_frequency_locked", "Lock center frequency", "isCenterFrequencyLocked",
+        specs.add(spec("center_frequency_locked", "Lock center", "isCenterFrequencyLocked",
             "setCenterFrequencyLocked"));
 
         if(configuration instanceof AirspyTunerConfiguration || configuration instanceof HydraSdrTunerConfiguration)

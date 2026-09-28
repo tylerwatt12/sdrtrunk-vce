@@ -308,7 +308,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"221\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"222\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -660,7 +660,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=193"));
+        assertTrue(html.contains("/assets/app.css?v=194"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1610,8 +1610,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Spectrum performance'"));
         assertTrue(tuner.contains("'Efficient · 2,048 bins / 5 FPS'"));
         assertTrue(tuner.contains("'Balanced · 8,192 bins / 10 FPS'"));
-        assertTrue(tuner.contains("'High detail · 16,384 bins / 20 FPS'"));
-        assertTrue(tuner.contains("'Maximum detail · 32,768 bins / 20 FPS'"));
+        assertTrue(tuner.contains("'High detail · 16,384 bins / 20 FPS · high load'"));
+        assertTrue(tuner.contains("'Maximum detail · 32,768 bins / 20 FPS · highest load'"));
         assertTrue(tuner.contains("All profiles use 8-bit spectrum data."));
         assertTrue(parameters.contains("profile: spectrumProfile"));
         assertTrue(acceptState.contains("Object.hasOwn(TUNER_SPECTRUM_PROFILES, acceptedProfile)"));
