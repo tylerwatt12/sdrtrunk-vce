@@ -192,6 +192,11 @@ async function mockTuners(page, mutations, state = {}) {
       return;
     }
     if (path === '/api/v1/spectrum-snap-presets') {
+      if (state.snapPresetError) {
+        await route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'Spectrum setup failed' } }) });
+        return;
+      }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: []
@@ -211,7 +216,7 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
 
   await expect(page.getByRole('heading', { name: 'Tuners', exact: true })).toBeVisible();
   await expect(page.getByText('Signal', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Gain' })).toBeVisible();
+  await expect(page.locator('.tuners-spectrum-toolbar-gain')).toBeVisible();
   await expect(page.getByText('Common tuning', { exact: true })).toBeVisible();
   await expect(page.getByText('Device settings', { exact: true })).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
@@ -304,6 +309,8 @@ test('operator workspace stays compact on a narrow screen', async ({ page }) => 
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
   await expect(page.locator('main')).toHaveScreenshot('tuners-operator-light-mobile.png');
+  await page.getByText('Limits & sample rate').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
 });
 
 test('inventory polling preserves a focused draft while updating the selected pane', async ({ page }) => {
@@ -376,7 +383,7 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   });
 });
 
-test('preset gain hides controls the descriptor marks unusable and keeps Signal compact', async ({ page }) => {
+test('preset gain hides unusable controls and uses the Signal toolbar', async ({ page }) => {
   const settings = operatorSettings({
     lna_gain: { editable: false, unavailable_reason: 'Use manual gain' }
   });
@@ -396,14 +403,74 @@ test('preset gain hides controls the descriptor marks unusable and keeps Signal 
   await expect(page.getByLabel('Gain preset')).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveCount(0);
   await expect(page.getByLabel('Mixer AGC')).toHaveCount(0);
-  await expect(page.locator('.tuners-signal-controls .tuners-setting')).toHaveCount(1);
-  const [spectrumBox, signalBox] = await Promise.all([
+  await expect(page.locator('.tuners-spectrum-toolbar-gain .tuners-setting')).toHaveCount(1);
+  await expect(page.locator('.tuner-spectrum-toolbar-actions > .tuners-spectrum-toolbar-gain')).toHaveCount(1);
+  const [gainBox, toolbarBox, spectrumBox, signalBox] = await Promise.all([
+    page.locator('.tuners-spectrum-toolbar-gain').boundingBox(),
+    page.locator('.tuner-spectrum-toolbar').boundingBox(),
     page.locator('.tuners-spectrum').boundingBox(),
     page.locator('.tuners-signal-layout').boundingBox()
   ]);
+  expect(gainBox).not.toBeNull();
+  expect(toolbarBox).not.toBeNull();
   expect(spectrumBox).not.toBeNull();
   expect(signalBox).not.toBeNull();
+  expect(gainBox.y).toBeGreaterThanOrEqual(toolbarBox.y);
+  expect(gainBox.y + gainBox.height).toBeLessThanOrEqual(toolbarBox.y + toolbarBox.height + 1);
+  expect(Math.abs(spectrumBox.x - signalBox.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(spectrumBox.width - signalBox.width)).toBeLessThanOrEqual(1);
   expect(Math.abs((spectrumBox.y + spectrumBox.height) - (signalBox.y + signalBox.height))).toBeLessThanOrEqual(1);
+});
+
+test('gain controls stay available when spectrum setup fails', async ({ page }) => {
+  const mutations = [];
+  await mockTuners(page, mutations, { currentTuner: operatorTuner(), snapPresetError: true });
+  await page.goto('/app.html?view=tuners');
+
+  await expect(page.getByText('Spectrum setup failed')).toBeVisible();
+  await expect(page.locator('.tuners-spectrum-toolbar-fallback > .tuners-spectrum-toolbar-gain')).toBeVisible();
+  await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
+  await page.getByLabel('LNA gain (dB)').fill('10');
+  await page.locator('[data-setting-id="lna_gain"]').getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => mutations.at(-1)).toEqual({ type: 'setting', setting: 'lna_gain', value: 10 });
+});
+
+test('wide tuner summary and common controls use their available row', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await mockTuners(page, [], { currentTuner: operatorTuner() });
+  await page.goto('/app.html?view=tuners');
+
+  const [summaryBox, centerBox, actionsBox] = await Promise.all([
+    page.locator('.tuners-detail-summary').boundingBox(),
+    page.locator('.tuners-center-host').boundingBox(),
+    page.locator('.tuners-detail-actions').boundingBox()
+  ]);
+  expect(summaryBox).not.toBeNull();
+  expect(centerBox).not.toBeNull();
+  expect(actionsBox).not.toBeNull();
+  expect(summaryBox.x + summaryBox.width).toBeLessThanOrEqual(centerBox.x + 1);
+  expect(centerBox.x + centerBox.width).toBeLessThanOrEqual(actionsBox.x + 1);
+  const detailCenters = [summaryBox, centerBox, actionsBox].map((box) => box.y + box.height / 2);
+  expect(Math.max(...detailCenters) - Math.min(...detailCenters)).toBeLessThanOrEqual(1);
+
+  await page.getByText('Limits & sample rate').click();
+  const limits = page.locator('.tuners-common-limits');
+  const sample = page.locator('.tuners-common-sample');
+  await expect(limits.locator(':scope > [data-setting-id="minimum_frequency_mhz"]')).toHaveCount(1);
+  await expect(limits.locator(':scope > [data-setting-id="maximum_frequency_mhz"]')).toHaveCount(1);
+  await expect(limits.locator(':scope > [data-setting-id="reset_frequency_extents"]')).toHaveCount(1);
+  await expect(limits.locator(':scope > [data-setting-id="sample_rate"]')).toHaveCount(0);
+  await expect(sample.locator(':scope > [data-setting-id="sample_rate"]')).toHaveCount(1);
+  const [minimumBox, maximumBox, resetBox, limitsBox, sampleBox] = await Promise.all([
+    limits.locator('[data-setting-id="minimum_frequency_mhz"]').boundingBox(),
+    limits.locator('[data-setting-id="maximum_frequency_mhz"]').boundingBox(),
+    limits.locator('[data-setting-id="reset_frequency_extents"]').boundingBox(),
+    limits.boundingBox(), sample.boundingBox()
+  ]);
+  expect(Math.max(minimumBox.y + minimumBox.height, maximumBox.y + maximumBox.height,
+    resetBox.y + resetBox.height) - Math.min(minimumBox.y + minimumBox.height,
+    maximumBox.y + maximumBox.height, resetBox.y + resetBox.height)).toBeLessThanOrEqual(1);
+  expect(limitsBox.x + limitsBox.width).toBeLessThanOrEqual(sampleBox.x + 1);
 });
 
 test('Setup unlocks setup-only controls and remains unavailable to channels', async ({ page }) => {

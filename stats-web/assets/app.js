@@ -12767,6 +12767,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const viewportControls = !basicOperator || panelOptions.viewportControls === true;
   const profileSelection = !basicOperator || panelOptions.profileSelection === true;
   const frequencyActions = !basicOperator && panelOptions.frequencyActions !== false;
+  const toolbarExtras = panelOptions.toolbarExtras instanceof Node ? panelOptions.toolbarExtras : null;
   const plotInteractions = frequencyCursor || viewportControls || frequencyActions;
   let managedTargetId = typeof panelOptions.targetId === 'string' ? panelOptions.targetId : '';
   const managedSelection = panelOptions.managedSelection === true;
@@ -12923,6 +12924,10 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   if (basicOperator && profileSelection) {
     profileControl.classList.add('tuner-spectrum-toolbar-profile');
     toolbarActions.prepend(profileControl);
+  }
+  if (toolbarExtras) {
+    toolbarActions.insertBefore(toolbarExtras,
+      zoomActions.parentNode === toolbarActions ? zoomActions : null);
   }
   if (!basicOperator) profilePanel.append(profileWarning);
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
@@ -23535,6 +23540,9 @@ async function renderTuners() {
   const gainBody = node('div', 'tuners-setting-group-body');
   const commonPrimaryBody = node('div', 'tuners-setting-group-body tuners-common-primary');
   const commonMoreBody = node('div', 'tuners-setting-group-body tuners-common-more');
+  const commonLimitsBody = node('div', 'tuners-common-limits');
+  const commonSampleBody = node('div', 'tuners-common-sample');
+  commonMoreBody.append(commonLimitsBody, commonSampleBody);
   const deviceBody = node('div', 'tuners-setting-group-body');
   const addTunerButton = node('button', 'ui-button ui-button-primary', 'Add tuner');
   addTunerButton.type = 'button';
@@ -23552,11 +23560,11 @@ async function renderTuners() {
   left.classList.add('tuners-receivers');
   const right = node('div', 'tuners-main');
   const signalLayout = node('div', 'tuners-signal-layout');
-  const signalControls = node('aside', 'tuners-signal-controls');
-  const gainPanel = node('div', 'tuners-signal-control-group');
-  gainPanel.append(node('h3', '', 'Gain'), gainBody);
-  signalControls.append(gainPanel);
-  signalLayout.append(spectrumBody, signalControls);
+  const gainPanel = node('div', 'tuners-spectrum-toolbar-gain');
+  gainPanel.append(gainBody);
+  const gainFallback = node('div', 'tuners-spectrum-toolbar-fallback');
+  gainFallback.append(gainPanel);
+  signalLayout.append(gainFallback, spectrumBody);
   const signalSection = section('Signal', signalLayout);
   const commonMore = node('details', 'tuners-common-details');
   commonMore.append(node('summary', '', 'Limits & sample rate'), commonMoreBody);
@@ -23903,7 +23911,8 @@ async function renderTuners() {
   }
 
   function renderSettings(tuner) {
-    for (const body of [gainBody, centerLockBody, commonPrimaryBody, commonMoreBody, deviceBody]) {
+    for (const body of [gainBody, centerLockBody, commonPrimaryBody, commonLimitsBody,
+      commonSampleBody, deviceBody]) {
       body.replaceChildren();
     }
     const settings = (Array.isArray(tuner.settings) ? tuner.settings : [])
@@ -23927,6 +23936,7 @@ async function renderTuners() {
       form.dataset.settingId = setting.id;
       const control = actionSetting ? null : tunerSettingInput(setting,
         settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
+      if (control && group === 'gain') control.element.classList.add('tuners-gain-control');
       if (control && setting.id === 'automatic_ppm') {
         control.element.classList.add('tuners-auto-ppm-field');
         control.element.querySelector('.ui-toggle-copy')?.classList.add('tuners-auto-ppm-copy');
@@ -24000,13 +24010,15 @@ async function renderTuners() {
       else if (group === 'gain') gainBody.append(form);
       else if (setting.id === 'automatic_ppm') commonPrimaryBody.prepend(form);
       else if (commonPrimary) commonPrimaryBody.append(form);
-      else if (commonMore) commonMoreBody.append(form);
+      else if (commonMore) {
+        if (setting.id === 'sample_rate') commonSampleBody.append(form);
+        else commonLimitsBody.append(form);
+      }
       else deviceBody.append(form);
     }
     gainPanel.hidden = gainBody.childElementCount === 0;
-    signalControls.hidden = gainPanel.hidden;
-    commonMore.hidden = commonMoreBody.childElementCount === 0;
-    commonSection.hidden = commonPrimaryBody.childElementCount === 0 && commonMoreBody.childElementCount === 0;
+    commonMore.hidden = commonLimitsBody.childElementCount === 0 && commonSampleBody.childElementCount === 0;
+    commonSection.hidden = commonPrimaryBody.childElementCount === 0 && commonMore.hidden;
     deviceSection.hidden = deviceBody.childElementCount === 0;
   }
 
@@ -24214,10 +24226,10 @@ async function renderTuners() {
       gainBody.replaceChildren();
       centerLockBody.replaceChildren();
       commonPrimaryBody.replaceChildren();
-      commonMoreBody.replaceChildren();
+      commonLimitsBody.replaceChildren();
+      commonSampleBody.replaceChildren();
       deviceBody.replaceChildren();
       gainPanel.hidden = true;
-      signalControls.hidden = true;
       commonSection.hidden = true;
       deviceSection.hidden = true;
       spectrum?.selectTarget('');
@@ -24242,7 +24254,9 @@ async function renderTuners() {
     }
     const centerHost = node('div', 'tuners-center-host');
     centerHost.append(centerLockBody);
-    detailsBody.append(title, facts, centerHost);
+    const summary = node('div', 'tuners-detail-summary');
+    summary.append(title, facts);
+    detailsBody.append(summary, centerHost);
     const actions = node('div', 'tuners-detail-actions ui-action-row');
     if (state === 'disabled') {
       const start = node('button', 'ui-button ui-button-primary', 'Start Setup');
@@ -24429,6 +24443,7 @@ async function renderTuners() {
       frequencyCursor: true,
       viewportControls: true,
       profileSelection: true,
+      toolbarExtras: gainPanel,
       targetId: selectedTuner()?.spectrum_target_id || ''
     });
     pageConnections.add(spectrum);
