@@ -73,15 +73,21 @@ assert.strictEqual(context.adminStatusBytes(1024), '1 KB');
 assert.strictEqual(context.adminStatusBytes(1048576), '1.0 MB');
 assert.strictEqual(context.adminDatabaseDisplay(undefined), 'Unknown');
 assert.strictEqual(context.adminDatabaseDisplay({}), 'Unknown');
-assert.strictEqual(context.adminDatabaseDisplay({ database_exists: false, database_bytes: 1024 }), 'Missing');
-assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true }), 'Present');
-assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: '1024' }), 'Present');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: false, database_bytes: 1024 }),
+  'No saved activity');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true }), 'Available');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: '1024' }), 'Available');
 assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: 1048576 }), '1.0 MB');
 
 const status = context.metrics([
-  ['Summary logging', true, 'Running'],
-  ['Detailed history', false, 'Configured · Inactive'],
-  ['Activity database', 1048576, '1.0 MB']
+  ['Activity summaries', true, 'On'],
+  ['Individual events', false, 'On · Not running'],
+  ['Activity storage', 1048576, '1.0 MB']
 ], true);
 assert.deepStrictEqual(status.children.map((metric) => metric.children[1].children[1].textContent),
-  ['Running', 'Configured · Inactive', '1.0 MB']);
+  ['On', 'On · Not running', '1.0 MB']);
+
+const systemStatus = functionSource('function adminSystemStatusSection(includeControls = false)');
+assert.match(systemStatus, /\['Activity summaries'/);
+assert.match(systemStatus, /\['Individual events'/);
+assert.match(systemStatus, /\['Activity storage'/);

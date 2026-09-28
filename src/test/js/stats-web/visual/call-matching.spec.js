@@ -140,7 +140,7 @@ async function openApp(page, options = {}) {
 test('administrator sees only confirmed duplicates and compares receiver copies', async ({ page }) => {
   const data = snapshot([duplicate(71), { ...duplicate(70), outcome: 'INDEPENDENT' }]);
   await openApp(page, { matching: async () => ({ data }) });
-  await expect(page.getByRole('heading', { name: 'Call matching monitor' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Call matching' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Call matching' })).toHaveAttribute('aria-current', 'page');
   const table = page.locator('table[data-table-type="call-matching-duplicates"]');
   await expect(table.locator('tbody tr')).toHaveCount(1);
@@ -149,9 +149,8 @@ test('administrator sees only confirmed duplicates and compares receiver copies'
   await expect(page.locator('.call-matching-workspace .ui-toggle')).toHaveCount(0);
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic file');
   await expect(page.locator('.call-matching-status-content')).not.toContainText('Diagnostic queue');
-  await expect(page.locator('.call-matching-history-footer')).toContainText('retained duplicates');
-  await expect(page.locator('.call-matching-history-footer')).toContainText('older duplicates evicted');
-  const compare = page.getByRole('button', { name: 'Compare duplicate decision 71' });
+  await expect(page.locator('.call-matching-history-footer')).toHaveCount(0);
+  const compare = page.getByRole('button', { name: 'Compare duplicate call 71' });
   await compare.click();
   const dialog = page.getByRole('dialog', { name: 'Duplicate call details' });
   await expect(dialog).toContainText('167 usable frames');
@@ -177,8 +176,8 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   await expect(table.locator('tbody tr')).toHaveCount(20);
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '125');
   await expect(page.locator('.call-matching-history-pager'))
-    .toContainText('Decisions 1-20 of 100 · Page 1 of 5');
-  await page.getByRole('button', { name: 'Compare duplicate decision 125' }).click();
+    .toContainText('Matched calls 1-20 of 100 · Page 1 of 5');
+  await page.getByRole('button', { name: 'Compare duplicate call 125' }).click();
   await expect(page.locator('tbody tr[data-id="125"]')).toHaveClass(/selected/);
   current = snapshot([duplicate(126), duplicate(125)]);
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '126', { timeout: 3500 });
@@ -200,7 +199,7 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(20);
   await expect(rows.first()).toHaveAttribute('data-id', '45');
   await expect(rows.last()).toHaveAttribute('data-id', '26');
-  await expect(pager).toContainText('Decisions 1-20 of 45 · Page 1 of 3');
+  await expect(pager).toContainText('Matched calls 1-20 of 45 · Page 1 of 3');
   await expect(previous).toBeDisabled();
   await expect(next).toBeEnabled();
 
@@ -208,7 +207,7 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(20);
   await expect(rows.first()).toHaveAttribute('data-id', '25');
   await expect(rows.last()).toHaveAttribute('data-id', '6');
-  await expect(pager).toContainText('Decisions 21-40 of 45 · Page 2 of 3');
+  await expect(pager).toContainText('Matched calls 21-40 of 45 · Page 2 of 3');
   await expect(previous).toBeEnabled();
   await expect(next).toBeEnabled();
 
@@ -216,11 +215,11 @@ test('confirmed duplicate history paginates and clamps after live history shrink
   await expect(rows).toHaveCount(5);
   await expect(rows.first()).toHaveAttribute('data-id', '5');
   await expect(rows.last()).toHaveAttribute('data-id', '1');
-  await expect(pager).toContainText('Decisions 41-45 of 45 · Page 3 of 3');
+  await expect(pager).toContainText('Matched calls 41-45 of 45 · Page 3 of 3');
   await expect(next).toBeDisabled();
 
   current = snapshot([duplicate(46)]);
-  await expect(pager).toContainText('Decisions 1-1 of 1 · Page 1 of 1', { timeout: 3500 });
+  await expect(pager).toContainText('Matched calls 1-1 of 1 · Page 1 of 1', { timeout: 3500 });
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toHaveAttribute('data-id', '46');
   await expect(previous).toBeDisabled();
@@ -248,7 +247,7 @@ test('slow polling has one request in flight and navigation aborts it', async ({
 test('late authorization loss clears details and stops polling', async ({ page }) => {
   const app = await openApp(page, { matching: async (count) => count === 1 ?
     { data: snapshot() } : { status: 403, message: 'Administrator required' } });
-  await page.getByRole('button', { name: 'Compare duplicate decision 71' }).click();
+  await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
   await expect(page.locator('.call-matching-live-status')).toContainText('Access denied', { timeout: 3500 });
   await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible();
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
@@ -268,7 +267,7 @@ test('empty and failed snapshots recover on a later poll', async ({ page }) => {
   await expect(page.locator('.call-matching-live-status')).toContainText('Live');
   await expect(page.locator('.call-matching-status-content')).toContainText('Healthy');
   await expect(page.locator('table[data-table-type="call-matching-duplicates"] tbody td.empty')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Compare duplicate decision 71' })).toBeVisible({ timeout: 3500 });
+  await expect(page.getByRole('button', { name: 'Compare duplicate call 71' })).toBeVisible({ timeout: 3500 });
 });
 
 test('published warning state appears without file-debug health', async ({ page }) => {
@@ -277,7 +276,7 @@ test('published warning state appears without file-debug health', async ({ page 
   await openApp(page, { matching: async () => ({ data }) });
   await expect(page.locator('.call-matching-health-state')).toContainText('Warning');
   await expect(page.locator('.call-matching-health-summary')).not.toContainText('Diagnostic file');
-  await expect(page.locator('.call-matching-status-content')).toContainText('Matching queue');
+  await expect(page.locator('.call-matching-status-content')).toContainText('Calls being matched');
 });
 
 for (const [name, viewport, theme] of [
@@ -290,7 +289,7 @@ for (const [name, viewport, theme] of [
     await openApp(page, { theme });
     await expect(page.locator('.call-matching-live-status')).toContainText('Live');
     await page.screenshot({ path: `build/playwright-results/call-matching-${name}-page.png`, fullPage: true });
-    await page.getByRole('button', { name: 'Compare duplicate decision 71' }).click();
+    await page.getByRole('button', { name: 'Compare duplicate call 71' }).click();
     await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).toBeVisible();
     if (viewport.width < 760) {
       await expect(page.locator('.call-matching-comparison-hint')).toBeVisible();

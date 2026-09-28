@@ -193,8 +193,8 @@ assert.match(render, /api\(channelApiPath\(requestedConfigurationId, 'frequency-
   'A missing exact site profile must load its existing detected band-plan resource.');
 assert.match(render, /p25OverrideDetectedBands\(detected, requestedProfile\)/);
 assert.match(render, /list\.prepend\(requestedCard\)/);
-assert.match(render, /prepared with.*currently detected OTA band/);
-assert.match(render, /no usable detected OTA bands were available for this site/,
+assert.match(render, /prepared with.*detected OTA band/);
+assert.match(render, /No detected OTA bands were available/,
   'No detected bands must leave a clearly explained blank-row draft.');
 assert.match(render, /requestedCard\.scrollIntoView/,
   'An existing exact site card must be brought into view.');

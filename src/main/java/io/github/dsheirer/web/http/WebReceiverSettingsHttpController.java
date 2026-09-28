@@ -77,7 +77,7 @@ public final class WebReceiverSettingsHttpController
                     {
                         mLog.error("Unable to save receiver settings", exception);
                         ApiHttpResponse.sendError(exchange, 500, "settings_save_failed",
-                            "Receiver settings could not be saved");
+                            "Live timing could not be saved");
                     }
                 }
                 default -> {
@@ -92,7 +92,7 @@ public final class WebReceiverSettingsHttpController
         }
         catch(IllegalArgumentException exception)
         {
-            ApiHttpResponse.sendError(exchange, 422, "invalid_receiver_settings", exception.getMessage());
+            ApiHttpResponse.sendError(exchange, 422, "invalid_receiver_settings", "Live timing is invalid");
         }
     }
 
@@ -108,16 +108,16 @@ public final class WebReceiverSettingsHttpController
         List<String> values = exchange.getRequestHeaders().get("If-Match");
         if(values == null || values.isEmpty())
         {
-            throw new RequestException(428, "revision_required", "If-Match is required");
+            throw new RequestException(428, "revision_required", "Reload Live timing before saving.");
         }
         if(values.size() != 1)
         {
-            throw new RequestException(400, "invalid_revision", "If-Match must contain one quoted revision");
+            throw new RequestException(400, "invalid_revision", "Reload Live timing before saving.");
         }
         Matcher matcher = ETAG.matcher(values.getFirst());
         if(!matcher.matches())
         {
-            throw new RequestException(400, "invalid_revision", "If-Match must contain one quoted revision");
+            throw new RequestException(400, "invalid_revision", "Reload Live timing before saving.");
         }
         try
         {
@@ -125,7 +125,7 @@ public final class WebReceiverSettingsHttpController
         }
         catch(NumberFormatException exception)
         {
-            throw new RequestException(400, "invalid_revision", "If-Match revision is too large");
+            throw new RequestException(400, "invalid_revision", "Reload Live timing before saving.");
         }
     }
 
@@ -144,7 +144,8 @@ public final class WebReceiverSettingsHttpController
         if(contentType == null || !"application/json".equals(contentType.toLowerCase(Locale.ROOT)
             .split(";", 2)[0].strip()))
         {
-            throw new RequestException(415, "invalid_content_type", "Content-Type must be application/json");
+            throw new RequestException(415, "invalid_content_type",
+                "Live timing could not be read. Reload and try again.");
         }
 
         String contentLength = exchange.getRequestHeaders().getFirst("Content-Length");
@@ -159,7 +160,8 @@ public final class WebReceiverSettingsHttpController
                 }
                 if(length > MAXIMUM_BODY_BYTES)
                 {
-                    throw new RequestException(413, "request_too_large", "Request body is too large");
+                    throw new RequestException(413, "request_too_large",
+                        "Live timing could not be read. Reload and try again.");
                 }
             }
             catch(NumberFormatException exception)
@@ -173,11 +175,13 @@ public final class WebReceiverSettingsHttpController
         {
             if(body.length == 0)
             {
-                throw new RequestException(400, "invalid_request", "Request body is required");
+                throw new RequestException(400, "invalid_request",
+                    "Live timing could not be read. Reload and try again.");
             }
             if(body.length > MAXIMUM_BODY_BYTES)
             {
-                throw new RequestException(413, "request_too_large", "Request body is too large");
+                throw new RequestException(413, "request_too_large",
+                    "Live timing could not be read. Reload and try again.");
             }
             try
             {
@@ -186,14 +190,14 @@ public final class WebReceiverSettingsHttpController
 
                 if(settings == null)
                 {
-                    throw new RequestException(422, "invalid_receiver_settings", "Receiver settings are invalid");
+                    throw new RequestException(422, "invalid_receiver_settings", "Live timing is invalid");
                 }
 
                 return settings;
             }
             catch(IOException exception)
             {
-                throw new RequestException(422, "invalid_receiver_settings", "Receiver settings are invalid");
+                throw new RequestException(422, "invalid_receiver_settings", "Live timing is invalid");
             }
         }
         finally

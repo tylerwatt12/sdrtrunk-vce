@@ -101,7 +101,7 @@ class CallMatchingHttpControllerTest
             assertEquals(1, selected.at("/legs/0/copy_index").intValue());
             assertEquals(2, selected.at("/legs/1/copy_index").intValue());
             assertEquals(500, selected.at("/legs/1/overlap/overlap_milliseconds").longValue());
-            assertEquals("stable tie-breaker", selected.at("/winner/winner_value/display").textValue());
+            assertEquals("No measurable difference", selected.at("/winner/winner_value/display").textValue());
             assertEquals("[path hidden]", selected.at("/legs/0/channel_name").textValue());
             assertEquals("[path hidden]", selected.at("/legs/1/channel_name").textValue());
             assertEquals("[path hidden]", selected.at("/call_identity/destination_alias").textValue());

@@ -28,7 +28,7 @@ public record SpectrumSnapSettings(long revision, String countryCode)
     {
         if(revision < 1)
         {
-            throw new IllegalArgumentException("Spectrum-snap settings revision must be positive");
+            throw new IllegalArgumentException("The Spectrum country is invalid");
         }
         countryCode = SpectrumSnapPresetCatalog.requireCountry(countryCode).code();
     }

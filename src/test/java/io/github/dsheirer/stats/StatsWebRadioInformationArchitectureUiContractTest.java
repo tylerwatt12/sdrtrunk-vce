@@ -77,8 +77,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(app.contains("id: 'protocol-nxdn'"));
         assertFalse(app.contains("id: 'protocol-am'"));
         assertFalse(app.contains("id: 'protocol-nbfm'"));
-        assertTrue(app.contains("Live traffic-row idle delay"));
-        assertTrue(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
+        assertFalse(app.contains("Traffic-row idle delay"));
+        assertTrue(app.contains("Mark a traffic row idle after (milliseconds)"));
+        assertFalse(app.contains("This does not keep ' +\n        'the call, tuner, or traffic channel active."));
         assertTrue(css.contains(".admin-settings-shell {"));
         assertFalse(css.contains(".admin-settings-nested-branch"));
         assertFalse(css.contains(".alias-coverage-guidance"));

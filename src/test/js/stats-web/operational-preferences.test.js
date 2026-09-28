@@ -79,19 +79,23 @@ async function main() {
 
   const page = functionSource('async function renderAdminOperationalPreferences(');
   assert.match(page, /node\('div', 'settings-page-form operational-preferences'\)/);
-  assert.match(page, /body\.append\(introduction, workspace\)/);
+  assert.match(page, /body\.append\(workspace\)/);
+  assert.doesNotMatch(page, /adminWorkflowNote\(/,
+    'Operations should rely on its page description and setting labels instead of a second summary.');
   assert.match(page,
     /content\.append\(section\('Call output & activity', body, sectionActionHost\(reload\)\)\)/);
   assert.doesNotMatch(page, /const heading = node\('div', 'ui-action-row'\)/,
     'Reload belongs in the section heading instead of a detached blank action row');
   assert.match(page, /lane\('output', 'Calls & audio'/);
   assert.match(page, /lane\('activity', 'Activity history'/);
-  assert.match(page, /These settings apply across the receiver/);
   assert.match(page, /A patch group joins two or more talkgroups/);
-  assert.match(page, /This does not turn recording on/);
-  assert.match(page, /This does not change tuner sample rate or/);
-  assert.match(page, /Turning this off stops/);
-  assert.match(page, /Lowering this number can permanently remove/);
+  assert.match(page, /Individual Talkgroups may repeat the same audio/);
+  assert.match(page, /label: 'Recording format'/);
+  assert.match(page, /label: 'MP3 sample rate and bit depth'/);
+  assert.match(page, /label: 'Save activity summaries'/);
+  assert.match(page, /Required for individual activity events/);
+  assert.match(page, /Lowering the value can permanently/);
+  assert.match(page, /remove older saved activity/);
   assert.match(page, /const drafts = new Map\(\)/);
   assert.match(page, /drafts\.delete\(field\.id\)/);
   assert.match(page, /state\.textContent = changed \? 'Unsaved change' : ''/);

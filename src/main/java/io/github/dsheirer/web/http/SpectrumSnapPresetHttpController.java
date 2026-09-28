@@ -64,7 +64,8 @@ public final class SpectrumSnapPresetHttpController
         }
         if(exchange.getRequestURI().getRawQuery() != null)
         {
-            ApiHttpResponse.sendError(exchange, 400, "unknown_parameter", "Query parameters are not supported");
+            ApiHttpResponse.sendError(exchange, 400, "unknown_parameter",
+                "Reload the Spectrum country and try again");
             return;
         }
 
@@ -107,7 +108,7 @@ public final class SpectrumSnapPresetHttpController
         {
             mLog.error("Unable to access spectrum-snap settings", exception);
             ApiHttpResponse.sendError(exchange, 500, "spectrum_snap_settings_failed",
-                "Spectrum-snap settings could not be accessed");
+                "The Spectrum country could not be loaded or saved");
         }
     }
 
@@ -124,14 +125,16 @@ public final class SpectrumSnapPresetHttpController
         if(contentType == null || !"application/json".equals(contentType.toLowerCase(Locale.ROOT)
             .split(";", 2)[0].strip()))
         {
-            throw new RequestException(415, "invalid_content_type", "Content-Type must be application/json");
+            throw new RequestException(415, "invalid_content_type",
+                "The selected Spectrum country could not be read. Reload and try again.");
         }
         byte[] body = ApiRequestDecoder.readBody(exchange, MAXIMUM_BODY_BYTES);
         try
         {
             if(body.length == 0)
             {
-                throw new RequestException(400, "invalid_request", "Request body is required");
+                throw new RequestException(400, "invalid_request",
+                    "The selected Spectrum country could not be read. Reload and try again.");
             }
             try
             {
@@ -139,14 +142,14 @@ public final class SpectrumSnapPresetHttpController
                 if(selection == null || selection.countryCode() == null)
                 {
                     throw new RequestException(422, "invalid_spectrum_snap_settings",
-                        "Spectrum-snap settings are invalid");
+                        "The selected Spectrum country is invalid");
                 }
                 return selection;
             }
             catch(IOException exception)
             {
                 throw new RequestException(422, "invalid_spectrum_snap_settings",
-                    "Spectrum-snap settings are invalid");
+                    "The selected Spectrum country is invalid");
             }
         }
         finally
@@ -161,12 +164,13 @@ public final class SpectrumSnapPresetHttpController
         if(values == null || values.size() != 1)
         {
             throw new RequestException(values == null ? 428 : 400, "revision_required",
-                "If-Match must contain one quoted revision");
+                "Reload the saved Spectrum country before saving.");
         }
         Matcher matcher = ETAG.matcher(values.getFirst());
         if(!matcher.matches())
         {
-            throw new RequestException(400, "invalid_revision", "If-Match must contain one quoted revision");
+            throw new RequestException(400, "invalid_revision",
+                "Reload the saved Spectrum country before saving.");
         }
         try
         {
@@ -174,7 +178,8 @@ public final class SpectrumSnapPresetHttpController
         }
         catch(NumberFormatException exception)
         {
-            throw new RequestException(400, "invalid_revision", "If-Match revision is too large");
+            throw new RequestException(400, "invalid_revision",
+                "Reload the saved Spectrum country before saving.");
         }
     }
 
@@ -184,7 +189,8 @@ public final class SpectrumSnapPresetHttpController
         if(contentLength != null && !"0".equals(contentLength) ||
             exchange.getRequestHeaders().containsKey("Transfer-Encoding"))
         {
-            throw new RequestException(400, "invalid_request", "Request body is not supported");
+            throw new RequestException(400, "invalid_request",
+                "Reload the Spectrum country and try again.");
         }
     }
 

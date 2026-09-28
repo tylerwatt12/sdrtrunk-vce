@@ -75,7 +75,8 @@ public record WebPasswordVerifier(int version, String username, String algorithm
         if(normalized.length() > MAXIMUM_USERNAME_CHARACTERS || !USERNAME_PATTERN.matcher(normalized).matches())
         {
             throw new IllegalArgumentException(
-                "Web username must contain only lowercase letters, numbers, dot, underscore, or hyphen");
+                "Username must be 1–64 characters, start with a lowercase letter or number, and use only " +
+                    "lowercase letters, numbers, dots, underscores, or hyphens");
         }
 
         return normalized;

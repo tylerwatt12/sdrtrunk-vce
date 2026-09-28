@@ -581,13 +581,13 @@ async function main() {
   assert.match(functionBinding(appSource, 'openScanListAdminModal'),
     /ui-button ui-button-primary', editing \? 'Save Scan List'/);
   assert.match(functionBinding(appSource, 'renderAdminSupportReport'),
-    /ui-button ui-button-primary', 'Generate Support Bundle'/);
+    /ui-button ui-button-primary', 'Prepare support report'/);
   const userTierSource = functionBinding(appSource, 'userTierControl');
   assert.match(userTierSource, /account\.primaryAdmin \? 'Admin' : 'User'/);
   assert.doesNotMatch(userTierSource, /node\('select'/);
   assert.doesNotMatch(userTierSource, /method: 'PUT'/);
   const managedUserModalSource = functionBinding(appSource, 'openManagedUserModal');
-  assert.doesNotMatch(managedUserModalSource, /formField\('Access tier'/);
+  assert.doesNotMatch(managedUserModalSource, /formField\('Access (?:tier|level)'/);
   assert.doesNotMatch(managedUserModalSource, /tier: accessTierToWire/);
   assert.match(managedUserModalSource,
     /body: \{ username: normalizedManagedUsername\(username\.value\), password: password\.value \}/);
@@ -643,7 +643,7 @@ async function main() {
   const receiverSettingsSource = functionBinding(appSource, 'renderAdminReceiverBehaviorSettings');
   assert.match(receiverSettingsSource, /error\?\.code === 'receiver_settings_conflict'/);
   assert.match(receiverSettingsSource, /apply\(error\.current\)/);
-  assert.match(receiverSettingsSource, /Current server values were reloaded/);
+  assert.match(receiverSettingsSource, /Live timing changed elsewhere\. The latest saved value was loaded/);
   assert.match(receiverSettingsSource, /ui-button ui-button-primary/);
   assert.match(functionBinding(appSource, 'renderAdminSpectrumSnapSettings'), /ui-button ui-button-primary/);
   assert.match(functionBinding(appSource, 'renderAdminRadioReferenceSettings'),
@@ -717,7 +717,8 @@ async function main() {
   assert.match(adminAccessRenderer, /admin-operation-status ui-notice/);
   assert.match(adminAccessRenderer, /type: 'admin-access', sortable: false, mobileCards: true/,
     'Access-policy rows must use the shared labeled-card layout on narrow screens');
-  assert.match(adminAccessRenderer, /adminWorkflowNote\('Access is layered'/);
+  assert.doesNotMatch(adminAccessRenderer, /adminWorkflowNote\(/,
+    'Page access should not repeat its controls in a separate summary.');
   const adminNavigation = functionBinding(appSource, 'adminSettingsTree');
   assert.match(adminNavigation, /admin-settings-picker/);
   assert.match(adminNavigation, /node\('optgroup'\)/);
@@ -844,13 +845,19 @@ async function main() {
     settings: {
       traffic_grant_age_out_milliseconds: 1000
     }
-  }), /invalid Receiver Settings/);
-  assert.match(functionBinding(appSource, 'renderAdminReceiverBehaviorSettings'),
-    /adminWorkflowNote\('Live display timing only'/,
-    'Receiver-wide Live timing must explain its scope before the settings surface');
-  assert.match(functionBinding(appSource, 'renderAdminSpectrumSnapSettings'),
-    /adminWorkflowNote\('Spectrum display, not reception'/,
-    'Spectrum scope settings must explain that they do not retune the receiver');
+  }), /Live timing could not be loaded/);
+  const receiverBehaviorSettings = functionBinding(appSource, 'renderAdminReceiverBehaviorSettings');
+  assert.doesNotMatch(receiverBehaviorSettings, /adminWorkflowNote\(/,
+    'Live timing should rely on its page description and setting label.');
+  assert.doesNotMatch(receiverBehaviorSettings, /section\('Live timing'/);
+  assert.match(receiverBehaviorSettings, /node\('section', 'section ui-section'\)/);
+  const spectrumSnapSettings = functionBinding(appSource, 'renderAdminSpectrumSnapSettings');
+  assert.doesNotMatch(spectrumSnapSettings, /adminWorkflowNote\(/,
+    'Spectrum settings should rely on their page description and setting label.');
+  assert.doesNotMatch(spectrumSnapSettings, /settingsCard\('Spectrum country'/);
+  assert.doesNotMatch(spectrumSnapSettings, /Controls Spectrum band labels/);
+  assert.doesNotMatch(spectrumSnapSettings, /section\('Spectrum country'/);
+  assert.match(spectrumSnapSettings, /formField\('Country'/);
   const receiverSettingsRequests = [];
   const receiverSettingsResponses = [];
   const requestReceiverSettings = vm.runInNewContext(

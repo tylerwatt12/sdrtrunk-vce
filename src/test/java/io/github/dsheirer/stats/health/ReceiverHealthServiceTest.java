@@ -42,9 +42,10 @@ class ReceiverHealthServiceTest
         PolyphaseChannelManager.PipelineStatus pipeline = new PolyphaseChannelManager.PipelineStatus(
             2, 7, 8, 3, 0, List.of());
         String detail = ReceiverHealthService.channelizerDetail(pipeline);
-        assertTrue(detail.contains("high_water=7"));
-        assertTrue(detail.contains("capacity=8"));
-        assertTrue(detail.contains("pipeline_dropped=3"));
+        assertTrue(detail.contains("Peak 7 chunks"));
+        assertTrue(detail.contains("Limit 8"));
+        assertTrue(detail.contains("Lost 3"));
+        assertFalse(detail.contains("high_water"));
     }
 
     @Test
@@ -116,7 +117,7 @@ class ReceiverHealthServiceTest
             List<Map<String,Object>> active = rows(snapshot.get("active"));
             assertTrue(active.isEmpty());
             assertEquals(9, rows(snapshot.get("measurements")).size());
-            assertEquals("info", measurement(snapshot, "supporting", "web").get("severity"));
+            assertEquals("info", measurement(snapshot, "supporting", "Web").get("severity"));
 
             clock.set(11_000);
             service.sampleNow();
@@ -164,20 +165,20 @@ class ReceiverHealthServiceTest
                 "diagnostics", Map.of()));
             service.sampleNow();
 
-            Map<String,Object> webAudio = measurement(service.snapshot(), "supporting", "web-audio");
+            Map<String,Object> webAudio = measurement(service.snapshot(), "supporting", "Browser audio");
             String detail = String.valueOf(webAudio.get("detail"));
             assertEquals("warning", webAudio.get("severity"));
-            assertTrue(detail.contains("capacity_drops=2"));
-            assertTrue(detail.contains("encoder_failures=3"));
-            assertFalse(detail.contains("capacity_drops=5"));
+            assertTrue(detail.contains("Dropped 2"));
+            assertTrue(detail.contains("Audio preparation failures 3"));
+            assertFalse(detail.contains("capacity_drops"));
 
             Map<String,Object> incident = rows(service.snapshot().get("active")).stream()
                 .filter(row -> "web-audio-drop".equals(row.get("code"))).findFirst().orElseThrow();
             assertEquals("Browser audio was not available for a call", incident.get("title"));
             assertEquals(5L, incident.get("count"));
-            assertEquals("5 new dropped or failed browser calls", incident.get("observed"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("queue was full"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("could not be encoded"));
+            assertEquals("5 browser calls dropped or failed", incident.get("observed"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("could not keep up"));
+            assertTrue(String.valueOf(incident.get("likely_cause")).contains("prepare the call's audio"));
         }
     }
 
@@ -322,7 +323,7 @@ class ReceiverHealthServiceTest
             assertEquals(0, summary.get("active_count"));
             assertFalse(summary.containsKey("diagnostic_count"));
             assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", "site-table").get("detail"))
-                .contains("dropped_bits=48"));
+                .contains("Dropped 48 bits"));
         }
     }
 

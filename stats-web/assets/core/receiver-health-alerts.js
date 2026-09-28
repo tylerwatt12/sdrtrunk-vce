@@ -9,73 +9,69 @@
   }
 
   const receiverHealthAlertGroups = Object.freeze([
-    group('receiver', 'Tuners and radio data',
-      'Problems receiving data from a tuner or assigning a tuner to a channel.', [
+    group('receiver', 'Tuners and radio data', '', [
       alert('tuner-error', 'Tuner stopped working',
-        'This tuner cannot receive its assigned channels. Check its reported error, USB connection, power, and driver.'),
+        'Assigned channels cannot receive data from this tuner.'),
       alert('receiver-iq-drop', 'Radio data was lost before decoding',
-        'The app could not process all data from this tuner. Calls may have gaps or be missed.'),
+        'Calls may have gaps or be missed.'),
       alert('receiver-ingress-drop', 'Radio data was lost entering the receiver',
-        'The tuner delivered data, but the app could not pass it into receiver processing fast enough.'),
-      alert('receiver-listener-failure', 'A receiver component missed radio data',
-        'One component could not accept tuner data. Other receiver components continued running.'),
-      alert('receiver-queue-pressure', 'Receiver processing is falling behind',
-        'Incoming radio data is building up. If this continues, every channel using this tuner may lose data.'),
+        'Radio data was lost after leaving the USB tuner.'),
+      alert('receiver-listener-failure', 'Part of the receiver missed radio data',
+        'Radio data could not reach a receiver function or open diagnostic view.'),
+      alert('receiver-queue-pressure', 'Receiver is falling behind',
+        'Incoming radio data is building up and may be lost.'),
       alert('tuner-allocation-failure', 'No tuner was available for a channel',
-        'No enabled tuner could receive the requested frequency, so the channel may not start.')
+        'No enabled tuner could receive the requested frequency.')
     ]),
-    group('usb', 'USB connection', 'Problems moving radio data from USB tuners into VCE.', [
+    group('usb', 'USB connection', '', [
       alert('usb-sample-loss', 'USB tuner data is incomplete',
-        'The tuner sent missing or unusable radio data. Signal strength may still look normal while decoding fails.'),
+        'Missing or unusable USB data can interrupt decoding even when signal strength looks normal.'),
       alert('usb-delivery-rate-low', 'USB tuner data is arriving too slowly',
-        'Radio data arrived more slowly than expected. Repeated slowdowns can interrupt decoding.'),
+        'Repeated slowdowns can interrupt decoding.'),
       alert('usb-transfer-gap', 'USB tuner data paused',
-        'No radio data arrived for a noticeable time, which can interrupt decoding or clip call audio.'),
+        'A USB data pause can interrupt decoding or clip call audio.'),
       alert('usb-transfer-pool-degraded', 'USB tuner has reduced transfer capacity',
-        'The app could not keep all USB transfers running, making data gaps more likely.')
+        'Fewer active USB transfers make data gaps more likely.')
     ]),
-    group('channels', 'Channel decoding',
-      'Problems separating tuner data into channels and decoding the radio system.', [
+    group('channels', 'Channel decoding', '', [
       alert('channelizer-drop', 'Channels lost radio data',
-        'Data was lost while the app separated one tuner signal into individual channels.'),
+        'Data was lost while separating one tuner signal into channels.'),
       alert('channelizer-queue-pressure', 'Channel separation is falling behind',
-        'The app is close to running out of room while separating channels.'),
+        'Radio data may be lost if channel separation falls further behind.'),
       alert('channel-queue-pressure', 'One channel is falling behind',
-        'Processing for one channel is close to its limit, putting its decoding or audio at risk.'),
+        'Its decoding or audio may be interrupted.'),
       alert('channel-output-drop', 'One or more channels lost radio data',
-        'A decoder did not receive all of its data, which can interrupt decoding or audio.'),
+        'Missing data can interrupt decoding or audio.'),
       alert('control-channel-lock-lost', 'Control channel stopped decoding',
-        'The receiver is no longer getting valid control messages and may miss new calls.')
+        'The receiver may miss new calls.')
     ]),
-    group('host', 'Computer resources',
-      'Processor, memory, and storage problems that can interrupt receiving.', [
+    group('host', 'Computer resources', '', [
       alert('host-cpu-pressure', 'Computer is overloaded',
-        'Processor use has stayed high enough that radio processing may fall behind.'),
+        'Radio processing may fall behind.'),
       alert('heap-pressure', 'VCE is low on memory',
-        'The app is using almost all the memory available to it, which can interrupt receiving.'),
+        'Receiving may be interrupted.'),
       alert('gc-pause', 'VCE spent extra time freeing memory',
-        'The app spent an unusually long time freeing memory, so receiving may fall behind.'),
+        'Receiving may fall behind.'),
       alert('disk-space', 'Storage space is low',
-        'The drive holding VCE application data has little free space remaining.')
+        'Recordings and activity history may not be saved.')
     ]),
-    group('outputs', 'Recordings and listening',
-      'Problems saving calls, sending calls to a streaming service, or preparing browser audio.', [
-      alert('audio-coordinator-ingress', 'A call could not finish all output steps',
-        'The app could not queue part of the work needed to finish a call for recording, streaming, or browser audio.'),
-      alert('audio-coordinator-aborted', 'Output processing stopped for a call',
-        'Output processing was overloaded and stopped handling a call.'),
+    group('outputs', 'Recordings and listening', '', [
+      alert('audio-coordinator-ingress', 'A call’s outputs were incomplete',
+        'Its recording, stream, or browser audio may be incomplete.'),
+      alert('audio-coordinator-aborted', 'A call’s outputs were interrupted',
+        'Its recording, stream, or browser audio may be missing.'),
       alert('audio-output-pressure', 'Call outputs are falling behind',
-        'Finished calls are arriving faster than recording, streaming, or browser audio processing can handle them.'),
+        'Recordings, streams, or browser audio may be missed.'),
       alert('recording', 'A call recording was not saved',
-        'A completed call could not be written to disk.'),
+        'The completed call could not be written to storage.'),
       alert('recording-output-pressure', 'Saving recordings is falling behind',
-        'Too many completed calls are waiting to be saved.'),
+        'Some recordings may not be saved.'),
       alert('streaming', 'A call was not sent to the streaming service',
-        'A completed call could not be prepared or delivered to a configured streaming service.'),
+        'The completed call could not be prepared or delivered.'),
       alert('streaming-output-pressure', 'Streaming is falling behind',
-        'Too many completed calls are waiting to be sent.'),
+        'Some calls may not be streamed.'),
       alert('web-audio-drop', 'Browser audio was not available for a call',
-        'The app could not prepare one completed call for browser listening.')
+        'Browser listeners may miss the call.')
     ])
   ]);
 

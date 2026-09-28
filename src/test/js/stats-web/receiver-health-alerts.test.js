@@ -55,7 +55,6 @@ test('the friendly catalog covers every incident code emitted by ReceiverHealthS
   for (const group of alerts.receiverHealthAlertGroups) {
     assert.match(group.id, stableId);
     assert.ok(group.name.length > 0);
-    assert.ok(group.description.length > 0);
     assert.ok(Object.isFrozen(group));
     assert.ok(Object.isFrozen(group.alerts));
     for (const alert of group.alerts) {

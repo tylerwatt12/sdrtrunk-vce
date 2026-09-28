@@ -71,17 +71,17 @@ public final class WebUserAdminHttpController
         catch(IllegalArgumentException exception)
         {
             WebHttpSupport.sendError(exchange, 400, "invalid_request",
-                WebHttpSupport.safeMessage(exception, "The user request is invalid"));
+                WebHttpSupport.safeMessage(exception, "The account change is invalid"));
         }
         catch(IllegalStateException exception)
         {
             WebHttpSupport.sendError(exchange, 409, "conflict",
-                WebHttpSupport.safeMessage(exception, "The user request conflicts with current state"));
+                WebHttpSupport.safeMessage(exception, "The account changed elsewhere. Reload and try again"));
         }
         catch(SQLException exception)
         {
             mLog.warn("Unable to persist web user administration change", exception);
-            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The user change could not be saved");
+            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The account change could not be saved");
         }
         catch(IOException exception)
         {
@@ -90,7 +90,7 @@ public final class WebUserAdminHttpController
                 throw exception;
             }
             mLog.warn("Unable to read or persist web user administration data", exception);
-            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The user change could not be saved");
+            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The account change could not be saved");
         }
     }
 

@@ -94,15 +94,15 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(page.contains("'Stale'"));
         assertTrue(page.indexOf("receiverHealthHostResourceOverview(snapshot)") <
             page.lastIndexOf("receiverHealthSection('current', 'Summary'"));
-        assertTrue(incident.contains("incident.occurrence_id"));
-        assertTrue(incident.contains("incident.code"));
+        assertFalse(incident.contains("incident.occurrence_id"));
+        assertFalse(incident.contains("['Issue code'"));
         assertTrue(incident.contains("incident.severity"));
         assertTrue(incident.contains("incident.title"));
         assertTrue(incident.contains("incident.scope"));
         assertTrue(incident.contains("incident.opened_at_ms"));
         assertTrue(incident.contains("incident.last_seen_ms"));
         assertTrue(incident.contains("incident.resolved_at_ms"));
-        assertTrue(incident.contains("incident.count"));
+        assertFalse(incident.contains("incident.count"));
         assertTrue(incident.contains("receiver-health-incident-resolved-summary"));
         assertTrue(incident.contains("incident.observed"));
         assertTrue(incident.contains("incident.likely_cause"));

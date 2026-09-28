@@ -81,14 +81,14 @@ public final class OperationalPreferencesHttpController
             JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("value"));
             if(body.size() != 1 || body.get("value") == null)
             {
-                throw new IllegalArgumentException("One preference value is required");
+                throw new IllegalArgumentException("A setting value is required");
             }
             JsonNode raw = body.get("value");
             Object value = raw.isTextual() ? raw.textValue() : raw.isBoolean() ? raw.booleanValue() :
                 raw.isIntegralNumber() && raw.canConvertToInt() ? raw.intValue() : null;
             if(value == null)
             {
-                throw new IllegalArgumentException("Preference value must be a supported text, boolean, or integer");
+                throw new IllegalArgumentException("The setting value is invalid");
             }
 
             OperationalPreferencesService.UpdateResult result = mPreferences.update(expectedRevision, field, value);
@@ -106,7 +106,7 @@ public final class OperationalPreferencesHttpController
         {
             mLog.error("Unable to update operational preference", exception);
             ApiHttpResponse.sendError(exchange, 500, "operational_preference_failed",
-                "Operational preference could not be updated; refresh its current value");
+                "The setting could not be saved. Reload and try again");
         }
     }
 
@@ -115,16 +115,19 @@ public final class OperationalPreferencesHttpController
         List<String> values = exchange.getRequestHeaders().get("If-Match");
         if(values == null || values.isEmpty())
         {
-            throw new WebHttpSupport.RequestException(428, "revision_required", "If-Match is required");
+            throw new WebHttpSupport.RequestException(428, "revision_required",
+                "Reload the saved settings before saving.");
         }
         if(values.size() != 1)
         {
-            throw new WebHttpSupport.RequestException(400, "invalid_revision", "If-Match must contain one revision");
+            throw new WebHttpSupport.RequestException(400, "invalid_revision",
+                "Reload the saved settings before saving.");
         }
         Matcher match = ETAG.matcher(values.getFirst());
         if(!match.matches())
         {
-            throw new WebHttpSupport.RequestException(400, "invalid_revision", "If-Match must contain one quoted revision");
+            throw new WebHttpSupport.RequestException(400, "invalid_revision",
+                "Reload the saved settings before saving.");
         }
         return match.group(1);
     }

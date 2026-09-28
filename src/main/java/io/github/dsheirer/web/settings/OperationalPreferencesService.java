@@ -80,7 +80,8 @@ public final class OperationalPreferencesService
                 MP3Setting setting = requireEnum(value, MP3Setting.class);
                 if(!setting.getSupportedSampleRates().contains(current.mp3InputAudioFormat()))
                 {
-                    throw new IllegalArgumentException("Choose an input audio rate supported by the new MP3 setting first");
+                    throw new IllegalArgumentException(
+                        "Choose a compatible MP3 sample rate and bit depth first");
                 }
                 if(setting != current.mp3Setting()) mMp3.setMP3Setting(setting);
             }
@@ -88,7 +89,8 @@ public final class OperationalPreferencesService
                 InputAudioFormat format = requireEnum(value, InputAudioFormat.class);
                 if(!current.mp3Setting().getSupportedSampleRates().contains(format))
                 {
-                    throw new IllegalArgumentException("Input audio rate is not supported by the current MP3 setting");
+                    throw new IllegalArgumentException(
+                        "That sample rate and bit depth are not available with the current MP3 bit rate and quality");
                 }
                 if(format != current.mp3InputAudioFormat()) mMp3.setAudioSampleRate(format);
             }
@@ -116,7 +118,7 @@ public final class OperationalPreferencesService
     private static boolean requireBoolean(Object value)
     {
         if(value instanceof Boolean bool) return bool;
-        throw new IllegalArgumentException("Preference value must be a boolean");
+        throw new IllegalArgumentException("This setting must be on or off");
     }
 
     private static int requireRetention(Object value)
@@ -126,7 +128,7 @@ public final class OperationalPreferencesService
         {
             return days;
         }
-        throw new IllegalArgumentException("Statistics retention must be between 1 and 365 days");
+        throw new IllegalArgumentException("Activity history must be between 1 and 365 days");
     }
 
     private static <T extends Enum<T>> T requireEnum(Object value, Class<T> type)
@@ -141,7 +143,7 @@ public final class OperationalPreferencesService
             {
             }
         }
-        throw new IllegalArgumentException("Unsupported preference option");
+        throw new IllegalArgumentException("Choose one of the available options");
     }
 
     private static String revision(Settings settings)
@@ -207,7 +209,7 @@ public final class OperationalPreferencesService
             {
                 if(field.mPath.equals(path)) return field;
             }
-            throw new IllegalArgumentException("Unknown operational preference");
+            throw new IllegalArgumentException("Setting not found");
         }
     }
 

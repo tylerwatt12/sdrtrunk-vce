@@ -92,7 +92,7 @@ public final class SupportReportHttpController
             EnumSet<SupportBundleService.Section> sections = EnumSet.noneOf(SupportBundleService.Section.class);
             for(JsonNode section: sectionValues)
             {
-                if(!section.isTextual()) throw new IllegalArgumentException("A bundle choice is invalid");
+                if(!section.isTextual()) throw new IllegalArgumentException("A report item is invalid");
                 sections.add(SupportBundleService.Section.fromId(section.textValue()));
             }
             SupportBundleService.Request bundleRequest = new SupportBundleService.Request(

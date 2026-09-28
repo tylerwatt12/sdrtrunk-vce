@@ -35,7 +35,7 @@ class StatsWebSettingsOwnershipUiContractTest
         String admin = function(source, "async function renderAdmin()");
         String adminGroups = function(source, "function adminSettingsGroups()");
 
-        assertTrue(adminGroups.contains("id: 'live-timing', label: 'Receiver-wide Live timing'"));
+        assertTrue(adminGroups.contains("id: 'live-timing', label: 'Live timing'"));
         assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25 band plans'"));
         assertFalse(adminGroups.contains("id: 'protocol-dmr'"));
         assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
@@ -49,18 +49,20 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(bandplanPrefill.contains("site: hexValue('site', 2, 0xFF)"));
         assertTrue(bandplanPage.contains("p25OverrideSameScope(profile, requestedProfile)"));
         assertTrue(bandplanPage.contains("list.prepend(requestedCard)"));
-        assertTrue(bandplanPage.contains("Enter its replacement bands, then save."));
+        assertTrue(bandplanPage.contains("No detected OTA bands were available. Enter the replacement bands."));
         assertTrue(bandplanPage.contains("clearP25OverrideCreateRoute()"));
         assertTrue(clearBandplanPrefill.contains("window.history.replaceState({}, '', currentHref())"));
-        assertTrue(receiver.contains("section('Receiver behavior', body)"));
+        assertFalse(receiver.contains("section('Live timing', body)"));
+        assertTrue(receiver.contains("const panel = node('section', 'section ui-section')"));
         assertTrue(receiver.contains("confirmed?.revision"));
         assertTrue(receiver.contains("error?.code === 'receiver_settings_conflict'"));
-        assertTrue(receiver.contains("Current server values were reloaded"));
+        assertTrue(receiver.contains("Live timing changed elsewhere. The latest saved value was loaded."));
         assertFalse(receiver.contains("retain_idle_call_details"));
         assertFalse(receiver.contains("clear_voice_decode_quality_on_call_end"));
         assertTrue(receiver.contains("traffic_grant_age_out_milliseconds"));
-        assertTrue(receiver.contains("Live traffic-row idle delay"));
-        assertTrue(receiver.contains("does not keep ' +"));
+        assertFalse(receiver.contains("Traffic-row idle delay"));
+        assertTrue(receiver.contains("Mark a traffic row idle after (milliseconds)"));
+        assertFalse(receiver.contains("does not keep ' +"));
         assertFalse(receiver.contains("show_encryption_details"));
         assertFalse(receiver.contains("show_control_decode_quality"));
         assertFalse(receiver.contains("live_detail_row_limit"));

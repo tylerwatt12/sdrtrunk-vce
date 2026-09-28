@@ -120,7 +120,7 @@ public final class Pbkdf2PasswordHasher
         }
         catch(GeneralSecurityException exception)
         {
-            throw new IllegalStateException("Required web password algorithm is unavailable", exception);
+            throw new IllegalStateException("Password changes are unavailable", exception);
         }
         finally
         {
@@ -133,7 +133,7 @@ public final class Pbkdf2PasswordHasher
         if(password == null || password.length < MINIMUM_PASSWORD_CHARACTERS ||
             password.length > MAXIMUM_PASSWORD_CHARACTERS)
         {
-            throw new IllegalArgumentException("Web password length is outside safe bounds");
+            throw new IllegalArgumentException("Password must be 7–256 characters");
         }
     }
 

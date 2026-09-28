@@ -194,15 +194,16 @@ public final class WebAccessService
             SecuritySnapshot current = mSnapshot;
             if(current.primaryAdmin() == null)
             {
-                throw new IllegalStateException("The primary web administrator must be configured first");
+                throw new IllegalStateException(
+                    "Set up the primary admin account in the desktop application first");
             }
             if(current.accountsByUsername().containsKey(normalized))
             {
-                throw new IllegalStateException("A web user with that username already exists");
+                throw new IllegalStateException("That username is already in use");
             }
             if(ordinaryUserCount(current) >= MAXIMUM_USERS)
             {
-                throw new IllegalStateException("The maximum number of web users has been reached");
+                throw new IllegalStateException("The account limit has been reached");
             }
 
             WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, 1);
@@ -299,7 +300,7 @@ public final class WebAccessService
     public CapabilityPolicy setCapabilityTier(String capabilityId, AccessTier tier) throws IOException, SQLException
     {
         WebCapability capability = WebCapability.fromId(capabilityId)
-            .orElseThrow(() -> new IllegalArgumentException("Unknown web capability"));
+            .orElseThrow(() -> new IllegalArgumentException("Page access setting not found"));
         return setCapabilityTier(capability, tier);
     }
 
@@ -309,7 +310,7 @@ public final class WebAccessService
         Objects.requireNonNull(tier, "Required web access tier cannot be null");
         if(!capability.configurable())
         {
-            throw new IllegalArgumentException("This administrative capability is fixed at ADMIN access");
+            throw new IllegalArgumentException("Admin access cannot be changed for this page");
         }
 
         mMutationLock.lock();
@@ -317,7 +318,8 @@ public final class WebAccessService
         {
             if(mSnapshot.primaryAdmin() == null)
             {
-                throw new IllegalStateException("The primary web administrator must be configured first");
+                throw new IllegalStateException(
+                    "Set up the primary admin account in the desktop application first");
             }
             SecuritySnapshot current = mSnapshot;
             mPolicies.save(capability, tier);
@@ -389,7 +391,7 @@ public final class WebAccessService
         WebUserRepository.StoredAccount account = mSnapshot.accountsByUsername().get(username);
         if(account == null || account.account().primaryAdmin())
         {
-            throw new IllegalStateException("Web user does not exist");
+            throw new IllegalStateException("Account not found");
         }
         return account;
     }
@@ -459,7 +461,8 @@ public final class WebAccessService
         String normalized = WebPasswordVerifier.normalizeUsername(username);
         if(PRIMARY_ADMIN_USERNAME.equals(normalized))
         {
-            throw new IllegalArgumentException("The primary administrator is managed only by the JavaFX interface");
+            throw new IllegalArgumentException(
+                "Manage the primary admin account in the desktop application");
         }
         return normalized;
     }

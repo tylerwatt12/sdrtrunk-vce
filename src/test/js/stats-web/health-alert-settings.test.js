@@ -103,15 +103,14 @@ assert.deepEqual(plain(context.disabledCodesForSave({
 const openAlerts = functionSource('function openStatusIconSettings(returnFocusSelector = null)');
 assert.match(openAlerts, /receiverHealthAlertGroups\.map/);
 assert.match(openAlerts, /receiverHealthDisabledCodesForSave\(preferences, controls\)/);
-assert.match(openAlerts, /openReadOnlyModal\('Status icon choices'/);
+assert.match(openAlerts, /openReadOnlyModal\('Status icon issues'/);
 assert.match(openAlerts, /className: 'health-alert-settings-modal'/);
 assert.match(openAlerts, /modal\.setDirty\(true\)/);
 assert.match(openAlerts, /modal\.setBusy\(true\)/);
 assert.match(openAlerts, /if \(modal\.close\(\)\) void render\(\)/);
-assert.match(openAlerts, /Save status icon choices/);
-assert.match(openAlerts, /VCE still monitors it/);
+assert.match(openAlerts, /Save choices/);
 assert.doesNotMatch(openAlerts, /content\.append/,
-  'Status icon choices must open in the shared modal instead of rendering as a page.');
+  'Status icon issues must open in the shared modal instead of rendering as a page.');
 
 const renderHealth = functionSource('function renderReceiverHealthPage(host, snapshot, stale, lastError)');
 assert.match(renderHealth, /receiverHealthIncidentList\(snapshot\.active\)/,

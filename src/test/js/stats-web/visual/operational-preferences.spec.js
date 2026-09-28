@@ -78,7 +78,7 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await patch.locator('select').selectOption('TALKGROUPS');
   await expect(patch.getByText('Unsaved change')).toBeVisible();
   await patch.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('Send each patch-group call as saved.');
+  await expect(workspace.locator('.admin-form-message')).toHaveText('Saved.');
   await expect(patch.getByRole('button', { name: 'Save' })).toHaveCount(0);
   expect(app.writes).toEqual([{ field: 'patch_group_streaming_option', value: 'TALKGROUPS',
     revision: `"${'a'.repeat(64)}"` }]);
@@ -86,7 +86,7 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await detailed.locator('.ui-toggle').click();
   await expect(detailed.locator('input')).toBeChecked();
   await detailed.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('Save individual activity events saved.');
+  await expect(workspace.locator('.admin-form-message')).toHaveText('Saved.');
   expect(app.current().settings.stats_detailed_history_enabled).toBe(true);
   expect(app.writes.at(-1).revision).toBe(`"${'b'.repeat(64)}"`);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -100,7 +100,7 @@ test('receiver settings read as separate output and activity workflows', async (
   const workspace = page.locator('.operational-preferences');
   const section = page.locator('.admin-settings-content > .section');
   await expect(workspace).toHaveClass(/settings-page-form/);
-  await expect(section.locator('.admin-workflow-note + .operational-preferences')).toHaveCount(1);
+  await expect(section.locator('.admin-workflow-note')).toHaveCount(0);
   await expect(section.locator(':scope > .ui-section-title')
     .getByRole('button', { name: 'Reload saved settings' })).toBeVisible();
   await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
@@ -163,7 +163,7 @@ test('a stale local edit reloads the current saved values', async ({ page }) => 
   const retention = workspace.locator('form[data-preference="stats_logging_retention_days"]');
   await retention.locator('input').fill('90');
   await retention.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('current saved settings were reloaded.');
+  await expect(workspace).toContainText('These settings changed elsewhere. The saved settings were reloaded.');
   await expect(workspace.locator('form[data-preference="stats_logging_retention_days"] input'))
     .toHaveValue('60');
 });

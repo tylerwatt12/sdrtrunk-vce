@@ -122,7 +122,7 @@ public final class SupportBundleService implements AutoCloseable
         pruneFinishedJobs();
         if(mJobs.size() >= MAXIMUM_JOBS)
         {
-            throw new IllegalStateException("Too many support bundles are already being prepared");
+            throw new IllegalStateException("Too many support reports are already being prepared");
         }
         String id = UUID.randomUUID().toString();
         Job job = new Job(id, request);
@@ -145,7 +145,7 @@ public final class SupportBundleService implements AutoCloseable
         {
             deleteBundle(job);
             job.state = State.CANCELLED;
-            job.message = "Stopped and removed the local support bundle.";
+            job.message = "Report stopped.";
         }
     }
 
@@ -156,12 +156,12 @@ public final class SupportBundleService implements AutoCloseable
         {
             if(job.state != State.READY || job.path == null)
             {
-                throw new IllegalStateException("The support bundle is not ready to send");
+                throw new IllegalStateException("The report is not ready to send");
             }
             job.state = State.UPLOADING;
             job.progress = 99;
-            job.message = "Sending the support bundle…";
-            job.log("Sending the support bundle");
+            job.message = "Sending report…";
+            job.log("Sending report");
         }
         mWorker.execute(() -> upload(job));
     }
@@ -171,7 +171,7 @@ public final class SupportBundleService implements AutoCloseable
         Job job = requireJob(id);
         if(job.state != State.READY || job.path == null || !Files.isRegularFile(job.path))
         {
-            throw new IllegalStateException("The support bundle is not ready to download");
+            throw new IllegalStateException("The report is not ready to download");
         }
         return new PreparedDownload(job.path, job.fileName, job.bytes);
     }
@@ -181,14 +181,14 @@ public final class SupportBundleService implements AutoCloseable
         Path path = null;
         try
         {
-            update(job, State.GENERATING, 2, "Starting…", "Starting support bundle");
+            update(job, State.GENERATING, 2, "Preparing report…", "Preparing report");
             path = Files.createTempFile("sdrtrunk-vce-support-", ".zip");
             job.path = path;
             try(OutputStream file = Files.newOutputStream(path); ZipOutputStream zip = new ZipOutputStream(file))
             {
                 writeJson(zip, "report.json", report(job.request));
-                update(job, State.GENERATING, 10, "Collecting application details…",
-                    "Collected issue details");
+                update(job, State.GENERATING, 10, "Adding app and computer details…",
+                    "Added issue details");
                 checkCancelled(job);
 
                 Map<String,Object> health = safeHealthSnapshot();
@@ -208,8 +208,8 @@ public final class SupportBundleService implements AutoCloseable
                         Set.of("tuners", "usb", "receiver-queues", "channelizer", "channels")));
                     job.included.add(Section.HARDWARE.id);
                 }
-                update(job, State.GENERATING, 25, "Collecting receiver information…",
-                    "Collected receiver information");
+                update(job, State.GENERATING, 25, "Adding receiver information…",
+                    "Added receiver information");
                 checkCancelled(job);
 
                 if(job.request.sections.contains(Section.SETUP) || job.request.sections.contains(Section.ALIASES) ||
@@ -218,8 +218,8 @@ public final class SupportBundleService implements AutoCloseable
                 {
                     exportDatabase(zip, job);
                 }
-                update(job, State.GENERATING, 80, "Collecting recent messages…",
-                    "Collected selected receiver data");
+                update(job, State.GENERATING, 80, "Adding selected information…",
+                    "Added selected information");
                 checkCancelled(job);
 
                 if(job.request.sections.contains(Section.LOGS))
@@ -228,24 +228,24 @@ public final class SupportBundleService implements AutoCloseable
                     job.included.add(Section.LOGS.id);
                 }
                 writeJson(zip, "bundle-summary.json", bundleSummary(job));
-                update(job, State.GENERATING, 95, "Finishing the bundle…", "Finished writing bundle contents");
+                update(job, State.GENERATING, 95, "Finalizing report…", "Finalized report");
             }
             checkCancelled(job);
             job.bytes = Files.size(path);
             job.fileName = "sdrtrunk-vce-support-" + Instant.now().toString().replace(':', '-') + ".zip";
-            update(job, State.READY, 100, "Ready to send.", "Support bundle is ready");
+            update(job, State.READY, 100, "Report ready.", "Report ready");
         }
         catch(CancelledException exception)
         {
             deleteBundle(job);
-            update(job, State.CANCELLED, 0, "Stopped and removed the local support bundle.",
-                "Bundle creation stopped");
+            update(job, State.CANCELLED, 0, "Report stopped.",
+                "Report stopped");
         }
         catch(Exception exception)
         {
             deleteBundle(job);
-            String error = safeMessage(exception, "The support bundle could not be created.");
-            update(job, State.FAILED, 0, error, "Bundle creation failed");
+            update(job, State.FAILED, 0, "The report could not be prepared. Try again.",
+                "Report preparation failed");
         }
     }
 
@@ -270,17 +270,15 @@ public final class SupportBundleService implements AutoCloseable
             HttpResponse<Void> response = mHttpClient.send(request, HttpResponse.BodyHandlers.discarding());
             if(response.statusCode() < 200 || response.statusCode() >= 300)
             {
-                throw new IOException("The server did not accept the support bundle (" + response.statusCode() + ")");
+                throw new IOException("The server did not accept the report (" + response.statusCode() + ")");
             }
             deleteBundle(job);
-            update(job, State.UPLOADED, 100, "Your bug report was sent. The local support bundle was removed.",
-                "Bug report sent successfully");
+            update(job, State.UPLOADED, 100, "Report sent.", "Report sent");
         }
         catch(Exception exception)
         {
-            String error = safeMessage(exception, "The support bundle could not be sent.");
-            update(job, State.READY, 100, error + " The local bundle is still available.",
-                "Upload failed; local bundle kept");
+            update(job, State.READY, 100, "The report could not be sent. Try again, or download it.",
+                "Report not sent");
         }
     }
 
@@ -586,13 +584,13 @@ public final class SupportBundleService implements AutoCloseable
     private Job requireJob(String id)
     {
         Job job = id != null ? mJobs.get(id) : null;
-        if(job == null) throw new IllegalArgumentException("Support bundle not found");
+        if(job == null) throw new IllegalArgumentException("Support report not found");
         return job;
     }
 
     private void requireOpen()
     {
-        if(mClosed.get()) throw new IllegalStateException("Support bundles are unavailable");
+        if(mClosed.get()) throw new IllegalStateException("Support reports are unavailable");
     }
 
     private void pruneFinishedJobs()
@@ -615,12 +613,6 @@ public final class SupportBundleService implements AutoCloseable
             try { Files.deleteIfExists(path); }
             catch(IOException ignored) { }
         }
-    }
-
-    private static String safeMessage(Exception exception, String fallback)
-    {
-        String message = exception.getMessage();
-        return message != null && !message.isBlank() ? message : fallback;
     }
 
     @Override
@@ -646,7 +638,7 @@ public final class SupportBundleService implements AutoCloseable
         public static Section fromId(String id)
         {
             for(Section section: values()) if(section.id.equals(id)) return section;
-            throw new IllegalArgumentException("Unknown support bundle section");
+            throw new IllegalArgumentException("Report item not found");
         }
     }
 
@@ -663,8 +655,8 @@ public final class SupportBundleService implements AutoCloseable
             }
             category = required(category, 80, "Category");
             issue = required(issue, 80, "Issue");
-            description = required(description, 10_000, "Description");
-            steps = required(steps, 10_000, "Steps to reproduce");
+            description = required(description, 10_000, "What happened");
+            steps = required(steps, 10_000, "What happened before the problem?");
             sections = sections != null ? Collections.unmodifiableSet(EnumSet.copyOf(sections)) : Set.of();
             if(sections.isEmpty()) throw new IllegalArgumentException("Choose at least one item to include");
             if(sections.contains(Section.FULL_ACTIVITY) && sections.contains(Section.RECENT_ACTIVITY))
@@ -678,7 +670,7 @@ public final class SupportBundleService implements AutoCloseable
         {
             String result = value != null ? value.strip() : "";
             if(result.isEmpty() || result.length() > maximum)
-                throw new IllegalArgumentException(label + " is required and must be shorter than " + maximum + " characters");
+                throw new IllegalArgumentException(label + " is required and must be " + maximum + " characters or fewer");
             return result;
         }
     }
@@ -700,7 +692,7 @@ public final class SupportBundleService implements AutoCloseable
         private final Map<String,String> omitted = Collections.synchronizedMap(new LinkedHashMap<>());
         private volatile State state = State.QUEUED;
         private volatile int progress;
-        private volatile String message = "Waiting to start…";
+        private volatile String message = "Waiting to prepare report…";
         private volatile Path path;
         private volatile String fileName;
         private volatile long bytes;

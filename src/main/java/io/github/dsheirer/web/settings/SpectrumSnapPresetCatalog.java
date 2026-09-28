@@ -113,7 +113,8 @@ public final class SpectrumSnapPresetCatalog
 
     public static Country requireCountry(String code)
     {
-        return country(code).orElseThrow(() -> new IllegalArgumentException("Unsupported spectrum-snap country"));
+        return country(code).orElseThrow(() -> new IllegalArgumentException(
+            "That Spectrum country is not available"));
     }
 
     private static Scope display(String id, String label, long minHz, long maxHz)

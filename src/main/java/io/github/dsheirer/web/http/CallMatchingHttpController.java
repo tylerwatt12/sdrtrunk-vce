@@ -109,7 +109,7 @@ public final class CallMatchingHttpController
     private static void unavailable(HttpExchange exchange) throws IOException
     {
         ApiHttpResponse.sendError(exchange, 503, "call_matching_unavailable",
-            "Call matching diagnostics are unavailable");
+            "Call matching is not available");
     }
 
     private static Document document(LogicalCallDiagnosticServiceSnapshot history,
@@ -326,7 +326,7 @@ public final class CallMatchingHttpController
         if(criterion == LogicalCallWinnerCriterion.CHANNEL_CONFIGURATION_ID ||
             criterion == LogicalCallWinnerCriterion.CALL_LEG_ID)
         {
-            return new CriterionValueView("stable tie-breaker", null, null);
+            return new CriterionValueView("No measurable difference", null, null);
         }
         return new CriterionValueView(safeLabel(value.display()), value.numerator(), value.denominator());
     }

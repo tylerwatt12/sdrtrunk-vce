@@ -75,17 +75,18 @@ public final class WebAccessPolicyHttpController
         catch(IllegalArgumentException exception)
         {
             WebHttpSupport.sendError(exchange, 400, "invalid_request",
-                WebHttpSupport.safeMessage(exception, "The access request is invalid"));
+                WebHttpSupport.safeMessage(exception, "The page access change is invalid"));
         }
         catch(IllegalStateException exception)
         {
             WebHttpSupport.sendError(exchange, 409, "conflict",
-                WebHttpSupport.safeMessage(exception, "The access request conflicts with current state"));
+                WebHttpSupport.safeMessage(exception, "Page access changed elsewhere. Reload and try again"));
         }
         catch(SQLException exception)
         {
             mLog.warn("Unable to persist web access policy change", exception);
-            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The access change could not be saved");
+            WebHttpSupport.sendError(exchange, 503, "storage_unavailable",
+                "The page access change could not be saved");
         }
         catch(IOException exception)
         {
@@ -94,7 +95,8 @@ public final class WebAccessPolicyHttpController
                 throw exception;
             }
             mLog.warn("Unable to read or persist web access policy data", exception);
-            WebHttpSupport.sendError(exchange, 503, "storage_unavailable", "The access change could not be saved");
+            WebHttpSupport.sendError(exchange, 503, "storage_unavailable",
+                "The page access change could not be saved");
         }
     }
 
