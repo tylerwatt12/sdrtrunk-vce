@@ -1170,7 +1170,7 @@ public class SDRTrunk
         }
         if(!state.anyIpEnabled())
         {
-            return new NetworkAccessPresentation("Cannot connect (local only)", null,
+            return new NetworkAccessPresentation("Not available (this computer only)", null,
                 "Other devices cannot connect while access is set to This computer only.", null);
         }
         if(!state.https())

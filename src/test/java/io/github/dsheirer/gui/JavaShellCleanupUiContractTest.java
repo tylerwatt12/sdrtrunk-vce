@@ -30,7 +30,7 @@ class JavaShellCleanupUiContractTest
         assertTrue(application.contains("getNetworkAccessPanel()"));
         assertTrue(application.contains("mCopyNetworkAccessUrlButton"));
         assertTrue(application.contains("state.anyIpEnabled()"));
-        assertTrue(application.contains("Cannot connect (local only)"));
+        assertTrue(application.contains("Not available (this computer only)"));
         assertTrue(application.contains("mNetworkAccessWarningLabel.setVisible(status.warning() != null)"));
         assertTrue(application.contains("mCopyNetworkAccessUrlButton.setEnabled(status.url() != null)"));
         assertTrue(application.contains("String adminWarning = warning;"));
