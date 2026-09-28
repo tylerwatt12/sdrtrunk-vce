@@ -106,6 +106,13 @@ test('receiver settings read as separate output and activity workflows', async (
   await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
   await expect(workspace.getByText('Calls & audio', { exact: true })).toBeVisible();
   await expect(workspace.getByText('Activity history', { exact: true })).toBeVisible();
+  const mp3Setting = workspace.locator('form[data-preference="mp3_setting"] select');
+  const mp3Format = workspace.locator('form[data-preference="mp3_input_audio_format"] select');
+  await expect(mp3Setting).toHaveValue('CBR_16');
+  await expect(mp3Setting.locator('option')).toHaveCount(2);
+  await expect(mp3Format).toHaveValue('SR_16000');
+  await expect(mp3Format.locator('option')).toHaveCount(2);
+  await expect(workspace.getByText('Unsaved change')).toHaveCount(0);
   await page.waitForLoadState('networkidle');
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.locator('main')).toHaveScreenshot('admin-operations-light-desktop.png');

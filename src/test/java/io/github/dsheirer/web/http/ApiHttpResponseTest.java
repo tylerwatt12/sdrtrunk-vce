@@ -72,7 +72,8 @@ class ApiHttpResponseTest
         server.createContext("/composite", exchange -> ApiHttpResponse.sendData(exchange, 200, Map.of(
             "serverVersion", "1.0",
             "rows", List.of(Map.of("identityId", 7)),
-            "nestedState", Map.of("activeChannelCount", 3))));
+            "nestedState", Map.of("activeChannelCount", 3),
+            "formatsBySetting", Map.of("CBR_16", Map.of("sampleRate", 16_000)))));
         server.start();
 
         try
@@ -81,6 +82,8 @@ class ApiHttpResponseTest
             assertEquals("1.0", body.at("/data/server_version").textValue());
             assertEquals(3, body.at("/data/nested_state/active_channel_count").intValue());
             assertEquals(7, body.at("/data/rows/0/identity_id").intValue());
+            assertEquals(16_000, body.at("/data/formats_by_setting/CBR_16/sample_rate").intValue());
+            assertFalse(body.at("/data/formats_by_setting").has("c_b_r_16"));
             assertFalse(body.has("meta"));
 
             JsonNode event = OBJECT_MAPPER.readTree(ApiHttpResponse.encodePayload(Map.of(

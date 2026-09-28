@@ -145,6 +145,11 @@ public final class ApiHttpResponse
             return value;
         }
 
+        if(isConstantStyleKey(value))
+        {
+            return value;
+        }
+
         StringBuilder normalized = new StringBuilder(value.length() + 8);
 
         for(int x = 0; x < value.length(); x++)
@@ -167,5 +172,31 @@ public final class ApiHttpResponse
         }
 
         return normalized.toString();
+    }
+
+    /**
+     * Indicates if the key is an uppercase identifier whose spelling is part of the value contract, such as an enum
+     * name used as a lookup-table key.  These keys are data, not Java property names, and must remain byte-for-byte
+     * stable while ordinary camel-case response fields are normalized.
+     */
+    private static boolean isConstantStyleKey(String value)
+    {
+        boolean hasLetter = false;
+
+        for(int x = 0; x < value.length(); x++)
+        {
+            char character = value.charAt(x);
+
+            if(Character.isUpperCase(character))
+            {
+                hasLetter = true;
+            }
+            else if(character != '_' && !Character.isDigit(character))
+            {
+                return false;
+            }
+        }
+
+        return hasLetter;
     }
 }

@@ -40,6 +40,12 @@ class OperationalPreferencesHttpControllerTest
             assertEquals(8, initial.path("settings").size());
             assertTrue(initial.at("/settings/stats_logging_enabled").isBoolean());
             assertEquals("MP3", initial.at("/settings/audio_record_format").textValue());
+            assertEquals("CBR_16", initial.at("/settings/mp3_setting").textValue());
+            assertEquals("SR_16000", initial.at("/settings/mp3_input_audio_format").textValue());
+            assertTrue(initial.at("/options/mp3_input_audio_formats_by_setting/CBR_16").isArray());
+            assertTrue(initial.at("/options/mp3_input_audio_formats_by_setting/CBR_16").findValuesAsText("value")
+                .contains("SR_16000"));
+            assertFalse(initial.at("/options/mp3_input_audio_formats_by_setting").has("c_b_r_16"));
             assertFalse(initial.toString().contains("directory"));
             assertFalse(initial.toString().contains("certificate"));
             assertFalse(initial.toString().contains("vault"));
