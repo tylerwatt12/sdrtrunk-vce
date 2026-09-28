@@ -63,7 +63,7 @@ public class DibitToByteBufferAssembler implements Listener<Dibit>, IByteBufferP
      */
     private void closeAndBroadcast()
     {
-        if(mCurrentBuffer != null && mBufferListener != null)
+        if(mCurrentBuffer != null && mCurrentBuffer.position() > 0 && mBufferListener != null)
         {
             mCurrentBuffer.flip();
             mBufferListener.receive(mCurrentBuffer);

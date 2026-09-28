@@ -24,6 +24,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.ModuleEventBusMessage;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.remote.P25RemoteTrafficOpen;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,7 @@ public class ChannelStartProcessingRequest implements ModuleEventBusMessage
     private final IdentifierCollection mIdentifierCollection;
     private final TrafficChannelManager mTrafficChannelManager;
     private final List<PreloadDataContent<?>> mPreloadDataContents = new ArrayList<>();
+    private P25RemoteTrafficOpen mRemoteTrafficOpen;
 
     /**
      * Constructs an instance
@@ -152,5 +154,21 @@ public class ChannelStartProcessingRequest implements ModuleEventBusMessage
     public List<PreloadDataContent<?>> getPreloadDataContents()
     {
         return mPreloadDataContents;
+    }
+
+    /** Transient remote OPEN context used to bind a decoded-bit source before this processing chain starts. */
+    public P25RemoteTrafficOpen getRemoteTrafficOpen()
+    {
+        return mRemoteTrafficOpen;
+    }
+
+    public void setRemoteTrafficOpen(P25RemoteTrafficOpen remoteTrafficOpen)
+    {
+        mRemoteTrafficOpen = remoteTrafficOpen;
+    }
+
+    public boolean hasRemoteTrafficOpen()
+    {
+        return mRemoteTrafficOpen != null;
     }
 }

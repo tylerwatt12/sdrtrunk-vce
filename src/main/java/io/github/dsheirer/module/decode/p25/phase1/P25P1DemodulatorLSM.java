@@ -75,6 +75,12 @@ public class P25P1DemodulatorLSM
         mPLL = 0f;
     }
 
+    /** Flushes the final partial packed-dibit buffer before channel teardown. */
+    void flushBitstream()
+    {
+        mDibitAssembler.flush();
+    }
+
     /**
      * Primary input method for receiving a stream of filtered, pulse-shaped samples to process into symbols.
      * @param i inphase samples to process

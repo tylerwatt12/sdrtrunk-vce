@@ -53,9 +53,12 @@ import io.github.dsheirer.module.decode.dmr.DMRRestChannelHandoffRequest;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager.PreparedRestChannelHandoff;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderFactory;
+import io.github.dsheirer.remote.P25RemoteBitstreamService;
+import io.github.dsheirer.remote.P25RemoteTrafficOpen;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
@@ -63,6 +66,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
@@ -99,6 +103,14 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelProcessingManager implements Listener<ChannelEvent>
 {
+    public enum RemoteTrafficOpenResult
+    {
+        STARTING,
+        ALREADY_OPEN,
+        PARENT_NOT_RUNNING,
+        REJECTED
+    }
+
     private static final String DIVIDER = "-------------------------------------------------------------------------\n";
     private static final String ERROR_STOPPING_CHANNEL_LABEL = "Error stopping channel [";
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
@@ -130,6 +142,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private TunerManager mTunerManager;
     private AliasModel mAliasModel;
     private UserPreferences mUserPreferences;
+    private volatile P25RemoteBitstreamService mP25RemoteBitstreamService;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
     private final SiteMetadataIngressQueue mSiteMetadataIngress;
     private final AtomicInteger mSiteMetadataSubmissions = new AtomicInteger();
@@ -198,6 +211,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ChannelActivityModel getChannelActivityModel()
     {
         return mChannelActivityModel;
+    }
+
+    /** Installs or clears the process-local remote P25 transport boundary. */
+    public void setP25RemoteBitstreamService(P25RemoteBitstreamService service)
+    {
+        mP25RemoteBitstreamService = service;
     }
 
     private List<ChannelActivityModel.ActiveChannel> getActiveChannelActivitySnapshot()
@@ -302,6 +321,59 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         return List.copyOf(matches);
+    }
+
+    /**
+     * Starts a remote traffic mirror from confirmed sender OPEN metadata. Decoded control grants alone never enter
+     * this path and therefore cannot allocate host traffic children.
+     */
+    public RemoteTrafficOpenResult acceptRemoteTrafficOpen(P25RemoteTrafficOpen open)
+    {
+        if(open == null || mClosed || mShuttingDown)
+        {
+            return RemoteTrafficOpenResult.REJECTED;
+        }
+
+        P25TrafficChannelManager manager = findRemoteP25TrafficChannelManager(open.parentConfigurationId());
+        return manager != null ? manager.acceptRemoteTrafficOpen(open) :
+            RemoteTrafficOpenResult.PARENT_NOT_RUNNING;
+    }
+
+    /** Applies CLOSE only to the exact stream generation owned by the specified remote parent. */
+    public boolean acceptRemoteTrafficClose(String parentConfigurationId, String streamId, long generation)
+    {
+        if(parentConfigurationId == null || streamId == null || generation < 0L)
+        {
+            return false;
+        }
+
+        P25TrafficChannelManager manager = findRemoteP25TrafficChannelManager(parentConfigurationId);
+        return manager != null && manager.acceptRemoteTrafficClose(streamId, generation);
+    }
+
+    private P25TrafficChannelManager findRemoteP25TrafficChannelManager(String parentConfigurationId)
+    {
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            Channel channel = entry.getKey();
+
+            if(channel == null || !channel.isStandardChannel() ||
+                !(channel.getSourceConfiguration() instanceof SourceConfigRemote) ||
+                !Objects.equals(parentConfigurationId, channel.getConfigurationId()))
+            {
+                continue;
+            }
+
+            for(Module module: entry.getValue().getModules())
+            {
+                if(module instanceof P25TrafficChannelManager manager)
+                {
+                    return manager;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1239,8 +1311,21 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             String threadName = "sdrtrunk channel [" + channel.getChannelID() + "/" +
                     channel.getDecodeConfiguration().getDecoderType().getShortDisplayString() + "]";
-            source = mTunerManager.getSource(channel.getSourceConfiguration(),
-                channel.getDecodeConfiguration().getChannelSpecification(), threadName);
+
+            if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
+            {
+                P25RemoteBitstreamService remoteService = mP25RemoteBitstreamService;
+
+                if(remoteService != null)
+                {
+                    source = remoteService.acquireSource(channel, request, threadName);
+                }
+            }
+            else
+            {
+                source = mTunerManager.getSource(channel.getSourceConfiguration(),
+                    channel.getDecodeConfiguration().getChannelSpecification(), threadName);
+            }
         }
         catch(SourceException se)
         {
@@ -1421,6 +1506,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 }
 
                 setChannelProcessingFlag(channel, true);
+                notifyRemoteChannelStarted(channel, request, processingChain);
 
                 mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_START));
             }
@@ -1778,7 +1864,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             try
             {
-                processingChain.stop();
+                try
+                {
+                    processingChain.stop();
+                }
+                finally
+                {
+                    notifyRemoteChannelStopped(channel, processingChain);
+                }
+
                 processingChain.removeEventLoggingModules();
                 processingChain.removeRecordingModules();
 
@@ -1802,6 +1896,41 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             detachedTrafficAttempt.getExpectedChain().unrouteDecodeEventsFrom(
                 detachedTrafficAttempt.getPrepared().handoff().owner());
             processDetachedTrafficTeardown(detachedTrafficAttempt);
+        }
+    }
+
+    private void notifyRemoteChannelStarted(Channel channel, ChannelStartProcessingRequest request,
+                                            ProcessingChain processingChain)
+    {
+        P25RemoteBitstreamService service = mP25RemoteBitstreamService;
+
+        if(service != null)
+        {
+            try
+            {
+                service.channelStarted(channel, request, processingChain);
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Remote P25 channel-start notification failed for [{}]", channel.getName(), exception);
+            }
+        }
+    }
+
+    private void notifyRemoteChannelStopped(Channel channel, ProcessingChain processingChain)
+    {
+        P25RemoteBitstreamService service = mP25RemoteBitstreamService;
+
+        if(service != null)
+        {
+            try
+            {
+                service.channelStopped(channel, processingChain);
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Remote P25 channel-stop notification failed for [{}]", channel.getName(), exception);
+            }
         }
     }
 

@@ -109,6 +109,12 @@ public class P25P1DemodulatorC4FM
         mEqualizer.reset();
     }
 
+    /** Flushes the final partial packed-dibit buffer before channel teardown. */
+    void flushBitstream()
+    {
+        mDibitAssembler.flush();
+    }
+
     /**
      * Clears source-specific synchronization and adaptive NAC history while retaining a fixed expected traffic NAC.
      */

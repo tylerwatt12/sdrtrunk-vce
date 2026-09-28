@@ -279,6 +279,7 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
     @Override
     public void stop()
     {
+        mDemodulator.flushBitstream();
         super.stop();
         mMessageFramer.stop();
     }

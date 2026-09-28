@@ -80,11 +80,13 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1BitstreamDecoder;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderC4FM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderLSM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
 import io.github.dsheirer.module.decode.p25.phase1.message.filter.P25P1MessageFilterSet;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.phase2.P25P2BitstreamDecoder;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderHDQPSK;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderState;
 import io.github.dsheirer.module.decode.p25.phase2.message.P25P2Message;
@@ -98,6 +100,7 @@ import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import java.util.ArrayList;
 import java.util.List;
@@ -223,8 +226,17 @@ public class DecoderFactory
                                          IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
                                          ChannelActivityModel channelActivityModel)
     {
-        modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration(),
-            initialSourceSampleRate, channel.getChannelType() == ChannelType.STANDARD));
+        boolean controlNACGuardEnabled = channel.getChannelType() == ChannelType.STANDARD;
+
+        if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
+        {
+            modules.add(new P25P2BitstreamDecoder(controlNACGuardEnabled));
+        }
+        else
+        {
+            modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration(),
+                initialSourceSampleRate, controlNACGuardEnabled));
+        }
 
         P25TrafficChannelManager p25TrafficChannelManager = null;
 
@@ -312,7 +324,15 @@ public class DecoderFactory
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
             boolean standard = channel.getChannelType() == ChannelType.STANDARD;
-            addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate, standard);
+
+            if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
+            {
+                modules.add(new P25P1BitstreamDecoder(standard));
+            }
+            else
+            {
+                addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate, standard);
+            }
         }
 
         if(channel.getChannelType() == ChannelType.STANDARD)

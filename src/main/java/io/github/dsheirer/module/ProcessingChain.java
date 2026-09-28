@@ -52,6 +52,9 @@ import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.record.binary.BinaryRecorder;
+import io.github.dsheirer.remote.IP25RemoteBitstreamListener;
+import io.github.dsheirer.remote.IP25RemoteBitstreamProvider;
+import io.github.dsheirer.remote.P25RemoteBitstreamPacket;
 import io.github.dsheirer.record.wave.ComplexSamplesWaveRecorder;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
@@ -104,6 +107,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private Broadcaster<float[]> mDemodulatedAudioBufferBroadcaster = new Broadcaster<>();
     private Broadcaster<ComplexSamples> mBasebandComplexSamplesBroadcaster = new Broadcaster<>();
     private Broadcaster<ByteBuffer> mDemodulatedBitstreamBufferBroadcaster = new Broadcaster<>();
+    private Broadcaster<P25RemoteBitstreamPacket> mRemoteBitstreamPacketBroadcaster = new Broadcaster<>();
     private Broadcaster<AudioCallEvent> mAudioCallBroadcaster = new Broadcaster<>();
     private Broadcaster<IDecodeEvent> mDecodeEventBroadcaster = new Broadcaster<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
@@ -357,6 +361,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
         mChannelEventBroadcaster.dispose();
         mBasebandComplexSamplesBroadcaster.dispose();
         mDemodulatedBitstreamBufferBroadcaster.dispose();
+        mRemoteBitstreamPacketBroadcaster.dispose();
         mMessageBroadcaster.dispose();
         mSquelchStateEventBroadcaster.dispose();
     }
@@ -586,6 +591,12 @@ public class ProcessingChain implements Listener<ChannelEvent>
             mDemodulatedBitstreamBufferBroadcaster.addListener(((IByteBufferListener)module).getByteBufferListener());
         }
 
+        if(module instanceof IP25RemoteBitstreamListener)
+        {
+            mRemoteBitstreamPacketBroadcaster.addListener(
+                ((IP25RemoteBitstreamListener)module).getRemoteBitstreamListener());
+        }
+
         if(module instanceof IComplexSamplesListener)
         {
             mBasebandComplexSamplesBroadcaster.addListener(((IComplexSamplesListener)module).getComplexSamplesListener());
@@ -646,6 +657,12 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IByteBufferListener)
         {
             mDemodulatedBitstreamBufferBroadcaster.removeListener(((IByteBufferListener)module).getByteBufferListener());
+        }
+
+        if(module instanceof IP25RemoteBitstreamListener)
+        {
+            mRemoteBitstreamPacketBroadcaster.removeListener(
+                ((IP25RemoteBitstreamListener)module).getRemoteBitstreamListener());
         }
 
         if(module instanceof IComplexSamplesListener)
@@ -715,6 +732,11 @@ public class ProcessingChain implements Listener<ChannelEvent>
             ((IByteBufferProvider)module).setBufferListener(mDemodulatedBitstreamBufferBroadcaster);
         }
 
+        if(module instanceof IP25RemoteBitstreamProvider)
+        {
+            ((IP25RemoteBitstreamProvider)module).setRemoteBitstreamListener(mRemoteBitstreamPacketBroadcaster);
+        }
+
         if(module instanceof IRealBufferProvider)
         {
             ((IRealBufferProvider)module).setBufferListener(mDemodulatedAudioBufferBroadcaster);
@@ -750,6 +772,11 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IByteBufferProvider)
         {
             ((IByteBufferProvider)module).removeBufferListener(mDemodulatedBitstreamBufferBroadcaster);
+        }
+
+        if(module instanceof IP25RemoteBitstreamProvider)
+        {
+            ((IP25RemoteBitstreamProvider)module).removeRemoteBitstreamListener(mRemoteBitstreamPacketBroadcaster);
         }
 
         if(module instanceof IDecodeEventProvider)
@@ -836,6 +863,9 @@ public class ProcessingChain implements Listener<ChannelEvent>
                         break;
                     case REAL:
                         ((RealSource)mSource).setListener(mDemodulatedAudioBufferBroadcaster);
+                        break;
+                    case BITSTREAM:
+                        //Wired through IP25RemoteBitstreamProvider when the source is added as a module.
                         break;
                     default:
                         throw new IllegalArgumentException("Unrecognized source "
@@ -963,6 +993,9 @@ public class ProcessingChain implements Listener<ChannelEvent>
                     break;
                 case REAL:
                     ((RealSource)source).setListener(null);
+                    break;
+                case BITSTREAM:
+                    //The provider listener was removed by removeModule(source).
                     break;
                 default:
                     mLog.error("Unrecognized source sample type while stopping processing chain");
@@ -1162,6 +1195,20 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void removeDemodulatedAudioListener(Listener<float[]> listener)
     {
         mDemodulatedAudioBufferBroadcaster.removeListener(listener);
+    }
+
+    /**
+     * Adds a nonblocking observer for packed demodulated dibits. The callback runs inline with the decoder and must
+     * only copy/offer into a bounded queue; it must never perform network or serialization work.
+     */
+    public void addDemodulatedBitstreamListener(Listener<ByteBuffer> listener)
+    {
+        mDemodulatedBitstreamBufferBroadcaster.addListener(listener);
+    }
+
+    public void removeDemodulatedBitstreamListener(Listener<ByteBuffer> listener)
+    {
+        mDemodulatedBitstreamBufferBroadcaster.removeListener(listener);
     }
 
     /**
