@@ -22,6 +22,7 @@ public class P25P1BitstreamDecoder extends PrimaryDecoder implements IP25RemoteB
 {
     private final P25P1MessageFramer mMessageFramer = new P25P1MessageFramer();
     private final P25P1MessageProcessor mMessageProcessor;
+    private final Listener<P25RemoteBitstreamPacket> mRemoteBitstreamListener = this::receive;
     private P25FrequencyBandPreloadDataContent mFrequencyBandPreload;
 
     public P25P1BitstreamDecoder(boolean controlNACGuardEnabled)
@@ -114,7 +115,7 @@ public class P25P1BitstreamDecoder extends PrimaryDecoder implements IP25RemoteB
     @Override
     public Listener<P25RemoteBitstreamPacket> getRemoteBitstreamListener()
     {
-        return this::receive;
+        return mRemoteBitstreamListener;
     }
 
     @Override

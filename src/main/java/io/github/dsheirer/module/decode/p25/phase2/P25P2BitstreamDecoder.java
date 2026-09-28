@@ -20,6 +20,7 @@ public class P25P2BitstreamDecoder extends PrimaryDecoder implements IP25RemoteB
 {
     private final P25P2MessageFramer mMessageFramer = new P25P2MessageFramer(null);
     private final P25P2MessageProcessor mMessageProcessor;
+    private final Listener<P25RemoteBitstreamPacket> mRemoteBitstreamListener = this::receive;
     private P25FrequencyBandPreloadDataContent mFrequencyBandPreload;
     private ScrambleParameters mScrambleParameters;
 
@@ -99,6 +100,6 @@ public class P25P2BitstreamDecoder extends PrimaryDecoder implements IP25RemoteB
     @Override
     public Listener<P25RemoteBitstreamPacket> getRemoteBitstreamListener()
     {
-        return this::receive;
+        return mRemoteBitstreamListener;
     }
 }

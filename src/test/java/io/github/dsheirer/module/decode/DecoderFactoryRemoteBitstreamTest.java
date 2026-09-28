@@ -21,6 +21,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DecoderFactoryRemoteBitstreamTest
@@ -42,6 +43,16 @@ class DecoderFactoryRemoteBitstreamTest
 
         assertTrue(modules.stream().anyMatch(P25P2BitstreamDecoder.class::isInstance));
         assertFalse(modules.stream().anyMatch(P25P2DecoderHDQPSK.class::isInstance));
+    }
+
+    @Test
+    void bitstreamDecodersExposeStableListenerIdentity()
+    {
+        P25P1BitstreamDecoder phase1 = new P25P1BitstreamDecoder(true);
+        P25P2BitstreamDecoder phase2 = new P25P2BitstreamDecoder(true);
+
+        assertSame(phase1.getRemoteBitstreamListener(), phase1.getRemoteBitstreamListener());
+        assertSame(phase2.getRemoteBitstreamListener(), phase2.getRemoteBitstreamListener());
     }
 
     private static List<Module> modules(Object decodeConfiguration)

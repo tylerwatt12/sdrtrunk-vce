@@ -15,11 +15,21 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RemoteP25BitstreamSourceTest
 {
+    @Test
+    void exposesStableSourceEventListenerIdentity()
+    {
+        RemoteP25BitstreamSource source =
+            new RemoteP25BitstreamSource(851_012_500L, 4_800.0, "test remote", 1);
+
+        assertSame(source.getSourceEventListener(), source.getSourceEventListener());
+    }
+
     @Test
     void offerIsNonBlockingBoundedAndDefensivelyCopies() throws Exception
     {

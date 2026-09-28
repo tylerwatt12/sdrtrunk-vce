@@ -34,6 +34,7 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     private final AtomicBoolean mDiscontinuityPending = new AtomicBoolean(true);
     private final AtomicLong mDroppedPacketCount = new AtomicLong();
     private final AtomicLong mFrequencyEpoch = new AtomicLong();
+    private final Listener<SourceEvent> mSourceEventReceiver = sourceEvent -> { };
     private volatile long mExpectedSequence = -1L;
     private volatile Listener<P25RemoteBitstreamPacket> mPacketListener;
     private volatile Listener<SourceEvent> mSourceEventListener;
@@ -277,7 +278,7 @@ public class RemoteP25BitstreamSource extends Source implements IP25RemoteBitstr
     @Override
     public Listener<SourceEvent> getSourceEventListener()
     {
-        return sourceEvent -> { };
+        return mSourceEventReceiver;
     }
 
     @Override
