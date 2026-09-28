@@ -360,6 +360,8 @@ async function main() {
     /appearance\.theme|page_titles\.prepend_playing_call|playback\.volume|selected_scan_list_ids/);
   assert.match(summarySource,
     /target_grouping|target_burst_limit|scanner\.detail_mode|preferences\.presentation/);
+  assert.match(summarySource, /Show encryption algorithm and key ID/,
+    'My Settings must distinguish a reported encryption key ID from key material');
   assert.match(summarySource,
     /preferences\.tuner|health_alerts\.disabled_codes|preferences\.tables/);
   const resetSource = functionBinding(appSource, 'openResetUserPreferences');
@@ -378,6 +380,12 @@ async function main() {
   assert.match(livePresentationSource, /show_only_active_trunked_channels: activeOnly\.input\.checked/);
   assert.match(livePresentationSource, /retain_last_call_on_idle_rows: retainLastCall\.input\.checked/);
   assert.match(livePresentationSource, /clear_voice_quality_when_idle: clearIdleQuality\.input\.checked/);
+  assert.match(livePresentationSource,
+    /Show encryption algorithm and key ID[\s\S]*reported in received signaling\.[\s\S]*A key ID is not encryption key material\./,
+    'Live presentation copy must distinguish received key IDs from encryption key material');
+  assert.match(livePresentationSource,
+    /encryption algorithm, and key ID visible after a row becomes idle\./,
+    'Idle-row guidance must explicitly name the retained encryption algorithm and key ID');
   assert.doesNotMatch(livePresentationSource, /target_grouping|target_burst_limit|preferences\.playback/);
   assert.match(livePresentationSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.match(livePresentationSource, /error\?\.code === 'preference_session_changed'/);

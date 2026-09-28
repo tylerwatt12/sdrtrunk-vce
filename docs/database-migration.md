@@ -301,8 +301,8 @@ is preserved unchanged. Because formats 24 and 25 share the current row layout, 
 the step also applies the same bounded component repair policy that a damaged format-24 database received while it was
 current; every repair, default, reset, or skipped row is reported exactly before the strict format-25 stamp. An absent
 `ignoreEncryptedCalls` decoder setting means disabled, so existing P25 and DMR channels retain their prior behavior. An
-explicit existing NXDN selection is preserved. Loading a voice-decryption module may temporarily override the effective
-setting at runtime, but does not rewrite the administrator's saved preference. Formats 24 and 25 share one DDL
+explicit existing NXDN selection is preserved. Runtime constraints do not rewrite the administrator's saved
+preference. Formats 24 and 25 share one DDL
 fingerprint and row layout, so a markerless file is ambiguous and requires its authoritative global format marker.
 
 The format 25-to-26 step preserves every detailed Activity event and event ID, every attached identity-member

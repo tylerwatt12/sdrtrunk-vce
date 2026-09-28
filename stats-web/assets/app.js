@@ -22895,7 +22895,7 @@ function userPreferenceSummaryCards(preferences) {
       ['Show only active trunked channels', settingsEnabled(preferences.presentation.show_only_active_trunked_channels)],
       ['Retain the last call on idle rows', settingsEnabled(preferences.presentation.retain_last_call_on_idle_rows)],
       ['Clear voice quality on idle rows', settingsEnabled(preferences.presentation.clear_voice_quality_when_idle)],
-      ['Show encryption details', settingsEnabled(preferences.presentation.show_encryption_details)],
+      ['Show encryption algorithm and key ID', settingsEnabled(preferences.presentation.show_encryption_details)],
       ['Show control-channel quality', settingsEnabled(preferences.presentation.show_control_decode_quality)],
       ['Show voice-channel quality', settingsEnabled(preferences.presentation.show_voice_decode_quality)],
       ['Decode quality format', semanticLabel(preferences.presentation.decode_quality_display_mode)],
@@ -23005,9 +23005,9 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   const form = node('form', 'admin-form live-presentation-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key',
+  const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key ID',
     current.show_encryption_details,
-    'Show the decoded algorithm and key identifiers when they are available.');
+    'Show the encryption algorithm and key ID reported in received signaling. A key ID is not encryption key material.');
   const controlQuality = preferenceCheckbox('show-control-quality', 'Show control-channel decode quality',
     current.show_control_decode_quality,
     'Add the rolling control-channel quality reading to Live rows.');
@@ -23019,7 +23019,7 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     'Hide inactive trunked rows. Conventional channels are always shown.');
   const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
     current.retain_last_call_on_idle_rows,
-    'Keep the last source, target, alias, talker, and encryption details visible after a row becomes idle.');
+    'Keep the last source, target, alias, talker, encryption algorithm, and key ID visible after a row becomes idle.');
   const clearIdleQuality = preferenceCheckbox('clear-idle-voice-quality',
     'Clear voice quality when a row becomes idle', current.clear_voice_quality_when_idle,
     'Hide the completed call\'s voice-quality result after its row becomes idle.');

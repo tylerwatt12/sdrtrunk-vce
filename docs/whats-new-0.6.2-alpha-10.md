@@ -42,11 +42,11 @@ RadioReference import behavior, streaming-provider settings, or the fields used 
 - **Scanner-Map uploads work again.** Rdio Scanner connection checks and completed-call uploads now use the exact
   `User-Agent: sdrtrunk` value required by Scanner-Map. The product name remains sdrtrunk-vce everywhere else. This
   fixes [#46](https://github.com/tylerwatt12/sdrtrunk-vce/issues/46).
-- **Late encryption information stays with the original call.** If the encryption algorithm, key, or encrypted status
+- **Late encryption information stays with the original call.** If the encryption algorithm, key ID, or encrypted status
   becomes known after a P25, DMR, or NXDN call starts, the existing Activity entry and live Activity view are updated.
   sdrtrunk-vce no longer creates a duplicate call or counts the call and encryption twice. This fixes
   [#35](https://github.com/tylerwatt12/sdrtrunk-vce/issues/35).
-- **Encryption key numbers match the other status displays.** Event details no longer show a decimal key ID when the
+- **Encryption key IDs match the other status displays.** Event details no longer show a decimal key ID when the
   corresponding status display uses hexadecimal. This fixes
   [#38](https://github.com/tylerwatt12/sdrtrunk-vce/issues/38).
 - **P25 implicit uplink frequencies are calculated correctly.** Some P25 messages use the reserved `0xFFFF` value to
