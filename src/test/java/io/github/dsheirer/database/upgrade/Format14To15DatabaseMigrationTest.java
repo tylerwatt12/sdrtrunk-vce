@@ -791,6 +791,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 26);
             new Format26To27DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 27);
+            new Format27To28DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 28);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
