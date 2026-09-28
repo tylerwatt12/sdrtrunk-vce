@@ -306,15 +306,6 @@
   min-width: 0;
 }
 
-.admin-section-intro {
-  margin: 0;
-  padding: 14px 18px;
-  color: var(--muted);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-  line-height: 1.45;
-}
-
 .read-only-modal.live-presentation-modal {
   width: min(var(--modal-size-medium), 96vw);
 }

@@ -34,7 +34,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
             dashboard.indexOf("{ id: 'activity', label: 'Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
-        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, true)"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
         assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
         assertTrue(dashboard.indexOf("if (tab === 'health')") <

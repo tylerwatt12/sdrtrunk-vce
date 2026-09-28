@@ -43,11 +43,11 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     void rendersCurrentRadioSystemNamesAndCanonicalLinks() throws Exception
     {
         String app = readText(APP_JAVASCRIPT);
-        String directory = function(app, "async function renderRadioSystems()");
+        String directory = function(app, "function renderNestedRadioDirectory(renderContext)");
 
-        assertTrue(directory.contains("await renderModernChannelCatalog(renderContext, false)"));
-        assertTrue(app.contains("pageHeader(editable ? 'Channels' : 'Radio Directory'"));
-        assertTrue(app.contains("editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog'"));
+        assertTrue(directory.contains("requestChannelConfigurationJson('/api/v1/channel-catalog'"));
+        assertTrue(directory.contains("apiPage('/api/v1/radio-systems'"));
+        assertFalse(app.contains("function renderRadioSystems()"));
         assertTrue(app.contains("href('channel', { configuration_id: row.configuration_id })"));
         assertFalse(app.contains("systemApiPath("));
         assertFalse(app.contains("siteApiPath("));
@@ -57,7 +57,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
     void rendersEqualWidthSystemAndConventionalCardsFromSharedComponents() throws Exception
     {
         String app = readText(APP_JAVASCRIPT);
-        String directory = function(app, "function renderNestedRadioDirectory(renderContext, embedded = false)");
+        String directory = function(app, "function renderNestedRadioDirectory(renderContext)");
         String systemCard = function(app, "function radioDirectorySystemCard(row)");
         String channelCard = function(app, "function radioDirectoryConventionalSystemCard(row)");
         String liveState = function(app, "function radioDirectoryLiveState(row)");
@@ -91,7 +91,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         String savedScope = function(app, "function savedChannelScopeLabel(row)");
         String scopeTest = function(app, "function isSavedChannelRadioSystem(row)");
         String details = function(app, "function radioSystemsDirectoryDetails(row)");
-        String directory = function(app, "async function renderRadioSystems()");
+        String directory = function(app, "function renderNestedRadioDirectory(renderContext)");
         String page = function(app, "async function renderRadioSystem()");
 
         assertTrue(label.contains("if (isSavedChannelRadioSystem(row)) return savedChannelScopeLabel(row)"));
@@ -104,7 +104,7 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(details.contains("'Scoped to this saved channel'"));
         assertTrue(details.contains("`Network ${identifierNumber(row.network_id)}`"));
         assertTrue(details.contains("`System ${identifierNumber(row.system_id)}`"));
-        assertTrue(directory.contains("renderModernChannelCatalog(renderContext, false)"));
+        assertTrue(directory.contains("radioDirectoryTrunkedGroups(directory.catalog, directory.systems)"));
         assertTrue(page.contains("isSavedChannelRadioSystem(system) ?"));
         assertTrue(page.contains("'Saved Channel Activity' : 'System Activity'"));
         assertTrue(page.contains("'Saved Channel Scope' : 'System Info'"));

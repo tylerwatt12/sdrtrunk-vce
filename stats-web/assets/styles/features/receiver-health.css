@@ -99,12 +99,6 @@
   width: min(960px, 96vw);
 }
 
-.health-alert-settings-intro {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
 .health-alert-settings-card .settings-card-body {
   align-content: start;
 }

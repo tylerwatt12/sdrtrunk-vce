@@ -25,7 +25,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=283\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=284\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -81,7 +81,7 @@ class StatsWebPageLifecycleUiContractTest
         String render = function(source, "async function render()");
         String popState = function(source, "window.addEventListener('popstate', () =>");
 
-        assertOrdered(render, "setNavigationOpen(false);", "let view = routeFoundation.requestedView(route);");
+        assertOrdered(render, "setNavigationOpen(false);", "const view = routeFoundation.requestedView(route);");
         assertOrdered(popState, "setNavigationOpen(false);", "const previous = `/?${route.toString()}`;");
     }
 

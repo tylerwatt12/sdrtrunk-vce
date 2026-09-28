@@ -392,14 +392,6 @@
   box-shadow: var(--ui-surface-shadow, var(--shadow-surface-soft));
 }
 
-.ui-inset-surface {
-  min-width: 0;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--ui-control-radius, var(--radius-control));
-}
-
 .ui-surface-header {
   background: var(--surface);
   border-bottom: 1px solid var(--line);

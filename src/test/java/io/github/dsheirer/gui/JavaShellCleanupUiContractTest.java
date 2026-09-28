@@ -82,11 +82,37 @@ class JavaShellCleanupUiContractTest
     void deadDesktopDeepLinksAreNotLeftRegistered() throws Exception
     {
         String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
+        String service = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/stats/StatsWebServerService.java"));
+        String sessions = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/web/http/WebSessionHttpController.java"));
 
         assertFalse(manager.contains("process(ViewWebAliasRequest"));
         assertFalse(manager.contains("process(ViewWebP25BandplanOverrideRequest"));
         assertFalse(Files.exists(ROOT.resolve("ViewWebAliasRequest.java")));
         assertFalse(Files.exists(ROOT.resolve("ViewWebP25BandplanOverrideRequest.java")));
+        assertTrue(service.contains("createDesktopAdministratorHandoffUri()"));
+        assertFalse(service.contains("createDesktopAdministratorAliasHandoffUri"));
+        assertFalse(service.contains("createDesktopAdministratorStreamingHandoffUri"));
+        assertFalse(service.contains("createDesktopAdministratorP25BandplanOverrideHandoffUri"));
+        assertFalse(sessions.contains("desktopAliasHandoffPath"));
+        assertFalse(sessions.contains("desktopStreamingHandoffPath"));
+        assertFalse(sessions.contains("desktopP25BandplanOverrideHandoffPath"));
+    }
+
+    @Test
+    void deadViewerLaunchersAreGoneButTheBitsViewerRemainsReachable() throws Exception
+    {
+        String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
+        String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
+        String recordingViewer = Files.readString(ROOT.resolve("viewer/MessageRecordingViewer.java"));
+        String nxdnViewer = Files.readString(ROOT.resolve("viewer/NxdnViewer.java"));
+
+        assertTrue(application.contains("Message Recording Viewer (.bits)"));
+        assertTrue(manager.contains("new MessageRecordingViewer()"));
+        assertFalse(recordingViewer.contains("public static void main(String[] args)"));
+        assertFalse(nxdnViewer.contains("static void main()"));
+        assertFalse(nxdnViewer.contains("class A implements Listener<IMessage>"));
     }
 
     @Test

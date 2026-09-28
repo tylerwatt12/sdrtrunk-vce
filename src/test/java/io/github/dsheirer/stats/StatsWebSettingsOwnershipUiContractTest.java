@@ -25,8 +25,6 @@ class StatsWebSettingsOwnershipUiContractTest
         String bandplanRequest = function(source,
             "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
         String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides()");
-        String bandplanPrefill = function(source, "function p25OverrideCreateRouteProfile(parameters)");
-        String clearBandplanPrefill = function(source, "function clearP25OverrideCreateRoute()");
         String personal = function(source, "async function renderSettings()");
         String personalSummary = function(source, "function userPreferenceSummaryCards(preferences)");
         String personalReset = function(source, "function openResetUserPreferences(returnFocusSelector = null)");
@@ -43,15 +41,12 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
         assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
         assertFalse(bandplanRequest.contains("requestJson("));
-        assertTrue(bandplanPrefill.contains("parameters.get('createP25Override') !== '1'"));
-        assertTrue(bandplanPrefill.contains("wacn: hexValue('wacn', 5, 0xFFFFF)"));
-        assertTrue(bandplanPrefill.contains("rfss: hexValue('rfss', 2, 0xFF)"));
-        assertTrue(bandplanPrefill.contains("site: hexValue('site', 2, 0xFF)"));
-        assertTrue(bandplanPage.contains("p25OverrideSameScope(profile, requestedProfile)"));
-        assertTrue(bandplanPage.contains("list.prepend(requestedCard)"));
-        assertTrue(bandplanPage.contains("No detected OTA bands were available. Enter the replacement bands."));
-        assertTrue(bandplanPage.contains("clearP25OverrideCreateRoute()"));
-        assertTrue(clearBandplanPrefill.contains("window.history.replaceState({}, '', currentHref())"));
+        assertTrue(bandplanPage.contains("list.append(...documentValue.profiles.map(p25OverrideProfileCard))"));
+        assertTrue(bandplanPage.contains("const add = node('button', 'ui-button ui-button-secondary', " +
+            "'Add P25 override')"));
+        assertFalse(source.contains("createP25Override"));
+        assertFalse(source.contains("p25OverrideCreateRoute"));
+        assertFalse(source.contains("clearP25OverrideCreateRoute"));
         assertFalse(receiver.contains("section('Live timing', body)"));
         assertTrue(receiver.contains("const panel = node('section', 'section ui-section')"));
         assertTrue(receiver.contains("confirmed?.revision"));

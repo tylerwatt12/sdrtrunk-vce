@@ -39,7 +39,6 @@ import io.github.dsheirer.filter.FilterCatalog;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -1114,8 +1113,7 @@ public class StatsWebServerService implements AutoCloseable
         ReceiverActivityStatus loggingStatus = statsLoggingStatus();
         WebServerRuntimeState runtimeState = mRuntimeState;
         return new StatsWebNavigationState(runtimeState.running(), runtimeState.port(), runtimeState.https(),
-            loggingStatus.summaryActive(),
-            loggingStatus.detailedHistoryActive());
+            loggingStatus.summaryActive());
     }
 
     /** Arms the one-use local administrator sign-in opened by the desktop Web button. */
@@ -1130,63 +1128,6 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         return navigation.baseUri().resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH);
-    }
-
-    /** Arms the one-use local administrator sign-in and sends the browser to the Alias catalog after sign-in. */
-    public synchronized URI createDesktopAdministratorAliasHandoffUri()
-    {
-        StatsWebNavigationState navigation = getNavigationState();
-
-        if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff())
-        {
-            return null;
-        }
-
-        return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath());
-    }
-
-    /**
-     * Arms the one-use local administrator sign-in and sends the browser to one persisted Alias after sign-in.
-     */
-    public synchronized URI createDesktopAdministratorAliasHandoffUri(long aliasListId, long aliasId)
-    {
-        StatsWebNavigationState navigation = getNavigationState();
-
-        if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff())
-        {
-            return null;
-        }
-
-        return navigation.baseUri().resolve(WebSessionHttpController.desktopAliasHandoffPath(aliasListId, aliasId));
-    }
-
-    public synchronized URI createDesktopAdministratorStreamingHandoffUri()
-    {
-        StatsWebNavigationState navigation = getNavigationState();
-        if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff()) return null;
-        return navigation.baseUri().resolve(WebSessionHttpController.desktopStreamingHandoffPath());
-    }
-
-    /**
-     * Arms the one-use local administrator sign-in and opens a site-scoped P25 bandplan override draft.
-     */
-    public synchronized URI createDesktopAdministratorP25BandplanOverrideHandoffUri(P25SiteIdentity identity,
-                                                                                     String configurationId)
-    {
-        String handoffPath = WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(identity,
-            configurationId);
-        StatsWebNavigationState navigation = getNavigationState();
-
-        if(!navigation.running() || mWebAuthenticationService == null ||
-            !mWebAuthenticationService.armDesktopAdministratorHandoff())
-        {
-            return null;
-        }
-
-        return navigation.baseUri().resolve(handoffPath);
     }
 
     public synchronized void cancelDesktopAdministratorHandoff()

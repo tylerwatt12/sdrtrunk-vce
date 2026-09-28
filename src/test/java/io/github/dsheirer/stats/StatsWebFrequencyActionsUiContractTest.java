@@ -27,7 +27,7 @@ class StatsWebFrequencyActionsUiContractTest
         String html = Files.readString(INDEX_HTML);
 
         assertTrue(source.contains("radioreference: renderAdminRadioReferenceSettings"));
-        assertTrue(source.contains("function renderConfiguration()"));
+        assertFalse(source.contains("function renderConfiguration()"));
         assertFalse(source.contains("focused migration"));
         assertFalse(source.contains("function comingSoonPanel"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));

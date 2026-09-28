@@ -28,7 +28,7 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"228\">"));
         assertTrue(html.contains("/assets/app.css?v=200"));
         assertFalse(html.contains("/assets/web-call-player.js"));
-        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=283\"></script>"));
+        assertTrue(html.contains("<script type=\"module\" src=\"/assets/app.js?v=284\"></script>"));
         assertTrue(html.contains("<span>Main</span>"));
         assertFalse(html.contains("data-view=\"radio-systems\""));
         assertTrue(html.contains("id=\"icon-recording\""));

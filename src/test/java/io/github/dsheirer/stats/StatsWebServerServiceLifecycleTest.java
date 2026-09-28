@@ -21,7 +21,6 @@ import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -223,28 +222,14 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(service.isPrimaryAdminConfigured());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             URI initialOrigin = origin(initial.port());
-            URI aliasCatalogHandoff = service.createDesktopAdministratorAliasHandoffUri();
-            assertEquals(initialOrigin.resolve(WebSessionHttpController.desktopAliasHandoffPath()),
-                aliasCatalogHandoff);
-            URI handoffUri = service.createDesktopAdministratorAliasHandoffUri(aliasListId, 41L);
-            assertEquals(initialOrigin.resolve(
-                WebSessionHttpController.desktopAliasHandoffPath(aliasListId, 41L)), handoffUri);
+            URI handoffUri = service.createDesktopAdministratorHandoffUri();
+            assertEquals(initialOrigin.resolve(WebSessionHttpController.DESKTOP_HANDOFF_PATH), handoffUri);
             assertNull(handoffUri.getQuery());
             assertNull(handoffUri.getFragment());
-            P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
-            String p25ChannelConfigurationId = "00000000-0000-0000-0000-000000000001";
-            URI p25HandoffUri = service.createDesktopAdministratorP25BandplanOverrideHandoffUri(p25Site,
-                p25ChannelConfigurationId);
-            assertEquals(initialOrigin.resolve(
-                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
-                    p25ChannelConfigurationId)), p25HandoffUri);
-            assertNull(p25HandoffUri.getQuery());
-            assertNull(p25HandoffUri.getFragment());
             HttpResponse<String> handoff = client.send(HttpRequest.newBuilder(handoffUri)
                 .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(303, handoff.statusCode());
-            assertEquals("/?view=aliases&list=" + aliasListId + "&alias=41",
-                handoff.headers().firstValue("Location").orElseThrow());
+            assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             String cookie = setCookie.substring(0, setCookie.indexOf(';'));
             assertAuthenticated(client, initialOrigin, cookie, true);

@@ -22,8 +22,8 @@ class StatsWebChannelAdministrationUiContractTest
         assertFalse(Files.exists(Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java")));
 
         assertTrue(javascript.contains("ADMIN_CHANNELS: 'admin-channels'"));
-        assertTrue(javascript.contains("const catalogPath = editable ? '/api/v1/admin/channels' : " +
-            "'/api/v1/channel-catalog'"));
+        assertTrue(javascript.contains("requestChannelConfigurationJson('/api/v1/admin/channels'"));
+        assertFalse(javascript.contains("const catalogPath = editable"));
         assertTrue(javascript.contains("profile.sections.forEach"));
         assertTrue(javascript.contains("field.visible_when"));
         assertTrue(javascript.contains("action('Start', 'icon-play', 'START')"));

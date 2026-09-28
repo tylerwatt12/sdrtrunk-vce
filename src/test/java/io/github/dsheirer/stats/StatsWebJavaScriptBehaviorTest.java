@@ -49,7 +49,6 @@ class StatsWebJavaScriptBehaviorTest
         contract("P25 Visualizer camera", "p25-visualizer-camera.test.js", NETWORK_VISUALIZER),
         contract("channel patches", "channel-patches.test.js", APP_JAVASCRIPT),
         contract("CSS architecture", "css-architecture.test.js", APP_STYLESHEET),
-        contract("P25 band-plan override prefill", "p25-bandplan-override-prefill.test.js", APP_JAVASCRIPT),
         contract("page lifecycle", "page-lifecycle.test.js", PAGE_LIFECYCLE),
         contract("radio identity presentation", "radio-identity-presentation.test.js", APP_JAVASCRIPT),
         contract("external RF analysis", "radioresolve-analysis.test.js", RADIORESOLVE_ANALYSIS),

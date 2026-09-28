@@ -20,7 +20,6 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAccessSession;
@@ -362,53 +361,26 @@ class WebAccessControllersTest
             assertFalse(WebRequestSecurity.isLoopbackHost("attacker.example:" + server.getAddress().getPort(),
                 server.getAddress().getPort()));
 
-            assertThrows(IllegalArgumentException.class,
-                () -> WebSessionHttpController.desktopAliasHandoffPath(0, 41));
-            P25SiteIdentity p25Site = new P25SiteIdentity(0xBEE00, 0x49F, 1, 1);
             String configurationId = "abcdefab-cdef-abcd-efab-cdefabcdefab";
-            assertEquals(WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId,
-                WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site, configurationId));
-            assertThrows(IllegalArgumentException.class,
-                () -> WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
-                    configurationId.toUpperCase()));
             HttpResponse<String> arbitraryRedirect = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
                     "?target=https%3A%2F%2Fattacker.example").GET());
             assertEquals(400, arbitraryRedirect.statusCode());
-            for(String retiredPath : new String[]{"/channels", "/channels/" + configurationId})
+            for(String retiredPath : new String[]{"/channels", "/channels/" + configurationId, "/aliases",
+                "/aliases/12/41", "/streaming",
+                "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId})
             {
-                HttpResponse<String> retiredChannelHandoff = send(client,
+                HttpResponse<String> retiredHandoff = send(client,
                     request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + retiredPath).GET());
-                assertEquals(404, retiredChannelHandoff.statusCode());
-                assertTrue(retiredChannelHandoff.headers().firstValue("Location").isEmpty());
-                assertTrue(retiredChannelHandoff.headers().firstValue("Set-Cookie").isEmpty());
+                assertEquals(404, retiredHandoff.statusCode());
+                assertTrue(retiredHandoff.headers().firstValue("Location").isEmpty());
+                assertTrue(retiredHandoff.headers().firstValue("Set-Cookie").isEmpty());
             }
-            HttpResponse<String> malformedAliasTarget = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH + "/aliases/12/41/extra").GET());
-            assertEquals(404, malformedAliasTarget.statusCode());
-            HttpResponse<String> malformedP25Target = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/100000/49F/01/01/" + configurationId).GET());
-            assertEquals(404, malformedP25Target.statusCode());
-            HttpResponse<String> nonHexP25Target = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE0+/49F/01/01/" + configurationId).GET());
-            assertEquals(404, nonHexP25Target.statusCode());
-            HttpResponse<String> missingConfigurationId = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE00/49F/01/01").GET());
-            assertEquals(404, missingConfigurationId.statusCode());
-            HttpResponse<String> uppercaseConfigurationId = send(client,
-                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH +
-                    "/p25-bandplan-overrides/BEE00/49F/01/01/" + configurationId.toUpperCase()).GET());
-            assertEquals(404, uppercaseConfigurationId.statusCode());
 
             HttpResponse<String> handoff = send(client,
-                request(origin, WebSessionHttpController.desktopAliasHandoffPath()).GET());
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
             assertEquals(303, handoff.statusCode());
-            assertEquals("/?view=aliases",
-                handoff.headers().firstValue("Location").orElseThrow());
+            assertEquals("/", handoff.headers().firstValue("Location").orElseThrow());
             String setCookie = handoff.headers().firstValue("Set-Cookie").orElseThrow();
             assertTrue(setCookie.contains("HttpOnly"));
             assertTrue(setCookie.contains("SameSite=Strict"));
@@ -419,42 +391,17 @@ class WebAccessControllersTest
             assertTrue(session.get("authenticated").booleanValue());
             assertTrue(session.get("primary").booleanValue());
 
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            HttpResponse<String> exactHandoff = send(client,
-                request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))
+            HttpResponse<String> expiredHandoff = send(client,
+                request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH)
                     .header("Cookie", cookie).GET());
-            assertEquals(303, exactHandoff.statusCode());
-            assertEquals("/?view=aliases&list=12&alias=41",
-                exactHandoff.headers().firstValue("Location").orElseThrow());
-
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            HttpResponse<String> p25Handoff = send(client,
-                request(origin, WebSessionHttpController.desktopP25BandplanOverrideHandoffPath(p25Site,
-                    configurationId))
-                    .header("Cookie", cookie).GET());
-            assertEquals(303, p25Handoff.statusCode());
-            assertEquals("/?view=admin&tab=protocol-p25&createP25Override=1&wacn=BEE00&system=49F&rfss=01&site=01&configuration_id=" +
-                    configurationId,
-                p25Handoff.headers().firstValue("Location").orElseThrow());
-
-            assertTrue(authenticationService.armDesktopAdministratorHandoff());
-            HttpResponse<String> streamingHandoff = send(client,
-                request(origin, WebSessionHttpController.desktopStreamingHandoffPath()).header("Cookie", cookie).GET());
-            assertEquals(303, streamingHandoff.statusCode());
-            assertEquals("/?view=streaming", streamingHandoff.headers().firstValue("Location").orElseThrow());
-
-            HttpResponse<String> expiredExactHandoff = send(client,
-                request(origin, WebSessionHttpController.desktopAliasHandoffPath(12, 41))
-                    .header("Cookie", cookie).GET());
-            assertEquals(303, expiredExactHandoff.statusCode());
-            assertEquals("/?view=aliases&list=12&alias=41",
-                expiredExactHandoff.headers().firstValue("Location").orElseThrow(),
-                "An expired handoff must preserve the Alias route for ordinary sign-in");
-            assertTrue(expiredExactHandoff.headers().firstValue("Set-Cookie").isEmpty());
+            assertEquals(303, expiredHandoff.statusCode());
+            assertEquals("/", expiredHandoff.headers().firstValue("Location").orElseThrow());
+            assertTrue(expiredHandoff.headers().firstValue("Set-Cookie").isEmpty());
 
             HttpResponse<String> replay = send(client,
                 request(origin, WebSessionHttpController.DESKTOP_HANDOFF_PATH).GET());
             assertEquals(303, replay.statusCode());
+            assertEquals("/", replay.headers().firstValue("Location").orElseThrow());
             assertTrue(replay.headers().firstValue("Set-Cookie").isEmpty());
         }
         finally

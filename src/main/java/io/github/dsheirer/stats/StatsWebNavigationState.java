@@ -14,10 +14,8 @@ import java.net.URI;
  * @param port configured/listening port
  * @param https true when the embedded server is using TLS
  * @param summaryLoggingActive true when summary statistics are updating
- * @param detailedHistoryActive true when detailed activity history is updating
  */
-public record StatsWebNavigationState(boolean running, int port, boolean https, boolean summaryLoggingActive,
-                                      boolean detailedHistoryActive)
+public record StatsWebNavigationState(boolean running, int port, boolean https, boolean summaryLoggingActive)
 {
     /**
      * Loopback address used by desktop controls to open the embedded web interface.
@@ -25,29 +23,5 @@ public record StatsWebNavigationState(boolean running, int port, boolean https, 
     public URI baseUri()
     {
         return URI.create((https ? "https" : "http") + "://127.0.0.1:" + port + "/");
-    }
-
-    /**
-     * Loopback address for the web Alias editor.
-     */
-    public URI aliasEditorUri()
-    {
-        return baseUri().resolve("?view=aliases");
-    }
-
-    /**
-     * Loopback address for editing one persisted Alias.
-     *
-     * @param aliasListId persisted Alias List identity
-     * @param aliasId persisted Alias identity
-     */
-    public URI aliasEditorUri(long aliasListId, long aliasId)
-    {
-        if(aliasListId <= 0 || aliasId <= 0)
-        {
-            throw new IllegalArgumentException("Alias List and Alias IDs must be positive");
-        }
-
-        return baseUri().resolve("?view=aliases&list=" + aliasListId + "&alias=" + aliasId);
     }
 }

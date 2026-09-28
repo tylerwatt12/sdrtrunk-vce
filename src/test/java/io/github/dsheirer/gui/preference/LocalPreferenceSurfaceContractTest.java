@@ -50,6 +50,7 @@ class LocalPreferenceSurfaceContractTest
     void localWebBootstrapAndHardwareSetupRemainAvailable() throws Exception
     {
         String types = Files.readString(PREFERENCES.resolve("PreferenceEditorType.java"));
+        String factory = Files.readString(PREFERENCES.resolve("PreferenceEditorFactory.java"));
         String tree = Files.readString(PREFERENCES.resolve("UserPreferencesEditor.java"));
 
         for(String type: new String[]{"DIRECTORY", "JMBE_LIBRARY", "VOICE_DECRYPTION_MODULE", "SOURCE_TUNERS", "WEB_SERVER"})
@@ -58,6 +59,9 @@ class LocalPreferenceSurfaceContractTest
             assertTrue(tree.contains("PreferenceEditorType." + type));
         }
         assertTrue(Files.exists(PREFERENCES.resolve("stats/WebServerPreferenceEditor.java")));
+        assertFalse(factory.contains("UserPreferences userPreferences)"));
+        assertFalse(tree.contains("UserPreferencesEditor(UserPreferences userPreferences)"));
+        assertTrue(tree.contains("UserPreferencesEditor(UserPreferences userPreferences, StatsWebServerService"));
     }
 
     @Test

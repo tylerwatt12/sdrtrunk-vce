@@ -1,4 +1,4 @@
-import * as routeFoundation from './core/routes.js?v=7';
+import * as routeFoundation from './core/routes.js?v=8';
 import * as preferenceSchema from './core/preference-schema.js';
 import { Controller as UserPreferenceController } from './core/user-preferences.js';
 import * as tableLayouts from './core/table-layout.js';
@@ -44,9 +44,6 @@ const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
 const ALIAS_TRANSFER_IMPORT_MAX_BYTES = 128 * 1024 * 1024;
 const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
 const ALIAS_TRANSFER_EXPORT_START_TIMEOUT_MS = 30_000;
-const P25_OVERRIDE_CREATE_ROUTE_KEYS = Object.freeze([
-  'createP25Override', 'wacn', 'system', 'rfss', 'site', 'configuration_id'
-]);
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
@@ -694,10 +691,6 @@ function normalizedAccessSession(value) {
 function capabilityAllowed(capability) {
   if (!accessSessionAvailable) return false;
   return accessSession.capabilities?.[capability] === true;
-}
-
-function viewAccessCapability(view) {
-  return applicationRoutes?.[view]?.capability || null;
 }
 
 function routeDefinitionAllowed(definition) {
@@ -10868,7 +10861,7 @@ async function renderDashboard() {
     content.append(signalHost);
     const signalPromise = signalHealthSection();
     const directoryPromise = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-      renderNestedRadioDirectory(renderContext, true) : Promise.resolve();
+      renderNestedRadioDirectory(renderContext) : Promise.resolve();
     try {
       const signalHealth = await signalPromise;
       if (renderIsCurrent(renderContext)) signalHost.replaceWith(signalHealth);
@@ -15985,11 +15978,6 @@ function radioSystemsDirectoryDetails(row) {
   ].filter(Boolean).join(' · ');
 }
 
-async function renderRadioSystems() {
-  const renderContext = captureRenderContext();
-  await renderModernChannelCatalog(renderContext, false);
-}
-
 async function renderRadioSystem() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
@@ -18079,45 +18067,6 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   }
 }
 
-function channelMode(row) {
-  const family = protocolFamily(row);
-  const decoder = decoderLabel(row.decoder, true);
-  return family && decoder && family.toUpperCase() === decoder.toUpperCase() ? family :
-    [family, decoder].filter(Boolean).join(' · ');
-}
-
-function channelDetails(row) {
-  if (String(row.channel_kind || '').toUpperCase() === 'TRUNKED') return channelDirectoryRfIdentity(row);
-  return isP25(row) && row.nac != null ? `NAC ${hex(row.nac, 3)}` : '';
-}
-
-function channelDirectoryColumns() {
-  return [
-    { id: 'name', label: 'Name', render: (row) => {
-      const label = row.name || 'Unnamed channel';
-      const target = entityRefHref(row.entity_ref);
-      return target ? anchor(label, target) : label;
-    }, className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
-    { id: 'type', label: 'Type', render: (row) =>
-      String(row.channel_kind || '').toUpperCase() === 'TRUNKED' ? 'Trunked' : 'Conventional',
-      sort: 'type', sortValue: (row) => row.channel_kind || '' },
-    { id: 'system', label: 'System / Site', render: (row) =>
-      [row.system_name, row.site_name].filter(Boolean).join(' · '),
-      sortValue: (row) => `${row.system_name || ''}\u0000${row.site_name || ''}` },
-    { id: 'mode', label: 'Mode', render: channelMode, sort: 'decoder', sortValue: channelMode },
-    { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
-      render: (row) => frequency(row.primary_frequency_hz), className: 'numeric', sort: 'frequency',
-      sortValue: (row) => Number(row.primary_frequency_hz || 0) },
-    { id: 'details', label: 'Details', render: channelDetails, sortValue: channelDetails },
-    { id: 'logical-calls', label: 'Logical Calls', render: (row) => number(row.logical_call_count), className: 'numeric', sort: 'logical_call_count', sortValue: (row) => Number(row.logical_call_count || 0) },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
-  ];
-}
-
-function canManageChannels() {
-  return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS);
-}
-
 function channelAdminFrequencyList(values) {
   return (values || []).map((value) => frequency(value)).filter(Boolean).join(', ');
 }
@@ -18296,7 +18245,7 @@ function asyncControlFocusGuard(control) {
   };
 }
 
-function channelAdminColumns(selected, state, statusHost, editable, selectionChanged, renderSelectionHeader,
+function channelAdminColumns(selected, state, selectionChanged, renderSelectionHeader,
   moveAutoStart) {
   const selectedChanged = (id, checked, shiftKey, checkbox) => {
     const rows = [...checkbox.closest('tbody').querySelectorAll('tr[data-id]')];
@@ -18317,8 +18266,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     state.selectionAnchor = id;
     selectionChanged?.();
   };
-  const columns = [];
-  if (editable) columns.push(
+  const columns = [
     { id: 'select', label: 'Select', className: 'channel-select-cell',
       essential: true, fixed: true, renderHeader: renderSelectionHeader, render: (row) => {
       const checkbox = node('input');
@@ -18331,11 +18279,10 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       checkbox.addEventListener('change', () => selectedChanged(row.configuration_id,
         checkbox.checked, shiftPressed, checkbox));
       return checkbox;
-    } });
-  columns.push(
+    } },
     { id: 'name', label: 'Name', render: (row) => {
       const actions = node('div', 'channel-name-actions');
-      if (editable && row.editable !== false) {
+      if (row.editable !== false) {
         const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
         edit.type = 'button';
         edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
@@ -18351,7 +18298,7 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
         locked.title = row.restriction_message || 'This configuration is read-only on the web';
         actions.append(locked);
       }
-      actions.append(channelInlineNavigation(row, !(editable && row.editable !== false)));
+      actions.append(channelInlineNavigation(row, row.editable === false));
       return actions;
     }, sortValue: (row) => row.name || '' },
     { id: 'frequency', label: 'Frequencies', fullLabel: 'Frequencies (MHz)', render: (row) =>
@@ -18360,12 +18307,8 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
     { id: 'status', label: 'Status', render: (row) => uiPill(
       row.processing_state === 'RUNNING' ? 'Running' : 'Stopped',
       row.processing_state === 'RUNNING' ? 'success' : 'neutral',
-      row.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') }
-  );
-  if (editable) columns.push(
+      row.processing_state === 'RUNNING' ? 'icon-play' : 'icon-stop') },
     { id: 'auto-start', label: 'Order', fullLabel: 'Startup order', className: 'numeric channel-startup-order', render: (row) => {
-      if (!editable) return node('span', 'channel-order-readonly',
-        row.auto_start_order == null ? 'Off' : String(row.auto_start_order));
       const controls = node('div', 'channel-order-controls');
       const restoreControls = () => {
         earlier.disabled = false;
@@ -18404,12 +18347,10 @@ function channelAdminColumns(selected, state, statusHost, editable, selectionCha
       later.setAttribute('aria-label', later.title);
       controls.append(earlier, order, later);
       return controls;
-    }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order }
-  );
-  columns.push(
+    }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
     { id: 'alias-list', label: 'Alias List', key: 'alias_list_name',
       sortValue: (row) => row.alias_list_name || '' }
-  );
+  ];
   return columns;
 }
 
@@ -18722,18 +18663,14 @@ function radioDirectoryEmbeddedPanel(view, directory) {
   return section('Radio directory', body);
 }
 
-function renderNestedRadioDirectory(renderContext, embedded = false) {
-  if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, embedded);
+function renderNestedRadioDirectory(renderContext) {
+  if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
   const loading = createAsyncSection('Radio Directory', {
     bare: true,
     loadingMessage: 'Loading radio systems and channels…',
     errorMessage: 'The radio directory could not be loaded.'
   });
-  if (embedded) {
-    content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
-  } else if (!beginPage(renderContext, pageHeader('Radio Directory',
-    'Browse systems, sites, and conventional channels'),
-    radioDirectoryPerspectiveControl('systems'), loading.element)) return;
+  content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
 
   const loadDirectory = async (options = {}) => {
     const [catalog, systems] = await Promise.all([
@@ -18764,7 +18701,7 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
     ], activeView, (value) => { activeView = value; draw(); });
     filters.setAttribute('aria-label', 'Filter radio directory');
     const exportLink = exportCsvLink('channels');
-    const refresh = uiActionButton('', 'icon-refresh', () => embedded ? renderDashboard() : renderRadioSystems(),
+    const refresh = uiActionButton('', 'icon-refresh', () => renderDashboard(),
       'ui-button ui-button-secondary ui-icon-button');
     refresh.title = 'Refresh radio directory';
     refresh.setAttribute('aria-label', refresh.title);
@@ -18821,35 +18758,28 @@ function renderNestedRadioDirectory(renderContext, embedded = false) {
   }, renderContext);
 }
 
-async function renderModernChannelCatalog(renderContext, editable) {
-  if (!editable) return renderNestedRadioDirectory(renderContext);
-  const loading = createAsyncSection(editable ? 'Channels' : 'Receiver Channels', {
-    loadingMessage: editable ? 'Loading channel configuration…' : 'Loading receiver channels…',
-    errorMessage: editable ? 'Channel configuration could not be loaded.' :
-      'The radio directory could not be loaded.'
+async function renderModernChannelCatalog(renderContext) {
+  const loading = createAsyncSection('Channels', {
+    loadingMessage: 'Loading channel configuration…',
+    errorMessage: 'Channel configuration could not be loaded.'
   });
   loading.element.classList.add('channel-catalog-section');
-  if (!beginPage(renderContext, pageHeader(editable ? 'Channels' : 'Radio Directory', editable ?
-    'Create, configure, order, start, and stop receiver channels' :
-    'Browse every configured trunked and conventional channel and see what is running'), loading.element)) return;
+  if (!beginPage(renderContext, pageHeader('Channels',
+    'Create, configure, order, start, and stop receiver channels'), loading.element)) return;
   await loading.load(async () => {
-    const catalogPath = editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
     const [catalog, protocols, options] = await Promise.all([
-      requestChannelConfigurationJson(catalogPath, { csrf: false }),
-      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/protocols', { csrf: false }) :
-        Promise.resolve(null),
-      editable ? requestChannelConfigurationJson('/api/v1/admin/channels/options', { csrf: false }) :
-        Promise.resolve(null)
+      requestChannelConfigurationJson('/api/v1/admin/channels', { csrf: false }),
+      requestChannelConfigurationJson('/api/v1/admin/channels/protocols', { csrf: false }),
+      requestChannelConfigurationJson('/api/v1/admin/channels/options', { csrf: false })
     ]);
     return { catalog, protocols, options };
   }, ({ catalog, protocols, options }) => {
     const selected = new Set();
     const state = { revision: Number(catalog.revision), catalog, visibleRows: [], selectionAnchor: null };
-    const wrapper = node('div', `channel-admin-catalog ui-catalog ${editable ? 'editor-workspace' :
-      'data-workspace'}`);
-    wrapper.dataset.uiDensity = editable ? 'comfortable' : 'compact';
+    const wrapper = node('div', 'channel-admin-catalog ui-catalog editor-workspace');
+    wrapper.dataset.uiDensity = 'comfortable';
     const summaryHost = node('div');
-    summaryHost.append(channelSummaryCards(catalog, editable));
+    summaryHost.append(channelSummaryCards(catalog, true));
     const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
     const searchWrap = node('label', 'ui-search');
     searchWrap.append(iconGlyph('icon-search'));
@@ -18884,11 +18814,10 @@ async function renderModernChannelCatalog(renderContext, editable) {
     const statusHost = node('div', 'channel-admin-status');
     statusHost.setAttribute('role', 'status');
     statusHost.setAttribute('aria-live', 'polite');
-    if (editable) toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
+    toolbar.append(uiActionButton('New channel', 'icon-plus', () =>
       openChannelEditorModal('create', null, { protocols, options }), 'ui-button ui-button-primary'));
     const exportLink = exportCsvLink('channels');
-    const refresh = uiActionButton('', 'icon-refresh', () =>
-      editable ? renderChannelSetup() : renderRadioSystems(), 'ui-button ui-icon-button');
+    const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(), 'ui-button ui-icon-button');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.title = 'Refresh channels';
     toolbar.append(searchWrap, viewToggle, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
@@ -18904,7 +18833,6 @@ async function renderModernChannelCatalog(renderContext, editable) {
     let disableAutoStart = null;
     let selectAll = null;
     const updateSelection = () => {
-      if (!editable) return;
       const visibleIds = new Set(state.visibleRows.map((row) => row.configuration_id));
       const visibleSelected = [...selected].filter((id) => visibleIds.has(id)).length;
       const hiddenSelected = selected.size - visibleSelected;
@@ -18955,7 +18883,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
       state.catalog = refreshed;
       const available = new Set((refreshed.channels || []).map((row) => row.configuration_id));
       [...selected].filter((id) => !available.has(id)).forEach((id) => selected.delete(id));
-      summaryHost.replaceChildren(channelSummaryCards(refreshed, editable));
+      summaryHost.replaceChildren(channelSummaryCards(refreshed, true));
       if (autoStartVerificationNotice) {
         if (statusHost.firstElementChild === autoStartVerificationNotice) statusHost.replaceChildren();
         autoStartVerificationNotice = null;
@@ -19052,14 +18980,12 @@ async function renderModernChannelCatalog(renderContext, editable) {
           }, statusHost);
         } catch (_) { /* The inline error remains actionable. */ }
       }, `ui-button ${danger ? 'ui-button-danger' : 'ui-button-secondary'}`);
-    if (editable) {
-      enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
-      disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
-      selectedBar.append(selectedSummary, hiddenSummary,
-        action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
-        enableAutoStart, disableAutoStart, action('Clone', 'icon-copy', 'CLONE'),
-        action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
-    }
+    enableAutoStart = action('Enable auto-start', 'icon-plus', 'ENABLE_AUTO_START');
+    disableAutoStart = action('Disable auto-start', 'icon-clear-queue', 'DISABLE_AUTO_START');
+    selectedBar.append(selectedSummary, hiddenSummary,
+      action('Start', 'icon-play', 'START'), action('Stop', 'icon-stop', 'STOP'),
+      enableAutoStart, disableAutoStart, action('Clone', 'icon-copy', 'CLONE'),
+      action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
 
     const filteredRows = () => {
       const term = search.value.trim().toLowerCase();
@@ -19075,10 +19001,10 @@ async function renderModernChannelCatalog(renderContext, editable) {
     let channelTable = null;
     const renderChannelTable = () => {
       channelTable = table(state.visibleRows,
-        channelAdminColumns(selected, state, statusHost, editable, updateSelection, renderSelectionHeader,
+        channelAdminColumns(selected, state, updateSelection, renderSelectionHeader,
           moveAutoStart),
         'No channels match this view', {
-          type: editable ? 'channel-catalog-admin-v2' : 'channel-catalog-readonly-v1',
+          type: 'channel-catalog-admin-v2',
           sortable: false, controller: tableController,
           ...(activeCatalogView === 'grouped' ? {
             rowGroup: channelProtocolGroup, rowGroupNoun: 'channel',
@@ -19104,7 +19030,7 @@ async function renderModernChannelCatalog(renderContext, editable) {
     };
     search.addEventListener('input', () => draw());
     draw({ rebuild: true });
-    wrapper.append(summaryHost, toolbar, editable ? selectedBar : node('span'), tableHost);
+    wrapper.append(summaryHost, toolbar, selectedBar, tableHost);
     updateSelection();
 
     let refreshInFlight = false;
@@ -19113,13 +19039,12 @@ async function renderModernChannelCatalog(renderContext, editable) {
           !wrapper.isConnected || document.hidden) return;
       refreshInFlight = true;
       try {
-        const refreshed = await requestJson(editable ? '/api/v1/admin/channels' : '/api/v1/channel-catalog',
-          { csrf: false });
+        const refreshed = await requestJson('/api/v1/admin/channels', { csrf: false });
         if (applyCatalog(refreshed)) draw();
       } catch (_) { /* Preserve the last confirmed catalog; explicit actions still surface errors. */ }
       finally { refreshInFlight = false; }
     }, 5_000);
-    const requestedChannel = editable ? route.get('channel') : null;
+    const requestedChannel = route.get('channel');
     if (requestedChannel && state.catalog.channels?.some((row) =>
       row.configuration_id === requestedChannel && row.editable !== false)) {
       route.delete('channel');
@@ -19136,10 +19061,6 @@ function channelValueAt(value, path) {
 
 function channelMHz(value) {
   return value == null || value === '' ? '' : String(Number(value) / 1_000_000);
-}
-
-function channelFrequencyLines(values) {
-  return (values || []).map(channelMHz).join('\n');
 }
 
 function channelCreationProtocolLabel(profile) {
@@ -20106,7 +20027,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
 
 async function renderChannelSetup() {
   const renderContext = captureRenderContext();
-  await renderModernChannelCatalog(renderContext, true);
+  await renderModernChannelCatalog(renderContext);
 }
 
 function identityActivityValue(row) {
@@ -20663,7 +20584,6 @@ function adminUserRecord(value) {
     username: String(value?.username || '').trim(),
     tier: accessTierFromWire(value?.tier) || 'PUBLIC',
     passwordChangedAtEpochMillis: Number(value?.password_changed_at_epoch_millis || 0),
-    authRevision: Number(value?.auth_revision || 0),
     primaryAdmin: value?.primary === true
   };
 }
@@ -20879,13 +20799,11 @@ function adminAccessPolicies(response) {
   if (!Array.isArray(response?.capabilities)) return [];
   return response.capabilities.map((entry) => {
     const requiredTier = accessTierFromWire(entry?.required_tier);
-    const defaultTier = accessTierFromWire(entry?.default_tier);
-    if (!requiredTier || !defaultTier) return null;
+    if (!requiredTier) return null;
     return {
       id: typeof entry?.id === 'string' ? entry.id.trim() : '',
       displayName: typeof entry?.display_name === 'string' ? entry.display_name.trim() : '',
       requiredTier,
-      defaultTier,
       configurable: entry?.configurable === true
     };
   }).filter((entry) => entry?.id && entry.displayName);
@@ -22070,66 +21988,6 @@ function p25OverrideNumber(value, divisor) {
   return String(Number((Number(value) / divisor).toFixed(6)));
 }
 
-function p25OverrideCreateRouteProfile(parameters) {
-  if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
-    return null;
-  }
-  const hexValue = (name, width, maximum) => {
-    const value = String(parameters.get(name) || '').trim();
-    if (!new RegExp(`^[0-9A-Fa-f]{${width}}$`).test(value)) return null;
-    const parsed = Number.parseInt(value, 16);
-    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : null;
-  };
-  const profile = {
-    wacn: hexValue('wacn', 5, 0xFFFFF),
-    system: hexValue('system', 3, 0xFFF),
-    rfss: hexValue('rfss', 2, 0xFF),
-    site: hexValue('site', 2, 0xFF)
-  };
-  return Object.values(profile).every((value) => value !== null) ? profile : null;
-}
-
-function p25OverrideCreateRouteConfigurationId(parameters) {
-  if (!parameters || typeof parameters.get !== 'function' || parameters.get('createP25Override') !== '1') {
-    return null;
-  }
-  return canonicalConfigurationId(parameters.get('configuration_id')) || null;
-}
-
-function p25OverrideDetectedBands(documentValue, requestedProfile) {
-  const detectedProfile = {
-    wacn: documentValue?.wacn,
-    system: documentValue?.system_id,
-    rfss: documentValue?.rfss,
-    site: documentValue?.site_id
-  };
-  if (documentValue?.band_source !== 'OTA' || !p25OverrideSameScope(detectedProfile, requestedProfile) ||
-      !Array.isArray(documentValue.home_bands)) return [];
-  const bands = documentValue.home_bands.map((row) => ({
-    identifier: row?.band,
-    type: row?.tdma === true || row?.tdma === 1 ? 'TDMA' : 'FDMA',
-    base_frequency: row?.base_hz,
-    bandwidth: row?.bandwidth_hz,
-    channel_spacing: row?.spacing_hz,
-    transmit_offset: row?.transmit_offset_hz
-  }));
-  const valid = bands.every((band) => [band.identifier, band.base_frequency, band.bandwidth,
-    band.channel_spacing, band.transmit_offset].every(Number.isSafeInteger));
-  const unique = new Set(bands.map((band) => band.identifier)).size === bands.length;
-  return valid && unique ? bands : [];
-}
-
-function p25OverrideSameScope(left, right) {
-  if (!left || !right) return false;
-  return ['wacn', 'system', 'rfss', 'site'].every((field) =>
-    Number.isInteger(left[field]) && left[field] === right[field]);
-}
-
-function clearP25OverrideCreateRoute() {
-  P25_OVERRIDE_CREATE_ROUTE_KEYS.forEach((key) => route.delete(key));
-  window.history.replaceState({}, '', currentHref());
-}
-
 function p25OverrideBandRow(band = null) {
   const row = node('div', 'p25-override-band-row');
   const type = node('select');
@@ -22308,53 +22166,8 @@ async function renderAdminP25BandplanOverrides() {
   try {
     const documentValue = await requestP25BandplanOverrides();
     if (route.toString() !== renderRoute) return;
-    const createRequested = route.has('createP25Override');
-    const requestedProfile = p25OverrideCreateRouteProfile(route);
-    const requestedConfigurationId = p25OverrideCreateRouteConfigurationId(route);
-    let requestedCard = null;
-    const cards = documentValue.profiles.map((profile) => {
-      const card = p25OverrideProfileCard(profile);
-      if (requestedProfile && p25OverrideSameScope(profile, requestedProfile)) requestedCard = card;
-      return card;
-    });
-    list.append(...cards);
-    if (createRequested) {
-      if (requestedProfile && requestedConfigurationId) {
-        if (!requestedCard) {
-          let detectedBands = [];
-          let detectedBandsLoaded = true;
-          try {
-            const detected = await api(channelApiPath(requestedConfigurationId, 'frequency-bands'));
-            detectedBands = p25OverrideDetectedBands(detected, requestedProfile);
-          } catch (_) {
-            detectedBandsLoaded = false;
-          }
-          if (route.toString() !== renderRoute) return;
-          const draft = detectedBands.length ? { ...requestedProfile, bands: detectedBands } : requestedProfile;
-          requestedCard = p25OverrideProfileCard(draft);
-          list.prepend(requestedCard);
-          if (detectedBands.length) {
-            message.textContent = `Site override prepared with ${detectedBands.length} detected OTA band${detectedBands.length === 1 ? '' : 's'}. Review them before saving; other bands may not have been detected yet.`;
-          } else if (detectedBandsLoaded) {
-            message.textContent = 'No detected OTA bands were available. Enter the replacement bands.';
-          } else {
-            message.textContent = 'Detected OTA bands could not be loaded. Enter the replacement bands.';
-          }
-        } else {
-          message.textContent = 'This site already has an override.';
-        }
-        requestedCard.open = true;
-        window.requestAnimationFrame(() => {
-          requestedCard.scrollIntoView({ block: 'center' });
-          requestedCard.querySelector('[data-p25-override-field="identifier"]')?.focus({ preventScroll: true });
-        });
-      } else {
-        message.textContent = 'A site override could not be created because the P25 identity is invalid.';
-      }
-      clearP25OverrideCreateRoute();
-    } else {
-      message.textContent = '';
-    }
+    list.append(...documentValue.profiles.map(p25OverrideProfileCard));
+    message.textContent = '';
     add.disabled = false;
     save.disabled = false;
   } catch (error) {
@@ -22818,12 +22631,6 @@ function settingsCard(title, description, ...items) {
   body.append(...items);
   card.append(header, body);
   return card;
-}
-
-function adminWorkflowNote(title, description) {
-  const note = node('div', 'admin-workflow-note');
-  note.append(node('strong', '', title), node('p', '', description));
-  return note;
 }
 
 function settingsCardGrid(...cards) {
@@ -24451,17 +24258,6 @@ async function renderTuners() {
   }
 }
 
-async function renderConfiguration() {
-  const requested = route.get('tab') || 'scan-lists';
-  if (requested === 'radioreference') return renderAdminRadioReferenceSettings();
-  if (requested === 'streaming') return renderStreaming();
-  return renderAdminScanLists();
-}
-
-function renderHardware() {
-  return renderTuners();
-}
-
 function adminSystemStatusSection(includeControls = false) {
   const database = serviceStatus?.database;
   const logging = statsLoggingState();
@@ -25538,7 +25334,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'map', 'network-visualizer', 'scanner', 'configuration', 'hardware', 'scan-lists', 'radioreference', 'streaming',
+      !['live', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
         'tuners', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
@@ -25552,11 +25348,9 @@ applicationRoutes = routeFoundation.createRegistry({
   'network-visualizer': renderP25Visualizer,
   scanner: renderScanner,
   'tuner-spectrum': renderTunerSpectrum,
-  'radio-systems': renderRadioSystems,
   'radio-system': renderRadioSystem,
   'group-identity': renderGroupIdentity,
   radio: renderRadio,
-  channels: renderRadioSystems,
   'channel-setup': renderChannelSetup,
   channel: renderChannel,
   aliases: renderAliases,
@@ -25564,8 +25358,6 @@ applicationRoutes = routeFoundation.createRegistry({
   radioreference: renderAdminRadioReferenceSettings,
   streaming: renderStreaming,
   tuners: renderTuners,
-  configuration: renderConfiguration,
-  hardware: renderHardware,
   admin: renderAdmin,
   settings: renderSettings,
   credits: renderCredits
@@ -25573,21 +25365,7 @@ applicationRoutes = routeFoundation.createRegistry({
 
 async function render() {
   setNavigationOpen(false);
-  let view = routeFoundation.requestedView(route);
-  if (view === 'channels' || view === 'radio-systems') {
-    route.set('view', 'dashboard');
-    route.set('tab', 'health');
-    route.delete('channel');
-    window.history.replaceState({}, '', currentHref());
-    view = 'dashboard';
-  }
-  if (view === 'identities') {
-    route.set('view', 'dashboard');
-    route.set('tab', 'health');
-    route.set('directory_view', 'coverage');
-    window.history.replaceState({}, '', currentHref());
-    view = 'dashboard';
-  }
+  const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;
   restorePlaybackBarBeforeRender();

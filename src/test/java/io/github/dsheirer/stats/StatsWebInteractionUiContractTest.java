@@ -340,11 +340,10 @@ class StatsWebInteractionUiContractTest
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
-        String systems = function(source, "async function renderRadioSystems()");
-        String directory = function(source, "function renderNestedRadioDirectory(renderContext, embedded = false)");
-        assertTrue(systems.contains("renderModernChannelCatalog(renderContext, false)"));
-        assertTrue(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
-        assertTrue(directory.contains("'Browse systems, sites, and conventional channels'"));
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext)");
+        assertFalse(source.contains("function renderRadioSystems()"));
+        assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
+        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', loading.element)"));
         assertTrue(directory.contains("radioDirectoryTrunkedGroups(directory.catalog, directory.systems)"));
         assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
         assertTrue(directory.contains("value: 'running'"));
@@ -542,7 +541,7 @@ class StatsWebInteractionUiContractTest
             .contains("exportCsvLink('channel-frequencies', { configuration_id: channel.configuration_id })"));
         assertTrue(function(source, "async function renderChannelNeighbors(channel, renderContext)")
             .contains("exportCsvLink('channel-neighbors', { configuration_id: channel.configuration_id })"));
-        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext, editable)")
+        assertTrue(function(source, "async function renderModernChannelCatalog(renderContext)")
             .contains("exportCsvLink('channels')"));
         assertTrue(function(source, "async function renderChannelGroupIdentities(configurationId)")
             .contains("exportCsvLink('channel-group-identities', { configuration_id: configurationId })"));
@@ -1063,7 +1062,7 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(html.contains("data-view=\"scan-lists\" href=\"/?view=scan-lists\""));
         assertTrue(source.contains("'scan-lists': renderAdminScanLists"));
-        assertTrue(source.contains("return renderAdminScanLists()"));
+        assertFalse(source.contains("function renderConfiguration()"));
         assertTrue(scanLists.contains("const heading = pageHeader('Scan Lists'"));
         assertTrue(scanLists.contains("heading.classList.add('scan-list-page-header')"));
         assertTrue(source.contains("function renderStreaming()"));

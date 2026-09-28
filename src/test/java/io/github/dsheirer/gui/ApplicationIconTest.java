@@ -84,8 +84,7 @@ class ApplicationIconTest
         String setupWizard = source("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java");
         String basebandRecording =
             source("src/main/java/io/github/dsheirer/gui/diagnostic/BasebandRecordingDialog.java");
-        String recordingViewer =
-            source("src/main/java/io/github/dsheirer/gui/viewer/MessageRecordingViewer.java");
+        String windowManager = source("src/main/java/io/github/dsheirer/gui/JavaFxWindowManager.java");
         String migrationProgress =
             source("src/main/java/io/github/dsheirer/database/upgrade/ApplicationMigrationProgressDialog.java");
         String migrationSuccess =
@@ -99,9 +98,9 @@ class ApplicationIconTest
         assertTrue(setupWizard.contains("ApplicationIcon.apply(this);"));
         assertTrue(setupWizard.contains("ApplicationIcon.applyTaskbarIcon();"));
         assertTrue(basebandRecording.contains("ApplicationIcon.apply(this);"));
-        assertTrue(recordingViewer.contains("ApplicationIcon.applyTaskbarIcon();"));
-        assertTrue(recordingViewer.contains("ApplicationIcon.apply(primaryStage);"));
-        assertTrue(recordingViewer.contains("VCE - Message Recording Viewer (.bits)"));
+        assertTrue(windowManager.contains("ApplicationIcon.applyTaskbarIcon();"));
+        assertTrue(windowManager.contains("ApplicationIcon.apply(mRecordingViewerStage);"));
+        assertTrue(windowManager.contains("VCE - Message Recording Viewer (.bits)"));
         assertTrue(migrationProgress.contains("ApplicationIcon.apply(dialog);"));
         assertTrue(migrationProgress.contains("ApplicationIcon.applyTaskbarIcon();"));
         assertTrue(migrationSuccess.contains("ApplicationIcon.apply(dialog);"));

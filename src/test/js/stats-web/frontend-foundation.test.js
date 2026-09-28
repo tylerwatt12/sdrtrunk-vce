@@ -594,6 +594,10 @@ async function main() {
   assert.match(userTierSource, /account\.primaryAdmin \? 'Admin' : 'User'/);
   assert.doesNotMatch(userTierSource, /node\('select'/);
   assert.doesNotMatch(userTierSource, /method: 'PUT'/);
+  assert.doesNotMatch(functionBinding(appSource, 'adminUserRecord'), /auth_revision|authRevision/,
+    'The browser must not retain the server-only credential revision.');
+  assert.doesNotMatch(functionBinding(appSource, 'adminAccessPolicies'), /default_tier|defaultTier/,
+    'The browser must not retain an unused access-policy default.');
   const managedUserModalSource = functionBinding(appSource, 'openManagedUserModal');
   assert.doesNotMatch(managedUserModalSource, /formField\('Access (?:tier|level)'/);
   assert.doesNotMatch(managedUserModalSource, /tier: accessTierToWire/);
@@ -777,7 +781,7 @@ async function main() {
   const radioDirectorySource = functionBinding(appSource, 'renderNestedRadioDirectory');
   assert.match(radioDirectorySource, /radioDirectoryEmbeddedPanel\('systems', loading\.element\)/);
   assert.match(radioDirectorySource, /bare: true/);
-  assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext, embedded\)/);
+  assert.match(radioDirectorySource, /renderAliasCoverageDirectory\(renderContext, true\)/);
   assert.match(radioDirectorySource,
     /radioDirectoryCardSection\('Trunked Systems', trunkedSystems, 'system'/);
   assert.match(radioDirectorySource,
@@ -943,7 +947,7 @@ async function main() {
     'aliasEditorSourceBreakdownColumns', 'aliasEditorBaseColumns', 'scanListMemberColumns',
     'dashboardIdentityColumns', 'radioSystemRadioColumns', 'p25ChannelFrequencyColumns',
     'trunkedChannelFrequencyColumns', 'p25ChannelNeighborColumns', 'trunkedChannelNeighborColumns',
-    'activityColumns', 'channelDirectoryColumns', 'aliasCoverageAliasesColumns',
+    'activityColumns', 'aliasCoverageAliasesColumns',
     'aliasCoverageUnassignedColumns', 'channelGroupIdentityColumns', 'channelRadioColumns'
   ].forEach((name) => {
     const ids = [...functionBinding(appSource, name).matchAll(/\bid\s*:\s*'([^']+)'/g)]
@@ -1091,15 +1095,6 @@ async function main() {
   assert.match(scannerRenderer,
     /settleUserPreferenceMutation\(\(preferences\) => \{\s*preferences\.scanner\.detail_mode = selectedMode/,
     'Scanner detail modes must use the shared signed-in or anonymous preference mutation path');
-
-  const decoderLabel = vm.runInNewContext(
-    `(function(value, compact = false) ${functionBinding(appSource, 'decoderLabel')})`);
-  const channelMode = vm.runInNewContext(
-    `(function(row) ${functionBinding(appSource, 'channelMode')})`, {
-      protocolFamily: (row) => row.protocol, decoderLabel
-    });
-  assert.equal(channelMode({ protocol: 'DMR', decoder: 'DMR' }), 'DMR');
-  assert.equal(channelMode({ protocol: 'P25', decoder: 'P25_PHASE1' }), 'P25 · P25 P1');
 
   const timeslotLabel = vm.runInNewContext(
     `(function(value) ${functionBinding(appSource, 'timeslotLabel')})`, { identifierNumber });
@@ -1326,6 +1321,10 @@ async function main() {
   assert.equal(registry['radio-system'].parent, 'dashboard');
   assert.equal(registry.channel.parent, 'dashboard');
   assert.equal(registry['channel-setup'].allowed(), true);
+  ['radio-systems', 'channels', 'configuration', 'hardware'].forEach((id) => {
+    assert.equal(registry[id], undefined, `${id} must not remain as a compatibility route`);
+    assert.equal(routes.resolve(registry, `?view=${id}`), null);
+  });
   assert.throws(() => routes.createRegistry({ ...handlers, extra: () => {} }, () => true), /Unknown route/);
   assert.throws(() => routes.createRegistry({ ...handlers, scanner: null }, () => true), /Missing route/);
 

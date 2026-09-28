@@ -19,12 +19,8 @@
 
 package io.github.dsheirer.gui.viewer;
 
-import io.github.dsheirer.gui.ApplicationIcon;
 import io.github.dsheirer.preference.UserPreferences;
-import javafx.application.Application;
-import javafx.application.Platform;
 import javafx.scene.Node;
-import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -37,8 +33,6 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Utility application to load and view .bits recording file with the messages fully parsed.
@@ -47,7 +41,6 @@ import org.slf4j.LoggerFactory;
  */
 public class MessageRecordingViewer extends VBox
 {
-    private static final Logger mLog = LoggerFactory.getLogger(MessageRecordingViewer.class);
     private MenuBar mMenuBar;
     private TabPane mTabPane;
     private int mTabCounterDmr = 1;
@@ -172,33 +165,4 @@ public class MessageRecordingViewer extends VBox
         }
     }
 
-    public static void main(String[] args)
-    {
-        Application viewer = new Application()
-        {
-            @Override
-            public void start(Stage primaryStage) throws Exception
-            {
-                Scene scene = new Scene(new MessageRecordingViewer(), 1100, 800);
-                primaryStage.setTitle("VCE - Message Recording Viewer (.bits)");
-                primaryStage.setScene(scene);
-                ApplicationIcon.applyTaskbarIcon();
-                ApplicationIcon.apply(primaryStage);
-                primaryStage.show();
-            }
-        };
-
-        Runnable r = () -> {
-            try
-            {
-                viewer.start(new Stage());
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error starting message recording viewer application", e);
-            }
-        };
-
-        Platform.startup(r);
-    }
 }

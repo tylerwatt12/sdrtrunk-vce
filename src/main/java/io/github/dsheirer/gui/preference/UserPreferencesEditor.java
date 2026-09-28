@@ -59,16 +59,6 @@ public class UserPreferencesEditor extends BorderPane
     private Node mEditor;
     private HBox mButtonsBox;
 
-    /**
-     * Constructs an instance
-     *
-     * @param userPreferences to edit
-     */
-    public UserPreferencesEditor(UserPreferences userPreferences)
-    {
-        this(userPreferences, null);
-    }
-
     public UserPreferencesEditor(UserPreferences userPreferences, StatsWebServerService statsWebServerService)
     {
         mUserPreferences = userPreferences;

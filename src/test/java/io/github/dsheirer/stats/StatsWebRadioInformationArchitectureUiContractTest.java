@@ -27,7 +27,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         String index = readText(INDEX);
 
         assertTrue(routes.contains("id: 'dashboard', label: 'Main'"));
-        assertTrue(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
+        assertFalse(routes.contains("id: 'radio-systems', label: 'Radio Directory'"));
         assertFalse(routes.contains("id: 'identities', label: 'Identities'"));
         assertTrue(routes.contains("id: 'channel-setup', label: 'Channels'"));
         assertTrue(routes.contains("access: 'admin-channels'"));
@@ -38,13 +38,14 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(index.contains("data-view=\"channel-setup\""));
         assertTrue(index.contains("<summary>Manage</summary>"));
         assertFalse(index.contains("data-view=\"channels\""));
-        assertTrue(app.contains("if (view === 'channels' || view === 'radio-systems')"));
-        assertTrue(app.contains("if (view === 'identities')"));
-        assertTrue(app.contains("route.set('directory_view', 'coverage')"));
-        assertTrue(app.contains("route.set('view', 'dashboard')"));
-        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, true)"));
-        assertTrue(app.contains("editable ? 'Channels' : 'Radio Directory'"));
-        assertTrue(app.contains("if (editable) columns.push"));
+        assertFalse(routes.contains("id: 'channels'"));
+        assertFalse(routes.contains("id: 'configuration'"));
+        assertFalse(routes.contains("id: 'hardware'"));
+        assertFalse(app.contains("if (view === 'channels' || view === 'radio-systems')"));
+        assertFalse(app.contains("if (view === 'identities')"));
+        assertTrue(app.contains("renderNestedRadioDirectory(renderContext)"));
+        assertFalse(app.contains("editable ? 'Channels' : 'Radio Directory'"));
+        assertFalse(app.contains("if (editable) columns.push"));
     }
 
     @Test

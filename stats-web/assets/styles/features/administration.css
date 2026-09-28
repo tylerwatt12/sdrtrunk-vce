@@ -292,22 +292,6 @@
   display: grid;
 }
 
-.admin-workflow-note {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-control);
-}
-
-.admin-workflow-note p {
-  max-width: 72ch;
-  margin: 0;
-  color: var(--muted);
-}
-
 .operational-preferences > .admin-form-message:empty {
   display: none;
 }
@@ -320,10 +304,6 @@
 
 .operational-preference-lanes {
   gap: var(--space-5);
-}
-
-.operational-preference-output-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .operational-preference-card-wide {
@@ -351,17 +331,6 @@
 
 .operational-preference-card .settings-card-header {
   background: color-mix(in srgb, var(--accent-soft) 32%, var(--surface));
-}
-
-.operational-card-effect {
-  display: inline-block;
-  margin-bottom: var(--space-2);
-  padding: 3px 8px;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 999px;
-  font-size: var(--font-size-label);
-  font-weight: 700;
 }
 
 .operational-preferences .settings-card-body {
@@ -451,7 +420,6 @@
 }
 
 @media (max-width: 1100px) {
-  .operational-preference-output-grid,
   .operational-preference-card-wide .settings-card-body {
     grid-template-columns: minmax(0, 1fr);
   }

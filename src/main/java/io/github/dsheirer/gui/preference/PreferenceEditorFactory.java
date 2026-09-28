@@ -40,11 +40,6 @@ public class PreferenceEditorFactory
     {
     }
 
-    public static Node getEditor(PreferenceEditorType preferenceEditorType, UserPreferences userPreferences)
-    {
-        return getEditor(preferenceEditorType, userPreferences, null);
-    }
-
     public static Node getEditor(PreferenceEditorType preferenceEditorType, UserPreferences userPreferences,
                                  StatsWebServerService statsWebServerService)
     {

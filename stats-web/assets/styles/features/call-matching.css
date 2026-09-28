@@ -22,23 +22,9 @@
   margin: var(--space-3) var(--space-3) 0;
 }
 
-.call-matching-technical {
-  padding: 0 var(--space-3) var(--space-3);
-}
-
-.call-matching-technical h3,
 .call-matching-comparison-heading {
   margin: var(--space-2) 0;
   font-size: var(--font-size-body);
-}
-
-.call-matching-history-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--line);
-  font-size: var(--font-size-meta);
 }
 
 .call-matching-history-pagination:empty {
@@ -118,11 +104,6 @@
 
 .call-matching-winning-value {
   font-weight: var(--font-weight-heading);
-}
-
-.call-matching-readonly-note {
-  margin: 0;
-  font-size: var(--font-size-meta);
 }
 
 .call-matching-comparison-hint {

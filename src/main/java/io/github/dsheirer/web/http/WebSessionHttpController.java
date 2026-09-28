@@ -8,7 +8,6 @@ package io.github.dsheirer.web.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
@@ -18,12 +17,10 @@ import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -38,9 +35,6 @@ public final class WebSessionHttpController
     public static final String LOGIN_PATH = "/api/v1/auth/login";
     public static final String LOGOUT_PATH = "/api/v1/auth/logout";
     public static final String DESKTOP_HANDOFF_PATH = "/api/v1/auth/desktop-handoff";
-    private static final String DESKTOP_ALIAS_HANDOFF_PATH = DESKTOP_HANDOFF_PATH + "/aliases";
-    private static final String DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH =
-        DESKTOP_HANDOFF_PATH + "/p25-bandplan-overrides";
     private static final Logger mLog = LoggerFactory.getLogger(WebSessionHttpController.class);
 
     private final WebAccessService mAccessService;
@@ -201,8 +195,7 @@ public final class WebSessionHttpController
     private void handleDesktopHandoff(HttpExchange exchange) throws IOException
     {
         WebRequestSecurity.prepareSecurityHeaders(exchange);
-        String redirectLocation = desktopHandoffRedirectLocation(exchange.getRequestURI().getRawPath());
-        if(redirectLocation == null)
+        if(!WebHttpSupport.hasExactPath(exchange, DESKTOP_HANDOFF_PATH))
         {
             WebHttpSupport.notFound(exchange);
             return;
@@ -230,13 +223,11 @@ public final class WebSessionHttpController
 
         if(session.isEmpty())
         {
-            //Keep the validated same-origin destination so an expired or already-consumed handoff can continue
-            //through the ordinary administrator sign-in without losing the requested Alias.
-            redirect(exchange, redirectLocation);
+            redirect(exchange, "/");
             return;
         }
 
-        deliverSessionResponse(exchange, session.get(), existingSessionId, redirectLocation);
+        deliverSessionResponse(exchange, session.get(), existingSessionId, "/");
     }
 
     /** Retires the prior session only after the replacement session reaches the browser. */
@@ -286,150 +277,6 @@ public final class WebSessionHttpController
         exchange.getResponseHeaders().set("Vary", "Cookie");
         exchange.sendResponseHeaders(303, -1);
         exchange.close();
-    }
-
-    /**
-     * Fixed desktop handoff path for one persisted Alias.  Only numeric database identities cross the handoff;
-     * the server constructs the same-origin destination and never accepts an arbitrary redirect URL.
-     */
-    public static String desktopAliasHandoffPath(long aliasListId, long aliasId)
-    {
-        if(aliasListId <= 0 || aliasId <= 0)
-        {
-            throw new IllegalArgumentException("Alias List and Alias IDs must be positive");
-        }
-
-        return DESKTOP_ALIAS_HANDOFF_PATH + "/" + aliasListId + "/" + aliasId;
-    }
-
-    /** Fixed desktop handoff path for the Alias catalog. */
-    public static String desktopAliasHandoffPath()
-    {
-        return DESKTOP_ALIAS_HANDOFF_PATH;
-    }
-
-    /** Fixed desktop handoff path for Streaming. */
-    public static String desktopStreamingHandoffPath()
-    {
-        return DESKTOP_HANDOFF_PATH + "/streaming";
-    }
-
-    /** Fixed desktop handoff path for creating one site-scoped P25 bandplan override. */
-    public static String desktopP25BandplanOverrideHandoffPath(P25SiteIdentity identity, String configurationId)
-    {
-        Objects.requireNonNull(identity, "P25 site identity cannot be null");
-        return DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + String.format(Locale.ROOT, "/%05X/%03X/%02X/%02X/%s",
-            identity.wacn(), identity.system(), identity.rfss(), identity.site(),
-            requireCanonicalConfigurationId(configurationId));
-    }
-
-    private static String desktopHandoffRedirectLocation(String rawPath)
-    {
-        if(DESKTOP_HANDOFF_PATH.equals(rawPath))
-        {
-            return "/";
-        }
-
-        if(desktopStreamingHandoffPath().equals(rawPath)) return "/?view=streaming";
-
-        if(DESKTOP_ALIAS_HANDOFF_PATH.equals(rawPath))
-        {
-            return "/?view=aliases";
-        }
-
-        String p25Prefix = DESKTOP_P25_BANDPLAN_OVERRIDE_HANDOFF_PATH + "/";
-        if(rawPath != null && rawPath.startsWith(p25Prefix))
-        {
-            String[] segments = rawPath.substring(p25Prefix.length()).split("/", -1);
-            if(segments.length != 5 || !isFixedHex(segments[0], 5) || !isFixedHex(segments[1], 3) ||
-                !isFixedHex(segments[2], 2) || !isFixedHex(segments[3], 2))
-            {
-                return null;
-            }
-
-            try
-            {
-                P25SiteIdentity identity = new P25SiteIdentity(Integer.parseInt(segments[0], 16),
-                    Integer.parseInt(segments[1], 16), Integer.parseInt(segments[2], 16),
-                    Integer.parseInt(segments[3], 16));
-                String configurationId = requireCanonicalConfigurationId(segments[4]);
-                return String.format(Locale.ROOT,
-                    "/?view=admin&tab=protocol-p25&createP25Override=1&wacn=%05X&system=%03X&rfss=%02X&site=%02X&configuration_id=%s",
-                    identity.wacn(), identity.system(), identity.rfss(), identity.site(), configurationId);
-            }
-            catch(IllegalArgumentException exception)
-            {
-                return null;
-            }
-        }
-
-        String prefix = DESKTOP_ALIAS_HANDOFF_PATH + "/";
-        if(rawPath == null || !rawPath.startsWith(prefix))
-        {
-            return null;
-        }
-
-        String[] segments = rawPath.substring(prefix.length()).split("/", -1);
-        if(segments.length != 2)
-        {
-            return null;
-        }
-
-        try
-        {
-            long aliasListId = Long.parseLong(segments[0]);
-            long aliasId = Long.parseLong(segments[1]);
-            if(aliasListId <= 0 || aliasId <= 0)
-            {
-                return null;
-            }
-            return "/?view=aliases&list=" + aliasListId + "&alias=" + aliasId;
-        }
-        catch(NumberFormatException exception)
-        {
-            return null;
-        }
-    }
-
-    private static boolean isFixedHex(String value, int width)
-    {
-        if(value == null || value.length() != width)
-        {
-            return false;
-        }
-
-        for(int x = 0; x < value.length(); x++)
-        {
-            char character = value.charAt(x);
-            boolean digit = character >= '0' && character <= '9';
-            boolean upperHex = character >= 'A' && character <= 'F';
-            boolean lowerHex = character >= 'a' && character <= 'f';
-            if(!digit && !upperHex && !lowerHex)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static String requireCanonicalConfigurationId(String configurationId)
-    {
-        try
-        {
-            String canonical = UUID.fromString(configurationId).toString();
-
-            if(canonical.equals(configurationId))
-            {
-                return canonical;
-            }
-        }
-        catch(IllegalArgumentException | NullPointerException exception)
-        {
-            //Report one stable validation error below.
-        }
-
-        throw new IllegalArgumentException("Channel configuration ID must be a canonical lowercase UUID");
     }
 
     private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,
