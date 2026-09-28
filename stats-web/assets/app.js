@@ -13,7 +13,7 @@ import {
   isReceiverHealthAlertEnabled
 } from './core/receiver-health-alerts.js?v=3';
 import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=2';
+import { createListenMap } from './features/listen-map.js?v=3';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import {
   createAliasList,
@@ -23338,7 +23338,7 @@ function renderListenMap() {
     iconUrl: mapIconUrl
   });
   if (!beginPage(renderContext, pageHeader('Map',
-    'Recent receiver-observed locations and trails'), map.element)) {
+    'Follow receiver locations and inspect recent history'), map.element)) {
     map.close();
     return;
   }

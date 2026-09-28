@@ -34,7 +34,7 @@ async function main() {
       'Markers stay visible after panning across multiple wrapped worlds');
   }
   const snapshot = map.normalizeSnapshot({ entities: [
-    { id: 'radio-1', label: 'Engine 1', icon: 'fire-truck', color: '#123abc', positions: [
+    { id: 'radio-1', label: 'Engine 1', system: 'County P25', icon: 'fire-truck', color: '#123abc', positions: [
       { latitude: 39.6, longitude: -98.34, timestamp_ms: 3 },
       { latitude: 200, longitude: -98.35, timestamp_ms: 2 },
       { latitude: 39.5, longitude: -98.35, timestamp_ms: 1 }
@@ -47,7 +47,13 @@ async function main() {
   assert.equal(snapshot.entities[0].positions.at(-1).timestamp_ms, 3,
     'The moving marker and details use the newest receiver point');
   assert.equal(snapshot.entities[0].color, '#123abc');
+  assert.equal(snapshot.entities[0].system, 'County P25');
   assert.equal(snapshot.entities[1].icon, 'no-icon');
+  const cutoff = map.positionSignature(snapshot.entities[0].positions[0]);
+  assert.equal(map.positionsAfterCutoff(snapshot.entities[0].positions, cutoff).length, 1,
+    'Deleting a track resets its browser-session history at the last observed point');
+  assert.deepEqual(map.positionsAfterCutoff(snapshot.entities[0].positions, 'missing'),
+    snapshot.entities[0].positions, 'A cutoff that aged out of bounded history admits the newer points');
   assert.throws(() => map.normalizeSnapshot({}), /invalid map snapshot/);
   assert.match(source, /image\.referrerPolicy = 'origin'/);
   assert.match(source, /tile\.openstreetmap\.org/);

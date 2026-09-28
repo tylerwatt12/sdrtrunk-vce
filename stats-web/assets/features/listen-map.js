@@ -69,6 +69,7 @@ function normalizeSnapshot(value) {
     if (!positions.length || typeof entity?.id !== 'string' || !entity.id) return [];
     return [{ id: entity.id, label: String(entity.label || entity.identifier || entity.id),
       identifier: String(entity.identifier || ''), alias_list: String(entity.alias_list || ''),
+      system: String(entity.system || ''),
       icon: ICON_SLUG.test(String(entity.icon || '')) ? entity.icon : 'no-icon',
       color: /^#[0-9a-fA-F]{6}$/.test(String(entity.color || '')) ? entity.color : null,
       heading: Number(entity.heading), speed_kph: Number(entity.speed_kph), positions }];
@@ -76,6 +77,26 @@ function normalizeSnapshot(value) {
   return { entities, generated_at_ms: Number(value.generated_at_ms) || 0,
     dropped_observations: Number(value.dropped_observations) || 0,
     evicted_entities: Number(value.evicted_entities) || 0 };
+}
+
+function positionSignature(position) {
+  return position ? `${position.timestamp_ms}:${position.latitude}:${position.longitude}` : '';
+}
+
+function positionsAfterCutoff(positions, cutoffSignature) {
+  if (!cutoffSignature) return positions;
+  const index = positions.findIndex((position) => positionSignature(position) === cutoffSignature);
+  return index < 0 ? positions : positions.slice(index + 1);
+}
+
+function localTimestampParts(timestampMs) {
+  if (!(timestampMs > 0)) return { date: 'Unknown', time: '' };
+  const value = new Date(timestampMs);
+  const part = (number) => String(number).padStart(2, '0');
+  return {
+    date: `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}`,
+    time: `${part(value.getHours())}:${part(value.getMinutes())}:${part(value.getSeconds())}`
+  };
 }
 
 function fitPoints(points, width, height) {
@@ -122,7 +143,30 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
 
   const layout = node('div', 'listen-map-layout');
   const mapPanel = node('section', 'section ui-section listen-map-panel');
-  mapPanel.append(node('div', 'section-title ui-section-title', 'Map'));
+  const mapTitle = node('div', 'section-title ui-section-title');
+  mapTitle.append(node('span', '', 'Map'));
+  const mapActions = node('div', 'ui-section-actions listen-map-map-actions');
+  const trailControl = node('label', 'listen-map-trail-control');
+  trailControl.append(node('span', '', 'Trail length'));
+  const trailSelect = node('select', 'ui-select listen-map-trail-select');
+  trailSelect.setAttribute('aria-label', 'Trail length');
+  for (let length = 1; length <= MAX_TRAIL_POINTS; length += 1) {
+    const option = node('option', '', String(length));
+    option.value = String(length);
+    option.selected = length === 3;
+    trailSelect.append(option);
+  }
+  trailControl.append(trailSelect);
+  const clearMap = node('button', 'ui-button ui-button-secondary', 'Clear map');
+  clearMap.type = 'button';
+  clearMap.title = 'Hide tracks until selected, replotted, or updated';
+  const replotAll = node('button', 'ui-button ui-button-secondary', 'Replot all');
+  replotAll.type = 'button';
+  replotAll.title = 'Show all tracks in this browser';
+  mapActions.append(trailControl, clearMap, replotAll);
+  mapTitle.append(mapActions);
+  mapPanel.append(mapTitle);
+
   const viewport = node('div', 'listen-map-viewport');
   viewport.tabIndex = 0;
   viewport.setAttribute('role', 'region');
@@ -153,15 +197,48 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
   mapPanel.append(viewport);
 
   const sidebar = node('section', 'section ui-section listen-map-sidebar');
-  sidebar.append(node('div', 'section-title ui-section-title', 'Locations'));
+  const sidebarTitle = node('div', 'section-title ui-section-title');
+  sidebarTitle.append(node('span', '', 'Tracks'));
+  const removeAll = node('button', 'ui-button ui-button-danger-quiet', 'Remove all');
+  removeAll.type = 'button';
+  removeAll.title = 'Remove tracks until their next location update';
+  sidebarTitle.append(removeAll);
+  const catalogControls = node('div', 'listen-map-catalog-controls');
+  const centerToggle = node('label', 'listen-map-center-toggle');
+  centerToggle.append(node('span', '', 'Center on selection'));
+  const centerSwitch = node('span', 'ui-toggle');
+  const centerInput = node('input');
+  centerInput.type = 'checkbox';
+  centerInput.checked = true;
+  centerInput.setAttribute('aria-label', 'Center on selection');
+  const centerTrack = node('span', 'ui-toggle-track');
+  centerTrack.append(node('span', 'ui-toggle-thumb'));
+  const centerState = node('span', 'ui-toggle-state', 'On');
+  centerSwitch.append(centerInput, centerTrack, centerState);
+  centerToggle.append(centerSwitch);
+  const followStatus = node('span', 'listen-map-follow-status');
+  followStatus.hidden = true;
+  catalogControls.append(centerToggle, followStatus);
   const list = node('div', 'listen-map-list');
+  const selectedActions = node('div', 'listen-map-selected-actions ui-action-row');
+  const follow = node('button', 'ui-button ui-button-primary', 'Follow');
+  follow.type = 'button';
+  const centerSelected = node('button', 'ui-button ui-button-secondary', 'Center');
+  centerSelected.type = 'button';
+  const removeSelected = node('button', 'ui-button ui-button-danger-quiet', 'Remove');
+  removeSelected.type = 'button';
+  removeSelected.title = 'Remove this track until its next location update';
+  selectedActions.append(follow, centerSelected, removeSelected);
   const details = node('div', 'listen-map-details');
-  sidebar.append(list, details);
+  sidebar.append(sidebarTitle, catalogControls, list, selectedActions, details);
   layout.append(mapPanel, sidebar);
   root.append(toolbar, layout);
 
   let snapshot = { entities: [], generated_at_ms: 0, dropped_observations: 0, evicted_entities: 0 };
   let selectedId = '';
+  let followingId = '';
+  let followedSignature = '';
+  let trailLength = 3;
   let center = project(39.5, -98.35, 4);
   let zoom = 4;
   let initialized = false;
@@ -170,6 +247,9 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
   let frame = 0;
   let drag = null;
   const tileNodes = new Map();
+  const deletedCutoffs = new Map();
+  const historyCutoffs = new Map();
+  const plotCutoffs = new Map();
 
   const dimensions = () => ({ width: Math.max(1, viewport.clientWidth), height: Math.max(1, viewport.clientHeight) });
   const screenPoint = (position) => {
@@ -179,6 +259,29 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
     const { width, height } = dimensions();
     return { x: width / 2 + offsetX, y: height / 2 + point.y - center.y };
   };
+  const latestSignature = (entity) => positionSignature(entity?.positions.at(-1));
+
+  function catalogEntities() {
+    return snapshot.entities.flatMap((entity) => {
+      if (deletedCutoffs.has(entity.id)) return [];
+      const positions = positionsAfterCutoff(entity.positions, historyCutoffs.get(entity.id));
+      return positions.length ? [{ ...entity, positions }] : [];
+    }).sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  function plottedEntities() {
+    return catalogEntities().filter((entity) => !plotCutoffs.has(entity.id));
+  }
+
+  function selectedEntity() {
+    return catalogEntities().find((entity) => entity.id === selectedId);
+  }
+
+  function centerOn(position) {
+    if (!position) return;
+    center = project(position.latitude, position.longitude, zoom);
+    scheduleDraw();
+  }
 
   function draw() {
     frame = 0;
@@ -210,8 +313,8 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
     trails.replaceChildren();
     const focusedMarkerId = markers.contains(document.activeElement) ? document.activeElement.dataset.entityId : null;
     markers.replaceChildren();
-    for (const entity of snapshot.entities) {
-      const points = entity.positions.map(screenPoint);
+    for (const entity of plottedEntities()) {
+      const points = entity.positions.slice(-trailLength).map(screenPoint);
       if (points.length > 1) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' '));
@@ -249,12 +352,85 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
     if (!frame && !closed) frame = window.requestAnimationFrame(draw);
   }
 
+  function setFollowState(id = '') {
+    followingId = id;
+    followedSignature = id ? latestSignature(catalogEntities().find((entity) => entity.id === id)) : '';
+    centerInput.disabled = Boolean(id);
+    follow.textContent = id ? 'Unfollow' : 'Follow';
+    const entity = catalogEntities().find((candidate) => candidate.id === id);
+    followStatus.hidden = !entity;
+    followStatus.textContent = entity ? `Following: ${entity.label}` : '';
+    if (entity) centerOn(entity.positions.at(-1));
+  }
+
+  function updateControls(entities) {
+    const selected = entities.find((entity) => entity.id === selectedId);
+    const plotted = plottedEntities();
+    const count = entities.length;
+    const shown = plotted.length;
+    const dropped = snapshot.dropped_observations ? ` · ${snapshot.dropped_observations} dropped` : '';
+    const nextStatus = `${count} track${count === 1 ? '' : 's'} · ${shown} shown${dropped}`;
+    if (status.textContent !== nextStatus) status.textContent = nextStatus;
+    fit.disabled = !shown;
+    clearMap.disabled = !shown;
+    replotAll.disabled = !count || shown === count;
+    removeAll.disabled = !count;
+    follow.disabled = !selected && !followingId;
+    centerSelected.disabled = !selected;
+    removeSelected.disabled = !selected;
+    centerState.textContent = centerInput.checked ? 'On' : 'Off';
+    follow.textContent = followingId ? 'Unfollow' : 'Follow';
+    const followed = entities.find((entity) => entity.id === followingId);
+    followStatus.hidden = !followed;
+    followStatus.textContent = followed ? `Following: ${followed.label}` : '';
+  }
+
+  function historyTable(entity) {
+    const wrapper = node('div', 'ui-table-wrap listen-map-history-wrap');
+    const table = node('table', 'ui-data-table ui-data-table-quiet listen-map-history');
+    const head = node('thead');
+    const headingRow = node('tr');
+    for (const label of ['Time', 'Latitude', 'Longitude']) headingRow.append(node('th', '', label));
+    head.append(headingRow);
+    const body = node('tbody');
+    for (const position of entity.positions.slice().reverse()) {
+      const row = node('tr', 'listen-map-history-item');
+      row.dataset.positionSignature = positionSignature(position);
+      const timeCell = node('td');
+      const timestamp = localTimestampParts(position.timestamp_ms);
+      const choose = node('button', 'listen-map-history-center');
+      choose.type = 'button';
+      choose.append(node('span', '', timestamp.date));
+      if (timestamp.time) choose.append(node('span', '', timestamp.time));
+      choose.setAttribute('aria-label', `Center history position from ${timestamp.date} ${timestamp.time}`.trim());
+      const centerHistory = () => {
+        if (centerInput.checked && !followingId) centerOn(position);
+      };
+      choose.addEventListener('click', centerHistory);
+      row.addEventListener('click', (event) => {
+        if (event.target !== choose) centerHistory();
+      });
+      timeCell.append(choose);
+      row.append(timeCell, node('td', 'numeric', position.latitude.toFixed(5)),
+        node('td', 'numeric', position.longitude.toFixed(5)));
+      body.append(row);
+    }
+    table.append(head, body);
+    wrapper.append(table);
+    return wrapper;
+  }
+
   function renderSelection() {
+    const entities = catalogEntities();
+    if (!entities.some((entity) => entity.id === selectedId)) selectedId = entities[0]?.id || '';
+    if (followingId && !entities.some((entity) => entity.id === followingId)) setFollowState();
     const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.entityId : null;
+    const focusedHistorySignature = details.contains(document.activeElement) ?
+      document.activeElement.closest('.listen-map-history-item')?.dataset.positionSignature : null;
     const scrollTop = list.scrollTop;
     list.replaceChildren();
-    if (!snapshot.entities.length) list.append(node('div', 'empty', 'No mapped locations yet.'));
-    for (const entity of snapshot.entities) {
+    if (!entities.length) list.append(node('div', 'empty', 'No mapped locations yet.'));
+    for (const entity of entities) {
       const button = node('button', `listen-map-list-item ui-button ${entity.id === selectedId ?
         'ui-button-primary' : 'ui-button-secondary'}`);
       button.type = 'button';
@@ -264,50 +440,106 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
       icon.alt = '';
       icon.loading = 'lazy';
       icon.src = iconUrl(entity.icon);
-      button.append(icon, node('span', '', entity.label));
+      const copy = node('span', 'listen-map-list-copy');
+      const context = [entity.identifier, entity.alias_list].filter(Boolean).join(' · ');
+      copy.append(node('strong', '', entity.label),
+        node('small', '', context || 'Unknown'));
+      button.append(icon, copy);
       button.addEventListener('click', () => select(entity.id, true));
       list.append(button);
     }
     list.scrollTop = scrollTop;
     if (focusedId) [...list.querySelectorAll('button')]
       .find((button) => button.dataset.entityId === focusedId)?.focus({ preventScroll: true });
+
     details.replaceChildren();
-    const selected = snapshot.entities.find((entity) => entity.id === selectedId);
-    if (!selected) return;
-    const latest = selected.positions.at(-1);
-    const facts = node('dl', 'ui-facts');
-    for (const [label, value] of [
-      ['Identifier', selected.identifier || '—'], ['Alias list', selected.alias_list || '—'],
-      ['Position', `${latest.latitude.toFixed(5)}, ${latest.longitude.toFixed(5)}`],
-      ['Heading', Number.isFinite(selected.heading) ? `${Math.round(selected.heading)}°` : '—'],
-      ['Speed', Number.isFinite(selected.speed_kph) ? `${Math.round(selected.speed_kph)} km/h` : '—'],
-      ['Trail points', String(selected.positions.length)],
-      ['Last seen', latest.timestamp_ms > 0 ? new Date(latest.timestamp_ms).toLocaleString() : '—']
-    ]) {
-      const fact = node('div', 'ui-fact');
-      fact.append(node('dt', '', label), node('dd', '', value));
-      facts.append(fact);
+    const selected = entities.find((entity) => entity.id === selectedId);
+    if (selected) {
+      const latest = selected.positions.at(-1);
+      const facts = node('dl', 'ui-facts listen-map-facts');
+      for (const [label, value] of [
+        ['System', selected.system || '(no system name)'],
+        ['Identifier', selected.identifier || '—'],
+        ['Alias list', selected.alias_list || '—'],
+        ['Position', `${latest.latitude.toFixed(5)}, ${latest.longitude.toFixed(5)}`],
+        ['Heading', Number.isFinite(selected.heading) ? `${Math.round(selected.heading)}°` : '—'],
+        ['Speed', Number.isFinite(selected.speed_kph) ? `${Math.round(selected.speed_kph)} km/h` : '—'],
+        ['Last seen', latest.timestamp_ms > 0 ? new Date(latest.timestamp_ms).toLocaleString() : '—']
+      ]) {
+        const fact = node('div', 'ui-fact');
+        fact.append(node('dt', '', label), node('dd', '', value));
+        facts.append(fact);
+      }
+      const historyHeader = node('div', 'listen-map-history-heading');
+      historyHeader.append(node('h4', '', 'History'), node('span', '', String(selected.positions.length)));
+      details.append(node('h3', '', selected.label), facts, historyHeader, historyTable(selected));
     }
-    details.append(node('h3', '', selected.label), facts);
+    if (focusedHistorySignature) {
+      [...details.querySelectorAll('.listen-map-history-item')]
+        .find((row) => row.dataset.positionSignature === focusedHistorySignature)
+        ?.querySelector('.listen-map-history-center')?.focus({ preventScroll: true });
+    }
+    updateControls(entities);
   }
 
   function select(id, centerOnEntity = false) {
     selectedId = id;
-    if (centerOnEntity) {
-      const latest = snapshot.entities.find((entity) => entity.id === id)?.positions.at(-1);
-      if (latest) center = project(latest.latitude, latest.longitude, zoom);
-    }
+    plotCutoffs.delete(id);
+    const selected = catalogEntities().find((entity) => entity.id === id);
+    if (centerOnEntity && centerInput.checked && !followingId) centerOn(selected?.positions.at(-1));
     renderSelection();
     scheduleDraw();
   }
 
   function fitAll() {
-    const points = snapshot.entities.map((entity) => entity.positions.at(-1)).filter(Boolean);
+    const points = plottedEntities().map((entity) => entity.positions.at(-1)).filter(Boolean);
     const { width, height } = dimensions();
     const fitted = fitPoints(points, width, height);
     if (!fitted) return;
     ({ zoom, center } = fitted);
     scheduleDraw();
+  }
+
+  function removeEntity(id) {
+    const entity = catalogEntities().find((candidate) => candidate.id === id);
+    if (!entity) return;
+    deletedCutoffs.set(id, latestSignature(entity));
+    historyCutoffs.delete(id);
+    plotCutoffs.delete(id);
+    if (followingId === id) setFollowState();
+  }
+
+  function reconcileSnapshot(next) {
+    const incomingIds = new Set(next.entities.map((entity) => entity.id));
+    for (const state of [deletedCutoffs, historyCutoffs, plotCutoffs]) {
+      for (const id of state.keys()) {
+        if (!incomingIds.has(id)) state.delete(id);
+      }
+    }
+    for (const entity of next.entities) {
+      const signature = latestSignature(entity);
+      const deleted = deletedCutoffs.get(entity.id);
+      if (deleted && deleted !== signature) {
+        deletedCutoffs.delete(entity.id);
+        historyCutoffs.set(entity.id, deleted);
+      }
+      const cleared = plotCutoffs.get(entity.id);
+      if (cleared && cleared !== signature) plotCutoffs.delete(entity.id);
+      const cutoff = historyCutoffs.get(entity.id);
+      if (cutoff && !entity.positions.some((position) => positionSignature(position) === cutoff)) {
+        historyCutoffs.delete(entity.id);
+      }
+    }
+    snapshot = next;
+    const followed = catalogEntities().find((entity) => entity.id === followingId);
+    if (followingId && !followed) setFollowState();
+    else if (followed) {
+      const signature = latestSignature(followed);
+      if (signature !== followedSignature) {
+        followedSignature = signature;
+        centerOn(followed.positions.at(-1));
+      }
+    }
   }
 
   async function poll() {
@@ -317,21 +549,14 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
     try {
       const next = normalizeSnapshot(await fetchSnapshot());
       if (closed) return;
-      snapshot = next;
-      if (!snapshot.entities.some((entity) => entity.id === selectedId)) {
-        selectedId = snapshot.entities[0]?.id || '';
-      }
-      if (!initialized && snapshot.entities.length) {
+      reconcileSnapshot(next);
+      const entities = catalogEntities();
+      if (!initialized && entities.length) {
         initialized = true;
-        const latest = snapshot.entities[0].positions.at(-1);
+        const latest = entities[0].positions.at(-1);
         zoom = 12;
         center = project(latest.latitude, latest.longitude, zoom);
       }
-      const count = snapshot.entities.length;
-      const nextStatus = `${count} mapped location${count === 1 ? '' : 's'}` +
-        (snapshot.dropped_observations ? ` · ${snapshot.dropped_observations} observations dropped` : '');
-      if (status.textContent !== nextStatus) status.textContent = nextStatus;
-      fit.disabled = !count;
       renderSelection();
       scheduleDraw();
     } catch (error) {
@@ -351,8 +576,41 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
     scheduleDraw();
   }
 
+  centerInput.addEventListener('change', () => { centerState.textContent = centerInput.checked ? 'On' : 'Off'; });
+  trailSelect.addEventListener('change', () => {
+    trailLength = clamp(Number(trailSelect.value) || 3, 1, MAX_TRAIL_POINTS);
+    scheduleDraw();
+  });
   refresh.addEventListener('click', () => void poll());
   fit.addEventListener('click', fitAll);
+  clearMap.addEventListener('click', () => {
+    for (const entity of catalogEntities()) plotCutoffs.set(entity.id, latestSignature(entity));
+    renderSelection();
+    scheduleDraw();
+  });
+  replotAll.addEventListener('click', () => {
+    plotCutoffs.clear();
+    renderSelection();
+    scheduleDraw();
+  });
+  removeAll.addEventListener('click', () => {
+    for (const entity of catalogEntities()) removeEntity(entity.id);
+    selectedId = '';
+    renderSelection();
+    scheduleDraw();
+  });
+  follow.addEventListener('click', () => {
+    if (followingId) setFollowState();
+    else if (selectedId) setFollowState(selectedId);
+    renderSelection();
+  });
+  centerSelected.addEventListener('click', () => centerOn(selectedEntity()?.positions.at(-1)));
+  removeSelected.addEventListener('click', () => {
+    removeEntity(selectedId);
+    selectedId = '';
+    renderSelection();
+    scheduleDraw();
+  });
   zoomIn.addEventListener('click', () => changeZoom(1));
   zoomOut.addEventListener('click', () => changeZoom(-1));
   viewport.addEventListener('keydown', (event) => {
@@ -399,4 +657,5 @@ function createListenMap({ node, iconGlyph, fetchSnapshot, iconUrl }) {
   } };
 }
 
-export { project, unproject, visibleTiles, normalizeSnapshot, fitPoints, wrappedOffset, createListenMap };
+export { project, unproject, visibleTiles, normalizeSnapshot, fitPoints, wrappedOffset,
+  positionSignature, positionsAfterCutoff, createListenMap };

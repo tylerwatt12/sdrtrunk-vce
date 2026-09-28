@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -51,6 +52,7 @@ class MapSnapshotServiceTest
             assertEquals(3, snapshot.entities().size());
             assertEquals(1, snapshot.evictedEntities());
             assertTrue(snapshot.entities().getFirst().identifier().contains("4"));
+            assertEquals("Test System", snapshot.entities().getFirst().system());
             assertEquals("police", snapshot.entities().getFirst().icon());
             assertEquals("#123456", snapshot.entities().getFirst().color());
             for(MapSnapshotService.Entity entity: snapshot.entities())
@@ -155,6 +157,7 @@ class MapSnapshotServiceTest
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(AliasListConfigurationIdentifier.create("test"));
+        identifiers.update(SystemConfigurationIdentifier.create("Test System"));
         identifiers.update(APCO25RadioIdentifier.createFrom(radio));
         return PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, timestampMs)
             .identifiers(identifiers).location(new GeoPosition(latitude, longitude)).heading(90).speed(12).build();

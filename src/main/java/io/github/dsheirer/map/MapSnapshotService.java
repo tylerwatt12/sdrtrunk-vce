@@ -10,7 +10,9 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
@@ -100,8 +102,10 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
             return;
         }
 
-        Ingress observation = new Ingress(from, identifiers.getAliasListConfiguration(), location.getLatitude(),
-            location.getLongitude(), plottable.getTimeStart(), plottable.getHeading(), plottable.getSpeed());
+        Identifier system = identifiers.getIdentifier(IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
+        Ingress observation = new Ingress(from, system, identifiers.getAliasListConfiguration(),
+            location.getLatitude(), location.getLongitude(), plottable.getTimeStart(), plottable.getHeading(),
+            plottable.getSpeed());
         if(mIngress.offer(observation))
         {
             LockSupport.unpark(mWorker);
@@ -196,6 +200,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         }
 
         String identifier = boundedText(ingress.from().toString());
+        String system = ingress.system() != null ? boundedText(ingress.system().toString()) : "";
         String aliasList = ingress.aliasList() != null ? boundedText(ingress.aliasList().toString()) : "";
         String key = aliasList + '\u001f' + ingress.from().getClass().getName() + '\u001f' + identifier;
         Display display;
@@ -226,6 +231,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
 
         entity.label = display != null && display.label() != null && !display.label().isBlank() ?
             boundedText(display.label()) : identifier;
+        entity.system = system;
         entity.icon = display != null ? StandardMapIconCatalog.forSlug(display.icon()) :
             StandardMapIconCatalog.NO_ICON;
         if(entity.icon == null)
@@ -257,7 +263,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         List<Entity> entities = new ArrayList<>(mEntities.size());
         for(MutableEntity mutable: mEntities.values())
         {
-            entities.add(new Entity(mutable.key, mutable.label, mutable.identifier, mutable.aliasList,
+            entities.add(new Entity(mutable.key, mutable.label, mutable.identifier, mutable.system, mutable.aliasList,
                 mutable.icon.slug(), mutable.color, mutable.heading, mutable.speedKph,
                 List.copyOf(mutable.positions)));
         }
@@ -313,8 +319,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
     {
     }
 
-    private record Ingress(Identifier from, AliasListConfigurationIdentifier aliasList, double latitude,
-                           double longitude, long timestampMs, double heading, double speedKph)
+    private record Ingress(Identifier from, Identifier system, AliasListConfigurationIdentifier aliasList,
+                           double latitude, double longitude, long timestampMs, double heading, double speedKph)
     {
     }
 
@@ -325,6 +331,7 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
         private final String aliasList;
         private final Deque<Position> positions = new ArrayDeque<>();
         private String label;
+        private String system = "";
         private StandardMapIconCatalog icon = StandardMapIconCatalog.NO_ICON;
         private String color = "#0000ff";
         private double heading;
@@ -342,8 +349,8 @@ public final class MapSnapshotService implements Listener<IDecodeEvent>, AutoClo
     {
     }
 
-    public record Entity(String id, String label, String identifier, String aliasList, String icon, String color,
-                         double heading, double speedKph, List<Position> positions)
+    public record Entity(String id, String label, String identifier, String system, String aliasList, String icon,
+                         String color, double heading, double speedKph, List<Position> positions)
     {
     }
 

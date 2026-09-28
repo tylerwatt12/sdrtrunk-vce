@@ -108,6 +108,8 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/activity/radios` | Paged SOURCE-radio aggregation across retained matching activity events. Radio access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
+| `GET /api/v1/listen/map` | Bounded receiver-observed locations and ten-point track histories. |
+| `GET /api/v1/listen/map/icons/{slug}` | One allowlisted bundled map icon. |
 | `GET /api/v1/diagnostics/tuners` | Passive tuner diagnostic targets. Administrator access is required. |
 | `GET /api/v1/receiver-health` | Bounded receiver-health snapshot. Administrator access is required. |
 

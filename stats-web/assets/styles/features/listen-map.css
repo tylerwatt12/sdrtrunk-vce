@@ -18,7 +18,7 @@
 .listen-map-layout {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
   align-items: start;
   gap: var(--space-4);
 }
@@ -26,6 +26,26 @@
 .listen-map-panel,
 .listen-map-sidebar {
   min-width: 0;
+}
+
+.listen-map-map-actions {
+  min-width: 0;
+}
+
+.listen-map-trail-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: 650;
+}
+
+.listen-map-trail-select {
+  width: 64px;
+  min-height: var(--control-height-compact);
+  padding-top: 5px;
+  padding-bottom: 5px;
 }
 
 .listen-map-viewport {
@@ -124,7 +144,7 @@
 .listen-map-list {
   display: grid;
   gap: var(--space-2);
-  max-height: 300px;
+  max-height: 260px;
   padding: var(--space-3);
   overflow: auto;
 }
@@ -144,20 +164,162 @@
   object-fit: contain;
 }
 
-.listen-map-list-item span {
+.listen-map-list-copy {
   min-width: 0;
+  display: grid;
+  gap: 2px;
   overflow-wrap: anywhere;
+}
+
+.listen-map-list-copy strong {
+  font-size: var(--font-size-control);
+}
+
+.listen-map-list-copy small {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.listen-map-catalog-controls {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.listen-map-center-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: 650;
+}
+
+.listen-map-follow-status {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  overflow: hidden;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  font-size: var(--font-size-meta);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listen-map-selected-actions {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.listen-map-selected-actions .ui-button {
+  flex: 1 1 auto;
 }
 
 .listen-map-details {
-  padding: var(--space-3);
-  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .listen-map-details h3 {
-  margin: 0 0 var(--space-2);
+  margin: 0;
   font-size: var(--font-size-section-title);
   overflow-wrap: anywhere;
+}
+
+.listen-map-facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+}
+
+.listen-map-facts .ui-fact {
+  grid-template-columns: minmax(72px, .7fr) minmax(0, 1.3fr);
+  gap: var(--space-2);
+  padding: 5px 0;
+  background: transparent;
+  border: 0;
+}
+
+.listen-map-facts .ui-fact > dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.listen-map-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listen-map-history-heading h4 {
+  margin: 0;
+  font-size: var(--font-size-label);
+}
+
+.listen-map-history-heading span {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.listen-map-history-wrap {
+  max-height: 280px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow: auto;
+}
+
+.listen-map-history {
+  width: 100%;
+  table-layout: fixed;
+  font-size: var(--font-size-meta);
+}
+
+.listen-map-history :is(th, td) {
+  padding: 6px 5px;
+  white-space: nowrap;
+}
+
+.listen-map-history :is(th, td):first-child {
+  width: 42%;
+}
+
+.listen-map-history :is(th, td):not(:first-child) {
+  width: 29%;
+}
+
+.listen-map-history-item {
+  cursor: pointer;
+}
+
+.listen-map-history-center {
+  width: 100%;
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  color: var(--link);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.listen-map-history-center > span:last-child:not(:first-child) {
+  color: var(--muted);
+}
+
+.listen-map-history-center:hover {
+  text-decoration: underline;
+}
+
+.listen-map-history-center:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 @media (max-width: 800px) {
@@ -172,5 +334,25 @@
 
   .listen-map-list {
     max-height: 220px;
+  }
+}
+
+@media (max-width: 620px) {
+  .listen-map-panel > .ui-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .listen-map-map-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .listen-map-trail-control {
+    margin-right: auto;
+  }
+
+  .listen-map-viewport {
+    min-height: 300px;
   }
 }

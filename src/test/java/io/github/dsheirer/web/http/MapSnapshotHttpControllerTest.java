@@ -11,14 +11,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.map.MapSnapshotService;
 import io.github.dsheirer.map.StandardMapIconCatalog;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.junit.jupiter.api.Test;
 
 class MapSnapshotHttpControllerTest
@@ -47,6 +54,15 @@ class MapSnapshotHttpControllerTest
             assertTrue(data.path("entities").isArray());
             assertEquals(0, data.path("entities").size());
             assertEquals(0, data.path("dropped_observations").longValue());
+
+            MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+            identifiers.update(SystemConfigurationIdentifier.create("Test System"));
+            identifiers.update(APCO25RadioIdentifier.createFrom(1234));
+            service.receive(PlottableDecodeEvent.plottableBuilder(DecodeEventType.GPS, 1_000)
+                .identifiers(identifiers).location(new GeoPosition(40, -83)).build());
+            await(() -> service.snapshot().entities().size() == 1);
+            data = MAPPER.readTree(request(client, root.resolve(MapSnapshotHttpController.PATH)).body()).path("data");
+            assertEquals("Test System", data.path("entities").get(0).path("system").textValue());
 
             JsonNode options = MAPPER.readTree(request(client,
                 root.resolve(MapSnapshotHttpController.ICON_CATALOG_PATH)).body()).path("data");
@@ -78,5 +94,15 @@ class MapSnapshotHttpControllerTest
     private static HttpResponse<byte[]> request(HttpClient client, URI uri) throws Exception
     {
         return client.send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private static void await(java.util.function.BooleanSupplier condition) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(10);
+        }
+        assertTrue(condition.getAsBoolean(), "Timed out waiting for map snapshot");
     }
 }
