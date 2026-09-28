@@ -32,8 +32,8 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(feature.contains("'Add trusted sender'"));
         assertTrue(feature.contains("'Adopt remote feed'"));
         assertTrue(feature.contains(
-            "'Disconnected and removed advertisements remain visible. Removing a managed feed deletes only '"));
-        assertTrue(feature.contains("'its local channel; the sender may advertise it again.'"));
+            "'Managed feeds remain visible after a sender disconnects or stops advertising them, until '"));
+        assertTrue(feature.contains("'you remove the local channel.'"));
         assertTrue(feature.contains("'Copy this credential now. The shared secret will not be shown again.'"));
         assertTrue(feature.contains("exported_channel_configuration_ids"));
         assertTrue(feature.contains("default_alias_list_id"));

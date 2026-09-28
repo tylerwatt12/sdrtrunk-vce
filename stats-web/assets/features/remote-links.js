@@ -22,8 +22,8 @@ export function createRemoteLinksWorkspace(deps) {
   const pageMeta = node('footer', 'remote-links-page-meta');
   const freshness = node('span', 'muted');
   pageMeta.append(freshness,
-    node('span', 'muted', 'Disconnected and removed advertisements remain visible. Removing a managed feed deletes only ' +
-      'its local channel; the sender may advertise it again.'));
+    node('span', 'muted', 'Managed feeds remain visible after a sender disconnects or stops advertising them, until ' +
+      'you remove the local channel.'));
   host.append(summary, message, overview, senderHeader, senderHost, pageMeta);
 
   let snapshot = null;
