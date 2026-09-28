@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -322,6 +322,15 @@ the transformation happens offline, before the migrated database can issue a ses
 reject any future ordinary ADMIN account. When format 26 is the directly selected source, this step first applies the
 same bounded repairs used for recoverable current-format preference, administrative, receiver-derived, and
 configuration damage. An intermediate format 26 produced by the preceding step does not repeat those repairs.
+
+The format 27-to-28 step establishes the saved meaning of a remote P25 trunked source. It preserves every usable
+saved channel and application setting unchanged, and it never guesses a remote assignment for an existing local
+channel. A newly selected remote source stores only the stable sender UUID, stable feed UUID, and RF frequency needed
+to find the same feed after a reconnect. Connection, session, stream, and generation identifiers remain transient
+transport state and are not saved. This semantic-only format shares the format-27 DDL fingerprint, so a markerless
+format-27/28 file is ambiguous and requires its authoritative global format marker. When format 27 is the directly
+selected source, the step first applies the bounded current-component repair policy; an intermediate format 27 does
+not repeat those repairs.
 
 ## Schema-Change Rule
 

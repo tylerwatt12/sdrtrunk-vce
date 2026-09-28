@@ -85,7 +85,7 @@ class DatabaseFormatCatalogTest
         assertTrue(DatabaseFormatCatalog.requireVersion(25).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
         assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
-            .anyMatch(policy -> policy.contains("only ADMIN-tier account")));
+            .anyMatch(policy -> policy.contains("stable sender and feed UUIDs")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -215,22 +215,20 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessFormat27IsRecognizedUniquely() throws Exception
+    void markerlessFormat27And28LayoutIsRefusedAsAmbiguous() throws Exception
     {
         Path database = mTemporaryFolder.resolve("markerless-format-27.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Format27TestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             assertEquals(1, statement.executeUpdate(
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
-            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
-            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
-            assertEquals(27, strict.version());
-            assertFalse(strict.markerPresent());
-            assertEquals(strict, migration);
-            assertEquals("adopt-global-format-marker",
-                DatabaseMigrationChain.validateSource(connection, migration).steps().getFirst().id());
+            SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [27, 28]"));
+            assertTrue(migration.getMessage().contains("ambiguous across formats [27, 28]"));
         }
     }
 

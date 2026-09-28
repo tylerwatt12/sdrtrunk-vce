@@ -27,6 +27,7 @@ import io.github.dsheirer.source.SourceType;
     @JsonSubTypes.Type(value = SourceConfigMixer.class, name = "sourceConfigMixer"),
     @JsonSubTypes.Type(value = SourceConfigNone.class, name = "sourceConfigNone"),
     @JsonSubTypes.Type(value = SourceConfigRecording.class, name = "sourceConfigRecording"),
+    @JsonSubTypes.Type(value = SourceConfigRemote.class, name = "sourceConfigRemote"),
     @JsonSubTypes.Type(value = SourceConfigTuner.class, name = "sourceConfigTuner"),
     @JsonSubTypes.Type(value = SourceConfigTunerMultipleFrequency.class, name = "sourceConfigTunerMultipleFrequency")})
 public class SourceConfiguration extends Configuration

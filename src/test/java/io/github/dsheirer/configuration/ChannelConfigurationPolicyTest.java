@@ -19,10 +19,12 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigFactory;
 import io.github.dsheirer.source.config.SourceConfigMixer;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
@@ -75,6 +77,8 @@ class ChannelConfigurationPolicyTest
         assertTrue(Protocol.MPT1327.isRetiredCompatibility());
         assertFalse(Protocol.TALKGROUP_PROTOCOLS.contains(Protocol.MPT1327));
         assertTrue(SourceType.TUNER.isActive());
+        assertTrue(SourceType.REMOTE.isActive());
+        assertTrue(Arrays.asList(SourceType.getTypes()).contains(SourceType.REMOTE));
         assertFalse(SourceType.NONE.isActive());
         assertFalse(SourceType.NONE.isRetiredCompatibility());
         assertFalse(Arrays.asList(SourceType.getTypes()).contains(SourceType.NONE));
@@ -84,6 +88,28 @@ class ChannelConfigurationPolicyTest
             () -> SourceConfigFactory.getSourceConfiguration(SourceType.MIXER));
         assertThrows(IllegalArgumentException.class,
             () -> SourceConfigFactory.copy(new SourceConfigMixer()));
+    }
+
+    @Test
+    void remoteSourceIsActiveWithoutPretendingToBeATuner()
+    {
+        Channel remote = channel(new DecodeConfigP25Phase1());
+        SourceConfigRemote source = new SourceConfigRemote();
+        source.setSenderId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        source.setFeedId("11111111-2222-4333-8444-555555555555");
+        source.setFrequency(851_012_500L);
+        remote.setSourceConfiguration(source);
+
+        assertTrue(ChannelConfigurationPolicy.isActive(remote));
+        assertTrue(remote.getTunerChannels().isEmpty());
+
+        remote.setDecodeConfiguration(new DecodeConfigDMR());
+        assertFalse(ChannelConfigurationPolicy.isActive(remote));
+        assertThrows(IllegalArgumentException.class, () -> ChannelConfigurationPolicy.requireChannelKind(remote));
+
+        remote.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        source.setFeedId(null);
+        assertFalse(ChannelConfigurationPolicy.isActive(remote));
     }
 
     private static Channel channel(io.github.dsheirer.module.decode.config.DecodeConfiguration decoder)

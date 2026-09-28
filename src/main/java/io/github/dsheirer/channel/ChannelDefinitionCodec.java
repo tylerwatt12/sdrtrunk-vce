@@ -41,6 +41,8 @@ import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.record.config.RecordConfiguration;
+import io.github.dsheirer.source.SourceType;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
@@ -387,6 +389,39 @@ public final class ChannelDefinitionCodec
     private SourceConfiguration sourceTo(ChannelDefinition.Source submitted, ChannelProtocolRegistry.Profile profile)
     {
         List<Long> frequencies = normalizedFrequencies(submitted.frequenciesHz());
+        SourceType expectedLocalType = profile.sourceMode() == ChannelProtocolRegistry.SourceMode.SINGLE ?
+            SourceType.TUNER : SourceType.TUNER_MULTIPLE_FREQUENCIES;
+        SourceType sourceType = sourceType(submitted.sourceType(), expectedLocalType);
+
+        if(sourceType == SourceType.REMOTE)
+        {
+            if(profile.decoderType() != DecoderType.P25_PHASE1 && profile.decoderType() != DecoderType.P25_PHASE2)
+            {
+                throw new IllegalArgumentException("Remote sources are supported only for P25 trunked channels");
+            }
+            if(frequencies.size() != 1)
+            {
+                throw new IllegalArgumentException("Remote P25 requires exactly one frequency");
+            }
+            requireAbsent(submitted.minimumFrequencyHz(), "Minimum frequency");
+            requireAbsent(submitted.maximumFrequencyHz(), "Maximum frequency");
+            requireAbsent(submitted.preferredFrequencyHz(), "Preferred frequency");
+            requireAbsent(optionalText(submitted.preferredTuner(), "Preferred tuner"), "Preferred tuner");
+            requireAbsent(submitted.rotationDelayMs(), "Frequency rotation delay");
+            SourceConfigRemote source = new SourceConfigRemote();
+            source.setSenderId(requiredUuid(submitted.senderId(), "Sender ID"));
+            source.setFeedId(requiredUuid(submitted.feedId(), "Feed ID"));
+            source.setFrequency(frequencies.getFirst());
+            return source;
+        }
+
+        if(sourceType != SourceType.TUNER && sourceType != SourceType.TUNER_MULTIPLE_FREQUENCIES)
+        {
+            throw new IllegalArgumentException("Source type is not supported for this channel");
+        }
+        requireAbsent(optionalText(submitted.senderId(), "Sender ID"), "Sender ID");
+        requireAbsent(optionalText(submitted.feedId(), "Feed ID"), "Feed ID");
+
         if(profile.sourceMode() == ChannelProtocolRegistry.SourceMode.SINGLE)
         {
             if(frequencies.size() != 1)
@@ -441,15 +476,21 @@ public final class ChannelDefinitionCodec
         if(source instanceof SourceConfigTuner tuner)
         {
             return new ChannelDefinition.Source(List.of(tuner.getFrequency()), null, null, null,
-                tuner.getPreferredTuner(), null);
+                tuner.getPreferredTuner(), null, SourceType.TUNER.name(), null, null);
         }
         if(source instanceof SourceConfigTunerMultipleFrequency multiple)
         {
             return new ChannelDefinition.Source(multiple.getFrequencies(), multiple.getMinimumFrequency(),
                 multiple.getMaximumFrequency(), multiple.getPersistedPreferredFrequency(),
-                multiple.getPreferredTuner(), multiple.getFrequencyRotationDelay());
+                multiple.getPreferredTuner(), multiple.getFrequencyRotationDelay(),
+                SourceType.TUNER_MULTIPLE_FREQUENCIES.name(), null, null);
         }
-        throw new IllegalArgumentException("Only active tuner channel sources can be administered on the web");
+        if(source instanceof SourceConfigRemote remote)
+        {
+            return new ChannelDefinition.Source(List.of(remote.getFrequency()), null, null, null, null, null,
+                SourceType.REMOTE.name(), remote.getSenderId(), remote.getFeedId());
+        }
+        throw new IllegalArgumentException("Only active channel sources can be administered on the web");
     }
 
     private static EventLogConfiguration loggersTo(ChannelProtocolRegistry.Profile profile, List<String> values)
@@ -570,6 +611,46 @@ public final class ChannelDefinitionCodec
         catch(IllegalArgumentException exception)
         {
             throw new IllegalArgumentException("RadioResolve ID must be blank or a valid UUID");
+        }
+    }
+
+    private static SourceType sourceType(String value, SourceType fallback)
+    {
+        if(value == null || value.isBlank())
+        {
+            return fallback;
+        }
+
+        try
+        {
+            SourceType type = SourceType.valueOf(value.strip().toUpperCase(Locale.ROOT));
+            if(!type.isActive())
+            {
+                throw new IllegalArgumentException();
+            }
+            return type;
+        }
+        catch(IllegalArgumentException e)
+        {
+            throw new IllegalArgumentException("Source type is not supported");
+        }
+    }
+
+    private static String requiredUuid(String value, String label)
+    {
+        String normalized = optionalText(value, label);
+        if(normalized == null)
+        {
+            throw new IllegalArgumentException(label + " is required");
+        }
+
+        try
+        {
+            return UUID.fromString(normalized).toString();
+        }
+        catch(IllegalArgumentException e)
+        {
+            throw new IllegalArgumentException(label + " must be a valid UUID");
         }
     }
 

@@ -28,6 +28,7 @@ public enum SourceType
     MIXER("Sound Card", Availability.RETIRED_COMPATIBILITY),
     TUNER("Tuner"),
     TUNER_MULTIPLE_FREQUENCIES("Tuner - Multiple Frequencies"),
+    REMOTE("Remote P25"),
     RECORDING("IQ Recording");
 
     private String mDisplayString;
@@ -46,7 +47,7 @@ public enum SourceType
 
     public static SourceType[] getTypes()
     {
-        return java.util.stream.Stream.of(SourceType.TUNER, SourceType.TUNER_MULTIPLE_FREQUENCIES)
+        return java.util.stream.Stream.of(SourceType.TUNER, SourceType.TUNER_MULTIPLE_FREQUENCIES, SourceType.REMOTE)
             .filter(SourceType::isActive)
             .toArray(SourceType[]::new);
     }
