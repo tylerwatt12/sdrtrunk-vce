@@ -18583,15 +18583,17 @@ function radioDirectoryConventionalGroups(rows) {
   });
 }
 
-function radioDirectoryLiveLink(row) {
-  const running = row.processing_state === 'RUNNING';
+function radioDirectoryLiveState(row) {
+  if (row.processing_state !== 'RUNNING') {
+    return node('span', 'muted radio-directory-live-state', 'Stopped');
+  }
   const channelName = row.name || 'channel';
   const link = anchor('Live', href('live', { channel: row.configuration_id }),
     'ui-button ui-button-secondary radio-directory-live-action');
-  link.classList.toggle('ui-button-state-success', running);
+  link.classList.add('ui-button-state-success');
   link.prepend(iconGlyph('icon-play'));
-  link.setAttribute('aria-label', `Open ${channelName} in Live; channel is ${running ? 'running' : 'stopped'}`);
-  link.title = `Open ${channelName} in Live · ${running ? 'Running' : 'Stopped'}`;
+  link.setAttribute('aria-label', `Open ${channelName} in Live; channel is running`);
+  link.title = `Open ${channelName} in Live · Running`;
   return link;
 }
 
@@ -18617,7 +18619,7 @@ function radioDirectorySiteRow(row) {
     row.site || row.site_name || 'Site not identified'));
   const frequencies = node('span', 'radio-directory-frequency-list',
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequencies configured');
-  site.append(identity, frequencies, radioDirectoryLiveLink(row));
+  site.append(identity, frequencies, radioDirectoryLiveState(row));
   return site;
 }
 
@@ -18655,7 +18657,7 @@ function radioDirectoryConventionalRow(row) {
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequency'),
     node('span', 'radio-directory-meta-separator', '·'),
     node('span', '', row.protocol_label || protocolFamily(row) || 'Unknown protocol'));
-  channel.append(identity, technical, radioDirectoryLiveLink(row));
+  channel.append(identity, technical, radioDirectoryLiveState(row));
   return channel;
 }
 

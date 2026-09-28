@@ -786,9 +786,12 @@ async function main() {
     /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalRow'),
     /radio-directory-site-row radio-directory-conventional-row/);
-  const radioDirectoryLiveLinkSource = functionBinding(appSource, 'radioDirectoryLiveLink');
-  assert.match(radioDirectoryLiveLinkSource, /ui-button-state-success/);
-  assert.match(radioDirectoryLiveLinkSource, /channel is \$\{running \? 'running' : 'stopped'\}/);
+  const radioDirectoryLiveStateSource = functionBinding(appSource, 'radioDirectoryLiveState');
+  assert.match(radioDirectoryLiveStateSource,
+    /row\.processing_state !== 'RUNNING'[\s\S]+muted radio-directory-live-state[\s\S]+Stopped/);
+  assert.match(radioDirectoryLiveStateSource, /classList\.add\('ui-button-state-success'\)/);
+  assert.match(radioDirectoryLiveStateSource, /channel is running/);
+  assert.doesNotMatch(radioDirectoryLiveStateSource, /channel is stopped/);
   assert.doesNotMatch(appSource, /function radioDirectoryStatus\(/);
   assert.match(appCssSource,
     /\.ui-button-state-success > svg \{[^}]*color: var\(--success\);[^}]*fill: currentColor/s);

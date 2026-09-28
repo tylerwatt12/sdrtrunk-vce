@@ -295,6 +295,11 @@
   white-space: nowrap;
 }
 
+.radio-directory-live-state {
+  font-size: var(--font-size-meta);
+  white-space: nowrap;
+}
+
 .radio-directory-channel-alias {
   color: var(--muted);
   font-size: 10px;
@@ -311,7 +316,8 @@
     grid-row: 2;
   }
 
-  .radio-directory-site-row > .radio-directory-live-action {
+  .radio-directory-site-row > .radio-directory-live-action,
+  .radio-directory-site-row > .radio-directory-live-state {
     grid-row: 1 / 3;
   }
 }
@@ -373,7 +379,8 @@
     grid-row: 2;
   }
 
-  .radio-directory-site-row > .radio-directory-live-action {
+  .radio-directory-site-row > .radio-directory-live-action,
+  .radio-directory-site-row > .radio-directory-live-state {
     grid-column: 2;
     grid-row: 1;
   }

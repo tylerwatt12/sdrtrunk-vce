@@ -679,16 +679,19 @@ test('radio-directory-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-dark-mobile.png', { fullPage: true });
 });
 
-test('radio directory Live actions expose running state without repeated row labels', async ({ page }) => {
+test('radio directory exposes Live only for running channels', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=radio-directory');
   const running = page.getByRole('link', { name: 'Open Parma in Live; channel is running', exact: true });
-  const stopped = page.getByRole('link', { name: 'Open Ottawa County in Live; channel is stopped', exact: true });
+  const stoppedRow = page.locator('.radio-directory-site-row').filter({
+    has: page.getByRole('link', { name: 'Ottawa County', exact: true })
+  });
   await expect(page.locator('.radio-directory-item-status')).toHaveCount(0);
   await expect(running).toHaveAttribute('title', 'Open Parma in Live · Running');
-  await expect(stopped).toHaveAttribute('title', 'Open Ottawa County in Live · Stopped');
   await expect(running.locator('svg')).toHaveCSS('fill', /rgb\(/);
-  await expect(stopped.locator('svg')).toHaveCSS('fill', 'none');
+  await expect(stoppedRow.getByRole('link', { name: /Live/ })).toHaveCount(0);
+  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveText('Stopped');
+  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveClass(/muted/);
   await running.focus();
   await expect(running).toBeFocused();
   await expect(running).toHaveAccessibleName('Open Parma in Live; channel is running');
