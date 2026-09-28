@@ -217,8 +217,9 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
   await expect(page.getByRole('heading', { name: 'Tuners', exact: true })).toBeVisible();
   await expect(page.getByText('Signal', { exact: true })).toBeVisible();
   await expect(page.locator('.tuners-spectrum-toolbar-gain')).toBeVisible();
-  await expect(page.getByText('Common tuning', { exact: true })).toBeVisible();
-  await expect(page.getByText('Device settings', { exact: true })).toBeVisible();
+  await expect(page.locator('.tuners-selected-section')).toHaveCount(0);
+  await expect(page.locator('.tuners-signal-section')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Configure tuner' })).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
   await expect(page.locator('.tuners-frequency-digits')).toContainText('0851.01250MHz');
   await expect(page.locator('.tuners-main').getByRole('button', { name: /Queue/i })).toHaveCount(0);
@@ -226,6 +227,12 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
   await page.getByLabel('LNA gain (dB)').fill('10');
   await page.locator('[data-setting-id="lna_gain"]').getByRole('button', { name: 'Save' }).click();
   await expect.poll(() => mutations.at(-1)).toEqual({ type: 'setting', setting: 'lna_gain', value: 10 });
+
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
+  await expect(configure.getByText('Common tuning', { exact: true })).toBeVisible();
+  await expect(configure.getByText('Device settings', { exact: true })).toBeVisible();
+  await configure.getByRole('button', { name: 'Close Configure Airspy R2' }).click();
 
   expect(state.recordingReads || 0).toBe(0);
   await page.getByRole('button', { name: 'Add tuner' }).click();
@@ -309,7 +316,8 @@ test('operator workspace stays compact on a narrow screen', async ({ page }) => 
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
   await expect(page.locator('main')).toHaveScreenshot('tuners-operator-light-mobile.png');
-  await page.getByText('Limits & sample rate').click();
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  await page.getByRole('dialog', { name: 'Configure Airspy R2' }).getByText('Limits & sample rate').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
 });
 
@@ -325,6 +333,35 @@ test('inventory polling preserves a focused draft while updating the selected pa
   await expect(page.getByLabel('LNA gain (dB)')).toBeFocused();
 });
 
+test('configuration modal preserves a focused draft while inventory refreshes', async ({ page }) => {
+  await page.clock.install();
+  await mockTuners(page, []);
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  const manualPpm = page.getByRole('dialog', { name: 'Configure Airspy R2' })
+    .getByLabel('Frequency correction (ppm)');
+  await manualPpm.focus();
+  await manualPpm.fill('12');
+  await page.clock.runFor(5_100);
+  await expect(manualPpm).toHaveValue('12');
+  await expect(manualPpm).toBeFocused();
+});
+
+test('discarding configuration changes restores confirmed values when reopened', async ({ page }) => {
+  await mockTuners(page, []);
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  let configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
+  await configure.getByLabel('Frequency correction (ppm)').fill('12');
+  page.once('dialog', (dialog) => dialog.accept());
+  await configure.getByRole('button', { name: 'Close Configure Airspy R2' }).click();
+  await expect(configure).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
+  await expect(configure.getByLabel('Frequency correction (ppm)')).toHaveValue('0');
+});
+
 test('descriptor availability and dependencies control common and device settings', async ({ page }) => {
   const settings = operatorSettings({
     automatic_ppm: { value: true },
@@ -333,14 +370,16 @@ test('descriptor availability and dependencies control common and device setting
   });
   await mockTuners(page, [], { currentTuner: operatorTuner({ settings }) });
   await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
 
-  const automaticPpm = page.getByLabel('Automatic PPM');
-  const manualPpm = page.getByLabel('Frequency correction (ppm)');
+  const automaticPpm = configure.getByLabel('Automatic PPM');
+  const manualPpm = configure.getByLabel('Frequency correction (ppm)');
   await expect(manualPpm).toBeDisabled();
   await expect(manualPpm).toHaveValue('0');
   await expect(page.locator('[data-setting-id="frequency_correction_ppm"]')).toHaveAttribute(
     'aria-disabled', 'true');
-  await expect(page.getByText('Turn off Auto PPM')).toBeVisible();
+  await expect(configure.getByText('Turn off Auto PPM')).toBeVisible();
   const [automaticBox, manualBox] = await Promise.all([
     page.locator('[data-setting-id="automatic_ppm"] .ui-toggle').boundingBox(),
     manualPpm.boundingBox()
@@ -354,11 +393,11 @@ test('descriptor availability and dependencies control common and device setting
     .toBeTruthy();
   await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '-1');
   await expect(page.getByText('Unlock center')).toBeVisible();
-  await page.getByText('Limits & sample rate').click();
-  await expect(page.getByLabel('Sample rate')).toBeDisabled();
-  await expect(page.getByText('Available in Setup')).toBeVisible();
-  await expect(page.getByLabel('Bias T')).toBeEnabled();
-  await expect(page.locator('.tuners-main').getByText(/queued/i)).toHaveCount(0);
+  await configure.getByText('Limits & sample rate').click();
+  await expect(configure.getByLabel('Sample rate')).toBeDisabled();
+  await expect(configure.getByText('Available in Setup')).toBeVisible();
+  await expect(configure.getByLabel('Bias T')).toBeEnabled();
+  await expect(configure.getByText(/queued/i)).toHaveCount(0);
 });
 
 test('manual PPM presents and applies whole-number steps', async ({ page }) => {
@@ -368,8 +407,10 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   });
   await mockTuners(page, mutations, { currentTuner: operatorTuner({ settings }) });
   await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
 
-  const manualPpm = page.getByLabel('Frequency correction (ppm)');
+  const manualPpm = page.getByRole('dialog', { name: 'Configure Airspy R2' })
+    .getByLabel('Frequency correction (ppm)');
   await expect(manualPpm).toHaveAttribute('step', '1');
   await expect(manualPpm).toHaveValue('0');
   await manualPpm.press('Enter');
@@ -439,6 +480,8 @@ test('wide tuner summary and common controls use their available row', async ({ 
   await page.setViewportSize({ width: 1600, height: 1000 });
   await mockTuners(page, [], { currentTuner: operatorTuner() });
   await page.goto('/app.html?view=tuners');
+  await expect(page.locator('.tuners-selected-section')).toHaveCount(0);
+  await expect(page.locator('.tuners-signal-section > .tuners-signal-header .tuners-details')).toHaveCount(1);
 
   const [summaryBox, centerBox, actionsBox] = await Promise.all([
     page.locator('.tuners-detail-summary').boundingBox(),
@@ -453,7 +496,8 @@ test('wide tuner summary and common controls use their available row', async ({ 
   const detailCenters = [summaryBox, centerBox, actionsBox].map((box) => box.y + box.height / 2);
   expect(Math.max(...detailCenters) - Math.min(...detailCenters)).toBeLessThanOrEqual(1);
 
-  await page.getByText('Limits & sample rate').click();
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  await page.getByRole('dialog', { name: 'Configure Airspy R2' }).getByText('Limits & sample rate').click();
   const limits = page.locator('.tuners-common-limits');
   const sample = page.locator('.tuners-common-sample');
   await expect(limits.locator(':scope > [data-setting-id="minimum_frequency_mhz"]')).toHaveCount(1);
@@ -482,8 +526,10 @@ test('Setup unlocks setup-only controls and remains unavailable to channels', as
 
   await expect(page.getByText('Not available to channels')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Go live' })).toBeVisible();
-  await page.getByText('Limits & sample rate').click();
-  await expect(page.getByLabel('Sample rate')).toBeEnabled();
+  await page.getByRole('button', { name: 'Configure tuner' }).click();
+  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
+  await configure.getByText('Limits & sample rate').click();
+  await expect(configure.getByLabel('Sample rate')).toBeEnabled();
   await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '0');
 });
 
@@ -529,7 +575,7 @@ test('leaving Live stops channels once and offers one restore attempt', async ({
   await mockTuners(page, mutations, state);
   await page.goto('/app.html?view=tuners');
 
-  await page.getByRole('button', { name: 'Setup' }).click();
+  await page.getByRole('button', { name: 'Enter setup' }).click();
   const stop = page.getByRole('dialog', { name: 'Enter Setup' });
   await expect(stop.getByText('Stop 2 channels?')).toBeVisible();
   await stop.getByRole('button', { name: 'Enter Setup', exact: true }).click();
@@ -592,7 +638,7 @@ test('restore operation error stays in the prompt without reporting success', as
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(1);
 });
 
-test('Find Optimal Tuner Placement opens every eligible tuner and running frequency in a new tab',
+test('Plan tuner placement opens every eligible tuner and running frequency in a new tab',
     async ({ page, context }) => {
   const state = { currentTuner: operatorTuner(), rfAnalysis: { tuners: [
     { id: 'tuner-a', model: 'airspy', rate_hz: 10000000 },
@@ -604,7 +650,7 @@ test('Find Optimal Tuner Placement opens every eligible tuner and running freque
   }));
   await page.goto('/app.html?view=tuners');
   const originalUrl = page.url();
-  const placement = page.getByRole('button', { name: 'Find Optimal Tuner Placement', exact: true });
+  const placement = page.getByRole('button', { name: 'Plan tuner placement', exact: true });
   await expect(placement).toBeVisible();
   const popupPromise = page.waitForEvent('popup');
   await placement.click();
