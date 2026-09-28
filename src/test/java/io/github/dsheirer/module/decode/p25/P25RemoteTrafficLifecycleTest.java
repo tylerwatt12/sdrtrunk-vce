@@ -11,6 +11,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager.RemoteTrafficOpenResult;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -20,6 +21,7 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2ScrambleParametersPreloadData;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.remote.P25RemotePhase;
 import io.github.dsheirer.remote.P25RemoteTrafficOpen;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -123,6 +126,33 @@ class P25RemoteTrafficLifecycleTest
     }
 
     @Test
+    void phase2OpenSeedsTheMostRecentlyStartedTimeslotGrant()
+    {
+        Channel parent = remoteParent(new DecodeConfigP25Phase1());
+        P25TrafficChannelManager manager = manager(parent);
+        P25FrequencyBand band = new P25FrequencyBand(0, 851_012_500L, -45_000_000L, 12_500L, 12_500, 2);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber starts = subscribe(manager);
+        MutableIdentifierCollection timeslot1 = new MutableIdentifierCollection();
+        timeslot1.update(APCO25Talkgroup.create(1201));
+        MutableIdentifierCollection timeslot2 = new MutableIdentifierCollection();
+        timeslot2.update(APCO25Talkgroup.create(1202));
+        manager.processP2ChannelGrant(APCO25Channel.create(0, 0), VoiceServiceOptions.createUnencrypted(), timeslot1,
+            MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_000L);
+        manager.processP2ChannelGrant(APCO25Channel.create(0, 1), VoiceServiceOptions.createUnencrypted(), timeslot2,
+            MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_100L);
+
+        assertTrue(starts.requests.isEmpty(), "remote grants must not independently start a host traffic chain");
+        assertEquals(RemoteTrafficOpenResult.STARTING, manager.acceptRemoteTrafficOpen(open(parent,
+            UUID.randomUUID().toString(), 1L, P25RemotePhase.PHASE_2, 851_012_500L, 0x491, 0xABCDE, 0x123)));
+        IdentifierCollection seeded = starts.requests.getFirst().getIdentifierCollection();
+        assertEquals(APCO25Talkgroup.create(1202), seeded.getToIdentifier());
+        assertEquals(timeslot2.getTimeslot(), seeded.getTimeslot());
+        assertNotSame(timeslot2, seeded);
+    }
+
+    @Test
     void remoteControlGrantsTrackActivityButCannotAllocateHostTraffic()
     {
         DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
@@ -143,6 +173,9 @@ class P25RemoteTrafficLifecycleTest
         assertEquals(RemoteTrafficOpenResult.STARTING, manager.acceptRemoteTrafficOpen(open(parent,
             UUID.randomUUID().toString(), 1L, P25RemotePhase.PHASE_1, 851_012_500L, 0x491, null, null)));
         assertEquals(1, starts.requests.size(), "the sender-confirmed OPEN must still have the full pool available");
+        IdentifierCollection seeded = starts.requests.getFirst().getIdentifierCollection();
+        assertEquals(APCO25Talkgroup.create(1201), seeded.getToIdentifier());
+        assertNotSame(identifiers, seeded, "remote traffic must receive a defensive grant-identifier copy");
     }
 
     private static Channel remoteParent(Object decodeConfiguration)

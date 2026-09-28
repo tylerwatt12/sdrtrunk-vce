@@ -2020,7 +2020,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mRemoteTrafficGenerations.record(open.streamId(), open.generation());
 
             ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel,
-                new P25RemoteChannelDescriptor(open.frequency(), open.phase()), new IdentifierCollection(), this);
+                new P25RemoteChannelDescriptor(open.frequency(), open.phase()),
+                getRemoteGrantIdentifiers(open), this);
             request.setRemoteTrafficOpen(open);
             request.addPreloadDataContent(new P25FrequencyBandPreloadDataContent(getEffectiveFrequencyBands().values()));
 
@@ -2050,6 +2051,40 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
+    }
+
+    /**
+     * Seeds the remote traffic mirror from the grant already decoded on this host. The sender OPEN remains the sole
+     * allocation authority; this only preserves the talkgroup/radio context that a normal local allocation passes to
+     * its traffic chain. A Phase 2 OPEN represents both timeslots, so prefer the most recently started active grant
+     * when both slots are present. The other slot continues to receive its identifiers from traffic signalling.
+     */
+    private IdentifierCollection getRemoteGrantIdentifiers(P25RemoteTrafficOpen open)
+    {
+        P25TrafficChannelEventTracker tracker = mTS1ChannelGrantEventMap.get(open.frequency());
+
+        if(open.phase() == P25RemotePhase.PHASE_2)
+        {
+            P25TrafficChannelEventTracker timeslot2 = mTS2ChannelGrantEventMap.get(open.frequency());
+
+            if(tracker == null || tracker.isComplete() || timeslot2 != null && !timeslot2.isComplete() &&
+                timeslot2.getEvent().getTimeStart() > tracker.getEvent().getTimeStart())
+            {
+                tracker = timeslot2;
+            }
+        }
+
+        IdentifierCollection tracked = tracker != null && !tracker.isComplete() ?
+            tracker.getEvent().getIdentifierCollection() : null;
+
+        if(tracked == null)
+        {
+            return new IdentifierCollection();
+        }
+
+        IdentifierCollection copy = new IdentifierCollection(tracked.getIdentifiers());
+        copy.setTimeslot(tracked.getTimeslot());
+        return copy;
     }
 
     /** Stops only the exact active generation; stale CLOSE frames cannot tear down a replacement stream. */
