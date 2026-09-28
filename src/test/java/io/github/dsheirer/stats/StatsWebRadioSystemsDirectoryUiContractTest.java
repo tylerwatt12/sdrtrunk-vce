@@ -60,6 +60,9 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         String directory = function(app, "function renderNestedRadioDirectory(renderContext, embedded = false)");
         String systemCard = function(app, "function radioDirectorySystemCard(row)");
         String channelCard = function(app, "function radioDirectoryConventionalSystemCard(row)");
+        String liveLink = function(app, "function radioDirectoryLiveLink(row)");
+        String siteRow = function(app, "function radioDirectorySiteRow(row)");
+        String conventionalRow = function(app, "function radioDirectoryConventionalRow(row)");
 
         assertTrue(directory.contains("bare: true"));
         assertTrue(directory.contains("radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system'"));
@@ -70,6 +73,11 @@ class StatsWebRadioSystemsDirectoryUiContractTest
         assertTrue(channelCard.contains("ui-surface radio-directory-system-card radio-directory-conventional-card"));
         assertTrue(channelCard.contains("uiIconTile('icon-conventional', 'blue')"));
         assertTrue(app.contains("ui-button ui-button-secondary radio-directory-live-action"));
+        assertTrue(liveLink.contains("ui-button-state-success"));
+        assertTrue(liveLink.contains("channel is ${running ? 'running' : 'stopped'}"));
+        assertFalse(siteRow.contains("radioDirectoryStatus"));
+        assertFalse(conventionalRow.contains("radioDirectoryStatus"));
+        assertFalse(app.contains("function radioDirectoryStatus("));
     }
 
     @Test

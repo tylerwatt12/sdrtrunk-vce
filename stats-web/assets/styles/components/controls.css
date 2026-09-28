@@ -115,6 +115,11 @@
   stroke-linejoin: round;
 }
 
+.ui-button-state-success > svg {
+  color: var(--success);
+  fill: currentColor;
+}
+
 .ui-button:hover:not(:disabled, [aria-disabled="true"]) {
   border-color: var(--accent);
   background: var(--surface-2);

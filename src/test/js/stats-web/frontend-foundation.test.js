@@ -779,7 +779,12 @@ async function main() {
     /ui-surface radio-directory-system-card radio-directory-conventional-card[\s\S]+uiIconTile\('icon-conventional', 'blue'\)/);
   assert.match(functionBinding(appSource, 'radioDirectoryConventionalRow'),
     /radio-directory-site-row radio-directory-conventional-row/);
-  assert.match(functionBinding(appSource, 'radioDirectoryStatus'), /uiStatus\(/);
+  const radioDirectoryLiveLinkSource = functionBinding(appSource, 'radioDirectoryLiveLink');
+  assert.match(radioDirectoryLiveLinkSource, /ui-button-state-success/);
+  assert.match(radioDirectoryLiveLinkSource, /channel is \$\{running \? 'running' : 'stopped'\}/);
+  assert.doesNotMatch(appSource, /function radioDirectoryStatus\(/);
+  assert.match(appCssSource,
+    /\.ui-button-state-success > svg \{[^}]*color: var\(--success\);[^}]*fill: currentColor/s);
   assert.match(appCssSource, /\.ui-surface \{[^}]*background: var\(--surface\)/s);
   assert.match(appCssSource, /\.ui-status::before \{[^}]*border-radius: 50%/s);
   assert.match(appCssSource, /\.ui-icon-tile \{[^}]*background: var\(--accent-soft\)/s);
