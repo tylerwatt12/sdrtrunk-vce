@@ -97,6 +97,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -145,6 +146,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private static final String PHASE_2_ENCRYPTED_CALL_IGNORED =
         ENCRYPTED_CALL_IGNORED + " - PHASE 2 CHANNEL GRANT";
     private static final String PHASE_1_CALL_DETAILS = "PHASE 1 CALL ";
+    private static final int MAX_REMOTE_TRAFFIC_GENERATION_TOMBSTONES = 2_048;
 
     private Queue<Channel> mAvailablePhase1TrafficChannelQueue = new LinkedTransferQueue<>();
     private Queue<Channel> mAvailablePhase2TrafficChannelQueue = new LinkedTransferQueue<>();
@@ -175,10 +177,59 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private final boolean mGrantAllocationEnabled;
     private final Map<String,RemoteTrafficAllocation> mRemoteTrafficAllocations = new HashMap<>();
-    private final Map<String,Long> mRemoteTrafficGenerations = new HashMap<>();
+    private final RemoteTrafficGenerationHistory mRemoteTrafficGenerations =
+        new RemoteTrafficGenerationHistory(MAX_REMOTE_TRAFFIC_GENERATION_TOMBSTONES);
 
     private record RemoteTrafficAllocation(long generation, long frequency, P25RemotePhase phase, Channel channel)
     {
+    }
+
+    /**
+     * Keeps a bounded recent replay window. Sender stream IDs are random UUIDs and TCP preserves frame order, so an
+     * indefinite history provides no additional normal-session protection while leaking one entry per completed call.
+     * Access is protected by the traffic manager lock.
+     */
+    static final class RemoteTrafficGenerationHistory
+    {
+        private final int mCapacity;
+        private final LinkedHashMap<String,Long> mGenerations = new LinkedHashMap<>();
+
+        RemoteTrafficGenerationHistory(int capacity)
+        {
+            if(capacity <= 0)
+            {
+                throw new IllegalArgumentException("Replay history capacity must be positive");
+            }
+
+            mCapacity = capacity;
+        }
+
+        Long get(String streamId)
+        {
+            return mGenerations.get(streamId);
+        }
+
+        void record(String streamId, long generation)
+        {
+            //Refresh an existing stream's insertion position so its newest generation stays in the replay window.
+            mGenerations.remove(streamId);
+            mGenerations.put(streamId, generation);
+
+            while(mGenerations.size() > mCapacity)
+            {
+                mGenerations.remove(mGenerations.keySet().iterator().next());
+            }
+        }
+
+        int size()
+        {
+            return mGenerations.size();
+        }
+
+        void clear()
+        {
+            mGenerations.clear();
+        }
     }
 
     /**
@@ -1966,7 +2017,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mAllocatedTrafficChannelMap.put(open.frequency(), trafficChannel);
             mRemoteTrafficAllocations.put(open.streamId(),
                 new RemoteTrafficAllocation(open.generation(), open.frequency(), open.phase(), trafficChannel));
-            mRemoteTrafficGenerations.put(open.streamId(), open.generation());
+            mRemoteTrafficGenerations.record(open.streamId(), open.generation());
 
             ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel,
                 new P25RemoteChannelDescriptor(open.frequency(), open.phase()), new IdentifierCollection(), this);

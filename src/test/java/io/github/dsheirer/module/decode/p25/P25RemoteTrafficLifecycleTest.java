@@ -32,12 +32,31 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25RemoteTrafficLifecycleTest
 {
     private static final String SENDER_ID = "c583c158-1581-4f14-90ce-745635c05526";
     private static final String FEED_ID = "f02e5285-33c9-4491-964c-afd88298d8df";
+
+    @Test
+    void replayHistoryIsBoundedAndRetainsMostRecentlyUpdatedStreams()
+    {
+        P25TrafficChannelManager.RemoteTrafficGenerationHistory history =
+            new P25TrafficChannelManager.RemoteTrafficGenerationHistory(3);
+        history.record("first", 1L);
+        history.record("second", 2L);
+        history.record("third", 3L);
+        history.record("first", 4L);
+        history.record("fourth", 5L);
+
+        assertEquals(3, history.size());
+        assertNull(history.get("second"));
+        assertEquals(Long.valueOf(3L), history.get("third"));
+        assertEquals(Long.valueOf(4L), history.get("first"));
+        assertEquals(Long.valueOf(5L), history.get("fourth"));
+    }
 
     @Test
     void phase1OpenIsIdempotentAndOnlyExactCloseStopsIt()
