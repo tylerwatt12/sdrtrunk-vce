@@ -1302,3 +1302,41 @@ body[data-view="live"] .channel-diagnostic-readouts {
     margin-left: auto;
   }
 }
+.live-channel-origin,
+.live-remote-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.live-channel-origin {
+  flex-wrap: wrap;
+}
+
+.live-remote-origin {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.live-remote-origin svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.live-remote-origin-success {
+  color: var(--success);
+}
+
+.live-remote-origin-warning {
+  color: var(--warning);
+}
+
+.live-remote-origin-danger {
+  color: var(--danger);
+}
+
+.live-selected-view-title .live-remote-origin {
+  margin-inline-start: var(--space-2);
+}

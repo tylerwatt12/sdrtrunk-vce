@@ -1,0 +1,244 @@
+/* Shared primitives own appearance; Remote Links owns only page, card, and editor geometry. */
+.remote-links-page,
+.remote-links-editor,
+.remote-links-card,
+.remote-links-card-identity,
+.remote-links-feed-detail,
+.remote-links-dependency,
+.remote-links-credential {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.remote-links-summary,
+.remote-links-card-title-row,
+.remote-links-feed-title,
+.remote-links-card-actions,
+.remote-links-page-meta,
+.remote-links-credential-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.remote-links-summary {
+  flex-wrap: wrap;
+}
+
+.remote-links-overview,
+.remote-links-sender-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.remote-links-card,
+.remote-links-sender-card {
+  overflow: hidden;
+  align-content: start;
+}
+
+.remote-links-card-header,
+.remote-links-feed-header,
+.remote-links-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.remote-links-card-header {
+  padding: var(--space-4) var(--space-4) 0;
+}
+
+.remote-links-card-title-row h2,
+.remote-links-section-header h2,
+.remote-links-section-header p,
+.remote-links-card-identity p {
+  margin: 0;
+}
+
+.remote-links-card-title-row svg,
+.remote-links-feed-title svg,
+.remote-links-empty > svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+}
+
+.remote-links-card-title-row h2 {
+  font-size: var(--font-size-section-title);
+}
+
+.remote-links-facts,
+.remote-links-dependencies,
+.remote-links-feed-grid,
+.remote-links-card > .ui-notice {
+  margin-inline: var(--space-4);
+}
+
+.remote-links-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.remote-links-dependencies,
+.remote-links-feed-grid {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.remote-links-dependency {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.remote-links-dependency:last-child {
+  border-bottom: 0;
+}
+
+.remote-links-dependency small {
+  grid-column: 1 / -1;
+}
+
+.remote-links-card-actions {
+  justify-content: flex-end;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.remote-links-feed-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.remote-links-feed-header,
+.remote-links-feed-detail {
+  grid-column: 1;
+}
+
+.remote-links-feed-card > .ui-button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.remote-links-feed-detail {
+  gap: var(--space-1);
+}
+
+.remote-links-feed-title {
+  min-width: 0;
+}
+
+.remote-links-feed-title strong,
+.remote-links-facts dd {
+  overflow-wrap: anywhere;
+}
+
+.remote-links-page-meta {
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.remote-links-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.remote-links-fields > .ui-toggle-field,
+.remote-links-fields > .ui-notice,
+.remote-links-export-list {
+  grid-column: 1 / -1;
+}
+
+.remote-links-export-list {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.remote-links-export-choice {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.remote-links-export-choice input {
+  grid-row: 1 / span 2;
+}
+
+.remote-links-export-choice small {
+  grid-column: 2;
+}
+
+.remote-links-credential-row > .ui-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.remote-links-empty {
+  grid-column: 1 / -1;
+}
+
+.remote-links-empty > svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.read-only-modal.remote-links-modal {
+  width: min(var(--modal-size-large), 96vw);
+}
+
+@media (max-width: 840px) {
+  .remote-links-overview,
+  .remote-links-sender-grid,
+  .remote-links-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .remote-links-fields > * {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 620px) {
+  .remote-links-section-header,
+  .remote-links-page-meta,
+  .remote-links-credential-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .remote-links-feed-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .remote-links-feed-card > .ui-button {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+  }
+
+  .remote-links-section-header > .ui-button,
+  .remote-links-credential-row > .ui-button {
+    width: 100%;
+  }
+}

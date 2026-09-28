@@ -44,6 +44,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.record.AudioRecordingManager;
+import io.github.dsheirer.remote.RemoteLinkAdministrationService;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -74,6 +75,7 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
+import io.github.dsheirer.web.http.RemoteLinksHttpController;
 import io.github.dsheirer.web.http.RecordingTunerHttpController;
 import io.github.dsheirer.web.http.WebAccessPolicyHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
@@ -201,6 +203,7 @@ public class StatsWebServerService implements AutoCloseable
     private final AliasAdministrationService mAliasAdministrationService;
     private final ChannelAdministrationService mChannelAdministrationService;
     private final StreamingAdministrationService mStreamingAdministrationService;
+    private final RemoteLinkAdministrationService mRemoteLinkAdministrationService;
     private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private volatile AudioCallCoordinator mAudioCallCoordinator;
     private volatile MapSnapshotService mMapSnapshotService;
@@ -305,7 +308,23 @@ public class StatsWebServerService implements AutoCloseable
                                  RadioReferenceImportService radioReferenceImportService,
                                  StreamingAdministrationService streamingAdministrationService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, channelAdministrationService,
+            radioReferenceDirectoryService, radioReferenceImportService, streamingAdministrationService, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 ReceiverActivityService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel, ChannelAdministrationService channelAdministrationService,
+                                 RadioReferenceDirectoryService radioReferenceDirectoryService,
+                                 RadioReferenceImportService radioReferenceImportService,
+                                 StreamingAdministrationService streamingAdministrationService,
+                                 RemoteLinkAdministrationService remoteLinkAdministrationService)
+    {
         mStreamingAdministrationService = streamingAdministrationService;
+        mRemoteLinkAdministrationService = remoteLinkAdministrationService;
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
@@ -334,7 +353,8 @@ public class StatsWebServerService implements AutoCloseable
             new TunerAdministrationService(tunerManager, mTunerDiagnosticService, mTunerSettingsService) : null;
         mFrequencyListenService = mTunerDiagnosticService != null ?
             new FrequencyListenService(mTunerDiagnosticService) : null;
-        mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog);
+        mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
+            remoteLinkAdministrationService);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
         mSpectrumSnapSettingsService = new SpectrumSnapSettingsService(mWebAccessDatabasePath);
         mWebReceiverSettingsService = new WebReceiverSettingsService(mUserPreferences.getNowPlayingPreference());
@@ -776,6 +796,13 @@ public class StatsWebServerService implements AutoCloseable
             StreamingAdminHttpController streamingController = new StreamingAdminHttpController(mStreamingAdministrationService);
             server.createContext(StreamingAdminHttpController.PATH, mWebRequestSecurity.protectApi(
                 WebCapability.ADMIN_STREAMING, streamingController::handle));
+        }
+        if(mRemoteLinkAdministrationService != null)
+        {
+            RemoteLinksHttpController remoteLinksController =
+                new RemoteLinksHttpController(mRemoteLinkAdministrationService);
+            server.createContext(RemoteLinksHttpController.PATH, mWebRequestSecurity.protectApi(
+                WebCapability.ADMIN_SETTINGS, remoteLinksController::handle));
         }
         if(mChannelAdministrationService != null)
         {

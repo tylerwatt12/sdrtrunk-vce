@@ -21,6 +21,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -15173,6 +15174,42 @@ function liveConventionalChannelValue(row) {
   return label && target ? anchor(label, target, 'live-channel-link') : label;
 }
 
+function liveRemoteOriginLabel(origin) {
+  if (!origin || typeof origin !== 'object') return '';
+  const sender = String(origin.sender_name || origin.sender_id || 'remote sender').trim();
+  const feed = String(origin.feed_name || origin.feed_id || '').trim();
+  const state = String(origin.state || 'UNKNOWN').replaceAll('_', ' ').toLowerCase();
+  const dependency = String(origin.dependency_state || 'UNKNOWN').replaceAll('_', ' ').toLowerCase();
+  return `Remote via ${sender}${feed ? ` · ${feed}` : ''} · ${state} · dependency ${dependency}`;
+}
+
+function liveRemoteOriginBadge(origin, showLabel = false) {
+  const label = liveRemoteOriginLabel(origin);
+  if (!label) return null;
+  const state = String(origin.state || '').toUpperCase();
+  const dependency = String(origin.dependency_state || '').toUpperCase();
+  const tone = state === 'CONNECTED' && dependency === 'READY' ? 'success' :
+    (state === 'UNSUPPORTED' || dependency === 'MISSING' ? 'danger' : 'warning');
+  const badge = node('span', `live-remote-origin live-remote-origin-${tone}`);
+  badge.title = label;
+  badge.setAttribute('aria-label', label);
+  badge.append(iconGlyph('icon-cloud'));
+  if (showLabel) badge.append(node('span', '', 'Remote'));
+  return badge;
+}
+
+function liveChannelValue(row) {
+  const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
+  const value = conventional ? liveConventionalChannelValue(row) :
+    (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`);
+  const remote = liveRemoteOriginBadge(row.remote_origin);
+  if (!remote) return value;
+  const wrapper = node('span', 'live-channel-origin');
+  if (value) wrapper.append(value);
+  wrapper.append(remote);
+  return wrapper;
+}
+
 function liveChannelViewMeta(value, label = '') {
   if (value?.table_id === 'conventional') {
     const count = Number(value?.rows_total ?? value?.rows?.length ?? 0);
@@ -15186,7 +15223,9 @@ function liveChannelViewMeta(value, label = '') {
     .filter((item, index, items) => items.findIndex((candidate) =>
       candidate.toLowerCase() === item.toLowerCase()) === index)
     .filter((item) => item.toLowerCase() !== normalizedLabel);
-  return values.slice(0, 2).join(' · ') || 'Trunked channel';
+  const local = values.slice(0, 2).join(' · ') || 'Trunked channel';
+  const sender = String(value?.remote_origin?.sender_name || value?.remote_origin?.sender_id || '').trim();
+  return sender ? `${local} · Remote via ${sender}` : local;
 }
 
 function liveRequestedChannelMatch(tableValue, configurationId) {
@@ -15403,12 +15442,11 @@ function liveChannelsSection(onSelectionChange) {
       sortValue: (row) => row.status || '' },
     { id: 'tags', label: 'Tags', render: channelTagText, title: channelTagTitle,
       sortValue: channelTagText },
-    { id: 'channel', label: 'Channel', render: (row) =>
-      channelTagSet(row.tags).has('CONVENTIONAL') ? liveConventionalChannelValue(row) :
-        (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`),
+    { id: 'channel', label: 'Channel', render: liveChannelValue,
       title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
       className: channelStateClass, sortValue: (row) =>
-        channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
+        channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || ''),
+      reconcileKey: (row) => JSON.stringify([row.channel_name, row.lcn, row.remote_origin || null]) },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: channelStateClass,
       sortValue: (row) => Number(row.frequency_hz || 0) },
@@ -15560,10 +15598,13 @@ function liveChannelsSection(onSelectionChange) {
     const label = value?.title || value?.channel_name || value?.table_id || 'Live Channels';
     const meta = value ? liveChannelViewMeta(value, label) : 'Waiting for channel activity…';
     const signature = JSON.stringify([value?.table_id || '', label, meta,
-      value?.channel_running, value?.entity_ref || null, capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]);
+      value?.channel_running, value?.entity_ref || null, value?.remote_origin || null,
+      capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]);
     if (signature === selectedViewSignature) return;
     selectedViewSignature = signature;
-    selectedViewTitle.textContent = label;
+    selectedViewTitle.replaceChildren(document.createTextNode(label));
+    const remote = liveRemoteOriginBadge(value?.remote_origin, true);
+    if (remote) selectedViewTitle.append(remote);
     selectedViewMeta.textContent = meta;
     pickerToggleLabel.textContent = label;
     selectedViewActions.replaceChildren();
@@ -15711,7 +15752,9 @@ function liveChannelsSection(onSelectionChange) {
     const select = tab.querySelector('.channels-tab-select');
     const title = tab.querySelector('.channels-tab-title');
     const meta = liveChannelViewMeta(value, label);
-    title.textContent = label;
+    title.replaceChildren(document.createTextNode(label));
+    const remote = liveRemoteOriginBadge(value.remote_origin);
+    if (remote) title.append(remote);
     tab.querySelector('.channels-tab-meta').textContent = meta;
     tab.dataset.search = `${label} ${meta}`.toLowerCase();
     const quality = tab.querySelector('.channels-tab-quality');
@@ -15727,16 +15770,18 @@ function liveChannelsSection(onSelectionChange) {
       Math.max(0, Math.min(100, decodeValue)) : null;
     const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     const operatingState = value.table_id === 'conventional' ? 'Live' : (stopped ? 'Stopped' : 'Running');
+    const remoteLabel = liveRemoteOriginLabel(value.remote_origin);
+    const originSuffix = remoteLabel ? ` · ${remoteLabel}` : '';
     if (value.table_id === 'conventional') {
       quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
-      tab.title = `${label} · ${operatingState}`;
-      select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}`);
+      tab.title = `${label} · ${operatingState}${originSuffix}`;
+      select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
       stateLabel.textContent = operatingState;
     } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
-      tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable`;
+      tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable${originSuffix}`;
       select.setAttribute('aria-label',
-        `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable`);
+        `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable${originSuffix}`);
       stateLabel.textContent = operatingState;
     } else {
       const level = signalBarLevel(signalStrength);
@@ -15748,9 +15793,9 @@ function liveChannelsSection(onSelectionChange) {
         `${signalStrength.toFixed(1)} dBFS signal strength`;
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
         `${decodeQuality.toFixed(1)}% decode quality`;
-      tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}`;
+      tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}${originSuffix}`;
       select.setAttribute('aria-label',
-        `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}`);
+        `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}${originSuffix}`);
       stateLabel.textContent = operatingState;
     }
     tab.classList.toggle('stopped', stopped);
@@ -23142,6 +23187,16 @@ function renderStreaming() {
   beginPage(renderContext, pageHeader('Streaming', 'Manage destinations and monitor delivery'), workspace.element);
 }
 
+function renderAdminRemoteLinks(renderContext) {
+  const workspace = createRemoteLinksWorkspace({
+    node, formField, uiSelectFrame, uiToggleField, uiStatus, iconGlyph,
+    openReadOnlyModal, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
+  });
+  const close = () => workspace.close();
+  renderContext.signal.addEventListener('abort', close, { once: true });
+  content.append(workspace.element);
+}
+
 function renderListenMap() {
   const renderContext = captureRenderContext();
   const map = createListenMap({
@@ -25083,6 +25138,8 @@ function adminSettingsGroups() {
     { label: 'Receiving & output', items: [
       { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose how calls are streamed and recorded, and whether activity is saved.' },
+      { id: 'remote-links', label: 'Remote Links', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Receive P25 systems from trusted installations or send local systems to one host.' },
       { id: 'spectrum', label: 'Spectrum country', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose the country used for Spectrum frequency labels and cursor snapping.' },
       { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -25141,6 +25198,7 @@ async function renderAdmin() {
     await renderAdminReceiverBehaviorSettings();
   }
   else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
+  else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'protocol-p25') {
     pageTitleController.update({ pageTitle: 'P25 band plans' });
