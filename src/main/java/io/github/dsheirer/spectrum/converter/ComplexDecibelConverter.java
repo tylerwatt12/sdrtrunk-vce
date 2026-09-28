@@ -53,8 +53,12 @@ package io.github.dsheirer.spectrum.converter;
  * 
  * and the dynamic range is:  (-66.23 to 0.0 dB)
  */
-public class ComplexDecibelConverter extends DFTResultsConverter
+public final class ComplexDecibelConverter
 {
+	private ComplexDecibelConverter()
+	{
+	}
+
 	public static float[] convert(float[] results)
 	{
 		int halfResults = results.length / 2;
@@ -94,10 +98,4 @@ public class ComplexDecibelConverter extends DFTResultsConverter
 
 		return processed;
 	}
-
-	@Override
-	public void receive(float[] results)
-    {
-		dispatch(convert(results));
-    }
 }

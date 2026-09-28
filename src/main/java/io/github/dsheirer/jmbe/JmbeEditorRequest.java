@@ -27,7 +27,6 @@ import io.github.dsheirer.jmbe.github.Release;
 public class JmbeEditorRequest
 {
     private Release mCurrentRelease;
-    private boolean mCloseEditor = false;
 
     /**
      * Constructs an instance to request an edit of the specified release
@@ -36,23 +35,6 @@ public class JmbeEditorRequest
     public JmbeEditorRequest(Release release)
     {
         mCurrentRelease = release;
-    }
-
-    /**
-     * Constructs a request to close and dispose of the editor
-     * @param close
-     */
-    public JmbeEditorRequest(boolean close)
-    {
-        mCloseEditor = close;
-    }
-
-    /**
-     * Indicates if this is a close (and dispose) editor request
-     */
-    public boolean isCloseEditorRequest()
-    {
-        return mCloseEditor;
     }
 
     /**

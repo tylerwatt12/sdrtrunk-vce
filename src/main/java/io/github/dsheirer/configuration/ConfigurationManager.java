@@ -35,7 +35,6 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -94,7 +93,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private boolean mConfigurationLoading = false;
     private volatile boolean mInitialized = false;
     private volatile boolean mExternalConfigurationOperation = false;
-    private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
     /**
      * Manages channel configurations, streams, and alias lists backed by the global SQLite database.
@@ -119,7 +117,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mScanListModel = new ScanListModel();
         mAliasAdministrationService = new AliasAdministrationService(this);
 
-        mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
+        mBroadcastModel = new BroadcastModel(mAliasModel, userPreferences);
         mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
 
         mChannelModel = new ChannelModel();
@@ -167,28 +165,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         synchronized(mHeadlessWebConfigurationLock)
         {
             task.run();
-        }
-    }
-
-    /**
-     * Adds the listener to be notified when an alias list refresh operation is about to take place.  The listener
-     * should clear any selected or editing item to prepare for the list of alias list names to be updated so that
-     * alias list combo boxes won't trigger an editor modified event when the list contents changes.
-     * @param listener for alias list refresh event.
-     */
-    public void addAliasListRefreshListener(IAliasListRefreshListener listener)
-    {
-        mAliasListRefreshListeners.add(listener);
-    }
-
-    /**
-     * Notifies listeners that the alias list will be refreshed
-     */
-    public void prepareForAliasListRefresh()
-    {
-        for(IAliasListRefreshListener editor : mAliasListRefreshListeners)
-        {
-            editor.prepareForAliasListRefresh();
         }
     }
 
@@ -691,7 +667,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * observer fails after commit, the committed Alias state is reloaded before this command returns.
      */
     public synchronized AliasConfigurationSnapshot commitAndPublishAliasConfiguration(AliasConfigurationSnapshot proposed,
-        AliasConfigurationPublication publication, Runnable beforePublication)
+        AliasConfigurationPublication publication)
     {
         AliasConfigurationPublication requested = Objects.requireNonNull(publication,
             "Alias publication cannot be null");
@@ -699,10 +675,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
-            if(beforePublication != null)
-            {
-                beforePublication.run();
-            }
             publishCommittedAliasConfiguration(committed, requested);
             return committed;
         }

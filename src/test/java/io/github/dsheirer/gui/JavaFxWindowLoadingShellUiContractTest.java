@@ -20,11 +20,14 @@ class JavaFxWindowLoadingShellUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java");
 
     @Test
-    void settingsRevealAThemeAwareLoadingShellAndStreamingOpensTheBrowser() throws Exception
+    void settingsRevealAThemeAwareLoadingShellWithoutTheRetiredConfigurationLauncher() throws Exception
     {
         String manager = normalizedSource(WINDOW_MANAGER);
         assertFalse(Files.exists(CONFIGURATION_EDITOR));
-        assertTrue(manager.contains(".openStreaming(null)"));
+        assertFalse(manager.contains("CONFIGURATION_EDITOR"));
+        assertFalse(manager.contains("ConfigurationEditorRequest"));
+        assertFalse(manager.contains("ViewConfigurationRequest"));
+        assertFalse(manager.contains("WebAdministratorNavigator"));
         String loading = block(manager, "private static void showLoadingStage(",
             "private static void installLoadedContent(");
 

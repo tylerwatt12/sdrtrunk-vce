@@ -59,7 +59,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
-import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
@@ -227,7 +226,7 @@ public class SDRTrunk
 
         if(mGuiAvailable)
         {
-            mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
+            mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences);
         }
 
         CalibrationManager.getInstance(mUserPreferences);
@@ -537,14 +536,6 @@ public class SDRTrunk
         preferencesItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest()));
         viewMenu.add(preferencesItem);
 
-        viewMenu.add(new JSeparator());
-        JMenuItem resetColumnWidthsMenuItem = new JMenuItem("Reset Table Column Widths");
-        resetColumnWidthsMenuItem.addActionListener(e -> {
-            int removed = JTableColumnWidthMonitor.resetSavedColumnWidths(mUserPreferences);
-            JOptionPane.showMessageDialog(mMainGui, "Reset " + removed + " saved table column width setting" +
-                    (removed == 1 ? "." : "s."), "Table Column Widths Reset", JOptionPane.INFORMATION_MESSAGE);
-        });
-        viewMenu.add(resetColumnWidthsMenuItem);
         viewMenu.add(new JSeparator());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 

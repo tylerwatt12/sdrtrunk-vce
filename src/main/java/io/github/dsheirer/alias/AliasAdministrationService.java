@@ -171,7 +171,7 @@ public final class AliasAdministrationService
             if(!aliases.isEmpty()) saveAliasesTarget(aliases);
             detached.forEach(entry -> scanListModel().replaceAliasMemberships(entry.alias().getId(), entry.scanListIds()));
             return new MutationTarget(null, deletions, aliases.size() + deletions.size(), aliases,
-                PublicationMode.ALIASES_THEN_SCAN_LISTS, null);
+                PublicationMode.ALIASES_THEN_SCAN_LISTS);
         });
     }
 
@@ -652,8 +652,8 @@ public final class AliasAdministrationService
             scanListModel().removeAliasList(definition.getId());
             removeAliasListDefinition(definition);
 
-            return new MutationTarget(definition, deletedAliasIds, impact.aliasCount(), List.of(),
-                PublicationMode.ALIAS_LIST_DELETE, mConfigurationManager::prepareForAliasListRefresh);
+            return new MutationTarget(definition, deletedAliasIds, impact.aliasCount(),
+                PublicationMode.ALIAS_LIST_DELETE);
         });
     }
 
@@ -868,8 +868,8 @@ public final class AliasAdministrationService
                 try
                 {
                     target = operation.get();
-                    mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(), target.publication(),
-                        target.beforePublication());
+                    mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
+                        target.publication());
                 }
                 catch(ConfigurationManager.ConfigurationCommitException |
                       ConfigurationIdentityAllocator.AllocationException exception)
@@ -900,8 +900,7 @@ public final class AliasAdministrationService
             {
                 mutation = operation.get();
                 mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
-                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true),
-                    null);
+                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true));
             }
             catch(ConfigurationManager.ConfigurationCommitException |
                   ConfigurationIdentityAllocator.AllocationException exception)
@@ -1080,7 +1079,7 @@ public final class AliasAdministrationService
         {
             prepared.forEach(alias -> mMutationWorkspace.aliasesById().put(alias.getId(), alias));
         }
-        return new MutationTarget(null, List.of(), prepared.size(), prepared, PublicationMode.ALIASES, null);
+        return new MutationTarget(null, List.of(), prepared.size(), prepared, PublicationMode.ALIASES);
     }
 
     private MutationResult deleteAliases(List<Long> aliasIds, Long expectedRevision)
@@ -2131,8 +2130,7 @@ public final class AliasAdministrationService
     }
 
     private record MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
-                                  List<Alias> savedAliases, PublicationMode publicationMode,
-                                  Runnable beforePublication)
+                                  List<Alias> savedAliases, PublicationMode publicationMode)
     {
         private MutationTarget
         {
@@ -2143,18 +2141,17 @@ public final class AliasAdministrationService
         private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
                                PublicationMode publicationMode)
         {
-            this(aliasList, aliases, affected, List.of(), publicationMode, null);
+            this(aliasList, aliases, affected, List.of(), publicationMode);
         }
 
         private MutationTarget withAliasList(AliasListDefinition definition)
         {
-            return new MutationTarget(definition, aliases, affected, savedAliases, publicationMode,
-                beforePublication);
+            return new MutationTarget(definition, aliases, affected, savedAliases, publicationMode);
         }
 
         private MutationTarget withPublication(PublicationMode mode)
         {
-            return new MutationTarget(aliasList, aliases, affected, savedAliases, mode, beforePublication);
+            return new MutationTarget(aliasList, aliases, affected, savedAliases, mode);
         }
 
         private ConfigurationManager.AliasConfigurationPublication publication()

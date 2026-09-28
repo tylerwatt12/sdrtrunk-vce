@@ -23,7 +23,6 @@ import io.github.dsheirer.dsp.filter.interpolator.LinearInterpolator;
 import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.dsp.symbol.DibitDelayLine;
 import io.github.dsheirer.dsp.symbol.DibitToByteBufferAssembler;
-import io.github.dsheirer.gui.viewer.sync.SyncResultsViewer;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetector;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSoftSyncDetectorFactory;
@@ -32,8 +31,6 @@ import io.github.dsheirer.module.decode.dmr.sync.DMRSyncModeMonitor;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.sample.Listener;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.concurrent.CountDownLatch;
 import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
 
 /**
@@ -102,7 +99,6 @@ public class DMRSoftSymbolProcessor
     private int mBufferPointer;
     private int mBufferWorkspaceLength;
     private int mSymbolsSinceLastSync = 0;
-    private SyncResultsViewer mSyncResultsViewer;
     private FeedbackDecoder mFeedbackDecoder;
 
     /**
@@ -248,7 +244,6 @@ public class DMRSoftSymbolProcessor
                                 //Debug - visualize the sync to show samples and symbol timing
 //                                if(primaryScore > SYNC_DETECTION_THRESHOLD)
 //                                {
-//                                    visualizeSyncDetect(mSyncDetector.getDetectedPattern(), primaryScore, true);
 //                                }
 
                                 if(primaryScore > SYNC_DETECTION_THRESHOLD && optimizeFine(mSyncDetector.getDetectedPattern()))
@@ -581,112 +576,6 @@ public class DMRSoftSymbolProcessor
             }
 
             mEqualizerInitialized = true;
-        }
-    }
-
-    /**
-     * Debug method to visualize the contents of the sample buffer.
-     */
-    public void visualizeBufferContents()
-    {
-        //This will block until the viewer is constructed and showing.
-        if(mSyncResultsViewer == null)
-        {
-            mSyncResultsViewer = new SyncResultsViewer();
-        }
-
-        int offset = 3;
-        int length = (int)Math.ceil(mObservedSamplesPerSymbol * 90) + (2 * offset);
-        int end = mBufferPointer + offset;
-        int start = end - length;
-        float[] symbols = new float[90];
-        float[] samples = Arrays.copyOfRange(mBuffer, start, end);
-
-        float[] intervals = new float[90];
-
-        int adjust = mBufferPointer - length + offset;
-        double pointer = mBufferPointer + mSamplePoint - adjust;
-
-        for(int x = 89; x >= 0; x--)
-        {
-            intervals[x] = (float)pointer;
-            pointer -= mObservedSamplesPerSymbol;
-        }
-
-        float[] sync = new float[90];
-        Arrays.fill(sync, -1.57f); //Cutoff between -1 & -1 to show symbol timings
-
-        CountDownLatch countDownLatch = new CountDownLatch(1);
-        mSyncResultsViewer.receive(symbols, sync, samples, intervals, mEqualizerBalance, mEqualizerGain,
-                "BUFFER CONTENTS", countDownLatch);
-
-        try
-        {
-            countDownLatch.await();
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
-        }
-    }
-
-    /**
-     * Debug method to visualize the contents of the sync detection for the samples and symbols and symbol timing.
-     * @param pattern that was detected.
-     * @param score from the sync detector
-     * @param primary sync detector (true) or secondary (false)
-     */
-    public void visualizeSyncDetect(DMRSyncPattern pattern, float score, boolean primary)
-    {
-        //This will block until the viewer is constructed and showing.
-        if(mSyncResultsViewer == null)
-        {
-            mSyncResultsViewer = new SyncResultsViewer();
-        }
-
-        int offset = 3;
-        int length = (int)Math.ceil(mObservedSamplesPerSymbol * 23) + (2 * offset);
-        int end = mBufferPointer + offset;
-        int start = end - length;
-        float[] symbols = new float[24];
-        float[] samples = Arrays.copyOfRange(mBuffer, start, end);
-
-        float[] intervals = new float[24];
-
-        int adjust = mBufferPointer - length + offset;
-        double pointer = mBufferPointer + mSamplePoint - adjust;
-
-        double symbolPointer = mBufferPointer + mSamplePoint - (mObservedSamplesPerSymbol * 23);
-        int symbolIntegral = (int)Math.floor(symbolPointer);
-        double mu = symbolPointer - symbolIntegral;
-
-        for(int x = 0; x < 24; x++)
-        {
-            symbols[x] = LinearInterpolator.calculate(mBuffer[symbolIntegral], mBuffer[symbolIntegral + 1], mu);
-            symbolPointer += mObservedSamplesPerSymbol;
-            symbolIntegral = (int)Math.floor(symbolPointer);
-            mu = symbolPointer - symbolIntegral;
-        }
-
-        for(int x = 23; x >= 0; x--)
-        {
-            intervals[x] = (float)pointer;
-            pointer -= mObservedSamplesPerSymbol;
-        }
-
-        CountDownLatch countDownLatch = new CountDownLatch(1);
-        mSyncResultsViewer.receive(symbols, pattern.toSymbols(), samples, intervals, mEqualizerBalance, mEqualizerGain,
-                pattern + " Score: " + score + (primary ? " PRIMARY" : " SECONDARY"), countDownLatch);
-
-        try
-        {
-            countDownLatch.await();
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
         }
     }
 

@@ -93,43 +93,6 @@ public class UserPreferencesEditor extends BorderPane
         }
     }
 
-    /**
-     * Shows the editor specified in the request by scrolling the editor view tree to the selected item.
-     */
-    public void process(ViewUserPreferenceEditorRequest request)
-    {
-        if(request.getPreferenceType() != null)
-        {
-            TreeItem<Object> toSelect = recursivelyFindEditorType(getEditorSelectionTreeView().getRoot(), request.getPreferenceType());
-
-            if(toSelect != null)
-            {
-                getEditorSelectionTreeView().getSelectionModel().select(toSelect);
-            }
-        }
-    }
-
-    /**
-     * Recursively finds the tree branch that matches the editor type
-     */
-    private TreeItem<Object> recursivelyFindEditorType(TreeItem<Object> parent, PreferenceEditorType type)
-    {
-        for(TreeItem<Object> treeItem: parent.getChildren())
-        {
-            if (treeItem.getValue() instanceof PreferenceEditorType && (treeItem.getValue()).equals(type)) {
-                return treeItem;
-            } else {
-                TreeItem<Object> item = recursivelyFindEditorType(treeItem, type);
-
-                if (item != null) {
-                    return item;
-                }
-            }
-        }
-
-        return null;
-    }
-
     private VBox getEditorAndButtonsBox()
     {
         if(mEditorAndButtonsBox == null)

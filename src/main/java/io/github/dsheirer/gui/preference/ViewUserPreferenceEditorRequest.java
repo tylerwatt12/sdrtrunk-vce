@@ -19,33 +19,9 @@
 
 package io.github.dsheirer.gui.preference;
 
-import io.github.dsheirer.gui.JavaFxWindowRequest;
-
 /**
- * Request to launch the preferences editor and scroll to a specific editor view
+ * Request to launch the preferences editor.
  */
-public class ViewUserPreferenceEditorRequest extends JavaFxWindowRequest
+public class ViewUserPreferenceEditorRequest
 {
-    private PreferenceEditorType mPreferenceType;
-
-    /**
-     * Request to show the preference editor and focus the specified editor type control
-     * @param preferenceEditorType to focus
-     */
-    public ViewUserPreferenceEditorRequest(PreferenceEditorType preferenceEditorType)
-    {
-        mPreferenceType = preferenceEditorType;
-    }
-
-    /**
-     * Request to simply show the preference editor without focusing any of the components
-     */
-    public ViewUserPreferenceEditorRequest()
-    {
-    }
-
-    public PreferenceEditorType getPreferenceType()
-    {
-        return mPreferenceType;
-    }
 }

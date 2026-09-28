@@ -22,7 +22,6 @@ package io.github.dsheirer.module.decode.p25.phase1;
 import io.github.dsheirer.dsp.filter.interpolator.LinearInterpolator;
 import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.dsp.symbol.DibitToByteBufferAssembler;
-import io.github.dsheirer.gui.viewer.symbol.SymbolViewerFX;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.sample.Listener;
 import java.nio.ByteBuffer;
@@ -41,7 +40,6 @@ public class P25P1DemodulatorLSM
     private final DibitToByteBufferAssembler mDibitAssembler = new DibitToByteBufferAssembler(300);
     private final FeedbackDecoder mFeedbackDecoder;
     private final P25P1MessageFramer mMessageFramer;
-    private SymbolViewerFX mDebugSymbolViewer;
     private double mSamplePoint;
     private double mSamplesPerSymbol;
     private double mSamplesPerHalfSymbol;
@@ -75,19 +73,6 @@ public class P25P1DemodulatorLSM
     public void resetPLL()
     {
         mPLL = 0f;
-    }
-
-    /**
-     * Debug utility for viewing I/Q waveform, demodulated waveform and symbol decision details, sequentially.
-     */
-    protected SymbolViewerFX getDebugSymbolViewer()
-    {
-        if(mDebugSymbolViewer == null)
-        {
-            mDebugSymbolViewer = new SymbolViewerFX();
-        }
-
-        return mDebugSymbolViewer;
     }
 
     /**

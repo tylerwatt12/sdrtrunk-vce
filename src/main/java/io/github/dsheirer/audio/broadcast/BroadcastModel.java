@@ -21,7 +21,6 @@ package io.github.dsheirer.audio.broadcast;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveBroadcaster;
-import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataListener;
 import io.github.dsheirer.preference.UserPreferences;
@@ -87,16 +86,15 @@ public class BroadcastModel extends AbstractTableModel implements Listener<Audio
     /**
      * Model for managing Broadcast configurations and any associated broadcaster instances.
      */
-    public BroadcastModel(AliasModel aliasModel, IconModel iconModel, UserPreferences userPreferences)
+    public BroadcastModel(AliasModel aliasModel, UserPreferences userPreferences)
     {
-        this(aliasModel, iconModel, userPreferences, true);
+        this(aliasModel, userPreferences, true);
     }
 
     /**
      * Model constructor with an option to disable background file maintenance for deterministic lifecycle tests.
      */
-    BroadcastModel(AliasModel aliasModel, IconModel iconModel, UserPreferences userPreferences,
-                   boolean startRecordingMaintenance)
+    BroadcastModel(AliasModel aliasModel, UserPreferences userPreferences, boolean startRecordingMaintenance)
     {
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;

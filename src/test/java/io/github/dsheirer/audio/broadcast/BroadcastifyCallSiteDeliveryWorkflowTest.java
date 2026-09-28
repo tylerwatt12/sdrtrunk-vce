@@ -462,7 +462,7 @@ class BroadcastifyCallSiteDeliveryWorkflowTest
 
         private TestBroadcastModel(AliasModel aliasModel, UserPreferences userPreferences)
         {
-            super(aliasModel, null, userPreferences, false);
+            super(aliasModel, userPreferences, false);
             mAliasModel = aliasModel;
         }
 

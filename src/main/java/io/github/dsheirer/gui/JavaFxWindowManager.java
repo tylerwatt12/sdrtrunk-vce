@@ -20,12 +20,8 @@
 package io.github.dsheirer.gui;
 
 import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
-import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
-import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
@@ -33,17 +29,13 @@ import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceE
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
-import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.jmbe.JmbeEditor;
 import io.github.dsheirer.jmbe.JmbeEditorRequest;
-import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.monitor.StatusBox;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import io.github.dsheirer.stats.StatsWebServerService;
 import java.net.URI;
@@ -51,7 +43,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javafx.animation.AnimationTimer;
-import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
 import javafx.geometry.Insets;
@@ -73,24 +64,17 @@ import org.slf4j.LoggerFactory;
  * Java FX window manager.  Handles all secondary Java FX windows that are used within this primarily
  * Swing application.
  */
-public class JavaFxWindowManager extends Application
+public class JavaFxWindowManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
 
-    public static final String CONFIGURATION_EDITOR = "configuration";
-    public static final String ENCRYPTION_KEY_EDITOR = "encryptionkeys";
-    public static final String USER_PREFERENCES_EDITOR = "preferences";
-    public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
-    public static final String STAGE_MONITOR_KEY_CONFIGURATION_EDITOR = "configuration";
     public static final String STAGE_MONITOR_KEY_ENCRYPTION_KEY_EDITOR = "encryption.keys";
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
     private JmbeEditor mJmbeEditor;
-    private ConfigurationManager mConfigurationManager;
-    private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
     private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
@@ -104,32 +88,14 @@ public class JavaFxWindowManager extends Application
     private JFXPanel mStatusPanel;
     private LoadingShell mUserPreferencesLoadingShell;
     private boolean mUserPreferencesEditorLoading;
-    private ViewUserPreferenceEditorRequest mPendingUserPreferencesRequest;
 
     /**
      * Constructs an instance.  Note: this constructor is used for Swing applications.
      */
-    public JavaFxWindowManager(UserPreferences userPreferences, TunerManager tunerManager, ConfigurationManager configurationManager)
+    public JavaFxWindowManager(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
-        mTunerManager = tunerManager;
-        mConfigurationManager = configurationManager;
 
-        setup();
-    }
-
-    /**
-     * Constructs an instance.  Note: this constructor is used for standalone JavaFX application testing
-     */
-    public JavaFxWindowManager()
-    {
-        mUserPreferences = new UserPreferences();
-        AliasModel aliasModel = new AliasModel();
-        EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
-        mTunerManager = new TunerManager(mUserPreferences);
-        mTunerManager.start();
-        mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
-        mConfigurationManager.init();
         setup();
     }
 
@@ -264,21 +230,10 @@ public class JavaFxWindowManager extends Application
     @Subscribe
     public void process(final JmbeEditorRequest request)
     {
-        if(request.isCloseEditorRequest())
-        {
-            execute(() -> {
-                getJmbeEditorStage().hide();
-                mJmbeEditorStage = null;
-                mJmbeEditor = null;
-            });
-        }
-        else
-        {
-            execute(() -> {
-                restoreStage(getJmbeEditorStage());
-                getJmbeEditor().process(request);
-            });
-        }
+        execute(() -> {
+            restoreStage(getJmbeEditorStage());
+            getJmbeEditor().process(request);
+        });
     }
 
     public Stage getJmbeEditorStage()
@@ -306,13 +261,6 @@ public class JavaFxWindowManager extends Application
         }
 
         return mJmbeEditor;
-    }
-
-    /** Retained desktop shortcut now opens Streaming in the authenticated web interface. */
-    @Subscribe
-    public void process(ConfigurationEditorRequest request)
-    {
-        execute(() -> new WebAdministratorNavigator(mUserPreferences, mStatsWebServerService).openStreaming(null));
     }
 
     /**
@@ -355,14 +303,12 @@ public class JavaFxWindowManager extends Application
     public void process(final ViewUserPreferenceEditorRequest request)
     {
         execute(() -> {
-            mPendingUserPreferencesRequest = request;
             Stage stage = getUserPreferencesStage();
 
             if(mUserPreferencesEditor != null)
             {
                 installLoadedContent(mUserPreferencesLoadingShell, mUserPreferencesEditor);
                 restoreStage(stage);
-                mUserPreferencesEditor.process(request);
             }
             else if(!mUserPreferencesEditorLoading)
             {
@@ -387,20 +333,6 @@ public class JavaFxWindowManager extends Application
             showLoadingFailure(mUserPreferencesLoadingShell, "Unable to load Settings. Click Settings to retry.");
             finishLoading(stage);
             return;
-        }
-
-        try
-        {
-            ViewUserPreferenceEditorRequest request = mPendingUserPreferencesRequest;
-
-            if(request != null)
-            {
-                editor.process(request);
-            }
-        }
-        catch(Throwable throwable)
-        {
-            mLog.error("Unable to process the user preferences editor request", throwable);
         }
 
         finishLoading(stage);
@@ -567,56 +499,4 @@ public class JavaFxWindowManager extends Application
         stage.toFront();
     }
 
-    @Override
-    public void start(Stage primaryStage) throws Exception
-    {
-        mLog.debug("Starting ...");
-        Parameters parameters = getParameters();
-        mLog.debug("Parameters: " + (parameters != null));
-
-        boolean valid = false;
-
-        if(parameters != null && parameters.getRaw().size() == 1)
-        {
-            String window = parameters.getRaw().get(0);
-
-            if(window != null)
-            {
-                switch(window)
-                {
-                    case CONFIGURATION_EDITOR:
-                        valid = true;
-                        process(new ViewConfigurationRequest());
-                        break;
-                    case ENCRYPTION_KEY_EDITOR:
-                        valid = true;
-                        process(new ViewEncryptionKeyPreferenceEditorRequest());
-                        break;
-                    case USER_PREFERENCES_EDITOR:
-                        valid = true;
-                        process(new ViewUserPreferenceEditorRequest(PreferenceEditorType.DEFAULT));
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-
-        if(!valid)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.append("An argument is required to launch JavaFX windows from this window manager.  " +
-                "Valid options are:\n\tconfiguration\tStreaming (Web)\n" +
-                "\tencryptionkeys\tEncryption Keys\n\tpreferences\tUser Preferences Editor\n");
-            sb.append("Supplied Argument(s): ").append(parameters.getRaw());
-
-            mLog.error(sb.toString());
-        }
-    }
-
-    public static void main(String[] args)
-    {
-        mLog.info("Application Start - Parameters: " + args);
-        launch(args);
-    }
 }

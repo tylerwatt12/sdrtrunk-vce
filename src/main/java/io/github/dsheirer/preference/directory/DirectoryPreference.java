@@ -45,14 +45,12 @@ public class DirectoryPreference extends Preference
     private static final String DIRECTORY_EVENT_LOG = "event_logs";
     private static final String DIRECTORY_JMBE = "jmbe";
     private static final String DIRECTORY_RECORDING = "recordings";
-    private static final String DIRECTORY_SCREEN_CAPTURE = "screen_captures";
     private static final String DIRECTORY_STREAMING = "streaming";
 
     private static final String PREFERENCE_KEY_DIRECTORY_APPLICATION_LOGS = "directory.application.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_JMBE = "directory.jmbe";
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
-    private static final String PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE = "directory.screen.capture";
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
@@ -62,7 +60,6 @@ public class DirectoryPreference extends Preference
     private Path mDirectoryEventLogs;
     private Path mDirectoryJmbe;
     private Path mDirectoryRecording;
-    private Path mDirectoryScreenCapture;
     private Path mDirectoryStreaming;
     private Integer mDirectoryMaxUsageRecordings;
     private Integer mDirectoryMaxUsageEventLogs;
@@ -295,40 +292,6 @@ public class DirectoryPreference extends Preference
     }
 
     /**
-     * Path to the folder for storing screen capture
-     */
-    public Path getDirectoryScreenCapture()
-    {
-        if(mDirectoryScreenCapture == null)
-        {
-            mDirectoryScreenCapture = getPath(PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE, getDefaultScreenCaptureDirectory());
-            createDirectory(mDirectoryScreenCapture);
-        }
-
-        return mDirectoryScreenCapture;
-    }
-
-    /**
-     * Sets the path to the screen capture folder
-     */
-    public void setDirectoryScreenCapture(Path path)
-    {
-        mDirectoryScreenCapture = path;
-        mPreferences.put(PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE, path.toString());
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Removes a stored screen capture directory preference so that the default path can be used again
-     */
-    public void resetDirectoryScreenCapture()
-    {
-        mPreferences.remove(PREFERENCE_KEY_DIRECTORY_SCREEN_CAPTURE);
-        mDirectoryScreenCapture = null;
-        notifyPreferenceUpdated();
-    }
-
-    /**
      * Path to the folder for storing streaming temporary recordings
      */
     public Path getDirectoryStreaming()
@@ -392,14 +355,6 @@ public class DirectoryPreference extends Preference
     public Path getDefaultRecordingDirectory()
     {
         return getDirectoryApplicationRoot().resolve(DIRECTORY_RECORDING);
-    }
-
-    /**
-     * Default screen capture directory
-     */
-    public Path getDefaultScreenCaptureDirectory()
-    {
-        return getDirectoryApplicationRoot().resolve(DIRECTORY_SCREEN_CAPTURE);
     }
 
     /**

@@ -19,12 +19,10 @@
 
 package io.github.dsheirer.gui.viewer;
 
-import io.github.dsheirer.gui.JavaFxWindowRequest;
-
 /**
  * Request to show the recording viewer
  */
-public class ViewRecordingViewerRequest extends JavaFxWindowRequest
+public class ViewRecordingViewerRequest
 {
     /**
      * Constructs an instance

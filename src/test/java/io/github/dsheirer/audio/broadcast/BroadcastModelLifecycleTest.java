@@ -271,7 +271,7 @@ public class BroadcastModelLifecycleTest
 
         private TestBroadcastModel()
         {
-            super(null, null, null, false);
+            super(null, null, false);
         }
 
         @Override

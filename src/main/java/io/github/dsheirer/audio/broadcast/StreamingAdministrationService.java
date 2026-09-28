@@ -163,7 +163,7 @@ public final class StreamingAdministrationService
             }
             if(!found.equals(changed)) throw new IllegalArgumentException("An alias no longer exists; reload and try again");
             if(!changed.isEmpty()) mConfigurationManager.commitAndPublishAliasConfiguration(proposed,
-                new ConfigurationManager.AliasConfigurationPublication(changed, false, false, false), null);
+                new ConfigurationManager.AliasConfigurationPublication(changed, false, false, false));
             return new Mutation(revision(), id);
         })));
     }

@@ -60,9 +60,19 @@ class JavaShellCleanupUiContractTest
     void obsoleteCaptureControlsAreGoneButNoStoredDirectoryIsDeleted() throws Exception
     {
         String directoryEditor = Files.readString(ROOT.resolve("preference/directory/DirectoryPreferenceEditor.java"));
+        String directoryPreference = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/preference/directory/DirectoryPreference.java"));
+        String migrator = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.java"));
         String wizard = Files.readString(ROOT.resolve("setup/SetupWizard.java"));
 
         assertFalse(directoryEditor.contains("getDirectoryScreenCapture"));
+        assertFalse(directoryPreference.contains("DIRECTORY_SCREEN_CAPTURE"));
+        assertFalse(directoryPreference.contains("getDirectoryScreenCapture"));
+        assertFalse(directoryPreference.contains("setDirectoryScreenCapture"));
+        assertFalse(directoryPreference.contains("resetDirectoryScreenCapture"));
+        assertFalse(directoryPreference.contains("getDefaultScreenCaptureDirectory"));
+        assertTrue(migrator.contains("\"directory.screen.capture\""));
         assertFalse(wizard.contains("Screenshots:"));
         assertTrue(directoryEditor.contains("setFitToWidth(true)"));
         assertTrue(wizard.contains("openWebAfterSetup"));
@@ -77,6 +87,62 @@ class JavaShellCleanupUiContractTest
         assertFalse(manager.contains("process(ViewWebP25BandplanOverrideRequest"));
         assertFalse(Files.exists(ROOT.resolve("ViewWebAliasRequest.java")));
         assertFalse(Files.exists(ROOT.resolve("ViewWebP25BandplanOverrideRequest.java")));
+    }
+
+    @Test
+    void retiredJavaUiScaffoldingIsRemoved() throws Exception
+    {
+        String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
+        String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
+        String configurationManager = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/configuration/ConfigurationManager.java"));
+        String aliasAdministration = Files.readString(
+            Path.of("src/main/java/io/github/dsheirer/alias/AliasAdministrationService.java"));
+
+        assertFalse(application.contains("Reset Table Column Widths"));
+        assertFalse(application.contains("JTableColumnWidthMonitor"));
+        assertFalse(manager.contains("CONFIGURATION_EDITOR"));
+        assertFalse(manager.contains("STAGE_MONITOR_KEY_CALIBRATION_DIALOG"));
+        assertFalse(manager.contains("STAGE_MONITOR_KEY_CONFIGURATION_EDITOR"));
+        assertFalse(manager.contains("extends Application"));
+        assertFalse(manager.contains("public static void main(String[] args)"));
+        assertFalse(manager.contains("isCloseEditorRequest"));
+        assertFalse(configurationManager.contains("IAliasListRefreshListener"));
+        assertFalse(configurationManager.contains("prepareForAliasListRefresh"));
+        assertFalse(configurationManager.contains("beforePublication"));
+        assertFalse(aliasAdministration.contains("prepareForAliasListRefresh"));
+
+        String[] removed = {
+            "WebAdministratorNavigator.java",
+            "configuration/ConfigurationEditorRequest.java",
+            "configuration/ViewConfigurationRequest.java",
+            "configuration/AliasMutationUi.java",
+            "configuration/Editor.java",
+            "configuration/IAliasListRefreshListener.java",
+            "editor/Editor.java",
+            "RecentFilesMenu.java",
+            "JavaFxWindowRequest.java",
+            "ChannelMemoryLogger.java",
+            "control/ConstellationViewer.java",
+            "control/DbPowerMeter.java",
+            "control/FrequencyTextField.java",
+            "control/HexFormatter.java",
+            "control/IntegerFormatter.java",
+            "control/JFrequencyControl.java",
+            "control/LongFormatter.java",
+            "control/MaxLengthUnaryOperator.java",
+            "control/PrefixIdentFormatter.java",
+            "power/PeakMonitor.java",
+            "symbol/ChannelView.java"
+        };
+
+        for(String relativePath: removed)
+        {
+            assertFalse(Files.exists(ROOT.resolve(relativePath)), relativePath);
+        }
+
+        assertFalse(Files.exists(Path.of(
+            "src/main/java/io/github/dsheirer/preference/swing/JTableColumnWidthMonitor.java")));
     }
 
     @Test

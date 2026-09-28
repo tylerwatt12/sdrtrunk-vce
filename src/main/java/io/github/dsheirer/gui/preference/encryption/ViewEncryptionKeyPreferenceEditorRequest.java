@@ -19,11 +19,9 @@
 
 package io.github.dsheirer.gui.preference.encryption;
 
-import io.github.dsheirer.gui.JavaFxWindowRequest;
-
 /**
  * Request to view/show the voice encryption key editor.
  */
-public class ViewEncryptionKeyPreferenceEditorRequest extends JavaFxWindowRequest
+public class ViewEncryptionKeyPreferenceEditorRequest
 {
 }

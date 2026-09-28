@@ -92,14 +92,14 @@ class StreamingAdministrationServiceTest
             defaults.definitions().stream().filter(list -> list.getId()==listId).findFirst().orElseThrow()
                 .setNewAliasBehavior(new NewAliasBehavior(false,List.of(new io.github.dsheirer.alias.id.broadcast.BroadcastChannel(id,"County Calls"))));
             manager.commitAndPublishAliasConfiguration(defaults,
-                new ConfigurationManager.AliasConfigurationPublication(Set.of(),true,false,false),null);
+                new ConfigurationManager.AliasConfigurationPublication(Set.of(),true,false,false));
             assertEquals(1,streams.get(id).references().aliasLists().size());
             assertThrows(IllegalArgumentException.class,() -> streams.delete(id,streams.catalog().revision()));
             defaults=manager.createDetachedAliasConfigurationSnapshot();
             defaults.definitions().stream().filter(list -> list.getId()==listId).findFirst().orElseThrow()
                 .setNewAliasBehavior(NewAliasBehavior.DEFAULT);
             manager.commitAndPublishAliasConfiguration(defaults,
-                new ConfigurationManager.AliasConfigurationPublication(Set.of(),true,false,false),null);
+                new ConfigurationManager.AliasConfigurationPublication(Set.of(),true,false,false));
             streams.delete(id,streams.catalog().revision());
             assertTrue(streams.catalog().destinations().isEmpty());
             assertTrue(new ConfigurationDatabaseStore(database).load().broadcastConfigurations().isEmpty());

@@ -26,15 +26,12 @@ import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.dsp.symbol.DibitDelayLine;
 import io.github.dsheirer.dsp.symbol.DibitToByteBufferAssembler;
 import io.github.dsheirer.edac.bch.BCH_63_16_23_P25;
-import io.github.dsheirer.gui.viewer.sync.SyncResultsViewer;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetector;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SoftSyncDetectorFactory;
 import io.github.dsheirer.module.decode.p25.phase1.sync.P25P1SyncDetector;
 import io.github.dsheirer.sample.Listener;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.concurrent.CountDownLatch;
 import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
 
 /**
@@ -68,7 +65,6 @@ public class P25P1DemodulatorC4FM
     private static final IntField NAC_FIELD = IntField.length12(0);
     private static final IntField DUID_FIELD = IntField.length4(12);
 
-    private SyncResultsViewer mSyncResultsViewer;
     private final BCH_63_16_23_P25 mBCHDecoder = new BCH_63_16_23_P25();
     private final DibitDelayLine mSymbolDelayLine = new DibitDelayLine(DIBIT_LENGTH_SYNC);
     private final DibitToByteBufferAssembler mDibitAssembler = new DibitToByteBufferAssembler(300);
@@ -505,130 +501,6 @@ public class P25P1DemodulatorC4FM
         else
         {
             return sample < -SOFT_SYMBOL_QUADRANT_BOUNDARY ? Dibit.D11_MINUS_3 : Dibit.D10_MINUS_1;
-        }
-    }
-
-    /**
-     * Debug viewer UI for visualizing sync detections in the sample stream/waveform.
-     */
-    private SyncResultsViewer getSyncResultsViewer()
-    {
-        if(mSyncResultsViewer == null)
-        {
-            mSyncResultsViewer = new SyncResultsViewer();
-        }
-
-        return mSyncResultsViewer;
-    }
-
-    /**
-     * Debug method to visualize the contents of the sync detection for the samples and symbols and symbol timing.
-     * @param score from the sync detector
-     * @param primary sync detector (true) or secondary (false)
-     */
-    public void visualizeSyncDetect(float score, boolean primary, String tag, int bufferPointer, double samplePoint)
-    {
-        int offset = 3;
-        int length = (int)Math.ceil(mSamplesPerSymbol * 23) + (2 * offset);
-        int end = bufferPointer + offset;
-        int start = end - length;
-        float[] symbols = new float[24];
-        float[] samples = Arrays.copyOfRange(mBuffer, start, end);
-        for(int i = 0; i < samples.length; i++)
-        {
-            samples[i] = mEqualizer.equalize(samples[i]);
-        }
-
-        double symbolPointer = bufferPointer + samplePoint - (mSamplesPerSymbol * 23);
-        int symbolIntegral = (int)Math.floor(symbolPointer);
-        double mu = symbolPointer - symbolIntegral;
-
-        for(int x = 0; x < 24; x++)
-        {
-            symbols[x] = mEqualizer.getEqualizedSymbol(mBuffer[symbolIntegral], mBuffer[symbolIntegral + 1], mu);
-            symbolPointer += mSamplesPerSymbol;
-            symbolIntegral = (int)Math.floor(symbolPointer);
-            mu = symbolPointer - symbolIntegral;
-        }
-
-        float[] syncIntervals = new float[24];
-        int adjust = bufferPointer - length + offset;
-        double pointer = bufferPointer + samplePoint - adjust;
-
-        for(int x = 23; x >= 0; x--)
-        {
-            syncIntervals[x] = (float)pointer;
-            pointer -= mSamplesPerSymbol;
-        }
-
-        CountDownLatch countDownLatch = new CountDownLatch(1);
-        getSyncResultsViewer().receive(symbols, SYNC_PATTERN_SYMBOLS, samples, syncIntervals, mEqualizer.mPll, mEqualizer.mGain,
-                "Score: " + score + (primary ? " PRIMARY " : " SECONDARY ") + (mFineSync ? "FINE " : "COARSE ") +
-                        " EQ-B:" + mEqualizer.mPll + " EQ-G:" + mEqualizer.mGain + " " + tag, countDownLatch);
-
-        try
-        {
-            countDownLatch.await();
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for sync results viewer", e);
-        }
-    }
-
-    /**
-     * Debug method to visualize the symbol decisions
-     */
-    public void visualizeSymbols(int bufferPointer, double samplePoint)
-    {
-        int offset = 3;
-        int length = (int)Math.ceil(mSamplesPerSymbol * 23) + (2 * offset);
-        int end = bufferPointer + offset;
-        int start = end - length;
-        float[] symbols = new float[24];
-        float[] decisions = new float[24];
-        float[] samples = Arrays.copyOfRange(mBuffer, start, end);
-        for(int i = 0; i < samples.length; i++)
-        {
-            samples[i] = mEqualizer.equalize(samples[i]);
-        }
-
-        double symbolPointer = bufferPointer + samplePoint - (mSamplesPerSymbol * 23);
-        int symbolIntegral = (int)Math.floor(symbolPointer);
-        double mu = symbolPointer - symbolIntegral;
-
-        for(int x = 0; x < 24; x++)
-        {
-            symbols[x] = mEqualizer.getEqualizedSymbol(mBuffer[symbolIntegral], mBuffer[symbolIntegral + 1], mu);
-            decisions[x] = toSymbol(symbols[x]).getIdealPhase();
-            symbolPointer += mSamplesPerSymbol;
-            symbolIntegral = (int)Math.floor(symbolPointer);
-            mu = symbolPointer - symbolIntegral;
-        }
-
-        float[] syncIntervals = new float[24];
-        int adjust = bufferPointer - length + offset;
-        double pointer = bufferPointer + samplePoint - adjust;
-
-        for(int x = 23; x >= 0; x--)
-        {
-            syncIntervals[x] = (float)pointer;
-            pointer -= mSamplesPerSymbol;
-        }
-
-        CountDownLatch countDownLatch = new CountDownLatch(1);
-        getSyncResultsViewer().receive(symbols, decisions, samples, syncIntervals, mEqualizer.mPll, mEqualizer.mGain,
-                "PLL:" + mEqualizer.mPll + " Gain:" + mEqualizer.mGain, countDownLatch);
-
-        try
-        {
-            countDownLatch.await();
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for symbol viewer", e);
         }
     }
 

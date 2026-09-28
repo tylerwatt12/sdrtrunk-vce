@@ -5,11 +5,13 @@
  */
 package io.github.dsheirer.controller;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -51,6 +53,18 @@ class JavaDesktopSystemsRemovalUiContractTest
     }
 
     @Test
+    void onlyRuntimeCoordinateRemainsFromSwingMapViewer() throws Exception
+    {
+        Path sourceRoot = Path.of("src/main/java/org/jdesktop");
+        try(var files = Files.walk(sourceRoot))
+        {
+            List<Path> retained = files.filter(Files::isRegularFile)
+                .map(sourceRoot::relativize).sorted().toList();
+            assertEquals(List.of(Path.of("swingx/mapviewer/GeoPosition.java")), retained);
+        }
+    }
+
+    @Test
     void applicationHasNoSystemsViewOrLowerViewWiring() throws Exception
     {
         String application = Files.readString(APPLICATION);
@@ -85,6 +99,68 @@ class JavaDesktopSystemsRemovalUiContractTest
             "src/main/java/io/github/dsheirer/spectrum/WaterfallPanel.java")));
         assertFalse(Files.exists(Path.of(
             "src/main/java/io/github/dsheirer/spectrum/SpectralDisplayPanel.java")));
+    }
+
+    @Test
+    void dormantEngineeringViewersAreNotCompiledIntoTheReceiver() throws Exception
+    {
+        for(String path: List.of(
+            "src/main/java/io/github/dsheirer/gui/channelizer/ChannelizerViewer.java",
+            "src/main/java/io/github/dsheirer/gui/channelizer/ChannelizerViewer2.java",
+            "src/main/java/io/github/dsheirer/gui/channelizer/SynthesizerViewer.java",
+            "src/main/java/io/github/dsheirer/gui/viewer/symbol/SymbolViewerFX.java",
+            "src/main/java/io/github/dsheirer/gui/viewer/sync/SyncResultsViewer.java",
+            "src/main/java/io/github/dsheirer/spectrum/ComplexDftProcessor.java",
+            "src/main/java/io/github/dsheirer/spectrum/SpectrumPanel.java",
+            "src/main/java/io/github/dsheirer/dsp/filter/design/FilterViewer.java",
+            "src/main/java/io/github/dsheirer/dsp/filter/design/FilterView.java",
+            "src/main/java/io/github/dsheirer/gui/control/CurveFittedAreaChart.java",
+            "src/main/java/io/github/dsheirer/filter/FilterEditor.java",
+            "src/main/java/io/github/dsheirer/log/TextAreaLogAppender.java",
+            "src/main/java/io/github/dsheirer/controller/channel/AutoStartChannelModel.java",
+            "src/main/java/io/github/dsheirer/controller/channel/ConfigurationValidationException.java",
+            "src/main/java/io/github/dsheirer/dsp/afsk/AFSK1200DecoderInstrumented.java",
+            "src/main/java/io/github/dsheirer/dsp/afsk/AFSKSampleBufferInstrumented.java",
+            "src/main/java/io/github/dsheirer/dsp/afsk/AFSKTimingErrorDetectorInstrumented.java",
+            "src/main/java/io/github/dsheirer/dsp/fsk/SampleBufferInstrumented.java",
+            "src/main/java/io/github/dsheirer/dsp/fsk/ZeroCrossingErrorDetectorInstrumented.java",
+            "src/main/java/io/github/dsheirer/module/decode/nxdn/channel/ObservableChannelFrequency.java",
+            "src/main/java/io/github/dsheirer/util/ColorIcon.java",
+            "src/main/java/io/github/dsheirer/util/SwingUtils.java"))
+        {
+            assertFalse(Files.exists(Path.of(path)), () -> "Retired engineering UI remains: " + path);
+        }
+
+        String p25Lsm = Files.readString(Path.of(
+            "src/main/java/io/github/dsheirer/module/decode/p25/phase1/P25P1DemodulatorLSM.java"));
+        String p25C4fm = Files.readString(Path.of(
+            "src/main/java/io/github/dsheirer/module/decode/p25/phase1/P25P1DemodulatorC4FM.java"));
+        String dmr = Files.readString(Path.of(
+            "src/main/java/io/github/dsheirer/module/decode/dmr/DMRSoftSymbolProcessor.java"));
+
+        assertFalse(p25Lsm.contains("SymbolViewer"));
+        assertFalse(p25C4fm.contains("SyncResultsViewer"));
+        assertFalse(p25C4fm.contains("visualizeSyncDetect"));
+        assertFalse(dmr.contains("SyncResultsViewer"));
+        assertFalse(dmr.contains("visualizeSyncDetect"));
+        assertFalse(dmr.contains("visualizeBufferContents"));
+
+        for(String resource: List.of(
+            "src/main/resources/FilterView.css",
+            "src/main/resources/images/Curve-fitted-background.png",
+            "src/main/resources/images/Curve-fitted-chart-background.png",
+            "src/main/resources/images/Curve-fitted-graph-gridlines.png",
+            "src/main/resources/sdrtrunk_style.css"))
+        {
+            assertFalse(Files.exists(Path.of(resource)), () -> "Retired Java UI resource remains: " + resource);
+        }
+
+        String icon = Files.readString(Path.of("src/main/java/io/github/dsheirer/icon/Icon.java"));
+        String iconModel = Files.readString(Path.of("src/main/java/io/github/dsheirer/icon/IconModel.java"));
+        assertFalse(icon.contains("ImageIcon"));
+        assertFalse(icon.contains("getFxImage"));
+        assertFalse(iconModel.contains("getScaledIcon"));
+        assertFalse(iconModel.contains("mResizedIcons"));
     }
 
     @Test
