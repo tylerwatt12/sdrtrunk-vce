@@ -445,6 +445,8 @@ public final class RemoteLinksHttpController
         put(value, "advertised_name", feed.advertisedName());
         put(value, "display_name", feed.displayName());
         put(value, "protocol", feed.protocol());
+        put(value, "system_name", feed.systemName());
+        put(value, "site_name", feed.siteName());
         put(value, "wacn", feed.wacn());
         put(value, "system", feed.system());
         put(value, "rfss", feed.rfss());

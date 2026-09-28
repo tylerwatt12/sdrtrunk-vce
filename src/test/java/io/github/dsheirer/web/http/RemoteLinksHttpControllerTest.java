@@ -46,6 +46,8 @@ class RemoteLinksHttpControllerTest
             assertEquals(7L, data.path("revision").longValue());
             assertEquals("10.8.0.2", data.at("/sender_connection/destination_host").textValue());
             assertEquals("feed-1", data.at("/senders/0/feeds/0/feed_id").textValue());
+            assertEquals("Metro", data.at("/senders/0/feeds/0/system_name").textValue());
+            assertEquals("North Site", data.at("/senders/0/feeds/0/site_name").textValue());
             assertEquals("DEGRADED", data.at("/listener/dependencies/0/state").textValue());
             assertFalse(response.body().contains("shared-secret"));
             assertFalse(response.body().contains("secret\""));
@@ -160,7 +162,7 @@ class RemoteLinksHttpControllerTest
             SenderConnectionSnapshot connection = new SenderConnectionSnapshot(true, "10.8.0.2", 35_300,
                 "sender-local", true, SenderConnectionState.CONNECTED, 1_000L, null, List.of("channel-a"));
             FeedSnapshot feed = new FeedSnapshot("feed-1", "North", "North simulcast", "P25_PHASE_1",
-                0xbee00, 0x123, 1, 2, 851_012_500L, FeedState.CONNECTED, true, true,
+                "Metro", "North Site", 0xbee00, 0x123, 1, 2, 851_012_500L, FeedState.CONNECTED, true, true,
                 "remote-channel-1", 2L, 1_100L, 24L, 0L, 0L, null);
             SenderSnapshot sender = new SenderSnapshot("sender-1", "Hilltop", SenderState.CONNECTED, true,
                 500L, 1_100L, false, 2L, null, List.of(feed));

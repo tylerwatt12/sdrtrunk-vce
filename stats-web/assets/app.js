@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=1';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=2';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);

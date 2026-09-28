@@ -163,7 +163,8 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     }
 
     record FeedSnapshot(String feedId, String advertisedName, String displayName, String protocol,
-                        Integer wacn, Integer system, Integer rfss, Integer site, long frequencyHz,
+                        String systemName, String siteName, Integer wacn, Integer system, Integer rfss, Integer site,
+                        long frequencyHz,
                         FeedState state, boolean adopted, boolean enabled, String channelConfigurationId,
                         Long aliasListId, long lastSeenAtMs, Long lagMilliseconds, long droppedPacketCount,
                         long sequenceGapCount, String statusMessage)
