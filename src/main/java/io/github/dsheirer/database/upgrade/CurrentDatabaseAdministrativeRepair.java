@@ -849,6 +849,11 @@ final class CurrentDatabaseAdministrativeRepair
                 droppedNonStructuralMetadata > 0 || defaultedAdministrativeTimestamps > 0 ||
                 clearedIconInitializedMarker > 0;
         }
+
+        boolean retainsWebUserRow(long rowId)
+        {
+            return resetWebAccounts == 0 && web.retainedUserRowIds().contains(rowId);
+        }
     }
 
     private record WebInspection(Map<Long,PreferenceRepair> preferenceRepairs, List<Long> retainedUserRowIds,

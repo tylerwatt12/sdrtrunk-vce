@@ -29,7 +29,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(source.contains("radioreference: renderAdminRadioReferenceSettings"));
         assertTrue(source.contains("function renderConfiguration()"));
         assertFalse(source.contains("focused migration"));
-        assertFalse(source.contains("comingSoonPanel('RadioReference')"));
+        assertFalse(source.contains("function comingSoonPanel"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
         assertTrue(settings.contains("Log out and clear saved credentials"));
         assertTrue(html.contains("data-view=\"radioreference\" href=\"/?view=radioreference\""));

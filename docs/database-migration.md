@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -313,6 +313,15 @@ pruning, identity, encryption, and administrator-owned configuration are unchang
 reclassified. When format 25 is the directly selected source, the step first applies the same bounded repairs used for
 recoverable current-format preference, administrative, receiver-derived, and configuration damage. An intermediate
 format 25 produced by the preceding step does not repeat those repairs.
+
+The format 26-to-27 step makes the fixed primary administrator the only ADMIN-tier account. Each usable ordinary
+ADMIN account becomes a USER account. Its ID, normalized username, exact password verifier, password-change time,
+authentication revision, preference document, preference revision, creation time, and update time are preserved, as
+is the `web_user` allocator high-water mark. No account is renamed or deleted and no revision is incremented because
+the transformation happens offline, before the migrated database can issue a session. The current schema and runtime
+reject any future ordinary ADMIN account. When format 26 is the directly selected source, this step first applies the
+same bounded repairs used for recoverable current-format preference, administrative, receiver-derived, and
+configuration damage. An intermediate format 26 produced by the preceding step does not repeat those repairs.
 
 ## Schema-Change Rule
 

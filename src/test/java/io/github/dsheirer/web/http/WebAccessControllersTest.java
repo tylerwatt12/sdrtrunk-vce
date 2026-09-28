@@ -203,7 +203,7 @@ class WebAccessControllersTest
             assertTrue(data(usersResponse).get("users").isArray());
 
             String createBody = OBJECT_MAPPER.writeValueAsString(Map.of(
-                "username", "listener", "password", USER_PASSWORD, "tier", "user"));
+                "username", "listener", "password", USER_PASSWORD));
             HttpResponse<String> missingCsrf = send(client, request(origin, "/api/v1/admin/users")
                 .header("Origin", origin.toString())
                 .header("Cookie", admin.cookieHeader())
@@ -223,16 +223,22 @@ class WebAccessControllersTest
             assertEquals(200, send(client, mutation(origin, ADMIN_ALIASES_PATH, admin)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
+            String createWithTier = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "username", "tiered-listener", "password", USER_PASSWORD, "tier", "user"));
+            assertEquals(400, send(client, mutation(origin, "/api/v1/admin/users", admin)
+                .POST(HttpRequest.BodyPublishers.ofString(createWithTier))).statusCode());
+
             HttpResponse<String> created = send(client, mutation(origin, "/api/v1/admin/users", admin)
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(201, created.statusCode());
             assertEquals("listener", data(created).get("username").textValue());
+            assertEquals("user", data(created).get("tier").textValue());
             assertTrue(data(created).has("password_changed_at_epoch_millis"));
             assertFalse(data(created).has("passwordChangedAtEpochMillis"));
 
-            String keepUserTier = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "user"));
+            String resetPassword = OBJECT_MAPPER.writeValueAsString(Map.of("password", USER_PASSWORD));
             assertEquals(200, send(client, mutation(origin, "/api/v1/admin/users/%6cistener", admin)
-                .PUT(HttpRequest.BodyPublishers.ofString(keepUserTier))).statusCode());
+                .PUT(HttpRequest.BodyPublishers.ofString(resetPassword))).statusCode());
             for(String rejectedPath: java.util.List.of(
                 "/api/v1/admin/users/%2561dmin",
                 "/api/v1/admin/users/listener+",
@@ -240,7 +246,7 @@ class WebAccessControllersTest
                 "/api/v1/admin/users/%C3%28"))
             {
                 assertEquals(404, send(client, mutation(origin, rejectedPath, admin)
-                    .PUT(HttpRequest.BodyPublishers.ofString(keepUserTier))).statusCode(), rejectedPath);
+                    .PUT(HttpRequest.BodyPublishers.ofString(resetPassword))).statusCode(), rejectedPath);
             }
 
             Login listener = login(client, origin, "listener", USER_PASSWORD);
@@ -281,29 +287,34 @@ class WebAccessControllersTest
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
 
             String promote = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "admin"));
-            HttpResponse<String> promoted = send(client,
+            HttpResponse<String> rejectedPromotion = send(client,
                 mutation(origin, "/api/v1/admin/users/listener", admin)
                     .PUT(HttpRequest.BodyPublishers.ofString(promote)));
-            assertEquals(200, promoted.statusCode());
-            assertEquals("admin", data(promoted).get("tier").textValue());
+            assertEquals(400, rejectedPromotion.statusCode());
+            JsonNode listenerSession = data(send(client, request(origin, "/api/v1/auth/session")
+                .header("Cookie", listener.cookieHeader()).GET()));
+            assertTrue(listenerSession.get("authenticated").booleanValue());
+            assertEquals("user", listenerSession.get("tier").textValue());
+
+            String replacementPassword = "listener-password-replaced-2026";
+            String replacePassword = OBJECT_MAPPER.writeValueAsString(Map.of("password", replacementPassword));
+            assertEquals(200, send(client, mutation(origin, "/api/v1/admin/users/listener", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(replacePassword))).statusCode());
             assertEquals(401, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
-
-            Login promotedLogin = login(client, origin, "listener", USER_PASSWORD);
-            assertEquals("admin", promotedLogin.body().get("tier").textValue());
-            assertEquals(200, send(client, request(origin, "/protected")
-                .header("Cookie", promotedLogin.cookieHeader()).GET()).statusCode());
+            Login replacementLogin = login(client, origin, "listener", replacementPassword);
+            assertEquals("user", replacementLogin.body().get("tier").textValue());
 
             HttpResponse<String> primaryMutation = send(client,
                 mutation(origin, "/api/v1/admin/users/admin", admin)
-                    .PUT(HttpRequest.BodyPublishers.ofString(promote)));
+                    .PUT(HttpRequest.BodyPublishers.ofString(resetPassword)));
             assertEquals(400, primaryMutation.statusCode());
 
             HttpResponse<String> deleted = send(client,
                 mutation(origin, "/api/v1/admin/users/listener", admin).DELETE());
             assertEquals(200, deleted.statusCode());
             assertEquals(401, send(client, request(origin, "/protected")
-                .header("Cookie", promotedLogin.cookieHeader()).GET()).statusCode());
+                .header("Cookie", replacementLogin.cookieHeader()).GET()).statusCode());
 
             HttpResponse<String> logout = send(client, mutation(origin, "/api/v1/auth/logout", admin)
                 .POST(HttpRequest.BodyPublishers.noBody()));

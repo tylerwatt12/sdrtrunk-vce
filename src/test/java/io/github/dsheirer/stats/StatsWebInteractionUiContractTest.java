@@ -164,7 +164,7 @@ class StatsWebInteractionUiContractTest
         String javascript = source();
         String statusBytes = function(javascript, "function adminStatusBytes(value)");
         String databaseDisplay = function(javascript, "function adminDatabaseDisplay(database)");
-        String system = function(javascript, "function adminSystemStatusSection()");
+        String system = function(javascript, "function adminSystemStatusSection(includeControls = false)");
         String refresh = function(javascript, "function refreshAdminSystemStatus()");
         String loadStatus = function(javascript, "async function loadStatus(refreshCurrentView = false)");
 
@@ -189,7 +189,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(system.contains("logging.historyConfigured ? `Configured · ${inactiveState}`"));
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
-        assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
+        assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection("));
+        assertTrue(refresh.contains("route.get('view') === 'admin' && route.get('tab') === 'activity'"));
         assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'activity'"));
         assertTrue(loadStatus.contains("refreshAdminSystemStatus();"));
     }
@@ -308,7 +309,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"225\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"226\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));

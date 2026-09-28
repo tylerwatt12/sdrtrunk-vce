@@ -34,7 +34,7 @@ class WebAccessServiceTest
         assertFalse(service.isPrimaryAdminConfigured());
         assertTrue(service.accounts().isEmpty());
         assertThrows(IllegalStateException.class, () -> service.createUser("user.one",
-            "ordinary user password".toCharArray(), AccessTier.USER));
+            "ordinary user password".toCharArray()));
 
         char[] adminPassword = "primary admin password".toCharArray();
         WebAccessAccount primary = service.provisionOrResetPrimaryAdmin(adminPassword);
@@ -47,26 +47,20 @@ class WebAccessServiceTest
         assertFalse(databaseText(database).contains(new String(adminPassword)));
 
         char[] initialPassword = "ordinary user password".toCharArray();
-        WebAccessAccount created = service.createUser(" User.One ", initialPassword, AccessTier.USER);
+        WebAccessAccount created = service.createUser(" User.One ", initialPassword);
         assertEquals("user.one", created.username());
+        assertEquals(AccessTier.USER, created.tier());
         assertEquals(1, created.authRevision());
         assertEquals(AccessTier.USER, service.authenticate("USER.ONE", initialPassword).orElseThrow().tier());
         assertThrows(IllegalArgumentException.class,
-            () -> service.createUser("admin", initialPassword, AccessTier.ADMIN));
-        assertThrows(IllegalArgumentException.class,
-            () -> service.createUser("guest", initialPassword, AccessTier.PUBLIC));
+            () -> service.createUser("admin", initialPassword));
 
         WebAccessSessionManager sessions = new WebAccessSessionManager();
-        WebAccessSession beforePromotion = sessions.create(created).orElseThrow();
-        WebAccessAccount promoted = service.changeUserTier("user.one", AccessTier.ADMIN);
-        assertEquals(AccessTier.ADMIN, promoted.tier());
-        assertEquals(2, promoted.authRevision());
-        assertTrue(sessions.resolve(beforePromotion.sessionId(), service).isEmpty());
-
-        WebAccessSession beforeReset = sessions.create(promoted).orElseThrow();
+        WebAccessSession beforeReset = sessions.create(created).orElseThrow();
         char[] replacementPassword = "replacement user password".toCharArray();
         WebAccessAccount reset = service.resetUserPassword("user.one", replacementPassword);
-        assertEquals(3, reset.authRevision());
+        assertEquals(2, reset.authRevision());
+        assertEquals(AccessTier.USER, reset.tier());
         assertTrue(sessions.resolve(beforeReset.sessionId(), service).isEmpty());
         assertTrue(service.authenticate("user.one", initialPassword).isEmpty());
         assertEquals(reset, service.authenticate("user.one", replacementPassword).orElseThrow());
@@ -147,7 +141,7 @@ class WebAccessServiceTest
         WebAccessService restarted = new WebAccessService(database);
         assertEquals(WebAccessService.MAXIMUM_USERS + 1, restarted.accounts().size());
         assertThrows(IllegalStateException.class, () -> restarted.createUser("one-too-many",
-            "ordinary user password".toCharArray(), AccessTier.USER));
+            "ordinary user password".toCharArray()));
     }
 
     @Test

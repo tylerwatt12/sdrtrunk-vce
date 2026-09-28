@@ -17,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.web.auth.WebAccessService;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -86,7 +85,7 @@ class DatabaseFormatCatalogTest
         assertTrue(DatabaseFormatCatalog.requireVersion(25).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
         assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
-            .anyMatch(policy -> policy.contains("action/time indexes")));
+            .anyMatch(policy -> policy.contains("only ADMIN-tier account")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -196,10 +195,10 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactMarkerlessFormat26IsRecognizedUniquely() throws Exception
+    void exactMarkerlessFormat26RequiresTheAdjacentAccountMigration() throws Exception
     {
         Path database = mTemporaryFolder.resolve("markerless-format-26.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Format26TestDatabase.create(database);
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -208,6 +207,26 @@ class DatabaseFormatCatalogTest
             DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
             DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
             assertEquals(26, strict.version());
+            assertFalse(strict.markerPresent());
+            assertEquals(strict, migration);
+            assertEquals("format-26-to-27",
+                DatabaseMigrationChain.validateSource(connection, migration).steps().getFirst().id());
+        }
+    }
+
+    @Test
+    void exactMarkerlessFormat27IsRecognizedUniquely() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("markerless-format-27.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate(
+                "DELETE FROM database_metadata WHERE key='database_format_version'"));
+            DatabaseFormatCatalog.DetectedFormat strict = DatabaseFormatCatalog.inspect(connection);
+            DatabaseFormatCatalog.DetectedFormat migration = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertEquals(27, strict.version());
             assertFalse(strict.markerPresent());
             assertEquals(strict, migration);
             assertEquals("adopt-global-format-marker",
@@ -522,7 +541,6 @@ class DatabaseFormatCatalogTest
     void markerlessFormat24And25LayoutIsRefusedAsAmbiguous() throws Exception
     {
         Path database = Format25TestDatabase.create(mTemporaryFolder.resolve("unmarked-format-25.sqlite"));
-        new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database);
             var statement = connection.prepareStatement("DELETE FROM database_metadata WHERE key=?"))
@@ -547,7 +565,6 @@ class DatabaseFormatCatalogTest
     {
         Path database = Format25TestDatabase.create(
             mTemporaryFolder.resolve("unmarked-format-25-with-retired-metadata.sqlite"));
-        new WebAccessService(database).provisionOrResetPrimaryAdmin("current-format-test".toCharArray());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {

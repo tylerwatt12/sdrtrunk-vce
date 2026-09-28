@@ -13,7 +13,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.http.WebRequestSecurity;
@@ -63,7 +62,7 @@ class StatsWebAliasAccessTest
         try
         {
             accessService.provisionOrResetPrimaryAdmin(adminPassword);
-            accessService.createUser("listener", userPassword, AccessTier.USER);
+            accessService.createUser("listener", userPassword);
         }
         finally
         {

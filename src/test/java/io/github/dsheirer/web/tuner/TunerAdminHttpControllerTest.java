@@ -16,7 +16,6 @@ import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
 import io.github.dsheirer.web.http.TunerAdminHttpController;
 import io.github.dsheirer.web.http.WebRequestSecurity;
-import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAccessSession;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
@@ -101,7 +100,7 @@ class TunerAdminHttpControllerTest
         }
         WebAccessService access = new WebAccessService(database);
         access.provisionOrResetPrimaryAdmin("admin-password-2026".toCharArray());
-        access.createUser("listener", "listener-password-2026".toCharArray(), AccessTier.USER);
+        access.createUser("listener", "listener-password-2026".toCharArray());
         WebAuthenticationService authentication = new WebAuthenticationService(access);
         WebAccessSession admin = authentication.login("admin", "admin-password-2026".toCharArray(),
             "admin-test").get(5, TimeUnit.SECONDS).session().orElseThrow();

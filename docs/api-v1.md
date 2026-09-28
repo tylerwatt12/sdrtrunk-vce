@@ -312,7 +312,7 @@ token and the capability assigned to the resource.
 
 Authenticated browser sessions have no idle timeout or absolute time limit, so session responses do not include an
 expiration timestamp. Sessions exist only in receiver memory and end when the user signs out, signs in again and a
-replacement session is delivered, the account password or tier changes, the account is deleted, the primary
+replacement session is delivered, the account password changes, the account is deleted, the primary
 administrator password is reset, the web server is disabled, or the session service shuts down. A receiver restart
 therefore ends every session.
 
@@ -330,6 +330,9 @@ Central administration uses:
 - `GET, PUT /api/v1/admin/access`
 - `GET, PUT /api/v1/admin/receiver-settings`
 - `GET, PUT /api/v1/admin/p25-bandplan-overrides`
+
+The fixed primary account is the only administrator account. Managed accounts always have `user` access. Creating a
+managed account accepts `username` and `password`; updating one accepts only `password`.
 
 The receiver-wide settings document currently contains only the Live traffic-row idle-delay value. That value changes
 how long completed traffic remains visible in the Live presentation; it does not keep a radio call, tuner, or traffic

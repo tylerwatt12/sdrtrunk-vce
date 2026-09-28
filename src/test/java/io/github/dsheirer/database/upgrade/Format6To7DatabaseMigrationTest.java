@@ -98,7 +98,8 @@ class Format6To7DatabaseMigrationTest
                 SELECT json_extract(settings_json, '$."user/example".sentinel')
                 FROM application_settings WHERE key='portable_java_preferences_v1'
                 """));
-            assertEquals(securityBefore, securityDigest(connection));
+            assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
+                securityDigest(connection));
             assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));

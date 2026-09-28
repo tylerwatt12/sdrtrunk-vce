@@ -61,7 +61,7 @@ class StatsWebReceiverHealthAccessTest
         try
         {
             accessService.provisionOrResetPrimaryAdmin(adminPassword);
-            accessService.createUser("listener", userPassword, AccessTier.USER);
+            accessService.createUser("listener", userPassword);
         }
         finally
         {

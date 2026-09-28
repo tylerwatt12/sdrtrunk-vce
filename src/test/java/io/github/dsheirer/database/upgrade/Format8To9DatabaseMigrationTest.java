@@ -77,7 +77,8 @@ class Format8To9DatabaseMigrationTest
                   AND preferences_revision=7
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
-            assertEquals(securityBefore, securityDigest(connection));
+            assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
+                securityDigest(connection));
             assertEquals("1:1750:preserve-application:preserve-me", scalar(connection, """
                 SELECT json_extract(settings_json,
                            '$."user/io/github/dsheirer/preference/nowplaying"."receiver.settings.revision"') || ':' ||

@@ -33,7 +33,7 @@ class StreamingAdminHttpTest
         ConfigurationManager manager=new ConfigurationManager(new StreamingAdministrationServiceTest.TestPreferences(temporary),null,new AliasModel(),null,null);
         WebAccessService access=new WebAccessService(database);
         access.provisionOrResetPrimaryAdmin("fixture-password".toCharArray());
-        access.createUser("listener","fixture-password".toCharArray(),AccessTier.USER);
+        access.createUser("listener", "fixture-password".toCharArray());
         WebAuthenticationService authentication=new WebAuthenticationService(access);
         WebRequestSecurity security=new WebRequestSecurity(access,authentication);
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

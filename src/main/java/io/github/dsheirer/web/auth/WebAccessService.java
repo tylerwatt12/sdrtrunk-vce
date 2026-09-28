@@ -183,11 +183,10 @@ public final class WebAccessService
         }
     }
 
-    public WebAccessAccount createUser(String username, char[] password, AccessTier tier)
+    public WebAccessAccount createUser(String username, char[] password)
         throws IOException, SQLException
     {
         String normalized = requireOrdinaryUsername(username);
-        requireAccountTier(tier);
         char[] copy = copyPassword(password);
         mMutationLock.lock();
         try
@@ -207,9 +206,9 @@ public final class WebAccessService
             }
 
             WebPasswordVerifier verifier = mPasswordHasher.createVerifier(normalized, copy, 1);
-            long id = mUsers.insert(verifier, tier, false,
+            long id = mUsers.insert(verifier, AccessTier.USER, false,
                 WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
-            WebUserRepository.StoredAccount created = storedAccount(id, verifier, tier, false);
+            WebUserRepository.StoredAccount created = storedAccount(id, verifier, AccessTier.USER, false);
             mSnapshot = withAccount(current, created);
             return created.account();
         }
@@ -240,32 +239,6 @@ public final class WebAccessService
         {
             mMutationLock.unlock();
             Arrays.fill(copy, '\u0000');
-        }
-    }
-
-    public WebAccessAccount changeUserTier(String username, AccessTier tier) throws IOException, SQLException
-    {
-        String normalized = requireOrdinaryUsername(username);
-        requireAccountTier(tier);
-        mMutationLock.lock();
-        try
-        {
-            WebUserRepository.StoredAccount existing = requireOrdinaryAccount(normalized);
-            if(existing.account().tier() == tier)
-            {
-                return existing.account();
-            }
-            long revision = Math.incrementExact(existing.account().authRevision());
-            mUsers.replaceTier(existing.account().id(), existing.account().authRevision(), tier, revision);
-            WebAccessAccount updated = new WebAccessAccount(existing.account().id(), normalized, tier,
-                existing.account().passwordChangedAtEpochMillis(), revision, false);
-            mSnapshot = withAccount(mSnapshot,
-                new WebUserRepository.StoredAccount(updated, existing.verifier().withAuthRevision(revision)));
-            return updated;
-        }
-        finally
-        {
-            mMutationLock.unlock();
         }
     }
 
@@ -398,6 +371,10 @@ public final class WebAccessService
                 }
                 primary = entry;
             }
+            else if(entry.account().tier() != AccessTier.USER)
+            {
+                throw new SQLException("Persisted ordinary web users must have USER access");
+            }
             ordered.add(entry.account());
         }
         if(primary == null && !stored.isEmpty())
@@ -485,14 +462,6 @@ public final class WebAccessService
             throw new IllegalArgumentException("The primary administrator is managed only by the JavaFX interface");
         }
         return normalized;
-    }
-
-    private static void requireAccountTier(AccessTier tier)
-    {
-        if(tier == null || !tier.isAccountTier())
-        {
-            throw new IllegalArgumentException("Web users must have USER or ADMIN access");
-        }
     }
 
     private static String boundedUsername(String username)

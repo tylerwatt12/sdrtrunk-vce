@@ -71,6 +71,21 @@ public final class Format5WebStateValidator
     {
         validate(connection, WebUserPreferences.CURRENT_VERSION, currentPolicyRegistry(),
             RECEIVER_SETTINGS_REVISION_KEY);
+        validateOnlyPrimaryAdministratorHasAdminTier(connection);
+    }
+
+    /** Current format permits the fixed primary account to be the only ADMIN-tier account. */
+    private static void validateOnlyPrimaryAdministratorHasAdminTier(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT COUNT(*) FROM web_user WHERE primary_admin=0 AND tier<>'USER'
+            """); ResultSet resultSet = statement.executeQuery())
+        {
+            if(!resultSet.next() || resultSet.getLong(1) != 0)
+            {
+                throw invalid("ordinary web users must have USER access");
+            }
+        }
     }
 
     /** Validates one exact persisted preference-document generation for its owning database format. */

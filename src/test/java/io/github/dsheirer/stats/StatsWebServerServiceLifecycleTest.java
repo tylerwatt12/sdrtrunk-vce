@@ -120,7 +120,7 @@ class StatsWebServerServiceLifecycleTest
                 .header(WebRequestSecurity.CSRF_HEADER_NAME, csrf)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(
-                    "{\"username\":\"listener\",\"password\":\"call-matching-user-password\",\"tier\":\"user\"}"))
+                    "{\"username\":\"listener\",\"password\":\"call-matching-user-password\"}"))
                 .build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(201, createdUser.statusCode(), createdUser.body());
             String userCookie = login(client, origin(web.getRuntimeState().port()), "listener",

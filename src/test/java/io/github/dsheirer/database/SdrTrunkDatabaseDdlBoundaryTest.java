@@ -58,6 +58,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format20To21DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format21To22DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format25To26DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format26To27DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format5SchemaSql.java");
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
@@ -75,7 +76,8 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format20To21DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format21To22DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format23To24DatabaseMigration.java",
-        "java/io/github/dsheirer/database/upgrade/Format25To26DatabaseMigration.java");
+        "java/io/github/dsheirer/database/upgrade/Format25To26DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format26To27DatabaseMigration.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",
         "java/io/github/dsheirer/database/importer/LegacyXmlConfigurationImporter.java");

@@ -124,16 +124,6 @@ final class WebHttpSupport
         return requiredText(request, "password", Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS).toCharArray();
     }
 
-    static AccessTier requiredAccountTier(JsonNode request) throws RequestException
-    {
-        AccessTier tier = requiredTier(request, "tier");
-        if(!tier.isAccountTier())
-        {
-            throw new RequestException(400, "invalid_request", "A user tier must be user or admin");
-        }
-        return tier;
-    }
-
     static AccessTier requiredTier(JsonNode request, String field) throws RequestException
     {
         return switch(requiredText(request, field, 16))

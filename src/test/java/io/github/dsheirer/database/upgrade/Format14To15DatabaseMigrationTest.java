@@ -99,7 +99,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-25-to-26", report.steps().getLast().id());
+                assertEquals("format-26-to-27", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -195,7 +195,7 @@ class Format14To15DatabaseMigrationTest
                 """));
 
             Map<Long,Preference> afterPreferences = preferences(connection);
-            assertEquals(beforeCredentials, credentials(connection));
+            assertEquals(withOrdinaryUserTiers(beforeCredentials), credentials(connection));
             assertPreferencesMigratedToCurrent(beforePreferences, afterPreferences);
             assertEquals(expectedPolicies(beforePolicies), policies(connection));
             assertEquals(beforePolicies.get("site-access"), policies(connection).get("web-access"));
@@ -789,6 +789,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 25);
             new Format25To26DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 26);
+            new Format26To27DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 27);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -2464,6 +2466,14 @@ class Format14To15DatabaseMigrationTest
         return Map.copyOf(result);
     }
 
+    private static Map<Long,Credential> withOrdinaryUserTiers(Map<Long,Credential> source)
+    {
+        Map<Long,Credential> result = new LinkedHashMap<>();
+        source.forEach((id, credential) -> result.put(id,
+            credential.primaryAdmin() == 1 ? credential : credential.withTier("USER")));
+        return Map.copyOf(result);
+    }
+
     private static Map<String,Policy> policies(Connection connection) throws Exception
     {
         Map<String,Policy> result = new LinkedHashMap<>();
@@ -2710,6 +2720,11 @@ class Format14To15DatabaseMigrationTest
                               String algorithm, long iterations, long derivedKeyBits, String saltHex,
                               String verifierHex, long passwordChangedAtMs, long authRevision, long createdAtMs)
     {
+        private Credential withTier(String replacement)
+        {
+            return new Credential(username, replacement, primaryAdmin, credentialVersion, algorithm, iterations,
+                derivedKeyBits, saltHex, verifierHex, passwordChangedAtMs, authRevision, createdAtMs);
+        }
     }
 
     private record Policy(String requiredTier, long updatedAtMs)

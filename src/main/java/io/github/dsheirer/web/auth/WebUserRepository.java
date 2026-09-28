@@ -147,23 +147,6 @@ final class WebUserRepository
         }
     }
 
-    void replaceTier(long id, long expectedRevision, AccessTier tier, long newRevision) throws IOException, SQLException
-    {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath);
-            PreparedStatement statement = connection.prepareStatement("""
-                UPDATE web_user SET tier=?, auth_revision=?, updated_at_ms=?
-                WHERE id=? AND auth_revision=? AND primary_admin=0
-                """))
-        {
-            statement.setString(1, tier.name());
-            statement.setLong(2, newRevision);
-            statement.setLong(3, System.currentTimeMillis());
-            statement.setLong(4, id);
-            statement.setLong(5, expectedRevision);
-            requireOne(statement.executeUpdate(), "Web user tier changed concurrently");
-        }
-    }
-
     void delete(long id, long expectedRevision) throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath);

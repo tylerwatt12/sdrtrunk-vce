@@ -42,9 +42,20 @@ public final class Format26TestDatabase
             {
                 throw new IllegalStateException("Global format 26 fixture fingerprint mismatch: " + fingerprint);
             }
-            if(DatabaseFormatCatalog.requireCurrent(connection).version() != 26)
+            if(DatabaseFormatCatalog.inspect(connection).version() != 26)
             {
                 throw new IllegalStateException("Global format 26 fixture marker mismatch");
+            }
+            try(var statement = connection.createStatement();
+                var rows = statement.executeQuery("""
+                    SELECT COUNT(*) FROM web_user
+                    WHERE username='operator' AND primary_admin=0 AND tier='ADMIN'
+                    """))
+            {
+                if(!rows.next() || rows.getLong(1) != 1)
+                {
+                    throw new IllegalStateException("Global format 26 fixture must contain one ordinary ADMIN account");
+                }
             }
         }
         return database;

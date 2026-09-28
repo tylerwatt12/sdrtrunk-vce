@@ -120,13 +120,12 @@ public final class WebUserAdminHttpController
             WebHttpSupport.notFound(exchange);
             return;
         }
-        JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("username", "password", "tier"));
+        JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("username", "password"));
         char[] password = WebHttpSupport.requiredPassword(request);
         try
         {
             WebAccessAccount created = mAccessService.createUser(
-                WebHttpSupport.requiredText(request, "username", 256), password,
-                WebHttpSupport.requiredAccountTier(request));
+                WebHttpSupport.requiredText(request, "username", 256), password);
             WebHttpSupport.sendData(exchange, 201, WebHttpSupport.accountResponse(created));
         }
         finally
@@ -143,31 +142,16 @@ public final class WebUserAdminHttpController
             WebHttpSupport.notFound(exchange);
             return;
         }
-        JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("password", "tier"));
-        boolean passwordPresent = request.has("password");
-        boolean tierPresent = request.has("tier");
-        if(passwordPresent == tierPresent)
-        {
-            throw new WebHttpSupport.RequestException(400, "invalid_request",
-                "Specify exactly one of password or tier");
-        }
-
+        JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("password"));
+        char[] password = WebHttpSupport.requiredPassword(request);
         WebAccessAccount updated;
-        if(passwordPresent)
+        try
         {
-            char[] password = WebHttpSupport.requiredPassword(request);
-            try
-            {
-                updated = mAccessService.resetUserPassword(username, password);
-            }
-            finally
-            {
-                Arrays.fill(password, '\u0000');
-            }
+            updated = mAccessService.resetUserPassword(username, password);
         }
-        else
+        finally
         {
-            updated = mAccessService.changeUserTier(username, WebHttpSupport.requiredAccountTier(request));
+            Arrays.fill(password, '\u0000');
         }
         mAuthenticationService.invalidateAccountSessions(updated.username());
         WebHttpSupport.sendData(exchange, 200, WebHttpSupport.accountResponse(updated));

@@ -136,8 +136,7 @@ class WebAccessSessionManagerTest
         WebAccessService accessService = new WebAccessService(database);
         WebAccessAccount primary = accessService.provisionOrResetPrimaryAdmin(
             "primary admin password".toCharArray());
-        WebAccessAccount user = accessService.createUser("listener", "listener password".toCharArray(),
-            AccessTier.USER);
+        WebAccessAccount user = accessService.createUser("listener", "listener password".toCharArray());
         WebAccessSessionManager.Configuration configuration = new WebAccessSessionManager.Configuration(4, 32);
 
         try(WebAccessSessionManager manager = new WebAccessSessionManager(configuration))
@@ -174,12 +173,10 @@ class WebAccessSessionManagerTest
         WebAccessService accessService = new WebAccessService(database);
         WebAccessAccount primary = accessService.provisionOrResetPrimaryAdmin(
             "primary admin password".toCharArray());
-        WebAccessAccount firstUser = accessService.createUser("listener-one", "listener one password".toCharArray(),
-            AccessTier.USER);
-        WebAccessAccount secondUser = accessService.createUser("listener-two", "listener two password".toCharArray(),
-            AccessTier.USER);
-        WebAccessAccount thirdUser = accessService.createUser("listener-three", "listener three password".toCharArray(),
-            AccessTier.USER);
+        WebAccessAccount firstUser = accessService.createUser("listener-one", "listener one password".toCharArray());
+        WebAccessAccount secondUser = accessService.createUser("listener-two", "listener two password".toCharArray());
+        WebAccessAccount thirdUser = accessService.createUser("listener-three",
+            "listener three password".toCharArray());
         WebAccessSessionManager.Configuration configuration = new WebAccessSessionManager.Configuration(4, 32);
 
         try(WebAccessSessionManager manager = new WebAccessSessionManager(configuration))

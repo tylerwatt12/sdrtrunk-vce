@@ -122,6 +122,20 @@ class Format5WebStateValidatorTest
     }
 
     @Test
+    void rejectsAnOrdinaryAdministratorWhenSqliteChecksWereBypassed() throws Exception
+    {
+        Path database = fresh(mTemporaryFolder.resolve("ordinary-administrator.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            insertUser(connection, 1, "admin", "ADMIN", true);
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            insertUser(connection, 2, "operator", "ADMIN", false);
+            statement.execute("PRAGMA ignore_check_constraints=OFF");
+        }
+        assertRejectedByBothPaths(database, "ordinary web users must have USER access");
+    }
+
+    @Test
     void rejectsCredentialStorageWhenSQLiteChecksWereBypassed() throws Exception
     {
         Path textSalt = fresh(mTemporaryFolder.resolve("text-salt.sqlite"));

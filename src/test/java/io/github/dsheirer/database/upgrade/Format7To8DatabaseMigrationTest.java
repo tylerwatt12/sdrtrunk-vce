@@ -69,7 +69,8 @@ class Format7To8DatabaseMigrationTest
                   AND preferences_revision=7
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
-            assertEquals(securityBefore, securityDigest(connection));
+            assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
+                securityDigest(connection));
             assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION), metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));

@@ -57,7 +57,7 @@ class StatsWebDashboardActivityAccessTest
         try
         {
             accessService.provisionOrResetPrimaryAdmin(adminPassword);
-            accessService.createUser("listener", password, AccessTier.USER);
+            accessService.createUser("listener", password);
         }
         finally
         {

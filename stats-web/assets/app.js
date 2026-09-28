@@ -20686,41 +20686,12 @@ function userIdentityCell(account) {
   return wrapper;
 }
 
-function userTierControl(account, statusHost) {
-  if (account.primaryAdmin) {
-    const locked = node('span', 'admin-tier-locked', 'Admin');
-    locked.title = 'The primary administrator is managed from the JavaFX interface.';
-    return locked;
-  }
-  const select = node('select', 'ui-select admin-tier-select');
-  select.setAttribute('aria-label', `Access tier for ${account.username}`);
-  ['USER', 'ADMIN'].forEach((tier) => {
-    const option = node('option', '', accessTierLabel(tier));
-    option.value = tier;
-    option.selected = tier === account.tier;
-    select.append(option);
-  });
-  select.addEventListener('change', async () => {
-    const previous = account.tier;
-    const requested = accessTierValue(select.value);
-    select.disabled = true;
-    adminStatusMessage(statusHost, `Updating ${account.username}…`);
-    try {
-      await requestJson(adminUserEndpoint(account.username), {
-        method: 'PUT', body: { tier: accessTierToWire(requested) }
-      });
-      account.tier = requested;
-      adminStatusMessage(statusHost, `${account.username} now has ${accessTierLabel(requested)} access.`);
-      await refreshAccessSession(false);
-      if (!viewAllowed('admin')) await render();
-    } catch (error) {
-      select.value = previous;
-      adminStatusMessage(statusHost, error.message, true);
-    } finally {
-      select.disabled = false;
-    }
-  });
-  return select;
+function userTierControl(account) {
+  const locked = node('span', 'admin-tier-locked', account.primaryAdmin ? 'Admin' : 'User');
+  locked.title = account.primaryAdmin
+    ? 'The primary administrator is managed from the JavaFX interface.'
+    : 'Managed accounts have user access.';
+  return locked;
 }
 
 function normalizedManagedUsername(value) {
@@ -20761,13 +20732,6 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   confirmation.minLength = 7;
   confirmation.maxLength = 256;
   confirmation.required = true;
-  const tier = node('select');
-  ['USER', 'ADMIN'].forEach((value) => {
-    const option = node('option', '', accessTierLabel(value));
-    option.value = value;
-    option.selected = value === (account?.tier || 'USER');
-    tier.append(option);
-  });
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'alert');
   const actions = node('div', 'admin-form-actions');
@@ -20777,7 +20741,6 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   form.append(formField('Username', username, creating ? 'Usernames are stored in lowercase.' : ''),
     formField('Password', password, 'Use 7–256 characters.'),
     formField('Confirm password', confirmation));
-  if (creating) form.append(formField('Access tier', tier));
   form.append(message, actions);
   const modal = openReadOnlyModal(creating ? 'Create user' : `Change password · ${account.username}`, form, {
     id: creating ? 'create-user' : 'change-password', returnFocusSelector, className: 'admin-modal'
@@ -20794,13 +20757,11 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
     username.disabled = true;
     password.disabled = true;
     confirmation.disabled = true;
-    tier.disabled = true;
     message.textContent = creating ? 'Creating user…' : 'Changing password…';
     try {
       if (creating) {
         await requestJson('/api/v1/admin/users', {
-          method: 'POST', body: { username: normalizedManagedUsername(username.value), password: password.value,
-            tier: accessTierToWire(accessTierValue(tier.value)) }
+          method: 'POST', body: { username: normalizedManagedUsername(username.value), password: password.value }
         });
       } else {
         await requestJson(adminUserEndpoint(account.username), {
@@ -20821,7 +20782,6 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
       username.disabled = !creating;
       password.disabled = false;
       confirmation.disabled = false;
-      tier.disabled = false;
       password.focus();
     }
   });
@@ -20899,7 +20859,7 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
     { id: 'username', label: 'Username', render: userIdentityCell,
       sortValue: (account) => account.username },
     { id: 'access-tier', label: 'Access tier',
-      render: (account) => userTierControl(account, statusHost),
+      render: (account) => userTierControl(account),
       sortValue: (account) => accessTierRank(account.tier) },
     { id: 'password-changed', label: 'Password changed',
       render: (account) => dateTime(account.passwordChangedAtEpochMillis),
@@ -22864,12 +22824,6 @@ async function renderAdminHealth() {
   content.append(host);
   receiverHealthController.bindPage(host);
   void receiverHealthController.refresh();
-}
-
-function comingSoonPanel(title) {
-  const panel = node('section', 'section ui-section placeholder-page');
-  panel.append(node('h2', '', title), badge('Coming Soon', 'state-stale'));
-  return panel;
 }
 
 function preferenceCheckbox(name, label, checked, detail = '') {

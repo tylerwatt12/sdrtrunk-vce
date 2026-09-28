@@ -37,7 +37,8 @@ public final class DatabaseMigrationChain
         new Format18To19DatabaseMigration(), new Format19To20DatabaseMigration(),
         new Format20To21DatabaseMigration(), new Format21To22DatabaseMigration(),
         new Format22To23DatabaseMigration(), new Format23To24DatabaseMigration(),
-        new Format24To25DatabaseMigration(), new Format25To26DatabaseMigration());
+        new Format24To25DatabaseMigration(), new Format25To26DatabaseMigration(),
+        new Format26To27DatabaseMigration());
     private static final Map<Integer,DatabaseMigrationStep> STEPS = ORDERED_STEPS.stream().collect(
         Collectors.toUnmodifiableMap(DatabaseMigrationStep::sourceVersion, Function.identity()));
 

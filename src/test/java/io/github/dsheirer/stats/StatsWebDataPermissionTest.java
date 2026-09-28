@@ -91,7 +91,7 @@ class StatsWebDataPermissionTest
         try
         {
             accessService.provisionOrResetPrimaryAdmin(adminPassword);
-            accessService.createUser("listener", listenerPassword, AccessTier.USER);
+            accessService.createUser("listener", listenerPassword);
         }
         finally
         {

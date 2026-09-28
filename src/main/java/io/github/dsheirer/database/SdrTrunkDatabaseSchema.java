@@ -494,7 +494,8 @@ public final class SdrTrunkDatabaseSchema
                 CHECK(typeof(updated_at_ms) = 'integer' AND updated_at_ms > 0)
         )
         """;
-    private static final String WEB_USER_TABLE_SQL = """
+    /** Frozen format-15-through-26 definition used only by the immutable historical migration chain. */
+    private static final String FORMAT_26_WEB_USER_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS web_user (
             id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(typeof(id) = 'integer' AND id > 0),
             username TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK(
@@ -549,6 +550,9 @@ public final class SdrTrunkDatabaseSchema
             )
         )
         """;
+    private static final String WEB_USER_TABLE_SQL = FORMAT_26_WEB_USER_TABLE_SQL.replace(
+        "OR (primary_admin = 0 AND username <> 'admin')",
+        "OR (primary_admin = 0 AND username <> 'admin' AND tier = 'USER')");
     private static final String WEB_ACCESS_POLICY_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS web_access_policy (
             capability_id TEXT NOT NULL PRIMARY KEY CHECK(
@@ -860,7 +864,8 @@ public final class SdrTrunkDatabaseSchema
             statement.executeUpdate(CONFIGURATION_BROADCAST_STREAM_TABLE_SQL);
             statement.executeUpdate(APPLICATION_SETTINGS_TABLE_SQL);
             statement.executeUpdate(APPLICATION_ICONS_TABLE_SQL);
-            statement.executeUpdate(WEB_USER_TABLE_SQL);
+            statement.executeUpdate(CONFIGURATION_CHANNEL_TABLE_SQL.equals(configurationChannelTableSql) ?
+                WEB_USER_TABLE_SQL : FORMAT_26_WEB_USER_TABLE_SQL);
             statement.executeUpdate(WEB_ACCESS_POLICY_TABLE_SQL);
             statement.executeUpdate(WEB_USER_PRIMARY_INDEX_SQL);
             createConfigurationChannelIndexes(connection);
@@ -922,6 +927,24 @@ public final class SdrTrunkDatabaseSchema
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate(RECEIVER_HEALTH_INCIDENT_TABLE_SQL);
+        }
+    }
+
+    /** Creates the current web-user table under the fixed adjacent-migration staging name. */
+    public static void createFormat27WebUserMigrationTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(WEB_USER_TABLE_SQL.replaceFirst("web_user", "web_user_format27"));
+        }
+    }
+
+    /** Creates the one-primary-administrator index after an adjacent web-user table rebuild. */
+    public static void createWebUserPrimaryAdminIndex(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(WEB_USER_PRIMARY_INDEX_SQL);
         }
     }
 

@@ -582,8 +582,15 @@ async function main() {
     /ui-button ui-button-primary', editing \? 'Save Scan List'/);
   assert.match(functionBinding(appSource, 'renderAdminSupportReport'),
     /ui-button ui-button-primary', 'Generate Support Bundle'/);
-  assert.match(functionBinding(appSource, 'userTierControl'),
-    /node\('select', 'ui-select admin-tier-select'\)/);
+  const userTierSource = functionBinding(appSource, 'userTierControl');
+  assert.match(userTierSource, /account\.primaryAdmin \? 'Admin' : 'User'/);
+  assert.doesNotMatch(userTierSource, /node\('select'/);
+  assert.doesNotMatch(userTierSource, /method: 'PUT'/);
+  const managedUserModalSource = functionBinding(appSource, 'openManagedUserModal');
+  assert.doesNotMatch(managedUserModalSource, /formField\('Access tier'/);
+  assert.doesNotMatch(managedUserModalSource, /tier: accessTierToWire/);
+  assert.match(managedUserModalSource,
+    /body: \{ username: normalizedManagedUsername\(username\.value\), password: password\.value \}/);
   assert.match(functionBinding(appSource, 'accessPolicyTierControl'),
     /node\('select', 'ui-select admin-tier-select'\)/);
   assert.doesNotMatch(appCssSource, /\.admin-tier-select\s*\{[^}]*background:/s);
