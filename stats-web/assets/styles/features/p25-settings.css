@@ -43,6 +43,10 @@
   margin: var(--space-1) 0 0;
 }
 
+.p25-override-profile-actions {
+  justify-content: flex-start;
+}
+
 .p25-override-band-row {
   display: grid;
   grid-template-columns: 90px minmax(150px, .9fr) repeat(4, minmax(130px, 1fr)) max-content;

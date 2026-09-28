@@ -258,6 +258,79 @@
   text-align: left;
 }
 
+.radioreference-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.radioreference-frequency-groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.radioreference-frequency-group {
+  min-width: 0;
+}
+
+.radioreference-frequency-group h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+}
+
+.radioreference-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: var(--space-3);
+}
+
+.radioreference-result-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.radioreference-result-card-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.radioreference-result-card :is(h4, h5) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.radioreference-result-card h4 {
+  font-size: 15px;
+}
+
+.radioreference-result-card h5 {
+  font-size: 13px;
+}
+
+.radioreference-result-type {
+  flex: 0 0 auto;
+}
+
+.radioreference-result-status {
+  margin: 0;
+}
+
+.radioreference-result-status:empty {
+  display: none;
+}
+
+.radioreference-result-actions .ui-button {
+  flex: 1 1 150px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .radioreference-directory-item .radioreference-row-identity {
   width: 100%;
 }

@@ -550,7 +550,7 @@
                   <button class="ui-button ui-button-danger-quiet ui-icon-button p25-override-remove" type="button" aria-label="Remove band"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button>
                 </div>
               </div>
-              <button class="ui-button ui-button-secondary" type="button">Add band</button>
+              <div class="ui-action-row p25-override-profile-actions"><button class="ui-button ui-button-secondary" type="button">Add band</button></div>
             </div>
           </details>
         </div>
@@ -563,25 +563,60 @@
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Report a problem</h1><p>Create a support report and choose the receiver information to include.</p></div></header>
     <div class="admin-settings-shell">
       <nav class="admin-settings-tree" aria-label="Administration settings">
-        <details class="admin-settings-branch" open><summary>Receiver status</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Current status</a><a class="admin-settings-leaf active" href="#" aria-current="page">Report a problem</a></div></details>
-        <details class="admin-settings-branch" open><summary>Accounts &amp; access</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Web accounts</a><a class="admin-settings-leaf" href="#">Page access</a></div></details>
-        <details class="admin-settings-branch"><summary>Web interface</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Preferences</a></div></details>
-        <details class="admin-settings-branch"><summary>Receiver</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Behavior</a></div></details>
-        <details class="admin-settings-branch"><summary>Data &amp; storage</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Retention</a></div></details>
+        <label class="admin-settings-picker"><span class="admin-settings-picker-label">Administration section</span><select class="ui-select" aria-label="Administration section"><optgroup label="Monitor"><option>Current status</option><option>Call matching</option><option selected>Report a problem</option></optgroup><optgroup label="Receiving &amp; output"><option>Call output &amp; activity</option><option>Spectrum frequency scopes</option><option>P25 band plans</option></optgroup><optgroup label="Data &amp; storage"><option>Activity history</option></optgroup><optgroup label="Accounts &amp; access"><option>Web accounts</option><option>Page access</option></optgroup><optgroup label="Web presentation"><option>Receiver-wide Live timing</option></optgroup></select></label>
+        <details class="admin-settings-branch" open><summary>Monitor</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Current status</a><a class="admin-settings-leaf" href="#">Call matching</a><a class="admin-settings-leaf active" href="#" aria-current="page">Report a problem</a></div></details>
+        <details class="admin-settings-branch"><summary>Receiving &amp; output</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Call output &amp; activity</a><a class="admin-settings-leaf" href="#">Spectrum frequency scopes</a><a class="admin-settings-leaf" href="#">P25 band plans</a></div></details>
+        <details class="admin-settings-branch"><summary>Data &amp; storage</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Activity history</a></div></details>
+        <details class="admin-settings-branch"><summary>Accounts &amp; access</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Web accounts</a><a class="admin-settings-leaf" href="#">Page access</a></div></details>
+        <details class="admin-settings-branch"><summary>Web presentation</summary><div class="admin-settings-branch-items"><a class="admin-settings-leaf" href="#">Receiver-wide Live timing</a></div></details>
       </nav>
       <div class="admin-settings-content">
         <section class="section ui-section">
           <div class="section-title ui-section-title"><h2>Report a problem</h2></div>
-          <form class="admin-form support-report-form">
-            <div class="support-report-fields">
-              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Title for your issue</span><input class="ui-input" value="Audio stops after several calls"></label>
-              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Email address</span><input class="ui-input" type="email" value="operator@example.com"><small class="admin-form-help ui-field-detail">Used only to follow up about this report.</small></label>
-              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Category</span><select class="ui-select"><option>Audio and recordings</option></select></label>
-              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Issue</span><select class="ui-select"><option>No audio</option></select></label>
-            </div>
-            <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Description for your issue</span><textarea class="ui-textarea support-report-textarea">Calls appear in Live activity, but playback remains silent.</textarea></label>
-            <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="button">Generate Support Bundle</button></div>
-          </form>
+          <div class="admin-section-body support-report-settings">
+            <form class="admin-form settings-page-form support-report-form">
+              <div class="settings-card-grid support-report-card-grid">
+                <section class="settings-card">
+                  <div class="settings-card-header"><h3 class="settings-card-title">Issue details</h3><p class="settings-card-description">Identify the problem and provide a way to follow up about this report.</p></div>
+                  <div class="settings-card-body">
+                    <div class="support-report-fields">
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Title for your issue</span><input class="ui-input" value="Audio stops after several calls"></label>
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Email address</span><input class="ui-input" type="email" value="operator@example.com"><small class="admin-form-help ui-field-detail">Used only to follow up about this report.</small></label>
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Category</span><select class="ui-select"><option>Audio and recordings</option></select></label>
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Issue</span><select class="ui-select"><option>No audio</option></select></label>
+                    </div>
+                  </div>
+                </section>
+                <section class="settings-card">
+                  <div class="settings-card-header"><h3 class="settings-card-title">Description and reproduction</h3><p class="settings-card-description">Describe what happened and the steps that make the problem occur.</p></div>
+                  <div class="settings-card-body">
+                    <div class="support-report-narrative-fields">
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Description for your issue</span><textarea class="ui-textarea support-report-textarea">Calls appear in Live activity, but playback remains silent.</textarea></label>
+                      <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Steps to reproduce this issue</span><textarea class="ui-textarea support-report-textarea">Start the receiver, wait for a call, and open playback.</textarea></label>
+                    </div>
+                  </div>
+                </section>
+                <section class="settings-card support-report-diagnostics-card">
+                  <div class="settings-card-header"><h3 class="settings-card-title">Diagnostic information</h3><p class="settings-card-description">Choose the receiver information to include in the support bundle.</p></div>
+                  <div class="settings-card-body">
+                    <details class="support-report-options" open>
+                      <summary>Information to include</summary>
+                      <div class="support-report-choice-list">
+                        <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Application and computer details</strong><span>App version, operating system, processor, memory, and storage totals.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                        <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Current receiver status</strong><span>Current warnings, workload, output, and service status.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                        <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Tuners and USB devices</strong><span>Connected tuners, USB performance, and channel processing.</span></span><label class="ui-toggle"><input type="checkbox"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></div>
+                        <div class="admin-toggle-control ui-field-row"><span class="admin-toggle-copy"><strong>Recent application messages</strong><span>Recent logs with private values removed.</span></span><label class="ui-toggle"><input type="checkbox" checked><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">On</span></label></div>
+                      </div>
+                    </details>
+                  </div>
+                </section>
+              </div>
+              <footer class="settings-form-footer support-report-footer">
+                <div class="admin-form-message support-report-message" role="status">Ready to create a support bundle.</div>
+                <div class="admin-form-actions ui-action-row"><button class="ui-button ui-button-primary" type="button">Generate Support Bundle</button></div>
+              </footer>
+            </form>
+          </div>
         </section>
       </div>
     </div>
@@ -647,11 +682,11 @@
       <div class="admin-section-body">
         <div class="admin-operation-status ui-notice">dispatcher now has User access.</div>
         <div class="table-wrap ui-table-wrap">
-          <table class="ui-data-table">
+          <table class="data-table resizable-table ui-data-table ui-mobile-cards admin-responsive-table" data-mobile-cards="true">
             <thead><tr><th>Username</th><th>Access tier</th><th>Password changed</th><th>Actions</th></tr></thead>
             <tbody>
-              <tr><td><div class="admin-user-identity"><strong>admin</strong><span class="ui-pill ui-pill-success"><span>Primary</span></span></div></td><td><span class="admin-tier-locked">Admin</span></td><td>Today at 8:12 AM</td><td><span class="admin-managed-note">Managed in JavaFX</span></td></tr>
-              <tr><td><div class="admin-user-identity"><strong>dispatcher</strong></div></td><td><select class="ui-select admin-tier-select" aria-label="Access tier for dispatcher"><option>User</option><option>Administrator</option></select></td><td>Yesterday at 4:38 PM</td><td><div class="admin-row-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Change password for dispatcher"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button" type="button" aria-label="Delete dispatcher"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></td></tr>
+              <tr><td data-label="Username"><div class="admin-user-identity"><strong>admin</strong><span class="ui-pill ui-pill-success"><span>Primary</span></span></div></td><td data-label="Access tier"><span class="admin-tier-locked">Admin</span></td><td data-label="Password changed">Today at 8:12 AM</td><td data-label="Actions"><span class="admin-managed-note">Managed in JavaFX</span></td></tr>
+              <tr><td data-label="Username"><div class="admin-user-identity"><strong>dispatcher</strong></div></td><td data-label="Access tier"><select class="ui-select admin-tier-select" aria-label="Access tier for dispatcher"><option>User</option><option>Administrator</option></select></td><td data-label="Password changed">Yesterday at 4:38 PM</td><td data-label="Actions"><div class="admin-row-actions"><button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Change password for dispatcher"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button" type="button" aria-label="Delete dispatcher"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -661,17 +696,17 @@
     <section class="section ui-section">
       <div class="section-title ui-section-title"><h2>Access policy</h2></div>
       <div class="admin-section-body">
-        <p class="admin-section-intro">Web access applies first. Each capability below can then require a higher tier for its page and backing APIs.</p>
+        <div class="admin-workflow-note"><strong>Access is layered</strong><p>Web access applies first. Each capability below can then require a higher tier for its page and backing APIs.</p></div>
         <div class="admin-web-access-control">
           <div class="admin-web-access-copy"><strong>Entire web interface</strong><p>Set the minimum tier for every receiver page, API, live stream, audio request, diagnostic, and export.</p></div>
           <label class="admin-web-access-tier"><span>Minimum tier</span><select class="ui-select admin-tier-select"><option>User</option></select></label>
         </div>
         <div class="table-wrap ui-table-wrap">
-          <table class="ui-data-table">
+          <table class="data-table resizable-table ui-data-table ui-mobile-cards admin-responsive-table" data-mobile-cards="true">
             <thead><tr><th>Capability</th><th>Required tier</th><th>Default</th><th>Policy</th></tr></thead>
             <tbody>
-              <tr><td><div class="admin-capability-identity"><strong>Call audio</strong><code>call-audio</code></div></td><td><select class="ui-select admin-tier-select"><option>User</option></select></td><td>Public</td><td>Configurable</td></tr>
-              <tr><td><div class="admin-capability-identity"><strong>Administration</strong><code>admin-settings</code></div></td><td><select class="ui-select admin-tier-select" disabled><option>Administrator</option></select></td><td>Administrator</td><td>Fixed</td></tr>
+              <tr><td data-label="Capability"><div class="admin-capability-identity"><strong>Call audio</strong><code>call-audio</code></div></td><td data-label="Required tier"><select class="ui-select admin-tier-select"><option>User</option></select></td><td data-label="Default">Public</td><td data-label="Policy">Configurable</td></tr>
+              <tr><td data-label="Capability"><div class="admin-capability-identity"><strong>Administration</strong><code>admin-settings</code></div></td><td data-label="Required tier"><select class="ui-select admin-tier-select" disabled><option>Administrator</option></select></td><td data-label="Default">Administrator</td><td data-label="Policy">Fixed</td></tr>
             </tbody>
           </table>
         </div>
@@ -683,28 +718,34 @@
     <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Receiver settings</h1><p>Receiver-wide timing and spectrum frequency scopes.</p></div></header>
     <section class="section ui-section">
       <div class="section-title ui-section-title"><h2>Receiver behavior</h2></div>
-      <form class="admin-form settings-page-form receiver-settings-form">
-        <div class="settings-card-grid">
-          <section class="settings-card">
-            <header class="settings-card-header"><h3 class="settings-card-title">Live traffic-row idle delay</h3><p class="settings-card-description">This receiver-wide presentation timing affects every viewer.</p></header>
-            <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Mark a traffic row idle after (milliseconds)</span><input class="ui-input" type="number" value="1200"><small class="ui-field-detail">This does not keep the call, tuner, or traffic channel active.</small></label></div>
-          </section>
-        </div>
-        <footer class="settings-form-footer"><div class="admin-form-message" role="status">Live timing saved.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button">Save Live Timing</button></div></footer>
-      </form>
+      <div class="admin-section-body receiver-settings">
+        <div class="admin-workflow-note"><strong>Live display timing only</strong><p>This delay changes when a traffic row looks idle to viewers. It does not keep a call, tuner, or channel active.</p></div>
+        <form class="admin-form settings-page-form receiver-settings-form">
+          <div class="settings-card-grid">
+            <section class="settings-card">
+              <header class="settings-card-header"><h3 class="settings-card-title">Live traffic-row idle delay</h3><p class="settings-card-description">This receiver-wide presentation timing affects every viewer.</p></header>
+              <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Mark a traffic row idle after (milliseconds)</span><input class="ui-input" type="number" value="1200"><small class="ui-field-detail">This does not keep the call, tuner, or traffic channel active.</small></label></div>
+            </section>
+          </div>
+          <footer class="settings-form-footer"><div class="admin-form-message" role="status">Live timing saved.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button">Save Live Timing</button></div></footer>
+        </form>
+      </div>
     </section>
 
     <section class="section ui-section">
       <div class="section-title ui-section-title"><h2>Spectrum frequency scopes</h2></div>
-      <form class="admin-form settings-page-form spectrum-snap-settings">
-        <div class="settings-card-grid">
-          <section class="settings-card">
-            <header class="settings-card-header"><h3 class="settings-card-title">Country frequency scopes</h3><p class="settings-card-description">Select the regulatory catalog used for FFT band indicators and optional cursor snapping.</p></header>
-            <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Country</span><select class="ui-select"><option>United States</option></select><small class="ui-field-detail">The selected catalog applies receiver-wide.</small></label><p class="settings-card-description">18 frequency scopes are available; 12 include snap rules.</p></div>
-          </section>
-        </div>
-        <footer class="settings-form-footer"><div class="admin-form-message" role="status">Spectrum snap country is unchanged.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button" disabled>Save Spectrum Country</button></div></footer>
-      </form>
+      <div class="admin-section-body spectrum-snap-settings">
+        <div class="admin-workflow-note"><strong>Spectrum display, not reception</strong><p>This catalog changes FFT band indicators and optional cursor snapping for all viewers. It does not retune a receiver or change channel decoding.</p></div>
+        <form class="admin-form settings-page-form">
+          <div class="settings-card-grid">
+            <section class="settings-card">
+              <header class="settings-card-header"><h3 class="settings-card-title">Country frequency scopes</h3><p class="settings-card-description">Select the regulatory catalog used for FFT band indicators and optional cursor snapping.</p></header>
+              <div class="settings-card-body"><label class="ui-field"><span class="ui-field-label">Country</span><select class="ui-select"><option>United States</option></select><small class="ui-field-detail">The selected catalog applies receiver-wide.</small></label><p class="settings-card-description">18 frequency scopes are available; 12 include snap rules.</p></div>
+            </section>
+          </div>
+          <footer class="settings-form-footer"><div class="admin-form-message" role="status">Spectrum snap country is unchanged.</div><div class="ui-action-row"><button class="ui-button ui-button-primary" type="button" disabled>Save Spectrum Country</button></div></footer>
+        </form>
+      </div>
     </section>
   </main>
 

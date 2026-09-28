@@ -208,5 +208,7 @@ assert.match(profileCard, /node\('details', 'settings-card p25-override-profile'
   'Saved profiles must use a collapsed disclosure container by default.');
 assert.match(profileCard, /node\('summary', 'settings-card-header p25-override-profile-header'\)/,
   'The profile identity must remain visible as the disclosure summary.');
+assert.match(profileCard, /node\('div', 'ui-action-row p25-override-profile-actions'\)/,
+  'Add band must use the shared action-row alignment instead of floating at the card edge.');
 assert.match(profileCard, /event\.preventDefault\(\)/,
   'Deleting a profile must not toggle its disclosure while removing it.');

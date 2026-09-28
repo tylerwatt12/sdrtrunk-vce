@@ -26,6 +26,12 @@
 
 .receiver-health-page {
   min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.receiver-health-page > .section {
+  margin: 0;
 }
 
 .receiver-health-section.collapsed > .section-title {
@@ -561,6 +567,10 @@ summary.receiver-health-incident-heading:focus-visible {
   .receiver-health-overview,
   .receiver-health-incident-guidance {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .receiver-health-overview > .summary-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .receiver-health-overview > .summary-band {

@@ -41,7 +41,8 @@ async function openApp(page, tier = 'admin') {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: tier === 'admin' ? 'admin' : 'listener', tier, primary: tier === 'admin',
-        capabilities: { 'admin-settings': tier === 'admin', credits: true } } } });
+        capabilities: { 'admin-settings': tier === 'admin', 'receiver-health': tier === 'admin',
+          'admin-users': tier === 'admin', 'admin-access': tier === 'admin', credits: true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
@@ -97,6 +98,11 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
 test('receiver settings read as separate output and activity workflows', async ({ page }) => {
   await openApp(page);
   const workspace = page.locator('.operational-preferences');
+  const section = page.locator('.admin-settings-content > .section');
+  await expect(workspace).toHaveClass(/settings-page-form/);
+  await expect(section.locator('.admin-workflow-note + .operational-preferences')).toHaveCount(1);
+  await expect(section.locator(':scope > .ui-section-title')
+    .getByRole('button', { name: 'Reload saved settings' })).toBeVisible();
   await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
   await expect(workspace.getByText('Calls & audio', { exact: true })).toBeVisible();
   await expect(workspace.getByText('Activity history', { exact: true })).toBeVisible();
@@ -108,6 +114,29 @@ test('receiver settings read as separate output and activity workflows', async (
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.locator('main')).toHaveScreenshot('admin-operations-dark-mobile.png');
+});
+
+test('administration navigation becomes a complete compact picker on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openApp(page);
+  const navigation = page.locator('.admin-settings-tree');
+  const picker = navigation.locator('.admin-settings-picker');
+  const select = picker.getByRole('combobox', { name: 'Administration section' });
+
+  await expect(picker).toBeHidden();
+  await expect(navigation.locator('.admin-settings-branch').first()).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(picker).toBeVisible();
+  await expect(select).toHaveValue('operations');
+  await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
+  expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
+    .toEqual(['health', 'call-matching', 'support', 'operations', 'spectrum', 'protocol-p25',
+      'activity', 'users', 'access', 'live-timing']);
+
+  await select.selectOption('support');
+  await expect(page).toHaveURL(/view=admin&tab=support/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Report a problem' })).toBeVisible();
 });
 
 test('saving one preference keeps another unsaved field', async ({ page }) => {

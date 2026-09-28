@@ -174,8 +174,10 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   let current = snapshot(Array.from({ length: 125 }, (_, index) => duplicate(index + 1)));
   await openApp(page, { matching: async () => ({ data: current }) });
   const table = page.locator('table[data-table-type="call-matching-duplicates"]');
-  await expect(table.locator('tbody tr')).toHaveCount(100);
+  await expect(table.locator('tbody tr')).toHaveCount(20);
   await expect(table.locator('tbody tr').first()).toHaveAttribute('data-id', '125');
+  await expect(page.locator('.call-matching-history-pager'))
+    .toContainText('Decisions 1-20 of 100 · Page 1 of 5');
   await page.getByRole('button', { name: 'Compare duplicate decision 125' }).click();
   await expect(page.locator('tbody tr[data-id="125"]')).toHaveClass(/selected/);
   current = snapshot([duplicate(126), duplicate(125)]);
@@ -184,6 +186,45 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).toBeVisible();
   current = snapshot([duplicate(127)]);
   await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible({ timeout: 3500 });
+});
+
+test('confirmed duplicate history paginates and clamps after live history shrinks', async ({ page }) => {
+  let current = snapshot(Array.from({ length: 45 }, (_, index) => duplicate(index + 1)));
+  await openApp(page, { matching: async () => ({ data: current }) });
+  const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+  const rows = table.locator('tbody tr');
+  const pager = page.locator('.call-matching-history-pager');
+  const previous = pager.getByRole('button', { name: 'Previous' });
+  const next = pager.getByRole('button', { name: 'Next' });
+
+  await expect(rows).toHaveCount(20);
+  await expect(rows.first()).toHaveAttribute('data-id', '45');
+  await expect(rows.last()).toHaveAttribute('data-id', '26');
+  await expect(pager).toContainText('Decisions 1-20 of 45 · Page 1 of 3');
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeEnabled();
+
+  await next.click();
+  await expect(rows).toHaveCount(20);
+  await expect(rows.first()).toHaveAttribute('data-id', '25');
+  await expect(rows.last()).toHaveAttribute('data-id', '6');
+  await expect(pager).toContainText('Decisions 21-40 of 45 · Page 2 of 3');
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeEnabled();
+
+  await next.click();
+  await expect(rows).toHaveCount(5);
+  await expect(rows.first()).toHaveAttribute('data-id', '5');
+  await expect(rows.last()).toHaveAttribute('data-id', '1');
+  await expect(pager).toContainText('Decisions 41-45 of 45 · Page 3 of 3');
+  await expect(next).toBeDisabled();
+
+  current = snapshot([duplicate(46)]);
+  await expect(pager).toContainText('Decisions 1-1 of 1 · Page 1 of 1', { timeout: 3500 });
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toHaveAttribute('data-id', '46');
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeDisabled();
 });
 
 test('slow polling has one request in flight and navigation aborts it', async ({ page }) => {

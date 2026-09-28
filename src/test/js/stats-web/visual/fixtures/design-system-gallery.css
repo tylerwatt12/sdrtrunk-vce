@@ -348,10 +348,6 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   border-radius: 0 0 var(--radius-card) var(--radius-card);
 }
 
-.visual-admin-access-example table {
-  min-width: 760px;
-}
-
 .visual-dashboard-example table {
   min-width: 680px;
 }

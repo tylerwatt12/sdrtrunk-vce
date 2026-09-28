@@ -789,6 +789,46 @@ test('admin-access-dark-mobile', async ({ page }) => {
   await expect(page.locator('body')).toHaveScreenshot('admin-access-dark-mobile.png', { fullPage: true });
 });
 
+test('admin account tables use labeled cards on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/design-system.html?theme=light&view=admin-access');
+  const example = page.locator('.visual-admin-access-example');
+  const tables = example.locator('table');
+  await expect(tables).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    const current = tables.nth(index);
+    await expect(current).toHaveAttribute('data-mobile-cards', 'true');
+    await expect(current).toHaveClass(/ui-mobile-cards/);
+    await expect(current).toHaveClass(/admin-responsive-table/);
+    await expect(current.locator('thead')).toBeHidden();
+    expect(await current.locator('tbody td').evaluateAll((cells) =>
+      cells.every((cell) => Boolean(cell.dataset.label)))).toBe(true);
+    expect(await current.locator('tbody td').evaluateAll((cells) =>
+      cells.every((cell) => cell.scrollWidth <= cell.clientWidth + 1))).toBe(true);
+    expect(await current.locator('tbody td').evaluateAll((cells) => cells.every((cell) => {
+      const bounds = cell.getBoundingClientRect();
+      const descendantsFit = [...cell.querySelectorAll('*')].every((element) => {
+        const child = element.getBoundingClientRect();
+        if (!child.width && !child.height) return true;
+        return child.left >= bounds.left - 1 && child.right <= bounds.right + 1;
+      });
+      const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+      let textFits = true;
+      while (walker.nextNode() && textFits) {
+        if (!walker.currentNode.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        const textRects = [...range.getClientRects()].filter((text) => text.width || text.height);
+        textFits = textRects.every((text) =>
+          text.left >= bounds.left - 1 && text.right <= bounds.right + 1);
+      }
+      return descendantsFit && textFits;
+    }))).toBe(true);
+  }
+  expect(await example.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
 test('admin-receiver-dark-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=dark&view=admin-receiver');

@@ -701,9 +701,22 @@ async function main() {
   assert.match(radioReferenceImportSource, /imports\/conventional\/preview/);
   assert.match(radioReferenceImportSource, /imports\/talkgroups\/preview/);
   assert.doesNotMatch(radioReferenceImportSource, /For Each Frequency|Create Selected Channels/);
-  assert.match(functionBinding(appSource, 'renderAdminUsers'),
+  const adminUsersRenderer = functionBinding(appSource, 'renderAdminUsers');
+  const adminAccessRenderer = functionBinding(appSource, 'renderAdminAccess');
+  assert.match(adminUsersRenderer,
     /admin-operation-status ui-notice[\s\S]+ui-button ui-button-primary/);
-  assert.match(functionBinding(appSource, 'renderAdminAccess'), /admin-operation-status ui-notice/);
+  assert.match(adminUsersRenderer, /type: 'admin-users', sortable: false, mobileCards: true/,
+    'Web-account rows must use the shared labeled-card layout on narrow screens');
+  assert.match(adminAccessRenderer, /admin-operation-status ui-notice/);
+  assert.match(adminAccessRenderer, /type: 'admin-access', sortable: false, mobileCards: true/,
+    'Access-policy rows must use the shared labeled-card layout on narrow screens');
+  assert.match(adminAccessRenderer, /adminWorkflowNote\('Access is layered'/);
+  const adminNavigation = functionBinding(appSource, 'adminSettingsTree');
+  assert.match(adminNavigation, /admin-settings-picker/);
+  assert.match(adminNavigation, /node\('optgroup'\)/);
+  assert.match(adminNavigation,
+    /select\.addEventListener\('change', \(\) => navigateTo\(href\('admin', \{ tab: select\.value \}\)\)\)/,
+    'The compact administration picker must navigate through the same tab routes as the desktop tree');
   assert.match(functionBinding(appSource, 'userIdentityCell'), /uiPill\('Primary', 'success'\)/);
   assert.match(functionBinding(appSource, 'userActions'),
     /iconButton\('icon-edit'[\s\S]+iconButton\('icon-trash'[\s\S]+ui-button ui-button-danger-quiet ui-icon-button/);
@@ -817,6 +830,12 @@ async function main() {
       traffic_grant_age_out_milliseconds: 1000
     }
   }), /invalid Receiver Settings/);
+  assert.match(functionBinding(appSource, 'renderAdminReceiverBehaviorSettings'),
+    /adminWorkflowNote\('Live display timing only'/,
+    'Receiver-wide Live timing must explain its scope before the settings surface');
+  assert.match(functionBinding(appSource, 'renderAdminSpectrumSnapSettings'),
+    /adminWorkflowNote\('Spectrum display, not reception'/,
+    'Spectrum scope settings must explain that they do not retune the receiver');
   const receiverSettingsRequests = [];
   const receiverSettingsResponses = [];
   const requestReceiverSettings = vm.runInNewContext(
@@ -874,6 +893,8 @@ async function main() {
   assert.match(callMatchingRenderer, /type: 'call-matching-duplicates'/);
   assert.match(callMatchingRenderer, /mobileCards: true/);
   assert.match(callMatchingRenderer, /sortable: false/);
+  assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
+  assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tableCalls = functionCalls(appSource, 'table');
   assert.equal(tableCalls.length, 17, 'Every application table call must be audited');
   assert.match(appSource,

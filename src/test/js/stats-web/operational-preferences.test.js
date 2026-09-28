@@ -78,6 +78,12 @@ async function main() {
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
 
   const page = functionSource('async function renderAdminOperationalPreferences(');
+  assert.match(page, /node\('div', 'settings-page-form operational-preferences'\)/);
+  assert.match(page, /body\.append\(introduction, workspace\)/);
+  assert.match(page,
+    /content\.append\(section\('Call output & activity', body, sectionActionHost\(reload\)\)\)/);
+  assert.doesNotMatch(page, /const heading = node\('div', 'ui-action-row'\)/,
+    'Reload belongs in the section heading instead of a detached blank action row');
   assert.match(page, /lane\('output', 'Calls & audio'/);
   assert.match(page, /lane\('activity', 'Activity history'/);
   assert.match(page, /These settings apply across the receiver/);

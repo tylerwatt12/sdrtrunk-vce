@@ -20910,7 +20910,8 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
     { id: 'actions', label: 'Actions', render: (account) => userActions(account, statusHost),
       sortable: false }
   ], 'No web users have been created', {
-    type: 'admin-users', sortable: false, layoutMenuHost: titleActions
+    type: 'admin-users', sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
+    layoutMenuHost: titleActions
   }));
   content.append(section('User management', body, titleActions));
 }
@@ -20996,7 +20997,7 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
   statusHost.setAttribute('role', 'status');
   const titleActions = sectionActionHost();
   const body = node('div', 'admin-section-body');
-  body.append(node('p', 'admin-section-intro',
+  body.append(adminWorkflowNote('Access is layered',
     'Web access applies first. Each capability below can then require a higher tier for its page and backing ' +
       'APIs.'), statusHost);
   if (webPolicy) body.append(webAccessControl(webPolicy, statusHost));
@@ -21012,7 +21013,8 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
       { id: 'policy-status', label: 'Policy',
         render: (policy) => policy.configurable && !policy.id.startsWith('admin-') ? 'Configurable' : 'Fixed' }
     ], 'No feature access capabilities were returned', {
-      type: 'admin-access', sortable: false, layoutMenuHost: titleActions
+      type: 'admin-access', sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
+      layoutMenuHost: titleActions
     }));
   content.append(section('Access policy', body, titleActions));
 }
@@ -21914,7 +21916,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
 }
 
 async function renderAdminOperationalPreferences(renderContext = captureRenderContext()) {
-  const body = node('div', 'admin-section-body operational-preferences');
+  const body = node('div', 'admin-section-body');
   const introduction = adminWorkflowNote('About these receiver-wide settings',
     'These settings apply across the receiver, not to one channel or web account. Calls & audio controls future ' +
     'streaming and recording. Activity history controls the totals and past activity available in the web ' +
@@ -21924,11 +21926,11 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
   const reload = node('button', 'ui-button ui-button-secondary', 'Reload saved settings');
   reload.type = 'button';
   reload.disabled = true;
-  const heading = node('div', 'ui-action-row');
-  heading.append(reload);
+  const workspace = node('div', 'settings-page-form operational-preferences');
   const lanes = node('div', 'operational-preference-lanes');
-  body.append(introduction, status, heading, lanes);
-  content.append(section('Call output & activity', body));
+  workspace.append(status, lanes);
+  body.append(introduction, workspace);
+  content.append(section('Call output & activity', body, sectionActionHost(reload)));
   let confirmed = null;
   let saving = false;
   const drafts = new Map();
@@ -21954,7 +21956,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
     { area: 'output', title: 'MP3 audio',
       description: 'Choose how VCE prepares MP3 audio for new recordings and streaming destinations. Existing ' +
         'audio files are not changed.',
-      effect: 'Future MP3 audio only', fields: [
+      effect: 'Future MP3 audio only', layout: 'wide', fields: [
       { id: 'mp3_setting', label: 'MP3 bit rate and quality', kind: 'select', options: 'mp3_settings',
         detail: 'Higher bit rates usually improve quality but create larger files and use more network bandwidth. ' +
           'Available choices depend on the sample rate below.' },
@@ -22073,15 +22075,19 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       });
       const card = settingsCard(group.title, group.description, ...forms);
       card.classList.add('operational-preference-card');
+      if (group.layout === 'wide') card.classList.add('operational-preference-card-wide');
       card.querySelector('.settings-card-header')?.prepend(node('span', 'operational-card-effect', group.effect));
       return { area: group.area, card };
     });
     const lane = (area, label, description) => {
       const host = node('div', 'operational-preference-lane');
+      host.dataset.preferenceArea = area;
       const labelGroup = node('div', 'operational-preference-lane-heading');
       labelGroup.append(node('strong', '', label), node('p', '', description));
-      host.append(labelGroup, settingsCardGrid(...rendered.filter((entry) => entry.area === area)
-        .map((entry) => entry.card)));
+      const grid = settingsCardGrid(...rendered.filter((entry) => entry.area === area)
+        .map((entry) => entry.card));
+      grid.classList.add(`operational-preference-${area}-grid`);
+      host.append(labelGroup, grid);
       return host;
     };
     lanes.replaceChildren(
@@ -22261,7 +22267,9 @@ function p25OverrideProfileCard(profile = null) {
   const addBand = node('button', 'ui-button ui-button-secondary', 'Add band');
   addBand.type = 'button';
   addBand.addEventListener('click', () => bands.append(p25OverrideBandRow()));
-  body.append(identity, node('h4', 'p25-override-bands-title', 'Replacement bands'), bands, addBand);
+  const actions = node('div', 'ui-action-row p25-override-profile-actions');
+  actions.append(addBand);
+  body.append(identity, node('h4', 'p25-override-bands-title', 'Replacement bands'), bands, actions);
   card.append(header, body);
 
   const updateTitle = () => {
@@ -24548,7 +24556,7 @@ function renderHardware() {
   return renderTuners();
 }
 
-function adminSystemStatusSection() {
+function adminSystemStatusSection(includeControls = false) {
   const database = serviceStatus?.database;
   const logging = statsLoggingState();
   const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
@@ -24561,28 +24569,49 @@ function adminSystemStatusSection() {
       (logging.historyRetained ? 'Off · Data retained' : 'Off'));
   const databaseDisplay = adminDatabaseDisplay(database);
   const body = node('div', 'admin-section-body');
+  let actions = null;
+  if (includeControls) {
+    body.append(adminWorkflowNote('Change collection and retention in Call output & activity',
+      'This page shows what is currently being saved. The collection switches and retention period are edited ' +
+      'together with call and audio settings.'));
+    actions = sectionActionHost(anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
+      'ui-button ui-button-secondary'));
+  }
   body.append(metrics([
     ['Summary logging', logging.summaryActive, summaryState],
     ['Detailed history', logging.historyActive, historyState],
     ['Activity database', database?.database_bytes, databaseDisplay]
   ], true));
-  const result = section('System status', body);
+  const result = section('System status', body, actions);
   result.id = 'admin-system-status';
   return result;
 }
 
 function renderAdminSystem() {
-  const note = adminWorkflowNote('Change collection and retention in Call output & activity',
-    'This page shows what is currently being saved. The collection switches and retention period are edited ' +
-    'together with call and audio settings.');
-  note.append(anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
-    'ui-button ui-button-secondary'));
-  content.append(note, adminSystemStatusSection());
+  content.append(adminSystemStatusSection(true));
 }
 
 function adminSettingsTree(groups, active) {
   const navigation = node('nav', 'admin-settings-tree');
   navigation.setAttribute('aria-label', 'Administration sections');
+  const picker = node('label', 'admin-settings-picker');
+  const pickerLabel = node('span', 'admin-settings-picker-label', 'Administration section');
+  const select = node('select', 'ui-select');
+  select.setAttribute('aria-label', 'Administration section');
+  groups.forEach((group) => {
+    const optionGroup = node('optgroup');
+    optionGroup.label = group.label;
+    group.items.forEach((item) => {
+      const option = node('option', '', item.label);
+      option.value = item.id;
+      option.selected = item.id === active;
+      optionGroup.append(option);
+    });
+    select.append(optionGroup);
+  });
+  select.addEventListener('change', () => navigateTo(href('admin', { tab: select.value })));
+  picker.append(pickerLabel, select);
+  navigation.append(picker);
   groups.forEach((group) => {
     const disclosure = node('details', 'admin-settings-branch');
     disclosure.open = group.items.some((item) => item.id === active) || group.open === true;
@@ -24674,7 +24703,8 @@ function supportReportSelect(entries) {
 
 function renderAdminSupportReport() {
   pageTitleController.update({ pageTitle: 'Report a problem' });
-  const form = node('form', 'admin-form support-report-form');
+  const body = node('div', 'admin-section-body support-report-settings');
+  const form = node('form', 'admin-form settings-page-form support-report-form');
   const title = node('input', 'ui-input');
   title.type = 'text';
   title.required = true;
@@ -24698,8 +24728,13 @@ function renderAdminSupportReport() {
   const identityFields = node('div', 'support-report-fields');
   identityFields.append(formField('Title for your issue', title), formField('Email address', email,
     'Used only to follow up about this report.'), formField('Category', category), formField('Issue', issue));
-  form.append(identityFields, formField('Description for your issue', description),
+  const issueCard = settingsCard('Issue details',
+    'Identify the problem and provide a way to follow up about this report.', identityFields);
+  const narrativeFields = node('div', 'support-report-narrative-fields');
+  narrativeFields.append(formField('Description for your issue', description),
     formField('Steps to reproduce this issue', steps));
+  const narrativeCard = settingsCard('Description and reproduction',
+    'Describe what happened and the steps that make the problem occur.', narrativeFields);
 
   const choices = node('details', 'support-report-options');
   choices.open = true;
@@ -24717,7 +24752,11 @@ function renderAdminSupportReport() {
   fullWarning.hidden = true;
   choiceList.append(fullWarning);
   choices.append(choiceList);
-  form.append(choices);
+  const diagnosticsCard = settingsCard('Diagnostic information',
+    'Choose the receiver information to include in the support bundle.', choices);
+  diagnosticsCard.classList.add('support-report-diagnostics-card');
+  const cardGrid = settingsCardGrid(issueCard, narrativeCard, diagnosticsCard);
+  cardGrid.classList.add('support-report-card-grid');
 
   const status = node('div', 'admin-form-message support-report-message');
   status.setAttribute('role', 'status');
@@ -24747,7 +24786,9 @@ function renderAdminSupportReport() {
   submit.hidden = true;
   const actions = node('div', 'admin-form-actions ui-action-row');
   actions.append(generate, stop, download, submit);
-  form.append(progressWrap, outputWrap, status, actions);
+  const footer = node('footer', 'settings-form-footer support-report-footer');
+  footer.append(progressWrap, outputWrap, status, actions);
+  form.append(cardGrid, footer);
 
   let jobId = null;
   let working = false;
@@ -24928,10 +24969,12 @@ function renderAdminSupportReport() {
     }
   });
 
-  content.append(section('Report a problem', form));
+  body.append(form);
+  content.append(section('Report a problem', body));
 }
 
 const CALL_MATCHING_HISTORY_LIMIT = 100;
+const CALL_MATCHING_PAGE_SIZE = 20;
 
 function callMatchingCount(value) {
   return value !== null && value !== undefined && value !== '' &&
@@ -25048,6 +25091,37 @@ function callMatchingSnapshot(value) {
   return { ...value, duplicates };
 }
 
+function callMatchingHistoryPage(decisions, requestedPage) {
+  const total = decisions.length;
+  const pageCount = Math.max(1, Math.ceil(total / CALL_MATCHING_PAGE_SIZE));
+  const numericPage = Number(requestedPage);
+  const page = Math.max(0, Math.min(Number.isFinite(numericPage) ? Math.trunc(numericPage) : 0,
+    pageCount - 1));
+  const offset = page * CALL_MATCHING_PAGE_SIZE;
+  const rows = decisions.slice(offset, offset + CALL_MATCHING_PAGE_SIZE);
+  return { rows, page, pageCount, total, offset };
+}
+
+function callMatchingHistoryPager(page, onPage) {
+  const navigation = node('nav', 'pager ui-pager call-matching-history-pager');
+  navigation.setAttribute('aria-label', 'Confirmed duplicate pages');
+  const first = page.rows.length ? page.offset + 1 : 0;
+  const last = page.offset + page.rows.length;
+  navigation.append(node('span', 'muted',
+    `Decisions ${number(first)}-${number(last)} of ${number(page.total)} · ` +
+      `Page ${number(page.page + 1)} of ${number(page.pageCount)}`));
+  const previous = node('button', 'ui-button ui-button-secondary', 'Previous');
+  previous.type = 'button';
+  previous.disabled = page.page === 0;
+  previous.addEventListener('click', () => onPage(page.page - 1));
+  const next = node('button', 'ui-button ui-button-secondary', 'Next');
+  next.type = 'button';
+  next.disabled = page.page + 1 >= page.pageCount;
+  next.addEventListener('click', () => onPage(page.page + 1));
+  navigation.append(previous, next);
+  return navigation;
+}
+
 function callMatchingComparison(decision) {
   const identity = decision.call_identity || {};
   const winner = callMatchingWinner(decision);
@@ -25142,18 +25216,16 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   const status = node('div', 'call-matching-live-status');
   status.setAttribute('role', 'status');
   status.append(uiStatus('Connecting'), node('span', '', 'Updates every second'));
-  const heading = node('div', 'call-matching-workspace-header');
-  heading.append(status);
-  workspace.append(heading);
   const statusContent = node('div', 'call-matching-status-content');
   statusContent.append(node('div', 'loading', 'Loading call matching status…'));
-  workspace.append(section('Matching status', statusContent));
+  workspace.append(section('Matching status', statusContent, sectionActionHost(status)));
   const tableActions = sectionActionHost();
   const tableController = {};
   let selectedSequence = null;
   let selectedModal = null;
   let latest = null;
   let sessionKey = null;
+  let historyPage = 0;
   const columns = [
     { id: 'time', label: 'Decision', render: (row) => dateTime(row.decided_at_ms) || '—' },
     { id: 'talkgroup', label: 'Talkgroup', render: (row) => {
@@ -25201,14 +25273,32 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   ];
   const tableWrap = table([], columns, 'No confirmed duplicate calls are in recent history.', {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
-    sortable: false, mobileCards: true, rowKey: (row) => row.decision_sequence,
+    sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
+    rowKey: (row) => row.decision_sequence,
     rowClass: (row) => Number(row.decision_sequence) === selectedSequence ? 'selected' : ''
   });
   const footer = node('div', 'call-matching-history-footer muted',
     'Only confirmed duplicate decisions are shown.');
-  const historySection = section('Confirmed duplicates', fragment(tableWrap, footer), tableActions);
+  const historyPager = node('div', 'call-matching-history-pagination');
+  const historySection = section('Confirmed duplicates', fragment(tableWrap, historyPager, footer), tableActions);
   workspace.append(historySection);
   content.append(workspace);
+
+  const renderHistory = () => {
+    if (!latest) return;
+    const page = callMatchingHistoryPage(latest.duplicates, historyPage);
+    historyPage = page.page;
+    tableController.reconcileRows(page.rows);
+    historyPager.replaceChildren(callMatchingHistoryPager(page, (nextPage) => {
+      historyPage = nextPage;
+      renderHistory();
+    }));
+    const first = page.rows.length ? page.offset + 1 : 0;
+    const last = page.offset + page.rows.length;
+    footer.textContent = `Only confirmed duplicate decisions are shown. Showing ${number(first)}-${number(last)} ` +
+      `of ${number(page.total)} recent decisions from ${callMatchingCount(latest.history.duplicates_retained)} ` +
+      `retained duplicates · ${callMatchingCount(latest.history.duplicates_evicted)} older duplicates evicted.`;
+  };
 
   const update = (value) => {
     latest = callMatchingSnapshot(value);
@@ -25217,6 +25307,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       selectedSequence = null;
       selectedModal?.close();
       selectedModal = null;
+      historyPage = 0;
     }
     sessionKey = nextSessionKey;
     const resolver = latest.resolver;
@@ -25227,12 +25318,14 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     const summary = node('div', 'call-matching-health-summary');
     const state = node('div', 'call-matching-health-state');
     state.append(uiStatus(health, healthTone));
-    summary.append(state, metrics([
+    const summaryMetrics = metrics([
       ['Call matching', 0, health], ['Receiving now', resolver.active_leg_count],
       ['Waiting to match', resolver.active_cohort_count],
       ['Duplicates combined', counters.merged_logical_calls],
       ['Extra copies suppressed', counters.merged_receiver_copies]
-    ], true));
+    ], true);
+    summaryMetrics.classList.add('call-matching-metrics');
+    summary.append(state, summaryMetrics);
     const facts = keyValues([
       ['Resolver queue', `${callMatchingCount(queue.ingress_depth)} / ${callMatchingCount(queue.total_ingress_capacity)}`],
       ['Uncertain kept separate', callMatchingCount(counters.fail_open_logical_calls)]
@@ -25247,10 +25340,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       selectedModal?.close();
       selectedModal = null;
     }
-    tableController.reconcileRows(latest.duplicates);
-    footer.textContent = `Only confirmed duplicate decisions are shown. Showing ${number(latest.duplicates.length)} ` +
-      `from ${callMatchingCount(latest.history.duplicates_retained)} retained duplicates · ` +
-      `${callMatchingCount(latest.history.duplicates_evicted)} older duplicates evicted.`;
+    renderHistory();
   };
   let inFlight = false;
   let stopped = false;
@@ -25275,6 +25365,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
         selectedSequence = null;
         latest = null;
         tableController.replaceRows([]);
+        historyPager.replaceChildren();
         if (workspace.isConnected) {
           status.replaceChildren(uiStatus('Access denied', 'danger'));
           statusContent.replaceChildren(node('div', 'error',
@@ -25343,7 +25434,8 @@ function adminSettingsLeaves(groups) {
 
 function refreshAdminSystemStatus() {
   const current = document.getElementById('admin-system-status');
-  if (current) current.replaceWith(adminSystemStatusSection());
+  if (current) current.replaceWith(adminSystemStatusSection(
+    route.get('view') === 'admin' && route.get('tab') === 'activity'));
 }
 
 async function renderAdmin() {
