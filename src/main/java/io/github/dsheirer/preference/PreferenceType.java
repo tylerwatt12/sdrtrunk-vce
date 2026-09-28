@@ -26,7 +26,6 @@ public enum PreferenceType
 {
     APPLICATION,
     CALIBRATION,
-    DECODE_EVENT,
     DIRECTORY,
     CALL_MANAGEMENT,
     ENCRYPTION_KEYS,
@@ -35,7 +34,6 @@ public enum PreferenceType
     NOW_PLAYING,
     RADIO_REFERENCE,
     RECORD,
-    TALKGROUP_FORMAT,
     TUNER,
     VOICE_DECRYPTION_MODULE;
 }

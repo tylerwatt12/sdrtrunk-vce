@@ -28,6 +28,7 @@ import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
@@ -37,7 +38,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import org.controlsfx.control.ToggleSwitch;
 
 /**
  * Preference settings for vector calibration behavior.
@@ -46,8 +46,8 @@ public class VectorCalibrationPreferenceEditor extends HBox
 {
     private VectorCalibrationPreference mPreference;
     private GridPane mEditorPane;
-    private ToggleSwitch mHideDialogSwitch;
-    private ToggleSwitch mVectorEnabled;
+    private CheckBox mHideDialogCheckBox;
+    private CheckBox mVectorEnabled;
     private Label mCalibrationsPendingValue;
     private Button mResetAllButton;
     private Button mCalibrateButton;
@@ -109,17 +109,17 @@ public class VectorCalibrationPreferenceEditor extends HBox
             GridPane.setConstraints(titleLabel, 0, row++, 2, 1);
             mEditorPane.getChildren().add(titleLabel);
 
-            GridPane.setConstraints(getVectorEnabledToggleSwitch(), 0, row);
-            GridPane.setHalignment(getVectorEnabledToggleSwitch(), HPos.RIGHT);
-            mEditorPane.getChildren().add(getVectorEnabledToggleSwitch());
+            GridPane.setConstraints(getVectorEnabledCheckBox(), 0, row);
+            GridPane.setHalignment(getVectorEnabledCheckBox(), HPos.RIGHT);
+            mEditorPane.getChildren().add(getVectorEnabledCheckBox());
 
             Label enableSimdLabel = new Label("Enable SIMD Vector Operations");
             GridPane.setConstraints(enableSimdLabel, 1, row++);
             mEditorPane.getChildren().add((enableSimdLabel));
 
-            GridPane.setConstraints(getHideDialogSwitch(), 0, row);
-            GridPane.setHalignment(getHideDialogSwitch(), HPos.RIGHT);
-            mEditorPane.getChildren().add(getHideDialogSwitch());
+            GridPane.setConstraints(getHideDialogCheckBox(), 0, row);
+            GridPane.setHalignment(getHideDialogCheckBox(), HPos.RIGHT);
+            mEditorPane.getChildren().add(getHideDialogCheckBox());
 
             Label hideDialogLabel = new Label("Don't Show Calibration Dialog When New Calibrations Are Available");
             GridPane.setConstraints(hideDialogLabel, 1, row++);
@@ -275,11 +275,11 @@ public class VectorCalibrationPreferenceEditor extends HBox
         return mCalibrationsPendingValue;
     }
 
-    private ToggleSwitch getVectorEnabledToggleSwitch()
+    private CheckBox getVectorEnabledCheckBox()
     {
         if(mVectorEnabled == null)
         {
-            mVectorEnabled = new ToggleSwitch();
+            mVectorEnabled = new CheckBox();
             mVectorEnabled.setTooltip(new Tooltip("Allow VCE to use optimized vector operations when supported by your CPU"));
             mVectorEnabled.setSelected(mPreference.isVectorEnabled());
             mVectorEnabled.selectedProperty()
@@ -289,16 +289,17 @@ public class VectorCalibrationPreferenceEditor extends HBox
         return mVectorEnabled;
     }
 
-    private ToggleSwitch getHideDialogSwitch()
+    private CheckBox getHideDialogCheckBox()
     {
-        if(mHideDialogSwitch == null)
+        if(mHideDialogCheckBox == null)
         {
-            mHideDialogSwitch = new ToggleSwitch();
-            mHideDialogSwitch.setTooltip(new Tooltip("Don't show dialog when new calibrations are available"));
-            mHideDialogSwitch.setSelected(mPreference.isHideCalibrationDialog());
-            mHideDialogSwitch.selectedProperty().addListener((observable, oldValue, hide) -> mPreference.setHideCalibrationDialog(hide));
+            mHideDialogCheckBox = new CheckBox();
+            mHideDialogCheckBox.setTooltip(new Tooltip("Don't show dialog when new calibrations are available"));
+            mHideDialogCheckBox.setSelected(mPreference.isHideCalibrationDialog());
+            mHideDialogCheckBox.selectedProperty()
+                .addListener((observable, oldValue, hide) -> mPreference.setHideCalibrationDialog(hide));
         }
 
-        return mHideDialogSwitch;
+        return mHideDialogCheckBox;
     }
 }

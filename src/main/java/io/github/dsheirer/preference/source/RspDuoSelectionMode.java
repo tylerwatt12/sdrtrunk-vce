@@ -17,44 +17,46 @@
  * ****************************************************************************
  */
 
-package io.github.dsheirer.audio.convert.thumbdv.message.response;
-
-import io.github.dsheirer.audio.convert.thumbdv.message.AmbeMessage;
-import io.github.dsheirer.audio.convert.thumbdv.message.PacketField;
-
-import java.util.Arrays;
+package io.github.dsheirer.preference.source;
 
 /**
- * AMBE-3000R Response Packet
+ * RSPduo tuner select mode preferences.
  */
-public abstract class AmbeResponse extends AmbeMessage
+public enum RspDuoSelectionMode
 {
-    protected static final int PAYLOAD_START_INDEX = 5;
-    private byte[] mMessage;
+    DUAL("Dual Tuner"),
+    SINGLE_1("Single Tuner 1"),
+    SINGLE_2("Single Tuner 2");
 
-    protected AmbeResponse(byte[] message)
+    private final String mLabel;
+
+    RspDuoSelectionMode(String label)
     {
-        mMessage = message;
+        mLabel = label;
+    }
+
+    @Override
+    public String toString()
+    {
+        return mLabel;
     }
 
     /**
-     * Control packet type
+     * Lookup the enum entry from the value.
+     * @param value to match
+     * @return matched value or (default) DUAL if the value couldn't be matched.
      */
-    public abstract PacketField getType();
-
-    /**
-     * Received message bytes
-     */
-    protected byte[] getMessage()
+    public static RspDuoSelectionMode fromValue(String value)
     {
-        return mMessage;
-    }
+        try
+        {
+            return RspDuoSelectionMode.valueOf(value);
+        }
+        catch(Exception e)
+        {
+            //Do nothing
+        }
 
-    /**
-     * Payload of the packet (does not include the packet header)
-     */
-    protected byte[] getPayload()
-    {
-        return Arrays.copyOfRange(getMessage(), PAYLOAD_START_INDEX, getMessage().length);
+        return DUAL;
     }
 }

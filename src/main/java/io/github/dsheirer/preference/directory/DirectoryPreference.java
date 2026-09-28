@@ -54,7 +54,6 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
-    private static final String PREFERENCE_KEY_LAST_RECORDING_BROWSE = "directory.last.recording.browse";
 
     private Path mDirectoryApplicationLogs;
     private Path mDirectoryEventLogs;
@@ -87,20 +86,6 @@ public class DirectoryPreference extends Preference
         Path applicationRoot = PortableApplicationPaths.getDataRoot();
         createDirectory(applicationRoot);
         return applicationRoot;
-    }
-
-    public Path getLastRecordingBrowseDirectory()
-    {
-        return getPath(PREFERENCE_KEY_LAST_RECORDING_BROWSE, getDefaultRecordingDirectory());
-    }
-
-    public void setLastRecordingBrowseDirectory(Path path)
-    {
-        if(path != null)
-        {
-            mPreferences.put(PREFERENCE_KEY_LAST_RECORDING_BROWSE, path.toString());
-            notifyPreferenceUpdated();
-        }
     }
 
     /**

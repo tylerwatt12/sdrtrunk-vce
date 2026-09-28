@@ -114,11 +114,6 @@ public class WebServerPreferenceEditor extends HBox
     private boolean mAdminConfigured;
     private boolean mPortValidationError;
 
-    public WebServerPreferenceEditor(UserPreferences userPreferences)
-    {
-        this(userPreferences, null);
-    }
-
     public WebServerPreferenceEditor(UserPreferences userPreferences, StatsWebServerService statsWebServerService)
     {
         mApplicationPreference = userPreferences.getApplicationPreference();

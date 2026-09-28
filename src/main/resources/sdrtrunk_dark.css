@@ -268,28 +268,6 @@
     -fx-background-color: #ffffff;
 }
 
-.toggle-switch
-{
-    -fx-text-fill: #ececec;
-}
-
-.toggle-switch > .thumb-area
-{
-    -fx-background-color: #3c3f41;
-    -fx-border-color: #555a5e;
-}
-
-.toggle-switch:selected > .thumb-area
-{
-    -fx-background-color: #4a90d9;
-    -fx-border-color: #4a90d9;
-}
-
-.toggle-switch > .thumb
-{
-    -fx-background-color: #ececec;
-}
-
 .spinner
 {
     -fx-background-color: #313335;

@@ -30,7 +30,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -115,7 +114,7 @@ class EncryptionKeyVaultServiceTest
         EncryptionKeyPreference preference = new EncryptionKeyPreference(this::ignore, directoryPreference);
         SdrTrunkDatabaseStartup.createVaultDatabase(preference.getVaultService().getVaultPath());
         preference.getVaultService().createVault(password("secret"));
-        preference.setKeys(List.of(key()));
+        preference.addKey(key());
         assertEquals(1, preference.getKeys().size());
 
         preference.getVaultService().lock();

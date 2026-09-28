@@ -44,63 +44,6 @@ public class SwingPreference
     private Preferences mPreferences = Preferences.userNodeForPackage(SwingPreference.class);
 
     /**
-     * Returns the stored swing related integer value
-     * @param key for accessing the value
-     * @param defaultValue to return if the value has not yet been persisted
-     * @return value or default value
-     */
-    public int getInt(String key, int defaultValue)
-    {
-        return mPreferences.getInt(key, defaultValue);
-    }
-
-    /**
-     * Stores the swing related integer value
-     * @param key to reference the value
-     */
-    public void setInt(String key, int value)
-    {
-        mPreferences.putInt(key, value);
-    }
-
-    /**
-     * Removes a stored swing preference value.
-     * @param key to remove
-     */
-    public void remove(String key)
-    {
-        mPreferences.remove(key);
-    }
-
-    /**
-     * Removes stored swing preference values where the key contains the supplied text.
-     * @param token text that identifies keys to remove
-     * @return count of removed preference values
-     */
-    public int removeKeysContaining(String token)
-    {
-        int removed = 0;
-
-        try
-        {
-            for(String key: mPreferences.keys())
-            {
-                if(key.contains(token))
-                {
-                    mPreferences.remove(key);
-                    removed++;
-                }
-            }
-        }
-        catch(BackingStoreException bse)
-        {
-            mLog.error("Error removing swing preferences containing [{}]", token, bse);
-        }
-
-        return removed;
-    }
-
-    /**
      * Returns the persisted window location for the specified preference key.
      * @param key identifying the window
      * @return location or null

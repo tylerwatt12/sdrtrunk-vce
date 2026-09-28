@@ -30,8 +30,6 @@ import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
 import io.github.dsheirer.preference.decoder.VoiceDecryptionModulePreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
-import io.github.dsheirer.preference.event.DecodeEventPreference;
-import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.javafx.JavaFxPreferences;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
@@ -60,7 +58,6 @@ import io.github.dsheirer.sample.Listener;
 public class UserPreferences implements Listener<PreferenceType>
 {
     private ApplicationPreference mApplicationPreference;
-    private DecodeEventPreference mDecodeEventPreference;
     private DirectoryPreference mDirectoryPreference;
     private CallManagementPreference mCallManagementPreference;
     private EncryptionKeyPreference mEncryptionKeyPreference;
@@ -70,7 +67,6 @@ public class UserPreferences implements Listener<PreferenceType>
     private NowPlayingPreference mNowPlayingPreference;
     private RadioReferencePreference mRadioReferencePreference;
     private RecordPreference mRecordPreference;
-    private TalkgroupFormatPreference mTalkgroupFormatPreference;
     private TunerPreference mTunerPreference;
     private VectorCalibrationPreference mVectorCalibrationPreference;
     private P25BandplanOverrideRegistry mP25BandplanOverrideRegistry;
@@ -110,14 +106,6 @@ public class UserPreferences implements Listener<PreferenceType>
     public JavaFxPreferences getJavaFxPreferences()
     {
         return mJavaFxPreferences;
-    }
-
-    /**
-     * Decode Event preferences
-     */
-    public DecodeEventPreference getDecodeEventPreference()
-    {
-        return mDecodeEventPreference;
     }
 
     /**
@@ -185,14 +173,6 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
-     * Identifier preferences
-     */
-    public TalkgroupFormatPreference getTalkgroupFormatPreference()
-    {
-        return mTalkgroupFormatPreference;
-    }
-
-    /**
      * Tuner preferences
      */
     public TunerPreference getTunerPreference()
@@ -236,7 +216,6 @@ public class UserPreferences implements Listener<PreferenceType>
     private void loadPreferenceTypes()
     {
         mApplicationPreference = new ApplicationPreference(this::receive);
-        mDecodeEventPreference = new DecodeEventPreference(this::receive);
         mDirectoryPreference = new DirectoryPreference(this::receive);
         mCallManagementPreference = new CallManagementPreference(this::receive);
         mEncryptionKeyPreference = new EncryptionKeyPreference(this::receive, mDirectoryPreference);
@@ -246,7 +225,6 @@ public class UserPreferences implements Listener<PreferenceType>
         mNowPlayingPreference = new NowPlayingPreference(this::receive);
         mRadioReferencePreference = new RadioReferencePreference(this::receive);
         mRecordPreference = new RecordPreference(this::receive);
-        mTalkgroupFormatPreference = new TalkgroupFormatPreference(this::receive);
         mTunerPreference = new TunerPreference(this::receive);
         mVectorCalibrationPreference = new VectorCalibrationPreference(this::receive);
     }

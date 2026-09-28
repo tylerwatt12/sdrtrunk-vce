@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
+import io.github.dsheirer.preference.source.RspDuoSelectionMode;
 import io.github.dsheirer.source.tuner.manager.ChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.sdrplay.RspTuner;

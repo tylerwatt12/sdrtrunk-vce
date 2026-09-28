@@ -37,6 +37,9 @@ class JavaShellCleanupUiContractTest
         assertTrue(application.contains("ensureShellFitsContent();"));
         assertFalse(application.contains("Streaming (Web)"));
         assertFalse(application.contains("Screen Capture"));
+        assertFalse(application.contains("JMenuItem preferencesItem"));
+        assertFalse(application.contains("Credits & Licensing"));
+        assertFalse(Files.exists(ROOT.resolve("CreditsDialog.java")));
         assertFalse(preferences.contains("Streaming (Web)"));
         assertFalse(webSettings.contains("getOpenButton()"));
     }
@@ -169,6 +172,16 @@ class JavaShellCleanupUiContractTest
 
         assertFalse(Files.exists(Path.of(
             "src/main/java/io/github/dsheirer/preference/swing/JTableColumnWidthMonitor.java")));
+
+        String calibrationEditor = Files.readString(
+            ROOT.resolve("preference/calibration/VectorCalibrationPreferenceEditor.java"));
+        String build = Files.readString(Path.of("build.gradle"));
+        String darkTheme = Files.readString(Path.of("src/main/resources/sdrtrunk_dark.css"));
+        assertFalse(calibrationEditor.contains("org.controlsfx"));
+        assertFalse(calibrationEditor.contains("ToggleSwitch"));
+        assertFalse(build.contains("org.controlsfx:controlsfx"));
+        assertFalse(build.contains("com.sun.javafx.event"));
+        assertFalse(darkTheme.contains(".toggle-switch"));
     }
 
     @Test

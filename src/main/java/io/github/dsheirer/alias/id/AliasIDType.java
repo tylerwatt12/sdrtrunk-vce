@@ -27,7 +27,6 @@ public enum AliasIDType
     BROADCAST_CHANNEL("Audio Broadcast Channel"),
     DCS("Digital Coded Squelch (DCS)"),
     ESN("ESN"),
-    INVERT("Audio Inversion"),
     LOJACK("LoJack"),
     //Legacy import type. Runtime talkgroup aliases use TALKGROUP or TALKGROUP_RANGE.
     P25_FULLY_QUALIFIED_TALKGROUP("P25 Fully Qualified Talkgroup"),

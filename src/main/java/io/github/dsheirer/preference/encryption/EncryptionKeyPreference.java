@@ -63,11 +63,6 @@ public class EncryptionKeyPreference extends Preference
         return sorted(mVaultService.getKeys());
     }
 
-    public synchronized void setKeys(Collection<VoiceEncryptionKey> keys)
-    {
-        replace(keys);
-    }
-
     public synchronized void addKey(VoiceEncryptionKey key)
     {
         List<VoiceEncryptionKey> keys = new ArrayList<>(mVaultService.getKeys());

@@ -35,7 +35,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javax.swing.LookAndFeel;
-import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
 import javax.swing.UIDefaults;
 import javax.swing.UIManager;
@@ -215,14 +214,6 @@ public class ThemeManager
     }
 
     /**
-     * @return the currently active theme.
-     */
-    public Theme getCurrentTheme()
-    {
-        return mCurrentTheme;
-    }
-
-    /**
      * @return true if the currently active theme is dark.
      */
     public boolean isDarkMode()
@@ -279,26 +270,6 @@ public class ThemeManager
         }
 
         refreshSwingComponent(component);
-    }
-
-    /**
-     * Refreshes a detached Swing popup immediately before it is displayed. Popup menus are not
-     * always children of the window or component that owns them, so the normal theme-change tree
-     * walk can miss a long-lived popup while it is closed.
-     *
-     * @param popupMenu menu that is about to be displayed
-     */
-    public void preparePopupMenu(JPopupMenu popupMenu)
-    {
-        if(popupMenu == null)
-        {
-            return;
-        }
-
-        runOnSwingEventThreadAndWait(() -> {
-            SwingUtilities.updateComponentTreeUI(popupMenu);
-            applyExplicitFontScale(popupMenu);
-        });
     }
 
     @Subscribe

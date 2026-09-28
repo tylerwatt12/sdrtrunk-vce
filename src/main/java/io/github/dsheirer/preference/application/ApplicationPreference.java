@@ -30,7 +30,6 @@ import java.util.prefs.Preferences;
  */
 public class ApplicationPreference extends Preference
 {
-    private static final String PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT = "channel.auto.start.timeout";
     private static final String PREFERENCE_KEY_DARK_MODE = "dark.mode";
     private static final String PREFERENCE_KEY_THEME = "ui.theme";
     private static final String PREFERENCE_KEY_GUI_SCALE = "ui.gui.scale";
@@ -60,7 +59,6 @@ public class ApplicationPreference extends Preference
     public static final double DEFAULT_GUI_SCALE = 1.0d;
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
-    private Integer mChannelAutoStartTimeout;
     private Boolean mStatsLoggingEnabled;
     private Boolean mStatsDetailedHistoryEnabled;
     private Integer mStatsLoggingRetentionDays;
@@ -87,31 +85,6 @@ public class ApplicationPreference extends Preference
         return PreferenceType.APPLICATION;
     }
 
-
-    /**
-     * Channel auto-start timeout.  This is the countdown in seconds to allow the user to cancel the channel auto-start.
-     * @return timeout in seconds.
-     */
-    public int getChannelAutoStartTimeout()
-    {
-        if(mChannelAutoStartTimeout == null)
-        {
-            mChannelAutoStartTimeout = mPreferences.getInt(PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT, 10);
-        }
-
-        return mChannelAutoStartTimeout;
-    }
-
-    /**
-     * Sets the channel auto-start timeout seconds value.
-     * @param timeout in seconds.
-     */
-    public void setChannelAutoStartTimeout(int timeout)
-    {
-        mChannelAutoStartTimeout = timeout;
-        mPreferences.putInt(PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT, timeout);
-        notifyPreferenceUpdated();
-    }
 
     /**
      * Indicates if sdrtrunk-vce stats should be logged to SQLite.
@@ -250,16 +223,6 @@ public class ApplicationPreference extends Preference
     }
 
     /**
-     * Enables or disables access from any IP address for the embedded stats web server.
-     */
-    public void setStatsWebServerAnyIpEnabled(boolean enabled)
-    {
-        mStatsWebServerAnyIpEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
-        notifyPreferenceUpdated();
-    }
-
-    /**
      * Selects whether the embedded web interface is reachable only from this computer or from other computers on
      * connected networks. Network access always enables HTTPS; returning to local-only access keeps the current HTTPS
      * setting. Both values are saved before publishing one preference update so the listener is recycled only once.
@@ -388,11 +351,6 @@ public class ApplicationPreference extends Preference
         mPreferences.put(PREFERENCE_KEY_THEME, theme.name());
         mPreferences.putBoolean(PREFERENCE_KEY_DARK_MODE, theme.isDark());
         notifyPreferenceUpdated();
-    }
-
-    public boolean isDarkMode()
-    {
-        return getTheme().isDark();
     }
 
     /**

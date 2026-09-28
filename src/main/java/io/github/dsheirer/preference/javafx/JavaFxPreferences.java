@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.preference.javafx;
 
-import io.github.dsheirer.preference.decoder.JmbeLibraryPreference;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -54,25 +53,6 @@ public class JavaFxPreferences
     public void monitor(Stage stage, String key)
     {
         mStageMonitors.add(new StageMonitor(stage, key));
-    }
-
-    /**
-     * Removes monitoring for the specified stage
-     */
-    public void unmonitor(Stage stage)
-    {
-        Iterator<StageMonitor> it = mStageMonitors.iterator();
-
-        while(it.hasNext())
-        {
-            StageMonitor next = it.next();
-
-            if(next.equals(stage))
-            {
-                it.remove();
-                next.dispose();
-            }
-        }
     }
 
     /**

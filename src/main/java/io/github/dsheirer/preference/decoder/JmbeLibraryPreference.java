@@ -92,22 +92,6 @@ public class JmbeLibraryPreference extends Preference
     }
 
     /**
-     * Indicates if a path to a JMBE library is setup (ie non-null).
-     */
-    public boolean hasJmbeLibraryPath()
-    {
-        return getPathJmbeLibrary() != null;
-    }
-
-    /**
-     * Indicates whether a selected JMBE library is new enough for this application.
-     */
-    public boolean isJmbeLibraryReady()
-    {
-        return JmbeLibraryMetadata.isSupported(getPathJmbeLibrary());
-    }
-
-    /**
      * Sets the path to the JMBE library
      */
     public void setPathJmbeLibrary(Path path)

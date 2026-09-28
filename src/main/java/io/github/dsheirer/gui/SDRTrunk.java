@@ -78,14 +78,12 @@ import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.awt.Toolkit;
-import java.awt.desktop.QuitResponse;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.Inet4Address;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -531,11 +529,6 @@ public class SDRTrunk
         recordingViewerMenu.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewRecordingViewerRequest()));
         viewMenu.add(recordingViewerMenu);
 
-        JMenuItem preferencesItem = new JMenuItem("User Preferences");
-        preferencesItem.setIcon(IconFontSwing.buildIcon(FontAwesome.COG, 12));
-        preferencesItem.addActionListener(e -> MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest()));
-        viewMenu.add(preferencesItem);
-
         viewMenu.add(new JSeparator());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
 
@@ -582,11 +575,6 @@ public class SDRTrunk
             }
         });
         helpMenu.add(mCheckForUpdatesMenuItem);
-        helpMenu.add(new JSeparator());
-
-        JMenuItem creditsItem = new JMenuItem("Credits & Licensing");
-        creditsItem.addActionListener(event -> new CreditsDialog(mMainGui).setVisible(true));
-        helpMenu.add(creditsItem);
         menuBar.add(helpMenu);
         ensureShellFitsContent();
     }

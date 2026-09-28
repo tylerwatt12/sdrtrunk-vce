@@ -19,7 +19,7 @@
 
 package io.github.dsheirer.source.tuner;
 
-import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
+import io.github.dsheirer.preference.source.RspDuoSelectionMode;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.airspy.AirspyTuner;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;

@@ -23,43 +23,36 @@ public enum BroadcastServerType
     /**
      * Broadcastify feeds (ie streaming) service
      */
-    BROADCASTIFY("Broadcastify Feed", "images/broadcastify.png"), //Icecast Server 2.3.2
+    BROADCASTIFY("Broadcastify Feed"), //Icecast Server 2.3.2
 
     /**
      * Broadcastify calls - completed audio recording push service
      */
-    BROADCASTIFY_CALL("Broadcastify Call", "images/broadcastify.png"),
+    BROADCASTIFY_CALL("Broadcastify Call"),
 
     /**
      * Broadcastify calls restricted to calls observed by one configured trunked-site channel
      */
-    BROADCASTIFY_CALL_SITE("Broadcastify Calls (Trunked Site)", "images/broadcastify.png"),
+    BROADCASTIFY_CALL_SITE("Broadcastify Calls (Trunked Site)"),
 
-    ICECAST_HTTP("Icecast 2 (v2.4+)", "images/icecast.png"),
-    RDIOSCANNER_CALL("Rdio Scanner", "images/rdioscanner.png"),
-    OPENMHZ("OpenMHz", "images/openmhz.png"),
-    RADIORESOLVE("RadioResolve", null),
-    ICECAST_TCP("Icecast (v2.3)", "images/icecast.png"),
-    SHOUTCAST_V1("Shoutcast v1.x", "images/shoutcast.png"),
-    UNKNOWN("Unknown", null);
+    ICECAST_HTTP("Icecast 2 (v2.4+)"),
+    RDIOSCANNER_CALL("Rdio Scanner"),
+    OPENMHZ("OpenMHz"),
+    RADIORESOLVE("RadioResolve"),
+    ICECAST_TCP("Icecast (v2.3)"),
+    SHOUTCAST_V1("Shoutcast v1.x"),
+    UNKNOWN("Unknown");
 
-    private String mLabel;
-    private String mIconPath;
+    private final String mLabel;
 
-    BroadcastServerType(String label, String iconPath)
+    BroadcastServerType(String label)
     {
         mLabel = label;
-        mIconPath = iconPath;
     }
 
     @Override
     public String toString()
     {
         return mLabel;
-    }
-
-    public String getIconPath()
-    {
-        return mIconPath;
     }
 }

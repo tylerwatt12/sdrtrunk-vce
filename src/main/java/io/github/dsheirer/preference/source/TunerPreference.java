@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.preference.source;
 
-import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
@@ -30,10 +29,9 @@ import java.util.prefs.Preferences;
  */
 public class TunerPreference extends Preference
 {
-    static final String RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE = "channelizer.type";
     private static final String PREFERENCE_KEY_RSP_DUO_TUNER_MODE = "rsp.duo.tuner.mode";
 
-    private final Preferences mPreferences;
+    private final Preferences mPreferences = Preferences.userNodeForPackage(TunerPreference.class);
     private RspDuoSelectionMode mRspDuoSelectionMode;
 
     /**
@@ -43,16 +41,7 @@ public class TunerPreference extends Preference
      */
     public TunerPreference(Listener<PreferenceType> updateListener)
     {
-        this(updateListener, Preferences.userNodeForPackage(TunerPreference.class));
-    }
-
-    TunerPreference(Listener<PreferenceType> updateListener, Preferences preferences)
-    {
         super(updateListener);
-        mPreferences = preferences;
-
-        //Retired preference values are deliberately ignored.  All tuners now use the polyphase channelizer.
-        mPreferences.remove(RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE);
     }
 
     @Override

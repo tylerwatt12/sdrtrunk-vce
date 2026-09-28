@@ -25240,7 +25240,6 @@ function renderCredits() {
     ['Guava', 'https://github.com/google/guava'],
     ['JTransforms', 'https://github.com/wendykierp/JTransforms'],
     ['usb4java', 'https://usb4java.org/'],
-    ['ControlsFX', 'https://github.com/controlsfx/controlsfx'],
     ['3d-force-graph', 'https://github.com/vasturiano/3d-force-graph'],
     ['Three.js', 'https://threejs.org/'],
     ['d3-force-3d', 'https://github.com/vasturiano/d3-force-3d'],

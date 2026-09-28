@@ -34,7 +34,7 @@ and failed steps are not shown as successful. Exit preserves accepted settings, 
 The sun/moon button at the top of the wizard switches between Light and Dark without losing entered values.
 It works before choosing a starting point without creating a database. An explicit choice is saved once the profile
 is created or imported; otherwise the imported theme is preserved. More theme presets remain available under
-View → User Preferences → Application → Appearance.
+Settings → Application → Appearance.
 
 New profiles default to HTTPS on localhost port **8090**. The web interface remains available for alias editing;
 there is no desktop-only/disabled choice. An imported disabled web server is enabled on localhost and the adjustment

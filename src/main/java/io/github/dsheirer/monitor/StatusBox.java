@@ -91,31 +91,6 @@ public class StatusBox extends VBox
     private Tooltip mUpdateStatusTooltip;
     private UpdateCheckResult mLastUpdateResult;
 
-    /**
-     * Constructs an instance.
-     * @param resourceMonitor for accessing resource usage statistics.
-     */
-    public StatusBox(ResourceMonitor resourceMonitor)
-    {
-        this(resourceMonitor, null, null, null, null, null);
-    }
-
-    /**
-     * Constructs an instance.
-     * @param resourceMonitor for accessing resource usage statistics.
-     * @param vaultService for displaying encryption vault status.
-     */
-    public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService)
-    {
-        this(resourceMonitor, vaultService, null, null, null, null);
-    }
-
-    public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
-                     VoiceDecryptionModuleManager moduleManager)
-    {
-        this(resourceMonitor, vaultService, moduleManager, null, null, null);
-    }
-
     public StatusBox(ResourceMonitor resourceMonitor, EncryptionKeyVaultService vaultService,
                      VoiceDecryptionModuleManager moduleManager,
                      Supplier<StatsWebNavigationState> navigationStateSupplier,

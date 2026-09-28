@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.preference.tuner;
 
+import io.github.dsheirer.preference.source.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.source.TunerPreference;
 import javafx.geometry.HPos;

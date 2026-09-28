@@ -65,12 +65,14 @@ class LocalPreferenceSurfaceContractTest
     }
 
     @Test
-    void unconsumedLegacyPreferenceEditorsAreAbsentButStoredModelsRemain() throws Exception
+    void unconsumedLegacyPreferenceEditorsAndModelsAreAbsent() throws Exception
     {
         String types = Files.readString(PREFERENCES.resolve("PreferenceEditorType.java"));
         String factory = Files.readString(PREFERENCES.resolve("PreferenceEditorFactory.java"));
         String tree = Files.readString(PREFERENCES.resolve("UserPreferencesEditor.java"));
         Path preferenceModels = Path.of("src/main/java/io/github/dsheirer/preference");
+        String userPreferences = Files.readString(preferenceModels.resolve("UserPreferences.java"));
+        String preferenceTypes = Files.readString(preferenceModels.resolve("PreferenceType.java"));
 
         assertFalse(Files.exists(PREFERENCES.resolve("application/ApplicationPreferenceEditor.java")));
         assertFalse(Files.exists(PREFERENCES.resolve("DecodeEventViewPreferenceEditor.java")));
@@ -86,8 +88,12 @@ class LocalPreferenceSurfaceContractTest
         assertFalse(tree.contains("TreeItem<Object> displayItem"));
 
         assertTrue(Files.exists(preferenceModels.resolve("application/ApplicationPreference.java")));
-        assertTrue(Files.exists(preferenceModels.resolve("event/DecodeEventPreference.java")));
-        assertTrue(Files.exists(preferenceModels.resolve("identifier/TalkgroupFormatPreference.java")));
+        assertFalse(Files.exists(preferenceModels.resolve("event/DecodeEventPreference.java")));
+        assertFalse(Files.exists(preferenceModels.resolve("identifier/TalkgroupFormatPreference.java")));
+        assertFalse(userPreferences.contains("DecodeEventPreference"));
+        assertFalse(userPreferences.contains("TalkgroupFormatPreference"));
+        assertFalse(preferenceTypes.contains("DECODE_EVENT"));
+        assertFalse(preferenceTypes.contains("TALKGROUP_FORMAT"));
         assertTrue(Files.exists(preferenceModels.resolve("TimestampFormat.java")));
     }
 }

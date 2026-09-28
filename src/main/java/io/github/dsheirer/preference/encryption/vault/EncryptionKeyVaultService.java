@@ -116,11 +116,6 @@ public class EncryptionKeyVaultService
         return mSavedPasswordPresent;
     }
 
-    public BooleanProperty promptOnLaunchProperty()
-    {
-        return mPromptOnLaunch;
-    }
-
     public synchronized EncryptionKeyVaultState getState()
     {
         return mCurrentState;

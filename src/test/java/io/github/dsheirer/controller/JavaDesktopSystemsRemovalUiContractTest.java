@@ -164,6 +164,44 @@ class JavaDesktopSystemsRemovalUiContractTest
     }
 
     @Test
+    void disconnectedAudioAndLegacyDesktopModelsAreNotPackaged() throws Exception
+    {
+        for(String path: List.of(
+            "src/main/java/io/github/dsheirer/audio/convert/thumbdv",
+            "src/main/java/io/github/dsheirer/audio/invert",
+            "src/main/java/io/github/dsheirer/settings"))
+        {
+            Path directory = Path.of(path);
+            if(Files.exists(directory))
+            {
+                try(var files = Files.walk(directory))
+                {
+                    assertFalse(files.anyMatch(Files::isRegularFile),
+                        () -> "Retired subsystem sources remain: " + path);
+                }
+            }
+        }
+
+        for(String path: List.of(
+            "src/main/java/io/github/dsheirer/map/DefaultIcon.java",
+            "src/main/java/io/github/dsheirer/map/MapIcon.java",
+            "src/main/java/io/github/dsheirer/gui/CreditsDialog.java"))
+        {
+            assertFalse(Files.exists(Path.of(path)), () -> "Retired subsystem remains: " + path);
+        }
+
+        String build = Files.readString(Path.of("build.gradle"));
+        String aliasTypes = Files.readString(Path.of(
+            "src/main/java/io/github/dsheirer/alias/id/AliasIDType.java"));
+
+        assertFalse(build.contains("com.fazecast:jSerialComm"));
+        assertFalse(build.contains("org.controlsfx:controlsfx"));
+        assertFalse(aliasTypes.contains("Audio Inversion"));
+        assertTrue(Files.exists(Path.of(
+            "src/main/java/io/github/dsheirer/audio/codec/mbe/JmbeAudioModule.java")));
+    }
+
+    @Test
     void localDebugRecorderSurvivesTunerEditorRemoval() throws Exception
     {
         String application = Files.readString(APPLICATION);

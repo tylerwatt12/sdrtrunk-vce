@@ -20,7 +20,7 @@
 package io.github.dsheirer.source.tuner.manager;
 
 import io.github.dsheirer.controller.NamingThreadFactory;
-import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
+import io.github.dsheirer.preference.source.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceException;
@@ -48,10 +48,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -59,7 +57,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
