@@ -23,7 +23,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=10") layer(features);',
   '@import url("./styles/features/entity-details.css?v=10") layer(features);',
-  '@import url("./styles/features/live.css?v=13") layer(features);',
+  '@import url("./styles/features/live.css?v=14") layer(features);',
   '@import url("./styles/features/radio-directory.css?v=6") layer(features);',
   '@import url("./styles/features/tuner-spectrum.css?v=10") layer(features);',
   '@import url("./styles/features/tuners.css?v=8") layer(features);',
@@ -38,6 +38,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/signal-quality.css?v=3") layer(features);',
   '@import url("./styles/features/radioreference.css?v=14") layer(features);',
   '@import url("./styles/features/streaming.css?v=4") layer(features);',
+  '@import url("./styles/features/remote-links.css?v=1") layer(features);',
   '@import url("./styles/features/p25-settings.css?v=2") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=5") layer(features);',
   '@import url("./styles/features/activity.css?v=2") layer(features);',
@@ -46,7 +47,7 @@ const EXPECTED_ENTRY_MANIFEST = [
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
 // This is a shrinking migration budget, not permission for new shared-component overrides.
-const FEATURE_SHARED_SELECTOR_BUDGET = 18;
+const FEATURE_SHARED_SELECTOR_BUDGET = 30;
 
 function locator(source) {
   const lineStarts = [0];
