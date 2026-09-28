@@ -150,8 +150,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(globalNotice.contains("Activity pages"));
         assertFalse(status.contains("historyLabel"));
         assertFalse(status.contains("History off"));
-        assertTrue(historyNotice.contains("Store Detailed Event History"));
-        assertTrue(historyNotice.contains("Administration > Receiver operations"));
+        assertTrue(historyNotice.contains("Save individual activity events"));
+        assertTrue(historyNotice.contains("Administration > Call output & activity"));
         assertTrue(historyNotice.contains("earlier activity cannot be recovered"));
         assertTrue(historyNotice.contains("New activity is not being saved."));
         assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));

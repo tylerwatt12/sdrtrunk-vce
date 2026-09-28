@@ -15,13 +15,13 @@ function preferences() {
   return {
     revision: 'a'.repeat(64),
     settings: {
-      patch_group_streaming_option: 'GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
+      patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
       mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false, stats_logging_enabled: true,
       stats_detailed_history_enabled: false, stats_logging_retention_days: 30
     },
     options: {
-      patch_group_streaming_options: [{ value: 'GROUP', label: 'As group' },
-        { value: 'INDIVIDUAL', label: 'Individually' }],
+      patch_group_streaming_options: [{ value: 'PATCH_GROUP', label: 'Patch Group' },
+        { value: 'TALKGROUPS', label: 'Individual Talkgroups' }],
       audio_record_formats: [{ value: 'MP3', label: 'MP3' }, { value: 'WAVE', label: 'WAV' }],
       mp3_settings: [{ value: 'CBR_16', label: '16 kbps' }, { value: 'VBR_5', label: 'Variable' }],
       mp3_input_audio_formats_by_setting: {
@@ -74,18 +74,18 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   await expect(workspace.locator('.settings-card')).toHaveCount(4);
   await expect(workspace.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
-  await patch.locator('select').selectOption('INDIVIDUAL');
+  await patch.locator('select').selectOption('TALKGROUPS');
   await expect(patch.getByText('Unsaved change')).toBeVisible();
   await patch.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('Stream a patch-group call as saved.');
+  await expect(workspace).toContainText('Send each patch-group call as saved.');
   await expect(patch.getByRole('button', { name: 'Save' })).toHaveCount(0);
-  expect(app.writes).toEqual([{ field: 'patch_group_streaming_option', value: 'INDIVIDUAL',
+  expect(app.writes).toEqual([{ field: 'patch_group_streaming_option', value: 'TALKGROUPS',
     revision: `"${'a'.repeat(64)}"` }]);
   const detailed = workspace.locator('form[data-preference="stats_detailed_history_enabled"]');
   await detailed.locator('.ui-toggle').click();
   await expect(detailed.locator('input')).toBeChecked();
   await detailed.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('Store detailed event history saved.');
+  await expect(workspace).toContainText('Save individual activity events saved.');
   expect(app.current().settings.stats_detailed_history_enabled).toBe(true);
   expect(app.writes.at(-1).revision).toBe(`"${'b'.repeat(64)}"`);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -115,7 +115,7 @@ test('saving one preference keeps another unsaved field', async ({ page }) => {
   const workspace = page.locator('.operational-preferences');
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
   const recording = workspace.locator('form[data-preference="audio_record_format"]');
-  await patch.locator('select').selectOption('INDIVIDUAL');
+  await patch.locator('select').selectOption('TALKGROUPS');
   await recording.locator('select').selectOption('WAVE');
   await patch.getByRole('button', { name: 'Save' }).click();
   await expect(recording.locator('select')).toHaveValue('WAVE');
@@ -134,7 +134,7 @@ test('a stale local edit reloads the current saved values', async ({ page }) => 
   const retention = workspace.locator('form[data-preference="stats_logging_retention_days"]');
   await retention.locator('input').fill('90');
   await retention.getByRole('button', { name: 'Save' }).click();
-  await expect(workspace).toContainText('Current values were reloaded.');
+  await expect(workspace).toContainText('current saved settings were reloaded.');
   await expect(workspace.locator('form[data-preference="stats_logging_retention_days"] input'))
     .toHaveValue('60');
 });

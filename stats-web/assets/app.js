@@ -2093,14 +2093,18 @@ function detailedHistoryNotice() {
     const lastSaved = logging.lastHistoryMs ?
       ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
     return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
-      `New activity is not being saved.${lastSaved} Enable Store Detailed Event History in Administration > Receiver operations to save new activity.`);
+      `New activity is not being saved.${lastSaved} Turn on Save individual activity events in ` +
+      'Administration > Call output & activity to save new events.');
   }
   if (logging.historyConfigured && !logging.summaryActive) {
     return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-      'Saved activity is unavailable because Collect Summary Statistics is turned off. Turn it on in Administration > Receiver operations to begin saving activity.');
+      'Saved activity is unavailable because Save activity summaries is off. Turn it on in ' +
+      'Administration > Call output & activity to begin saving activity.');
   }
   return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-    'No saved activity is available because Store Detailed Event History is turned off. Enable it in Administration > Receiver operations. Activity begins saving from that point forward; earlier activity cannot be recovered.');
+    'No saved activity is available because Save individual activity events is off. Turn it on in ' +
+    'Administration > Call output & activity. Activity begins saving from that point forward; ' +
+    'earlier activity cannot be recovered.');
 }
 
 function databaseLoggingNotice(view) {
@@ -15879,7 +15883,7 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=25');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=26');
   const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
@@ -21879,7 +21883,7 @@ function decodeOperationalPreferencesEnvelope(value) {
       !options.mp3_input_audio_formats_by_setting ||
       !Number.isInteger(options.minimum_stats_logging_retention_days) ||
       !Number.isInteger(options.maximum_stats_logging_retention_days)) {
-    throw new Error('The receiver returned invalid operational preferences.');
+    throw new Error('The receiver returned settings this page could not read. Reload the page and try again.');
   }
   return value;
 }
@@ -21889,7 +21893,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
   if (method === 'PUT') {
-    if (!/^[0-9a-f]{64}$/.test(revision)) throw new Error('Reload receiver operations before saving.');
+    if (!/^[0-9a-f]{64}$/.test(revision)) throw new Error('Reload the saved settings before saving.');
     headers['Content-Type'] = 'application/json';
     headers['If-Match'] = `"${revision}"`;
     options.body = JSON.stringify({ value });
@@ -21899,7 +21903,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
   try { documentValue = await response.json(); } catch (_) { }
   if (!response.ok) {
     const failure = documentValue?.error && typeof documentValue.error === 'object' ? documentValue.error : null;
-    const error = new Error(failure?.message || 'Receiver operations could not be saved.');
+    const error = new Error(failure?.message || 'The setting could not be saved. Reload the page and try again.');
     error.status = response.status;
     if (response.status === 409) {
       try { error.current = decodeOperationalPreferencesEnvelope(documentValue); } catch (_) { }
@@ -21911,47 +21915,68 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
 
 async function renderAdminOperationalPreferences(renderContext = captureRenderContext()) {
   const body = node('div', 'admin-section-body operational-preferences');
-  const introduction = adminWorkflowNote('Choose the outcome first',
-    'Call output and recording choices affect future calls. Activity collection controls what the receiver saves ' +
-    'from now on. Each change is saved separately.');
-  const status = node('div', 'admin-form-message', 'Loading receiver operations…');
+  const introduction = adminWorkflowNote('About these receiver-wide settings',
+    'These settings apply across the receiver, not to one channel or web account. Calls & audio controls future ' +
+    'streaming and recording. Activity history controls the totals and past activity available in the web ' +
+    'interface. Existing recordings and previously streamed calls are not changed. Each setting is saved separately.');
+  const status = node('div', 'admin-form-message', 'Loading settings…');
   status.setAttribute('role', 'status');
-  const reload = node('button', 'ui-button ui-button-secondary', 'Reload current values');
+  const reload = node('button', 'ui-button ui-button-secondary', 'Reload saved settings');
   reload.type = 'button';
   reload.disabled = true;
   const heading = node('div', 'ui-action-row');
   heading.append(reload);
   const lanes = node('div', 'operational-preference-lanes');
   body.append(introduction, status, heading, lanes);
-  content.append(section('Receiver operations', body));
+  content.append(section('Call output & activity', body));
   let confirmed = null;
   let saving = false;
   const drafts = new Map();
 
   const groups = [
-    { area: 'output', title: 'Calls', description: 'How patch-group calls are sent to streaming outputs.',
-      effect: 'New calls', fields: [
-      { id: 'patch_group_streaming_option', label: 'Stream a patch-group call as', kind: 'select',
-        options: 'patch_group_streaming_options' }
+    { area: 'output', title: 'Patch-group streaming',
+      description: 'A patch group joins two or more talkgroups for one conversation. Choose whether each patched ' +
+        'call is streamed once under the patch group or sent separately for every talkgroup in the patch. This ' +
+        'does not affect recordings.',
+      effect: 'Future streams only', fields: [
+      { id: 'patch_group_streaming_option', label: 'Send each patch-group call as', kind: 'select',
+        options: 'patch_group_streaming_options',
+        detail: 'Patch Group sends one copy identified by the patch group. Individual Talkgroups can send the ' +
+          'same audio more than once, identified by each talkgroup.' }
     ] },
-    { area: 'output', title: 'Audio recording', description: 'Default format for newly recorded calls.',
-      effect: 'New recordings', fields: [
-      { id: 'audio_record_format', label: 'Recording format', kind: 'select', options: 'audio_record_formats' }
+    { area: 'output', title: 'Call recordings',
+      description: 'Choose the file format used when a channel records a call. MP3 uses less storage; WAVE keeps ' +
+        'uncompressed audio. This does not turn recording on, and existing recordings are not converted or deleted.',
+      effect: 'Future recordings only', fields: [
+      { id: 'audio_record_format', label: 'Save new call recordings as', kind: 'select',
+        options: 'audio_record_formats' }
     ] },
-    { area: 'output', title: 'MP3 encoding', description: 'Settings for new MP3 recordings and streams.',
-      effect: 'New audio output', fields: [
-      { id: 'mp3_setting', label: 'Encoder setting', kind: 'select', options: 'mp3_settings',
-        detail: 'To see more encoder choices, first choose an 8 or 16 kHz input format.' },
-      { id: 'mp3_input_audio_format', label: 'Input audio format', kind: 'select',
-        detail: 'The available formats depend on the saved encoder setting.' },
-      { id: 'mp3_normalize_audio', label: 'Normalize audio before encoding', kind: 'boolean' }
+    { area: 'output', title: 'MP3 audio',
+      description: 'Choose how VCE prepares MP3 audio for new recordings and streaming destinations. Existing ' +
+        'audio files are not changed.',
+      effect: 'Future MP3 audio only', fields: [
+      { id: 'mp3_setting', label: 'MP3 bit rate and quality', kind: 'select', options: 'mp3_settings',
+        detail: 'Higher bit rates usually improve quality but create larger files and use more network bandwidth. ' +
+          'Available choices depend on the sample rate below.' },
+      { id: 'mp3_input_audio_format', label: 'MP3 sample rate and bit depth', kind: 'select',
+        detail: 'Controls how decoded call audio is prepared for MP3. This does not change tuner sample rate or ' +
+          'radio decoding.' },
+      { id: 'mp3_normalize_audio', label: 'Normalize MP3 volume', kind: 'boolean',
+        detail: 'Adjusts each call\u2019s volume before creating the MP3. Existing recordings are not changed.' }
     ] },
-    { area: 'activity', title: 'Statistics', description: 'Collection and retention of receiver activity.',
-      effect: 'Future activity', fields: [
-      { id: 'stats_logging_enabled', label: 'Collect summary statistics', kind: 'boolean' },
-      { id: 'stats_detailed_history_enabled', label: 'Store detailed event history', kind: 'boolean',
-        detail: 'New history is saved from the time this is enabled; earlier events cannot be recovered.' },
-      { id: 'stats_logging_retention_days', label: 'Retain time-based data for (days)', kind: 'number' }
+    { area: 'activity', title: 'Saved activity',
+      description: 'Activity summaries power dashboard totals and radio-system pages. Individual events support ' +
+        'Activity, P25 Visualizer, and troubleshooting. Audio recordings and application logs are not affected.',
+      effect: 'Web history & totals', fields: [
+      { id: 'stats_logging_enabled', label: 'Save activity summaries', kind: 'boolean',
+        detail: 'Keeps totals and recent observations used throughout the web interface. Turning this off stops ' +
+          'all new saved activity, including individual events.' },
+      { id: 'stats_detailed_history_enabled', label: 'Save individual activity events', kind: 'boolean',
+        detail: 'Keeps the event-by-event history used by Activity, P25 Visualizer, and troubleshooting. This ' +
+          'requires activity summaries, uses more storage, and begins with events received after it is enabled.' },
+      { id: 'stats_logging_retention_days', label: 'Keep activity history for (days)', kind: 'number',
+        detail: 'Older time-based activity is removed automatically. Lowering this number can permanently remove ' +
+          'older saved activity sooner. Audio recordings and application logs are not affected.' }
     ] }
   ];
 
@@ -22000,7 +22025,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
           input.min = String(confirmed.options.minimum_stats_logging_retention_days);
           input.max = String(confirmed.options.maximum_stats_logging_retention_days);
           input.value = String(draft);
-          form.append(formField(field.label, input));
+          form.append(formField(field.label, input, field.detail || ''));
         }
         const save = node('button', 'ui-button ui-button-primary', 'Save');
         save.type = 'submit';
@@ -22035,9 +22060,9 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
             if (error.current) {
               confirmed = error.current;
               drafts.clear();
-              status.textContent = 'Receiver operations changed elsewhere. Current values were reloaded.';
+              status.textContent = 'These settings changed while you were working. The current saved settings were reloaded.';
             } else {
-              status.textContent = error.message || 'Receiver operations could not be saved.';
+              status.textContent = error.message || 'The setting could not be saved. Reload the page and try again.';
             }
           } finally {
             saving = false;
@@ -22060,8 +22085,10 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       return host;
     };
     lanes.replaceChildren(
-      lane('output', 'Calls & audio', 'Choose how new calls are streamed, recorded, and encoded.'),
-      lane('activity', 'Activity history', 'Choose what is collected and how long it remains available.')
+      lane('output', 'Calls & audio',
+        'Decide how future calls are identified for streaming and how new audio files are created.'),
+      lane('activity', 'Activity history',
+        'Choose which listening activity the web interface can show later and how long it is kept.')
     );
   }
 
@@ -22073,7 +22100,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       status.textContent = '';
       renderFields();
     } catch (error) {
-      status.textContent = error.message || 'Receiver operations are unavailable.';
+      status.textContent = error.message || 'These settings are unavailable. Reload the page and try again.';
     } finally {
       reload.disabled = false;
     }
@@ -22084,7 +22111,9 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
     renderFields();
     status.textContent = '';
   } catch (error) {
-    if (renderIsCurrent(renderContext)) status.textContent = error.message || 'Receiver operations are unavailable.';
+    if (renderIsCurrent(renderContext)) {
+      status.textContent = error.message || 'These settings are unavailable. Reload the page and try again.';
+    }
   } finally {
     reload.disabled = false;
   }
@@ -24543,10 +24572,10 @@ function adminSystemStatusSection() {
 }
 
 function renderAdminSystem() {
-  const note = adminWorkflowNote('Change collection and retention in Receiver operations',
+  const note = adminWorkflowNote('Change collection and retention in Call output & activity',
     'This page shows what is currently being saved. The collection switches and retention period are edited ' +
     'together with call and audio settings.');
-  note.append(anchor('Open Receiver operations', href('admin', { tab: 'operations' }),
+  note.append(anchor('Open Call output & activity', href('admin', { tab: 'operations' }),
     'ui-button ui-button-secondary'));
   content.append(note, adminSystemStatusSection());
 }
@@ -25282,8 +25311,9 @@ function adminSettingsGroups() {
         description: 'Prepare a diagnostic report for a reception or application problem.' }
     ] },
     { label: 'Receiving & output', items: [
-      { id: 'operations', label: 'Receiver operations', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        scope: 'Receiver-wide', description: 'Set call output, audio recording, encoding, and activity collection.' },
+      { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        scope: 'Receiver-wide', description: 'Choose how future calls are streamed and recorded and what receiver ' +
+          'activity is kept.' },
       { id: 'spectrum', label: 'Spectrum frequency scopes', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         scope: 'Receiver-wide', description: 'Choose FFT frequency indicators and optional cursor snap rules.' },
       { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,

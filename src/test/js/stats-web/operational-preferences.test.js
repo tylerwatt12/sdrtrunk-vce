@@ -52,9 +52,9 @@ vm.runInContext([
 async function main() {
   assert.equal(context.decodeOperationalPreferencesEnvelope(envelope).revision, revision);
   assert.throws(() => context.decodeOperationalPreferencesEnvelope({ ...envelope, revision: 'bad' }),
-    /invalid operational preferences/);
+    /settings this page could not read/);
   assert.throws(() => context.decodeOperationalPreferencesEnvelope({ ...envelope, settings: {} }),
-    /invalid operational preferences/);
+    /settings this page could not read/);
 
   assert.equal((await context.requestOperationalPreference()).revision, revision);
   assert.equal(calls.at(-1).path, '/api/v1/admin/operational-preferences');
@@ -72,14 +72,20 @@ async function main() {
   await assert.rejects(context.requestOperationalPreference('PUT', 'mp3_setting', 'CBR_32', revision),
     /Input audio rate is not supported/);
 
-  assert.match(application, /id: 'operations', label: 'Receiver operations'/);
+  assert.match(application, /id: 'operations', label: 'Call output & activity'/);
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);
-  assert.match(application, /Administration > Receiver operations/);
+  assert.match(application, /Administration > Call output & activity/);
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
 
   const page = functionSource('async function renderAdminOperationalPreferences(');
   assert.match(page, /lane\('output', 'Calls & audio'/);
   assert.match(page, /lane\('activity', 'Activity history'/);
+  assert.match(page, /These settings apply across the receiver/);
+  assert.match(page, /A patch group joins two or more talkgroups/);
+  assert.match(page, /This does not turn recording on/);
+  assert.match(page, /This does not change tuner sample rate or/);
+  assert.match(page, /Turning this off stops/);
+  assert.match(page, /Lowering this number can permanently remove/);
   assert.match(page, /const drafts = new Map\(\)/);
   assert.match(page, /drafts\.delete\(field\.id\)/);
   assert.match(page, /state\.textContent = changed \? 'Unsaved change' : ''/);
