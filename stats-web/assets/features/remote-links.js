@@ -22,7 +22,8 @@ export function createRemoteLinksWorkspace(deps) {
   const pageMeta = node('footer', 'remote-links-page-meta');
   const freshness = node('span', 'muted');
   pageMeta.append(freshness,
-    node('span', 'muted', 'Disconnected and removed feeds stay visible until you remove them.'));
+    node('span', 'muted', 'Disconnected and removed advertisements remain visible. Removing a managed feed deletes only ' +
+      'its local channel; the sender may advertise it again.'));
   host.append(summary, message, overview, senderHeader, senderHost, pageMeta);
 
   let snapshot = null;
@@ -61,6 +62,28 @@ export function createRemoteLinksWorkspace(deps) {
   const notice = (text, tone = '') => node('div', tone ? `ui-notice ui-notice-${tone}` : 'ui-feedback', text);
   const showError = (target, error) => target.replaceChildren(notice(error?.message || 'The request failed', 'danger'));
   const pathPart = (value) => encodeURIComponent(String(value));
+  const aliasLists = () => Array.isArray(snapshot?.alias_lists) ? snapshot.alias_lists : [];
+
+  function feedAction(feed) {
+    if (feed.adopted) return { allowed: true, label: 'Manage feed', detail: '' };
+    const state = stateKey(feed.state);
+    if (state === 'REMOVED') return {
+      allowed: false,
+      label: 'No longer advertised',
+      detail: 'This feed is no longer advertised by the sender.'
+    };
+    if (state === 'UNSUPPORTED') return {
+      allowed: false,
+      label: 'Unsupported feed',
+      detail: 'This feed cannot be adopted by this version.'
+    };
+    if (!aliasLists().length) return {
+      allowed: false,
+      label: 'P25 Alias List required',
+      detail: 'Create a P25 Alias List before adopting remote feeds.'
+    };
+    return { allowed: true, label: 'Adopt feed', detail: 'Waiting for adoption' };
+  }
 
   function heading(title, detail, stateValue = null) {
     const header = node('header', 'remote-links-card-header');
@@ -131,19 +154,23 @@ export function createRemoteLinksWorkspace(deps) {
     const title = node('div', 'remote-links-feed-title');
     title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
     header.append(title, status(feed.state));
+    const action = feedAction(feed);
     const identity = [feed.protocol, frequency(feed.frequency_hz)].filter(Boolean).join(' · ');
-    const site = [feed.wacn != null ? `WACN ${feed.wacn}` : '', feed.system != null ? `System ${feed.system}` : '',
+    const catalog = [feed.system_name, feed.site_name].filter(Boolean).join(' · ');
+    const site = [feed.wacn != null ? `WACN ${feed.wacn}` : '', feed.system != null ? `System ID ${feed.system}` : '',
       feed.rfss != null ? `RFSS ${feed.rfss}` : '', feed.site != null ? `Site ${feed.site}` : '']
       .filter(Boolean).join(' · ');
     const detail = node('div', 'remote-links-feed-detail');
     detail.append(node('span', '', identity));
+    if (catalog) detail.append(node('span', '', catalog));
     if (site) detail.append(node('span', 'muted', site));
     detail.append(node('span', 'muted', feed.adopted ?
-      `Managed locally · ${feed.enabled ? 'enabled' : 'disabled'}` : 'Waiting for adoption'));
+      `Managed locally · ${feed.enabled ? 'enabled' : 'disabled'}` : action.detail));
     if (feed.lag_milliseconds != null) detail.append(node('span', 'muted',
       `${Math.max(0, Number(feed.lag_milliseconds))} ms link delay · ${feed.sequence_gap_count || 0} sequence gaps`));
     if (feed.status_message) detail.append(node('span', 'semantic-danger', feed.status_message));
-    const manage = button(feed.adopted ? 'Manage feed' : 'Adopt feed', () => openFeed(sender, feed), !feed.adopted);
+    const manage = button(action.label, action.allowed ? () => openFeed(sender, feed) : null, !feed.adopted && action.allowed);
+    manage.disabled = !action.allowed;
     card.append(header, detail, manage);
     return card;
   }
@@ -172,10 +199,10 @@ export function createRemoteLinksWorkspace(deps) {
     snapshot = value;
     const senders = Array.isArray(snapshot.senders) ? snapshot.senders : [];
     const feeds = senders.flatMap((sender) => Array.isArray(sender.feeds) ? sender.feeds : []);
+    const waiting = feeds.filter((feed) => !feed.adopted && !['REMOVED', 'UNSUPPORTED'].includes(stateKey(feed.state)));
     summary.replaceChildren(status(snapshot.listener?.state),
       uiStatus(`${senders.filter((sender) => stateKey(sender.state) === 'CONNECTED').length} connected sender${senders.length === 1 ? '' : 's'}`, 'neutral'),
-      uiStatus(`${feeds.filter((feed) => !feed.adopted).length} feed${feeds.filter((feed) => !feed.adopted).length === 1 ? '' : 's'} waiting`,
-        feeds.some((feed) => !feed.adopted) ? 'warning' : 'neutral'));
+      uiStatus(`${waiting.length} feed${waiting.length === 1 ? '' : 's'} waiting`, waiting.length ? 'warning' : 'neutral'));
     overview.replaceChildren(drawListener(snapshot.listener || {}),
       drawSenderConnection(snapshot.sender_connection || {}));
     if (senders.length) senderHost.replaceChildren(...senders.map(drawSender));
@@ -395,13 +422,14 @@ export function createRemoteLinksWorkspace(deps) {
   }
 
   function openFeed(sender, feed) {
+    if (!feedAction(feed).allowed) return;
     const name = input('text', feed.display_name || feed.advertised_name || '');
     name.required = true; name.maxLength = 160;
     const alias = selectAlias(feed.alias_list_id, false);
     alias.required = true;
     const enabled = uiToggleField('Enable this remote channel', feed.adopted ? Boolean(feed.enabled) : true,
       'Enable this remote channel', 'Disabled feeds remain configured but do not process traffic.');
-    const forget = feed.adopted ? button('Remove feed') : null;
+    const forget = feed.adopted ? button('Remove local channel') : null;
     if (forget) forget.className = 'ui-button ui-button-danger';
     const path = `/senders/${pathPart(sender.sender_id)}/feeds/${pathPart(feed.feed_id)}`;
     const editor = submitModal(feed.adopted ? 'Remote feed' : 'Adopt remote feed', [
@@ -415,7 +443,8 @@ export function createRemoteLinksWorkspace(deps) {
       display_name: name.value.trim(), alias_list_id: Number(alias.value) }), { danger: forget });
     if (!editor || !forget) return;
     forget.addEventListener('click', async () => {
-      if (!window.confirm(`Remove ${feed.display_name || feed.advertised_name || feed.feed_id}?`)) return;
+      if (!window.confirm(`Remove the local channel for ${feed.display_name || feed.advertised_name || feed.feed_id}? ` +
+        'The sender may continue advertising this feed.')) return;
       editor.modal.setBusy(true);
       try {
         const result = await write(path, 'DELETE', { revision: snapshot.revision });
