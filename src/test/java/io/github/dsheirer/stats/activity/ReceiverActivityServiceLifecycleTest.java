@@ -18,6 +18,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.call.AudioCallId;
@@ -102,6 +103,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -801,6 +803,81 @@ class ReceiverActivityServiceLifecycleTest
             drainCaller.interrupt();
             releaseProjection.countDown();
             drainCaller.join(TimeUnit.SECONDS.toMillis(2));
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void queuedDeletionFailsWhenItsObservationEpochIsRetired() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = fastWriterService(userPreferences);
+        Channel channel = new Channel("Blocked deletion epoch", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = blockingDecodeEvent(System.currentTimeMillis(), projectionEntered, releaseProjection);
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(
+                new StatsDatabaseMaintenanceRequest.Channel(
+                    "00000000-0000-0000-0000-000000000321"));
+            service.receiveMaintenanceRequest(request);
+            awaitPendingObservationCount(service, 1);
+
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            assertThrows(ExecutionException.class, () -> request.result().get(2, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            disposeAndAwait(service);
+        }
+    }
+
+    @Test
+    void fullObservationHandoffFailsDeletionInsteadOfSilentlyDroppingIt() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        ReceiverActivityService service = fastWriterService(userPreferences);
+        Channel channel = new Channel("Full deletion handoff", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        DecodeEvent blocked = blockingDecodeEvent(System.currentTimeMillis(), projectionEntered, releaseProjection);
+        DecodeEvent filler = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis() + 1).build();
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            for(int index = 0; index < ReceiverActivityService.OBSERVATION_QUEUE_SIZE; index++)
+            {
+                service.getDecodeEventListener().accept(channel, filler);
+            }
+            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(
+                new StatsDatabaseMaintenanceRequest.Channel(
+                    "00000000-0000-0000-0000-000000000321"));
+            long startedNanos = System.nanoTime();
+            service.receiveMaintenanceRequest(request);
+            assertThrows(ExecutionException.class, () -> request.result().get(1, TimeUnit.SECONDS));
+            assertTrue(TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startedNanos) < 4);
+        }
+        finally
+        {
+            releaseProjection.countDown();
             disposeAndAwait(service);
         }
     }

@@ -532,6 +532,11 @@ class ReceiverActivityWriter implements AutoCloseable
                     result = ReceiverActivityMaintenance.clearChannelStats(connection, mDatabasePath,
                         request.configurationId());
                 }
+                else if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
+                {
+                    result = ReceiverActivityMaintenance.deleteRetainedStats(connection, mDatabasePath,
+                        request.deletionTarget());
+                }
                 else
                 {
                     result = ReceiverActivityMaintenance.run(connection, mDatabasePath, mRetentionDays,

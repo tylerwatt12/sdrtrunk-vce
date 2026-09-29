@@ -73,6 +73,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private static final Object SINGLE_OBSERVATION = new Object();
     private static final long DEFAULT_DISPOSE_TIMEOUT_MILLISECONDS = 2_000;
     private static final long DRAIN_BARRIER_RETRY_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
+    private static final long DELETION_ENQUEUE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(2);
 
     private final UserPreferences mUserPreferences;
     private final ReceiverActivityMapper mMapper = new ReceiverActivityMapper();
@@ -84,6 +85,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
     private final Map<String,Long> mRecentLogicalNotifications = new LinkedHashMap<>(1024, 0.75f, true);
     private final Map<String,TrunkedSiteEvidence> mObservedTrunkedSites = new ConcurrentHashMap<>();
+    private final Map<StatsDatabaseMaintenanceRequest,BoundedMpscPairQueue<Object,Object>>
+        mPendingDeletionRequests = new ConcurrentHashMap<>();
     /* One preallocated queue per collection epoch preserves callback order across all observation types. */
     private volatile BoundedMpscPairQueue<Object,Object> mObservationIngress =
         new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
@@ -607,6 +610,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             //while a database writer is performing its own bounded close, and this method's timeout is a total bound.
             mCollectionEnabled = false;
             mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            failPendingDeletionRequests(null);
             MyEventBus.getGlobalEventBus().unregister(this);
             //The observer worker remains the only ingress consumer and owns state and writer cleanup.
             mObservationWakeup.release();
@@ -677,8 +681,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
         //An inactive queue catches callbacks that began during the transition and is never used as the next active
         //epoch. The observer worker owns state clearing and writer replacement.
+        BoundedMpscPairQueue<Object,Object> retiredIngress = mObservationIngress;
         mCollectionEnabled = false;
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+        failPendingDeletionRequests(retiredIngress);
         mWriterTransitionActive.set(true);
         mWriterTransition.set(transition);
         mObservationWakeup.release();
@@ -688,8 +694,10 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
         if(mCollectionEnabled && !collectionEnabled)
         {
+            BoundedMpscPairQueue<Object,Object> retiredIngress = mObservationIngress;
             mCollectionEnabled = false;
             mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+            failPendingDeletionRequests(retiredIngress);
             requestObservationStateClear();
         }
         else if(!mCollectionEnabled && collectionEnabled)
@@ -889,6 +897,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void cleanupObservationsOnWorker()
     {
+        failPendingDeletionRequests(null);
         mObservationIngress.clear();
         clearObservationStateOnWorker();
     }
@@ -990,6 +999,27 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         if(observation instanceof ObservationDrainBarrier barrier)
         {
             barrier.complete();
+        }
+        else if(observation instanceof StatsDatabaseMaintenanceRequest request &&
+            request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
+        {
+            synchronized(this)
+            {
+                ReceiverActivityWriter writer = getCollectionWriter();
+                if(mPendingDeletionRequests.remove(request, mWorkerObservationIngress) &&
+                    writer != null && !mWriterTransitionActive.get() &&
+                    mWorkerObservationIngress == mObservationIngress)
+                {
+                    // This control item follows all observations accepted before it into the mapper. The writer's
+                    // own sequence barrier then commits those mapped records before the delete transaction.
+                    writer.submitMaintenance(request);
+                }
+                else if(!request.result().isDone())
+                {
+                    request.result().completeExceptionally(
+                        new IllegalStateException("Statistics collection changed before deletion could run"));
+                }
+            }
         }
         else if(observation instanceof ControlChannelQualitySnapshot quality)
         {
@@ -1368,17 +1398,98 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     @Subscribe
     public void receiveMaintenanceRequest(StatsDatabaseMaintenanceRequest request)
     {
+        if(request == null)
+        {
+            return;
+        }
+
         ReceiverActivityWriter writer = !mDisposed.get() ? mWriter : null;
 
-        if(writer != null)
+        if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS &&
+            mWriterTransitionActive.get())
         {
-            writer.submitMaintenance(request);
+            request.result().completeExceptionally(
+                new IllegalStateException("Statistics database is changing; try deletion again"));
         }
-        else if(request != null)
+        else if(writer != null &&
+            request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS &&
+            mCollectionEnabled)
+        {
+            // This is called by an administrator request, never a decoder callback. A non-droppable control
+            // item must enter the bounded mapper queue before it is safe to place maintenance on the writer.
+            BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
+            long deadline = java.lang.System.nanoTime() + DELETION_ENQUEUE_TIMEOUT_NANOS;
+            mPendingDeletionRequests.put(request, ingress);
+            while(true)
+            {
+                if(ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get() ||
+                    Thread.currentThread().isInterrupted())
+                {
+                    failPendingDeletionRequest(request);
+                    return;
+                }
+                if(ingress.offer(request, SINGLE_OBSERVATION)) break;
+                if(java.lang.System.nanoTime() >= deadline)
+                {
+                    failPendingDeletionRequest(request);
+                    return;
+                }
+                mObservationWakeup.release();
+                LockSupport.parkNanos(this, DRAIN_BARRIER_RETRY_NANOS);
+            }
+            mObservationWakeup.release();
+            if(ingress != mObservationIngress || !mCollectionEnabled || mDisposed.get())
+            {
+                failPendingDeletionRequest(request);
+            }
+        }
+        else if(writer != null)
+        {
+            if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
+            {
+                synchronized(this)
+                {
+                    if(mDisposed.get() || mWriterTransitionActive.get() || mCollectionEnabled || writer != mWriter)
+                    {
+                        request.result().completeExceptionally(
+                            new IllegalStateException("Statistics collection changed; try deletion again"));
+                    }
+                    else
+                    {
+                        writer.submitMaintenance(request);
+                    }
+                }
+            }
+            else
+            {
+                writer.submitMaintenance(request);
+            }
+        }
+        else
         {
             request.result().completeExceptionally(
                 new IllegalStateException("Statistics database writer is not available"));
         }
+    }
+
+    private void failPendingDeletionRequest(StatsDatabaseMaintenanceRequest request)
+    {
+        if(mPendingDeletionRequests.remove(request) != null)
+        {
+            request.result().completeExceptionally(
+                new IllegalStateException("Statistics collection changed or is busy; try deletion again"));
+        }
+    }
+
+    private void failPendingDeletionRequests(BoundedMpscPairQueue<Object,Object> ingress)
+    {
+        mPendingDeletionRequests.forEach((request, owner) -> {
+            if((ingress == null || ingress == owner) && mPendingDeletionRequests.remove(request, owner))
+            {
+                request.result().completeExceptionally(
+                    new IllegalStateException("Statistics collection changed before deletion could run"));
+            }
+        });
     }
 
     private ReceiverActivityWriter getCollectionWriter()

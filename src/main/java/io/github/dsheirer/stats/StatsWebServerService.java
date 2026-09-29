@@ -853,6 +853,11 @@ public class StatsWebServerService implements AutoCloseable
         new StatsApiV1Controller(mDatabase, this::status, mWebRequestSecurity, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
             .register(server);
+        RetainedStatisticsAdminHttpController retainedStatistics = new RetainedStatisticsAdminHttpController(
+            new RetainedStatisticsCatalog(SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)),
+            request -> MyEventBus.getGlobalEventBus().post(request));
+        server.createContext(RetainedStatisticsAdminHttpController.PATH,
+            mWebRequestSecurity.protectApi(WebCapability.ADMIN_SETTINGS, retainedStatistics::handle));
         server.createContext(StatsApiV1.LIVE_MULTIPLEX,
             mWebRequestSecurity.protectAny(MULTIPLEX_CAPABILITIES, this::handleLiveMultiplex));
         server.createContext(StatsApiV1.LIVE_MULTIPLEX_CONTROL,

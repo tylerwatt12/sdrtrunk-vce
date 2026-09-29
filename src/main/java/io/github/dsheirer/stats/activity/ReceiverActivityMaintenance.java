@@ -38,12 +38,29 @@ public final class ReceiverActivityMaintenance
         SHRINK,
         CHECK,
         RESET_STATS,
-        CLEAR_CHANNEL_STATS
+        CLEAR_CHANNEL_STATS,
+        DELETE_RETAINED_STATS
+    }
+
+    public enum DeletionOutcome
+    {
+        NOT_APPLICABLE,
+        DELETED,
+        NOT_FOUND,
+        STALE_SITE
     }
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
-                         long databaseBytesAfter, long walBytesBefore, long walBytesAfter)
+                         long databaseBytesAfter, long walBytesBefore, long walBytesAfter,
+                         DeletionOutcome deletionOutcome)
     {
+        public Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
+                      long databaseBytesAfter, long walBytesBefore, long walBytesAfter)
+        {
+            this(operation, rowsDeleted, checkResult, databaseBytesBefore, databaseBytesAfter, walBytesBefore,
+                walBytesAfter, DeletionOutcome.NOT_APPLICABLE);
+        }
+
         public boolean checkOk()
         {
             return checkResult == null || "ok".equalsIgnoreCase(checkResult);
@@ -60,12 +77,24 @@ public final class ReceiverActivityMaintenance
                 case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
                 case RESET_STATS -> sb.append("Lifetime stats reset");
                 case CLEAR_CHANNEL_STATS -> sb.append("Channel statistics cleared");
+                case DELETE_RETAINED_STATS -> sb.append(switch(deletionOutcome)
+                {
+                    case NOT_FOUND -> "Target is no longer available";
+                    case STALE_SITE -> "Selected site changed; choose it again";
+                    default -> "Retained statistics removed";
+                });
             }
 
-            if(operation != Operation.CHECK)
+            if(operation == Operation.DELETE_RETAINED_STATS && deletionOutcome == DeletionOutcome.DELETED)
+            {
+                sb.append(". Removed ").append(rowsDeleted).append(" directly matched row(s)");
+            }
+            else if(operation != Operation.CHECK && deletionOutcome != DeletionOutcome.NOT_FOUND &&
+                deletionOutcome != DeletionOutcome.STALE_SITE)
             {
                 sb.append(". Deleted ").append(rowsDeleted).append(
-                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ?
+                    operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ||
+                        operation == Operation.DELETE_RETAINED_STATS ?
                     " stats row(s)" : " expired row(s)");
             }
 
@@ -132,6 +161,8 @@ public final class ReceiverActivityMaintenance
             }
             case CLEAR_CHANNEL_STATS -> throw new IllegalArgumentException(
                 "CLEAR_CHANNEL_STATS requires a channel configuration ID");
+            case DELETE_RETAINED_STATS -> throw new IllegalArgumentException(
+                "DELETE_RETAINED_STATS requires a deletion target");
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
@@ -168,6 +199,25 @@ public final class ReceiverActivityMaintenance
         optimize(connection);
         return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
             walBytesBefore, size(walPath(databasePath)));
+    }
+
+    /** Deletes one selected target on the single writer connection after re-resolving its ownership. */
+    static Result deleteRetainedStats(Connection connection, Path databasePath,
+                                      StatsDatabaseMaintenanceRequest.DeletionTarget target)
+        throws IOException, SQLException
+    {
+        if(target == null)
+        {
+            throw new IllegalArgumentException("Deletion target is required");
+        }
+
+        long databaseBytesBefore = size(databasePath);
+        long walBytesBefore = size(walPath(databasePath));
+        ReceiverActivityDeletion.Result deleted = inTransaction(connection,
+            () -> ReceiverActivityDeletion.delete(connection, target));
+        return new Result(Operation.DELETE_RETAINED_STATS, deleted.rowsDeleted(), null, databaseBytesBefore,
+            size(databasePath), walBytesBefore, size(walPath(databasePath)),
+            deleted.outcome());
     }
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException
@@ -225,7 +275,7 @@ public final class ReceiverActivityMaintenance
         });
     }
 
-    private static int inTransaction(Connection connection, SqlOperation operation) throws SQLException
+    private static <T> T inTransaction(Connection connection, SqlOperation<T> operation) throws SQLException
     {
         boolean previousAutoCommit = connection.getAutoCommit();
 
@@ -238,7 +288,7 @@ public final class ReceiverActivityMaintenance
 
         try
         {
-            int result = operation.run();
+            T result = operation.run();
             connection.commit();
             return result;
         }
@@ -262,9 +312,9 @@ public final class ReceiverActivityMaintenance
     }
 
     @FunctionalInterface
-    private interface SqlOperation
+    private interface SqlOperation<T>
     {
-        int run() throws SQLException;
+        T run() throws SQLException;
     }
 
     private static void optimize(Connection connection) throws SQLException

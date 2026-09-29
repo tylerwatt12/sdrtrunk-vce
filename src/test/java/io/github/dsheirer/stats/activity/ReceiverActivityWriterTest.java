@@ -449,6 +449,38 @@ class ReceiverActivityWriterTest
     }
 
     @Test
+    void selectedChannelDeletionIsOrderedAndReportsMissingTargets() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("selected-clear-order.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 32, 1_250,
+            TimeUnit.SECONDS.toMillis(10));
+        writer.start();
+        long before = 1_700_000_004_100L;
+        long after = before + 1;
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, before));
+        StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(
+            new StatsDatabaseMaintenanceRequest.Channel(CONFIGURATION_ID));
+        writer.submitMaintenance(request);
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
+
+        ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED, result.deletionOutcome());
+        StatsDatabaseMaintenanceRequest missing = StatsDatabaseMaintenanceRequest.delete(
+            new StatsDatabaseMaintenanceRequest.Channel("223e4567-e89b-42d3-a456-426614174000"));
+        writer.submitMaintenance(missing);
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND,
+            missing.result().get(5, TimeUnit.SECONDS).deletionOutcome());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            assertEquals(after, scalar(connection, "SELECT observed_at_ms FROM receiver_activity_event"));
+        }
+    }
+
+    @Test
     void resetIsOrderedBetweenEarlierAndLaterObservations() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("reset-order.sqlite"));
