@@ -24590,6 +24590,17 @@ function renderAdminSupportReport() {
   steps.required = true;
   steps.maxLength = 10000;
   steps.rows = 6;
+  const narrativeTemplates = new Map([
+    [description, 'What did you expect to happen?\n\nWhat happened instead? Include any error message you saw.\n'],
+    [steps, 'What were you doing just before the problem?\n\nCan you repeat it? If so, what steps make it happen?\n']
+  ]);
+  narrativeTemplates.forEach((template, input) => {
+    input.value = template;
+    const validate = () => input.setCustomValidity(input.value.trim() === template.trim() ?
+      'Add your answer before preparing the report.' : '');
+    input.addEventListener('input', validate);
+    validate();
+  });
   const category = supportReportSelect(supportReportCategories.map((entry) => [entry.id, entry.label]));
   const issue = supportReportSelect([]);
   const identityFields = node('div', 'support-report-fields');

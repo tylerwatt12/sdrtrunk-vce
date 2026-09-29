@@ -210,6 +210,23 @@ test('administration navigation becomes a complete compact picker on mobile', as
   await expect(page.getByRole('heading', { level: 1, name: 'Report a problem' })).toBeVisible();
 });
 
+test('problem report questions require answers before preparing a report', async ({ page }) => {
+  await openApp(page);
+  await page.goto('/app.html?view=admin&tab=support');
+  const happened = page.getByRole('textbox', { name: 'What happened', exact: true });
+  const before = page.getByRole('textbox', { name: 'What happened before the problem?' });
+
+  await expect(happened).toHaveValue(/What did you expect to happen\?[\s\S]*What happened instead\?/);
+  await expect(before).toHaveValue(/What were you doing just before the problem\?[\s\S]*Can you repeat it\?/);
+  expect(await happened.evaluate((input) => input.validity.valid)).toBe(false);
+  expect(await before.evaluate((input) => input.validity.valid)).toBe(false);
+
+  await happened.fill('Expected audio to play, but the stream was silent.');
+  await before.fill('Started playback from the Live page. It happens each time.');
+  expect(await happened.evaluate((input) => input.validity.valid)).toBe(true);
+  expect(await before.evaluate((input) => input.validity.valid)).toBe(true);
+});
+
 test('current status owns saved activity and refreshes both status sources', async ({ page }) => {
   const requests = await openCurrentStatus(page, 'activity');
   await expect(page).toHaveURL(/view=admin&tab=health/);
