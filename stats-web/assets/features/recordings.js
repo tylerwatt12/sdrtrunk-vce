@@ -1,5 +1,6 @@
 const CALLS = '/api/v1/recordings/calls';
 const SUGGESTIONS = '/api/v1/recordings/suggestions';
+const STATUS = '/api/v1/recordings/status';
 const ADMIN = '/api/v1/admin/recordings';
 const PAGE_SIZE = 50;
 const SUGGESTION_DELAY_MS = 240;
@@ -160,7 +161,7 @@ function select(node, options, labelText) {
 // owns only recordings geometry and the historical audio lifecycle.
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
-    captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, stopLiveAudio } = deps;
+    captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, stopLiveAudio, href, anchor } = deps;
   const search = {
     q: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -183,6 +184,8 @@ export function createRecordingsFeature(deps) {
   let sharedHost = null;
   let selectedFiltersHost = null;
   let searchHint = null;
+  let searchInputs = new Map();
+  let filterCountHost = null;
   let selectedHost = null;
   let sortControl = null;
   let searchRequest = 0;
@@ -569,23 +572,30 @@ export function createRecordingsFeature(deps) {
   function drawSharedContext() {
     if (!sharedHost) return;
     sharedHost.replaceChildren();
-    const pieces = [];
+    const exact = [];
+    const ranges = [];
     for (const [key, name] of [['system_key', 'Radio system'], ['talkgroup_id', 'Talkgroup'],
       ['radio_id', 'Radio ID'], ['channel_id', 'Channel']]) {
-      if (currentFilters[key]) pieces.push([name, selectedSuggestions.get(key)?.label || currentFilters[key]]);
+      if (currentFilters[key]) exact.push([name, selectedSuggestions.get(key)?.label || currentFilters[key]]);
     }
     if (currentFilters.talkgroup_min && currentFilters.talkgroup_max) {
-      pieces.push(['Talkgroup range', selectedSuggestions.get('talkgroup_id')?.label ||
+      ranges.push(['Talkgroup range', selectedSuggestions.get('talkgroup_id')?.label ||
         `${currentFilters.talkgroup_min}–${currentFilters.talkgroup_max}`]);
     }
     if (currentFilters.radio_min && currentFilters.radio_max) {
-      pieces.push(['Radio range', selectedSuggestions.get('radio_id')?.label ||
+      ranges.push(['Radio range', selectedSuggestions.get('radio_id')?.label ||
         `${currentFilters.radio_min}–${currentFilters.radio_max}`]);
     }
-    if (selectedSuggestions.get('site')) pieces.push(['Site', selectedSuggestions.get('site').label]);
-    if (!pieces.length) return;
-    sharedHost.append(node('strong', '', 'All matching calls'));
-    pieces.forEach(([name, detail]) => sharedHost.append(node('span', 'recordings-shared-chip',
+    if (selectedSuggestions.get('site')) exact.push(['Site', selectedSuggestions.get('site').label]);
+    if (!exact.length && !ranges.length) return;
+    const heading = node('div', 'recordings-shared-heading');
+    heading.append(node('span', 'recordings-shared-overline',
+      exact.length ? 'ALL MATCHING CALLS' : 'SEARCH FILTERS'));
+    if (exact.length) heading.append(node('h3', '', exact.slice(0, 2)
+      .map(([, detail]) => detail).join(' / ')), node('p', '', exact.slice(0, 2)
+      .map(([name]) => name).join(' · ')));
+    sharedHost.append(heading);
+    [...exact.slice(2), ...ranges].forEach(([name, detail]) => sharedHost.append(node('span', 'ui-pill',
       `${prettify(name)}: ${detail}`)));
   }
 
@@ -593,14 +603,20 @@ export function createRecordingsFeature(deps) {
     if (!selectedFiltersHost) return;
     selectedFiltersHost.replaceChildren();
     if (searchHint) searchHint.hidden = Boolean(search.system_key);
+    if (filterCountHost) {
+      filterCountHost.textContent = String(selectedSuggestions.size);
+      filterCountHost.hidden = selectedSuggestions.size === 0;
+    }
     for (const [key, suggestion] of selectedSuggestions) {
       if (!search[key] && !suggestion.appliedKeys?.some((applied) => search[applied])) continue;
-      const remove = button(node, `× ${suggestion.label || suggestion.id}`, () => {
+      const remove = button(node, `${suggestion.label || suggestion.id} ×`, () => {
         suggestion.appliedKeys?.forEach((applied) => { search[applied] = ''; });
         search[key] = '';
         selectedSuggestions.delete(key);
+        const input = searchInputs.get(key);
+        if (input) input.value = '';
         drawSelectedFilters();
-      }, 'ui-button ui-button-secondary');
+      }, 'ui-button ui-button-secondary recordings-filter-chip');
       remove.setAttribute('aria-label', `Remove ${suggestion.label || suggestion.id} filter`);
       selectedFiltersHost.append(remove);
     }
@@ -639,7 +655,7 @@ export function createRecordingsFeature(deps) {
         ids.forEach((id) => selection.delete(id));
         modal.setBusy(false);
         modal.close();
-        void loadPage(currentPage);
+        void renderSearchPage();
       } catch (error) {
         modal.setBusy(false);
         remove.disabled = false;
@@ -660,10 +676,17 @@ export function createRecordingsFeature(deps) {
         'No matches in this batch. More calls may match; select Next to continue.' :
         'No matching calls. Try a wider time range or fewer filters.', 'empty'));
     } else currentResults.forEach((row) => resultHost.append(callCard(row)));
-    if (countHost) countHost.textContent = resultTotal === null ?
-      `Page ${currentPage + 1}${nextCursor ? ' · more calls available' : ''}` :
-      `${Number(resultTotal).toLocaleString()} calls · page ${currentPage + 1}`;
+    const showCount = Boolean(currentResults.length || nextCursor);
+    const showPager = currentPage > 0 || Boolean(nextCursor);
+    if (countHost) {
+      countHost.hidden = !showCount;
+      const count = resultTotal === null ? currentResults.length : Number(resultTotal);
+      countHost.textContent = `${count.toLocaleString()} ${count === 1 ? 'call' : 'calls'}` +
+        (resultTotal === null ? ' shown' : '') +
+        (showPager ? ` · page ${currentPage + 1}${nextCursor ? ' · more available' : ''}` : '');
+    }
     if (pagerHost) {
+      pagerHost.hidden = !showPager;
       pagerHost.replaceChildren();
       const previous = button(node, 'Previous', () => void loadPage(currentPage - 1));
       previous.disabled = currentPage === 0;
@@ -691,7 +714,8 @@ export function createRecordingsFeature(deps) {
       currentResults = Array.isArray(result?.calls) ? result.calls : [];
       currentPage = page;
       nextCursor = result?.next_cursor || null;
-      resultTotal = Number.isFinite(Number(result?.total)) ? Number(result.total) : null;
+      resultTotal = result?.total !== null && result?.total !== undefined &&
+        Number.isFinite(Number(result.total)) ? Number(result.total) : null;
       resultStatus.replaceChildren();
       drawResults();
     } catch (error) {
@@ -716,9 +740,10 @@ export function createRecordingsFeature(deps) {
 
   function autocompleteFilter(key, title, kind, placeholder) {
     const input = textInput(placeholder);
+    searchInputs.set(key, input);
     input.value = selectedSuggestions.get(key)?.label || search[key] || '';
     const control = node('div', 'recordings-autocomplete');
-    const options = node('div', 'recordings-suggestions');
+    const options = node('div', 'ui-popover recordings-suggestions');
     options.id = `recordings-options-${key}`;
     options.setAttribute('role', 'listbox');
     options.hidden = true;
@@ -727,13 +752,28 @@ export function createRecordingsFeature(deps) {
     input.setAttribute('aria-controls', options.id);
     input.setAttribute('aria-expanded', 'false');
     let timer = null;
+    let blurTimer = null;
     let generation = 0;
     let active = -1;
+    const open = () => {
+      options.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    };
     const close = () => {
+      window.clearTimeout(timer);
+      generation++;
       options.hidden = true;
       input.setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
       active = -1;
+    };
+    const showMessage = (message, type = '') => {
+      const notice = makeNotice(message, type);
+      notice.classList.add('recordings-suggestion-feedback');
+      options.replaceChildren(notice);
+      open();
+      active = -1;
+      input.removeAttribute('aria-activedescendant');
     };
     const choose = (suggestion) => {
       if (key === 'q') {
@@ -742,10 +782,10 @@ export function createRecordingsFeature(deps) {
           channel: 'channel_id' }[suggestion.kind];
         if (matching) {
           applySuggestion(matching, suggestion);
-          const identity = ['talkgroup', 'talkgroup_range', 'radio', 'radio_range']
-            .includes(suggestion.kind);
-          input.value = identity ? String(suggestion.label || suggestion.id || '') : '';
-          search.q = input.value;
+          input.value = '';
+          search.q = '';
+          const matchingInput = searchInputs.get(matching);
+          if (matchingInput) matchingInput.value = String(suggestion.label || suggestion.id || '');
           drawSelectedFilters();
         } else {
           input.value = String(suggestion.label || suggestion.id || '');
@@ -757,15 +797,17 @@ export function createRecordingsFeature(deps) {
         drawSelectedFilters();
       }
       close();
+      input.focus();
     };
     input.addEventListener('input', () => {
       search[key] = input.value.trim();
       selectedSuggestions.get(key)?.appliedKeys?.forEach((applied) => { search[applied] = ''; });
       selectedSuggestions.delete(key);
       window.clearTimeout(timer);
+      const request = ++generation;
       const q = input.value.trim();
       if (q.length < 2) { close(); return; }
-      const request = ++generation;
+      showMessage('Finding suggestions…', 'loading');
       timer = window.setTimeout(async () => {
         try {
           const result = await requestJson(queryPath(SUGGESTIONS, {
@@ -774,19 +816,33 @@ export function createRecordingsFeature(deps) {
           if (request !== generation || input.value.trim() !== q || !input.isConnected) return;
           options.replaceChildren();
           const rows = Array.isArray(result) ? result : (result?.rows || result?.suggestions || []);
+          if (!rows.length) {
+            showMessage('No matching names or IDs. Try another term.');
+            return;
+          }
+          const heading = node('div', 'recordings-suggestion-heading');
+          heading.append(node('strong', '', 'Suggestions'),
+            node('span', '', `${rows.length} shown`));
+          options.append(heading);
           rows.forEach((suggestion, index) => {
-            const option = button(node,
-              `${key === 'q' ? `${prettify(suggestion.kind)} · ` : ''}${suggestion.label || suggestion.id}` +
-                `${suggestion.detail ? ` · ${suggestion.detail}` : ''}`,
-              () => choose(suggestion), 'recordings-suggestion');
+            const option = button(node, '', () => choose(suggestion),
+              'ui-suggestion-option recordings-suggestion');
             option.id = `${options.id}-${index}`;
             option.setAttribute('role', 'option');
+            const description = node('span', 'recordings-suggestion-copy');
+            description.append(node('strong', '', String(suggestion.label || suggestion.id || 'Unnamed')));
+            if (suggestion.detail) description.append(node('small', '', String(suggestion.detail)));
+            option.append(node('span', 'recordings-suggestion-kind', prettify(suggestion.kind || kind || 'Match')),
+              description);
             option.addEventListener('mousedown', (event) => event.preventDefault());
             options.append(option);
           });
-          options.hidden = !rows.length;
-          input.setAttribute('aria-expanded', String(Boolean(rows.length)));
-        } catch (_error) { close(); }
+          open();
+        } catch (_error) {
+          if (request === generation && input.isConnected) {
+            showMessage('Suggestions could not load. Keep typing to retry.', 'error');
+          }
+        }
       }, SUGGESTION_DELAY_MS);
     });
     input.addEventListener('keydown', (event) => {
@@ -795,7 +851,13 @@ export function createRecordingsFeature(deps) {
       if (options.hidden || !rows.length) return;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        active = Math.max(0, Math.min(rows.length - 1, active + (event.key === 'ArrowDown' ? 1 : -1)));
+        active = event.key === 'ArrowDown' ? (active + 1) % rows.length :
+          (active < 0 ? rows.length - 1 : (active + rows.length - 1) % rows.length);
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        active = event.key === 'Home' ? 0 : rows.length - 1;
+      }
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
         rows.forEach((row, index) => row.setAttribute('aria-selected', String(index === active)));
         input.setAttribute('aria-activedescendant', rows[active].id);
       } else if (event.key === 'Enter' && active >= 0) {
@@ -803,12 +865,17 @@ export function createRecordingsFeature(deps) {
         rows[active].click();
       }
     });
-    input.addEventListener('blur', () => window.setTimeout(close, 120));
+    input.addEventListener('focus', () => window.clearTimeout(blurTimer));
+    input.addEventListener('blur', () => {
+      generation++;
+      window.clearTimeout(timer);
+      blurTimer = window.setTimeout(close, 120);
+    });
     control.append(input, options);
     const wrapper = field(title, control);
-    if (key === 'q') {
+    if (key === 'system_key') {
       searchHint = node('small', 'ui-field-detail',
-        'Select a radio system to find over-the-air radio names.');
+        'Choose a radio system to search over-the-air radio names.');
       searchHint.hidden = Boolean(search.system_key);
       wrapper.append(searchHint);
     }
@@ -819,9 +886,12 @@ export function createRecordingsFeature(deps) {
   function makeSearchForm() {
     const form = node('form', 'recordings-search');
     const primary = node('div', 'recordings-search-primary');
-    primary.append(autocompleteFilter('q', 'Search calls', '', 'Alias, ID, or OTA name'));
+    searchInputs = new Map();
+    const queryField = autocompleteFilter('q', 'Find a call', '',
+      'System, site, talkgroup, radio, or channel');
+    queryField.classList.add('recordings-query-field');
     const range = select(node, [['24h', 'Past 24 hours'], ['7d', 'Past 7 days'], ['30d', 'Past 30 days'],
-      ['10y', 'Past 10 years'], ['custom', 'Custom dates']], 'Time range');
+      ['10y', 'Past 10 years'], ['custom', 'Custom dates']], 'Date & time');
     range.value = search.range || '24h';
     const from = textInput('', 'datetime-local');
     const to = textInput('', 'datetime-local');
@@ -831,9 +901,10 @@ export function createRecordingsFeature(deps) {
     customDates.hidden = range.value !== 'custom';
     customDates.append(field('From', from), field('To', to));
     range.addEventListener('change', () => { customDates.hidden = range.value !== 'custom'; });
-    primary.append(field('Time', range));
-    const advanced = node('details', 'recordings-search-advanced');
-    advanced.append(node('summary', '', 'More filters'));
+    const rangeField = field('Date & time', range);
+    primary.append(rangeField, queryField);
+    const advanced = node('div', 'recordings-search-advanced');
+    advanced.hidden = true;
     const advancedFields = node('div', 'recordings-search-fields');
     SEARCH_FIELDS.forEach(([key, title, kind, placeholder]) =>
       advancedFields.append(autocompleteFilter(key, title, kind, placeholder)));
@@ -871,16 +942,68 @@ export function createRecordingsFeature(deps) {
     const actions = node('div', 'recordings-search-actions');
     const submit = button(node, 'Search', null, 'ui-button ui-button-primary');
     submit.type = 'submit';
+    const filters = button(node, '', null);
+    filters.append(node('span', 'recordings-filter-label-desktop', 'More filters'),
+      node('span', 'recordings-filter-label-mobile', 'Filters'));
+    filterCountHost = node('span', 'ui-pill ui-pill-compact recordings-filter-count');
+    filterCountHost.hidden = true;
+    filters.append(filterCountHost);
+    filters.setAttribute('aria-expanded', 'false');
+    filters.setAttribute('aria-controls', 'recordings-advanced-filters');
+    advanced.id = 'recordings-advanced-filters';
     const clear = button(node, 'Clear filters', () => {
       Object.keys(search).forEach((key) => { search[key] = ''; });
       selectedSuggestions.clear();
       selection.clear();
       pageHost.replaceChildren();
       renderSearchPage();
+    }, 'ui-button ui-button-secondary recordings-clear-filters');
+    filters.addEventListener('click', () => {
+      if (!window.matchMedia('(max-width: 700px)').matches) {
+        advanced.hidden = !advanced.hidden;
+        filters.setAttribute('aria-expanded', String(!advanced.hidden));
+        return;
+      }
+      const sheet = node('div', 'recordings-filter-sheet');
+      const sheetFields = node('div', 'recordings-filter-sheet-fields');
+      sheetFields.append(rangeField, customDates, advancedFields);
+      const sheetActions = node('div', 'ui-action-row recordings-filter-sheet-actions');
+      const clearSheet = button(node, 'Clear filters', () => {
+        modal.close();
+        clear.click();
+      }, 'ui-button ui-button-secondary recordings-sheet-action');
+      const showCalls = button(node, 'Show calls', () => {
+        modal.close();
+        form.requestSubmit();
+      }, 'ui-button ui-button-primary recordings-sheet-action');
+      sheetActions.append(clearSheet, showCalls);
+      sheet.append(sheetFields, sheetActions);
+      const modal = openReadOnlyModal('Filters', sheet, {
+        id: 'recordings-filters', className: 'recordings-filter-modal',
+        onClose: () => {
+          primary.insertBefore(rangeField, queryField);
+          form.insertBefore(customDates, advanced);
+          advanced.append(advancedFields);
+          filters.setAttribute('aria-expanded', 'false');
+          filters.setAttribute('aria-controls', advanced.id);
+        }
+      });
+      if (modal) {
+        modal.dialog.id = 'recordings-filter-dialog';
+        filters.setAttribute('aria-controls', modal.dialog.id);
+        filters.setAttribute('aria-expanded', 'true');
+      }
+      else {
+        primary.insertBefore(rangeField, queryField);
+        form.insertBefore(customDates, advanced);
+        advanced.append(advancedFields);
+      }
     });
-    actions.append(submit, clear);
+    actions.append(submit, filters);
+    primary.append(actions);
+    advanced.append(clear);
     selectedFiltersHost = node('div', 'recordings-selected-filters');
-    form.append(primary, selectedFiltersHost, customDates, advanced, actions);
+    form.append(primary, selectedFiltersHost, customDates, advanced);
     drawSelectedFilters();
     form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -931,13 +1054,61 @@ export function createRecordingsFeature(deps) {
     return form;
   }
 
-  function renderSearchPage() {
+  async function renderSearchPage() {
     const context = captureRenderContext();
+    searchRequest++;
+    searchSignal?.abort();
     if (!beginPage(context, pageHeader('Recordings',
       'Find and play saved calls across radio systems and conventional channels.'))) return;
     pageHost = node('div', 'recordings-library data-workspace');
+    const host = pageHost;
+    host.append(makeNotice('Loading recordings…', 'loading'));
+    content.append(host);
+    let status;
+    try {
+      status = await requestJson(STATUS, { signal: context.signal });
+    } catch (error) {
+      if (renderIsCurrent(context) && host.isConnected) host.replaceChildren(makeNotice(
+        error.message || 'Recording availability could not be checked. Try again.', 'error'));
+      return;
+    }
+    if (!renderIsCurrent(context) || !host.isConnected) return;
+    host.replaceChildren();
+    if (status?.available !== true) {
+      host.append(makeNotice('The managed recordings library is unavailable. Check receiver status and try again.',
+        'error'));
+      return;
+    }
+    if (!status?.has_calls) {
+      const empty = node('section', 'ui-empty-state recordings-library-empty');
+      if (status?.mode === 'MANAGED') {
+        empty.append(node('h2', '', 'Ready for the first call'), node('p', '',
+          'Managed Recordings is enabled. New saved calls will appear here after they finish.'));
+        empty.append(button(node, 'Refresh calls', () => void renderSearchPage(),
+          'ui-button ui-button-primary'));
+      } else if (isPrimaryAdmin()) {
+        empty.append(node('h2', '', 'Make every call easy to find'), node('p', '',
+          'Enable Managed Recordings to organize calls into folders, search by radio or talkgroup, ' +
+          'play them in your browser, and set an optional age limit.'));
+        empty.append(anchor('Enable Managed Recordings', href('admin', { tab: 'recordings' }),
+          'ui-button ui-button-primary'));
+        empty.append(node('p', 'recordings-empty-footnote',
+          'Using Trunking Recorder or another tool that watches the flat recordings folder? Keep Classic mode.'));
+      } else {
+        empty.append(node('h2', '', 'No managed recordings yet'), node('p', '',
+          'This receiver saves new calls to the Classic recordings folder. Managed calls will appear here if ' +
+          'the primary administrator enables Managed Recordings.'));
+      }
+      host.append(empty);
+      return;
+    }
+    if (status?.mode === 'CLASSIC') host.append(node('p', 'ui-notice recordings-mode-notice',
+      'Classic mode is saving new calls in the flat recordings folder. Earlier Managed calls remain searchable here.'));
     const form = makeSearchForm();
-    pageHost.append(section('Search calls', form));
+    const searchSection = node('section', 'section ui-section recordings-search-panel');
+    searchSection.setAttribute('aria-label', 'Search calls');
+    searchSection.append(form);
+    host.append(searchSection);
     const resultSection = node('section', 'section ui-section');
     const titleBar = node('div', 'section-title ui-section-title');
     titleBar.append(node('span', '', 'Calls'));
@@ -961,8 +1132,7 @@ export function createRecordingsFeature(deps) {
     pagerHost.setAttribute('aria-label', 'Call result pages');
     body.append(sharedHost, selectedHost, countHost, resultStatus, resultHost, pagerHost);
     resultSection.append(titleBar, body);
-    pageHost.append(resultSection);
-    content.append(pageHost);
+    host.append(resultSection);
     if (Object.values(search).every((item) => !item)) search.from_ms = String(Date.now() - 86_400_000);
     currentFilters = effectiveFilters();
     cursors = [null];
@@ -985,8 +1155,9 @@ export function createRecordingsFeature(deps) {
       const modes = node('div', 'recordings-mode-choices');
       const radios = {};
       for (const [mode, title, detail] of [
-        ['CLASSIC', 'Classic', 'Save new calls in the flat recordings folder for external tools.'],
-        ['MANAGED', 'Managed', 'Organize new calls into folders and list them in Recordings.']
+        ['CLASSIC', 'Classic', 'Keep a flat recordings folder for tools such as Trunking Recorder.'],
+        ['MANAGED', 'Managed · Recommended', 'Organize calls automatically, search by radio or talkgroup, ' +
+          'listen in your browser, and clear old calls by age.']
       ]) {
         const choice = node('label', 'ui-choice-card recordings-mode-choice');
         const radio = node('input', 'ui-choice-radio');

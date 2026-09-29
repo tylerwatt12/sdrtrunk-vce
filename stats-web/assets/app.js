@@ -23,7 +23,7 @@ import { createRadioReferenceImportWorkspace } from './features/radioreference-i
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
-import { createRecordingsFeature } from './features/recordings.js?v=1';
+import { createRecordingsFeature } from './features/recordings.js?v=2';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -25546,7 +25546,7 @@ applicationRoutes = routeFoundation.createRegistry({
 
 const recordingsFeature = createRecordingsFeature({
   node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
-  captureRenderContext, renderIsCurrent, content,
+  captureRenderContext, renderIsCurrent, content, href, anchor,
   isPrimaryAdmin: () => accessSession.primary === true &&
     capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_RECORDINGS),
   stopLiveAudio: async () => {

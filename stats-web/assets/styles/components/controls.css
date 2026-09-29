@@ -941,6 +941,30 @@
   line-height: 1.45;
 }
 
+/* Compact option for searchable suggestion lists inside a shared popover. */
+.ui-suggestion-option {
+  width: 100%;
+  min-height: var(--control-height-compact);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-suggestion-option:hover,
+.ui-suggestion-option[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.ui-suggestion-option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .ui-field-row {
   min-width: 0;
   display: grid;
