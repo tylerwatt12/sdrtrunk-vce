@@ -51,6 +51,7 @@ public class DirectoryPreference extends Preference
     private static final String PREFERENCE_KEY_DIRECTORY_EVENT_LOGS = "directory.event.logs";
     private static final String PREFERENCE_KEY_DIRECTORY_JMBE = "directory.jmbe";
     private static final String PREFERENCE_KEY_DIRECTORY_RECORDING = "directory.recording";
+    private static final String PREFERENCE_KEY_DIRECTORY_MANAGED_RECORDING = "directory.recording.managed";
     private static final String PREFERENCE_KEY_DIRECTORY_STREAMING = "directory.streaming";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_RECORDINGS = "directory.max.usage.recordings";
     private static final String PREFERENCE_KEY_DIRECTORY_MAX_USAGE_EVENT_LOGS = "directory.max.usage.event.logs";
@@ -59,6 +60,7 @@ public class DirectoryPreference extends Preference
     private Path mDirectoryEventLogs;
     private Path mDirectoryJmbe;
     private Path mDirectoryRecording;
+    private volatile Path mDirectoryManagedRecording;
     private Path mDirectoryStreaming;
     private Integer mDirectoryMaxUsageRecordings;
     private Integer mDirectoryMaxUsageEventLogs;
@@ -274,6 +276,52 @@ public class DirectoryPreference extends Preference
         mPreferences.remove(PREFERENCE_KEY_DIRECTORY_RECORDING);
         mDirectoryRecording = null;
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * Separate stable root for managed recordings. Its default is a sibling of the Classic recording folder and is
+     * saved on first access, so moving the Classic folder later does not strand cataloged audio. The recording
+     * worker creates this root and its child folders only when it writes a managed call.
+     */
+    public synchronized Path getDirectoryManagedRecording()
+    {
+        if(mDirectoryManagedRecording == null)
+        {
+            // Use the configured Classic path even if its volume is temporarily unavailable. Falling back to a
+            // different Classic directory here could permanently pin the managed catalog to the wrong disk.
+            Path classic = getDefaultRecordingDirectory().toAbsolutePath().normalize();
+            String configuredClassic = mPreferences.get(PREFERENCE_KEY_DIRECTORY_RECORDING, null);
+            if(configuredClassic != null && !configuredClassic.isBlank())
+            {
+                try
+                {
+                    classic = Paths.get(configuredClassic).toAbsolutePath().normalize();
+                }
+                catch(RuntimeException exception)
+                {
+                    mLog.warn("Invalid Classic recording directory preference; using default managed root");
+                }
+            }
+            Path defaultManaged = classic.resolveSibling(classic.getFileName() != null ?
+                classic.getFileName() + "-managed" : "recordings-managed");
+            String configured = mPreferences.get(PREFERENCE_KEY_DIRECTORY_MANAGED_RECORDING, null);
+
+            try
+            {
+                mDirectoryManagedRecording = configured != null && !configured.isBlank() ?
+                    Paths.get(configured).toAbsolutePath().normalize() : defaultManaged;
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Invalid managed recording directory preference; using default");
+                mDirectoryManagedRecording = defaultManaged;
+            }
+
+            // Keep this path independent of later Classic directory changes.
+            mPreferences.put(PREFERENCE_KEY_DIRECTORY_MANAGED_RECORDING, mDirectoryManagedRecording.toString());
+        }
+
+        return mDirectoryManagedRecording;
     }
 
     /**

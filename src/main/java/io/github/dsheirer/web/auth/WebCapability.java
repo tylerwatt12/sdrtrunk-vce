@@ -30,6 +30,7 @@ public enum WebCapability
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
     WEB_AUDIO_LISTEN("call-audio", "Scanner and call audio", AccessTier.PUBLIC),
+    RECORDINGS_VIEW("recordings", "Recordings search and playback", AccessTier.PUBLIC),
     USER_SETTINGS("user-settings", "Personal settings", AccessTier.USER, false),
 
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),
@@ -39,6 +40,7 @@ public enum WebCapability
     ADMIN_CHANNELS("admin-channels", "Channel management", AccessTier.ADMIN, false),
     ADMIN_TUNERS("admin-tuners", "Tuner management", AccessTier.ADMIN, false),
     ADMIN_SETTINGS("admin-settings", "Receiver settings", AccessTier.ADMIN, false),
+    ADMIN_RECORDINGS("admin-recordings", "Manage recordings", AccessTier.ADMIN, false),
     RECEIVER_HEALTH("receiver-health", "Receiver status", AccessTier.ADMIN, false);
 
     private static final Map<String,WebCapability> BY_ID;

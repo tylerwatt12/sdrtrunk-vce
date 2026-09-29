@@ -23,6 +23,7 @@ import { createRadioReferenceImportWorkspace } from './features/radioreference-i
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
+import { createRecordingsFeature } from './features/recordings.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -133,6 +134,8 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
+  RECORDINGS: 'recordings',
+  ADMIN_RECORDINGS: 'admin-recordings',
   RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
   ADMIN_CHANNELS: 'admin-channels',
@@ -303,6 +306,7 @@ let notifyConfirmedAccessRefresh = () => {};
 let playbackScanListRequest = 0;
 let playbackScanListLoading = false;
 let webCallPlayer = null;
+let previousLivePlaybackStopped = true;
 let activityFilterControlSequence = 0;
 let activityCellActionSequence = 0;
 
@@ -718,7 +722,8 @@ function routeDefinitionAllowed(definition) {
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
-        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_RECORDINGS));
   }
   const capability = definition.capability;
   return !capability || capabilityAllowed(capability);
@@ -9469,6 +9474,10 @@ function synchronizePlaybackAccess(accessChanged = false) {
     webCallPlayer.applyPreferences(activeUserPreferences().playback);
     webCallPlayer.subscribeState((playerState) =>
       pageTitleController.update({ playerState }));
+    webCallPlayer.subscribeState((playerState) => {
+      if (previousLivePlaybackStopped && !playerState.stopped) recordingsFeature.stopAudio();
+      previousLivePlaybackStopped = playerState.stopped;
+    });
   }
   webCallPlayer.setActions({
     openAvoidList: openPlaybackAvoidList
@@ -20986,7 +20995,10 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
   const policies = adminAccessPolicies(response).sort((left, right) =>
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
   const webPolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.WEB_ACCESS);
-  const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.WEB_ACCESS);
+  const recordingsPolicies = policies.filter((policy) =>
+    [ACCESS_CAPABILITIES.RECORDINGS, ACCESS_CAPABILITIES.ADMIN_RECORDINGS].includes(policy.id));
+  const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.WEB_ACCESS &&
+    !recordingsPolicies.includes(policy));
   const statusHost = node('div', 'admin-operation-status ui-notice');
   statusHost.setAttribute('role', 'status');
   const titleActions = sectionActionHost();
@@ -21004,6 +21016,20 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
       layoutMenuHost: titleActions
     }));
   content.append(section('Access levels', body, titleActions));
+  if (recordingsPolicies.length) {
+    const recordingsBody = node('div', 'admin-section-body');
+    recordingsBody.append(table(recordingsPolicies, [
+      { id: 'capability', label: 'Recordings permission', render: accessPolicyIdentity,
+        sortValue: (policy) => policy.displayName || policy.id },
+      { id: 'required-tier', label: 'Minimum access',
+        render: (policy) => accessPolicyTierControl(policy, statusHost),
+        sortValue: (policy) => accessTierRank(policy.requiredTier) }
+    ], 'No recordings permissions are available', {
+      type: 'admin-recordings-access', sortable: false, mobileCards: true,
+      tableClass: 'admin-responsive-table'
+    }));
+    content.append(section('Recordings', recordingsBody));
+  }
 }
 
 function scanListAdminPayload(controls) {
@@ -25222,6 +25248,8 @@ function adminSettingsGroups() {
     { label: 'Receiving & output', items: [
       { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose how calls are streamed and recorded, and whether activity is saved.' },
+      { id: 'recordings', label: 'Recordings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
+        description: 'Choose how new calls are saved and how long managed calls are kept.' },
       { id: 'retained-statistics', label: 'Retained statistics', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Review and remove saved observations.' },
       { id: 'remote-links', label: 'Remote Links', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -25286,6 +25314,7 @@ async function renderAdmin() {
   else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
   else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
+  else if (active === 'recordings') await recordingsFeature.renderAdminRecordings();
   else if (active === 'retained-statistics') {
     content.append(createRetainedStatisticsWorkspace({
       node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
@@ -25485,7 +25514,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
+      !['live', 'recordings', 'map', 'network-visualizer', 'scanner', 'scan-lists', 'radioreference', 'streaming',
         'tuners', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {
     render();
@@ -25495,6 +25524,7 @@ async function loadStatus(refreshCurrentView = false) {
 applicationRoutes = routeFoundation.createRegistry({
   dashboard: renderDashboard,
   live: renderLive,
+  recordings: () => recordingsFeature.renderSearchPage(),
   map: renderListenMap,
   'network-visualizer': renderP25Visualizer,
   scanner: renderScanner,
@@ -25514,8 +25544,19 @@ applicationRoutes = routeFoundation.createRegistry({
   credits: renderCredits
 }, routeDefinitionAllowed);
 
+const recordingsFeature = createRecordingsFeature({
+  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
+  captureRenderContext, renderIsCurrent, content,
+  isPrimaryAdmin: () => accessSession.primary === true &&
+    capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_RECORDINGS),
+  stopLiveAudio: async () => {
+    if (webCallPlayer && !webCallPlayer.stopped) await webCallPlayer.togglePlayback();
+  }
+});
+
 async function render() {
   setNavigationOpen(false);
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)) recordingsFeature.stopAudio();
   const view = routeFoundation.requestedView(route);
   const entry = routeFoundation.resolve(applicationRoutes, route);
   if (!closeReadOnlyModal()) return;

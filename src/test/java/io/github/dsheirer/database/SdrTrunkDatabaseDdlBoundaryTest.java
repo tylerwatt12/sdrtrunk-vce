@@ -45,6 +45,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/stats/activity/TrunkedIdentitySchema.java",
         "java/io/github/dsheirer/stats/activity/DmrActivitySchema.java",
         "java/io/github/dsheirer/stats/site/TrunkedSiteSchema.java",
+        "java/io/github/dsheirer/record/managed/ManagedRecordingSchema.java",
         "java/io/github/dsheirer/preference/encryption/vault/EncryptionKeyVaultSchema.java",
         "java/io/github/dsheirer/database/upgrade/Format1To2DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format2SchemaSql.java",

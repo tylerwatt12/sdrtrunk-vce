@@ -1,0 +1,522 @@
+.recordings-library,
+.recordings-admin {
+  min-width: 0;
+}
+
+.recordings-search,
+.recordings-admin-body {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.recordings-search-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: var(--space-3);
+}
+
+.recordings-field input,
+.recordings-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.recordings-field {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.recordings-custom-dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.recordings-search-advanced {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+}
+
+.recordings-search-advanced > summary {
+  width: fit-content;
+  color: var(--link);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium);
+}
+
+.recordings-search-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.recordings-autocomplete {
+  position: relative;
+  min-width: 0;
+}
+
+.recordings-suggestions:not([hidden]) {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  display: grid;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-raised);
+}
+
+.recordings-suggestion {
+  min-height: var(--control-height-compact);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recordings-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.recordings-suggestion:hover,
+.recordings-suggestion[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.recordings-suggestion:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.recordings-search-actions,
+.recordings-call-actions,
+.recordings-selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.recordings-selected-filters:not(:empty) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.recordings-selected-filters button {
+  min-height: var(--control-height-compact);
+}
+
+.recordings-results-body {
+  min-width: 0;
+}
+
+.recordings-shared:not(:empty),
+.recordings-selected:not(:empty) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.recordings-shared {
+  background: var(--accent-soft);
+}
+
+.recordings-shared-chip {
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.recordings-selected {
+  background: var(--surface-2);
+}
+
+.recordings-result-count {
+  padding: var(--space-2) var(--space-4);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.recordings-result-status:not(:empty) {
+  padding: var(--space-3) var(--space-4);
+}
+
+.recordings-call {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(84px, 110px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--table-rule);
+}
+
+.recordings-call:not(:has(.recordings-call-select)) {
+  grid-template-columns: minmax(84px, 110px) minmax(0, 1fr) auto;
+}
+
+.recordings-call:last-child {
+  border-bottom: 0;
+}
+
+.recordings-call:hover {
+  background: var(--table-hover);
+}
+
+.recordings-call-select {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.recordings-call-time,
+.recordings-call-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.recordings-call-time > span,
+.recordings-call-id,
+.recordings-call-source,
+.recordings-call-meta {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.recordings-call-title {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+  font-size: var(--font-size-body);
+}
+
+.recordings-call-id {
+  font-weight: var(--font-weight-medium);
+}
+
+.recordings-call-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.recordings-call-actions {
+  justify-content: flex-end;
+}
+
+.recordings-call-actions button {
+  min-height: var(--control-height-compact);
+  padding-inline: var(--space-3);
+}
+
+.recordings-detail {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.recordings-detail-heading {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.recordings-detail-heading h3 {
+  margin: 0;
+}
+
+.recordings-detail-heading span {
+  color: var(--muted);
+}
+
+.recordings-detail-facts {
+  gap: var(--space-2) var(--space-4);
+}
+
+.recordings-detail-modal .read-only-modal {
+  max-width: min(680px, calc(100vw - 2 * var(--modal-viewport-gap)));
+}
+
+.recordings-player:not([hidden]) {
+  position: fixed;
+  z-index: 90;
+  bottom: var(--space-3);
+  left: 50%;
+  width: min(920px, calc(100vw - 2 * var(--space-3)));
+  transform: translateX(-50%);
+  color: var(--transport-ink);
+  background: var(--transport-surface);
+  border: 1px solid var(--header-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+}
+
+.recordings-player-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 220px) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.recordings-player-heading {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.recordings-player-eyebrow {
+  color: var(--transport-accent);
+  font-size: var(--font-size-meta);
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.recordings-player-title,
+.recordings-player-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordings-player-detail,
+.recordings-player-elapsed,
+.recordings-player-status {
+  color: var(--transport-muted);
+  font-size: var(--font-size-meta);
+}
+
+.recordings-player-progress {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.recordings-player-seek {
+  width: 100%;
+  accent-color: var(--transport-accent);
+}
+
+.recordings-player-controls {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.recordings-player-controls button {
+  min-height: var(--control-height-compact);
+}
+
+.recordings-player-status {
+  grid-column: 1 / -1;
+}
+
+.recordings-player-status:empty {
+  display: none;
+}
+
+.recordings-player-queue:not([hidden]) {
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--header-line);
+}
+
+.recordings-queue-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.recordings-queue-item {
+  display: grid;
+  gap: 1px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--header-line);
+}
+
+.recordings-queue-item > span:last-child,
+.recordings-queue-heading > span,
+.recordings-queue-note {
+  color: var(--transport-muted);
+}
+
+.recordings-audio-active .playback-bar {
+  display: none;
+}
+
+.app-shell:has(.recordings-player:not([hidden])) .content {
+  padding-bottom: 150px;
+}
+
+.recordings-mode-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.recordings-mode-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  align-items: start;
+}
+
+.recordings-mode-choice > span {
+  grid-column: 2;
+  color: var(--muted);
+}
+
+.recordings-managed-folder,
+.recordings-admin-note {
+  margin: 0;
+}
+
+.recordings-admin-note {
+  color: var(--muted);
+}
+
+.recordings-admin-body > button {
+  justify-self: start;
+}
+
+.recordings-admin-facts {
+  padding: 0;
+}
+
+.recordings-maintenance {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.recordings-maintenance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.recordings-maintenance-row p {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+}
+
+.recordings-form-status:empty {
+  display: none;
+}
+
+@media (max-width: 1150px) {
+  .recordings-search-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .recordings-call {
+    grid-template-columns: auto minmax(84px, 110px) minmax(0, 1fr);
+  }
+
+  .recordings-call:not(:has(.recordings-call-select)) {
+    grid-template-columns: minmax(84px, 110px) minmax(0, 1fr);
+  }
+
+  .recordings-call-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 700px) {
+  .recordings-search-primary,
+  .recordings-search-fields,
+  .recordings-custom-dates,
+  .recordings-mode-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recordings-search,
+  .recordings-admin-body {
+    padding: var(--space-3);
+  }
+
+  .recordings-call,
+  .recordings-call:not(:has(.recordings-call-select)) {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-2);
+    margin: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+  }
+
+  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-time,
+  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-main,
+  .recordings-call:not(:has(.recordings-call-select)) .recordings-call-actions {
+    grid-column: 1 / -1;
+  }
+
+  .recordings-call-time {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .recordings-call-main,
+  .recordings-call-actions {
+    grid-column: 1 / -1;
+  }
+
+  .recordings-call-actions button {
+    flex: 1 1 auto;
+  }
+
+  .recordings-player:not([hidden]) {
+    bottom: 0;
+    width: 100%;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+  }
+
+  .recordings-player-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+  }
+
+  .recordings-player-progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .recordings-player-controls {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .recordings-player-controls button {
+    padding-inline: var(--space-2);
+  }
+
+  .recordings-maintenance-row {
+    align-items: start;
+    flex-direction: column;
+  }
+}

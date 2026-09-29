@@ -32,6 +32,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
+import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
@@ -64,6 +65,8 @@ import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteConnectivityService;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -89,7 +92,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
@@ -140,6 +146,9 @@ public class SDRTrunk
     private StatsWebServerService mStatsWebServerService;
     private RemoteConnectivityService mRemoteConnectivityService;
     private AudioRecordingManager mAudioRecordingManager;
+    private ManagedRecordingCatalog mManagedRecordingCatalog;
+    private ScheduledFuture<?> mManagedRecordingRetention;
+    private ScheduledExecutorService mManagedRecordingMaintenance;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
     private IconModel mIconModel;
@@ -246,8 +255,28 @@ public class SDRTrunk
 
         mLogicalCallDiagnosticService = new LogicalCallDiagnosticService();
 
-        mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
-            mReceiverActivityService::receiveRecordedCall);
+        try
+        {
+            Path catalogPath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)
+                .resolveSibling("managed-recordings.sqlite");
+            mManagedRecordingCatalog = new ManagedRecordingCatalog(catalogPath,
+                mUserPreferences.getDirectoryPreference().getDirectoryManagedRecording());
+        }
+        catch(Exception exception)
+        {
+            //A damaged or unavailable optional catalog must not prevent Classic recording or live reception.
+            mLog.error("Managed recordings catalog is unavailable", exception);
+            if(mUserPreferences.getRecordPreference().getRecordingMode() == RecordingMode.MANAGED)
+            {
+                mUserPreferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
+                mLog.warn("Managed recordings were reset to Classic because the catalog is unavailable");
+            }
+        }
+
+        mAudioRecordingManager = mManagedRecordingCatalog != null ?
+            new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall,
+                mManagedRecordingCatalog) :
+            new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall);
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
             mUserPreferences, mReceiverActivityService::receiveStreamedCall);
@@ -264,6 +293,7 @@ public class SDRTrunk
             mConfigurationManager.getRadioReferenceDirectoryService(),
             mConfigurationManager.getRadioReferenceImportService(),
             mConfigurationManager.getStreamingAdministrationService(), mRemoteConnectivityService);
+        mStatsWebServerService.setManagedRecordingCatalog(mManagedRecordingCatalog);
 
         if(mGuiAvailable && !mStatsWebServerService.getRuntimeState().running())
         {
@@ -278,6 +308,27 @@ public class SDRTrunk
         }
         mTunerManager.start();
         mAudioRecordingManager.start();
+        if(mManagedRecordingCatalog != null)
+        {
+            mManagedRecordingMaintenance = Executors.newSingleThreadScheduledExecutor(
+                new NamingThreadFactory("managed recording retention"));
+            mManagedRecordingRetention = mManagedRecordingMaintenance.scheduleWithFixedDelay(() ->
+            {
+                try
+                {
+                    Integer retentionDays = mUserPreferences.getRecordPreference().getManagedRetentionDays();
+                    if(retentionDays != null)
+                    {
+                        mManagedRecordingCatalog.pruneOlderThan(System.currentTimeMillis() -
+                            TimeUnit.DAYS.toMillis(retentionDays));
+                    }
+                }
+                catch(Exception exception)
+                {
+                    mLog.warn("Managed recording age retention failed", exception);
+                }
+            }, 1, 24, TimeUnit.HOURS);
+        }
         mAudioStreamingManager.start();
 
         if(mJavaFxWindowManager != null)
@@ -976,7 +1027,38 @@ public class SDRTrunk
         {
             mAudioStreamingManager.stop();
         }
+        if(mManagedRecordingRetention != null)
+        {
+            mManagedRecordingRetention.cancel(false);
+            mManagedRecordingRetention = null;
+        }
+        if(mManagedRecordingMaintenance != null)
+        {
+            mManagedRecordingMaintenance.shutdown();
+            try
+            {
+                if(!mManagedRecordingMaintenance.awaitTermination(30, TimeUnit.SECONDS))
+                {
+                    mLog.warn("Managed recording retention is still finishing during shutdown");
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }
         mAudioRecordingManager.stop();
+        if(mManagedRecordingCatalog != null)
+        {
+            try
+            {
+                mManagedRecordingCatalog.close();
+            }
+            catch(Exception exception)
+            {
+                mLog.warn("Managed recordings catalog did not close cleanly", exception);
+            }
+        }
 
         if(mReceiverActivityService != null)
         {

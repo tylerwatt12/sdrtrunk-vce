@@ -43,6 +43,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=2") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=5") layer(features);',
   '@import url("./styles/features/activity.css?v=2") layer(features);',
+  '@import url("./styles/features/recordings.css?v=1") layer(features);',
   '@import url("./styles/utilities/reduced-motion.css?v=9") layer(utilities);',
 ];
 

@@ -45,6 +45,7 @@ import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -206,6 +207,9 @@ public class StatsWebServerService implements AutoCloseable
     private final RemoteLinkAdministrationService mRemoteLinkAdministrationService;
     private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private volatile AudioCallCoordinator mAudioCallCoordinator;
+    private volatile ManagedRecordingCatalog mManagedRecordingCatalog;
+    private final ManagedRecordingMaintenance mManagedRecordingMaintenance =
+        new ManagedRecordingMaintenance();
     private volatile MapSnapshotService mMapSnapshotService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
@@ -411,6 +415,12 @@ public class StatsWebServerService implements AutoCloseable
     public WebServerRuntimeState getRuntimeState()
     {
         return mRuntimeState;
+    }
+
+    /** Shares the recording worker's separate catalog with request handlers; it is owned by the receiver. */
+    public void setManagedRecordingCatalog(ManagedRecordingCatalog catalog)
+    {
+        mManagedRecordingCatalog = catalog;
     }
 
     /**
@@ -861,6 +871,14 @@ public class StatsWebServerService implements AutoCloseable
         MapSnapshotHttpController mapController = new MapSnapshotHttpController(() -> mMapSnapshotService);
         server.createContext(MapSnapshotHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.WEB_AUDIO_LISTEN, mapController::handle));
+
+        ManagedRecordingsHttpController managedRecordings = new ManagedRecordingsHttpController(
+            () -> mManagedRecordingCatalog, mUserPreferences, mWebRequestSecurity,
+            mManagedRecordingMaintenance);
+        server.createContext(ManagedRecordingsHttpController.BROWSE_PATH, mWebRequestSecurity.protectApi(
+            WebCapability.RECORDINGS_VIEW, managedRecordings::handleBrowse));
+        server.createContext(ManagedRecordingsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_RECORDINGS, managedRecordings::handleAdmin));
 
         if(mTunerAdministrationService != null)
         {
@@ -2391,6 +2409,7 @@ public class StatsWebServerService implements AutoCloseable
         }
 
         mClosed = true;
+        mManagedRecordingMaintenance.close();
         mSupportBundleService.close();
         mReceiverHealthService.close();
         mTlsMaintenanceExecutor.shutdownNow();

@@ -27,7 +27,10 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.record.RecordingMode;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.util.TimeStamp;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -39,6 +42,9 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,6 +52,24 @@ class AudioRecordingManagerTest
 {
     @TempDir
     Path mTemporaryFolder;
+    private RecordingMode mOriginalMode;
+
+    @BeforeEach
+    void selectClassicByDefault()
+    {
+        var preference = new UserPreferences().getRecordPreference();
+        mOriginalMode = preference.getRecordingMode();
+        preference.setRecordingMode(RecordingMode.CLASSIC);
+    }
+
+    @AfterEach
+    void restoreRecordingMode()
+    {
+        if(mOriginalMode != null)
+        {
+            new UserPreferences().getRecordPreference().setRecordingMode(mOriginalMode);
+        }
+    }
 
     @Test
     void reportsRecordedOnlyAfterPermanentFileExists() throws Exception
@@ -217,6 +241,208 @@ class AudioRecordingManagerTest
         {
             manager.stop();
             scheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    void modeIsCapturedWhenCallEntersQueueAndManagedFilesStaySeparate() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalClassic = preferences.getDirectoryPreference().getDirectoryRecording();
+        RecordFormat originalFormat = preferences.getRecordPreference().getAudioRecordFormat();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        Path classic = mTemporaryFolder.resolve("recordings");
+        Path managed = mTemporaryFolder.resolve("recordings-managed");
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> paths = new ArrayList<>();
+        List<RecordFormat> formats = new ArrayList<>();
+        List<Path> indexed = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AtomicReference<Runnable> indexedObserver = new AtomicReference<>();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                paths.add(path);
+                formats.add(format);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            }, (path, call, size, onIndexed) -> {
+                indexed.add(path);
+                indexedObserver.set(onIndexed);
+                return true;
+            }, managed);
+
+        try
+        {
+            Files.createDirectories(classic);
+            preferences.getDirectoryPreference().setDirectoryRecording(classic);
+            preferences.getRecordPreference().setAudioRecordFormat(RecordFormat.WAVE);
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+            manager.start();
+            manager.receive(completedCall(1, 1_777_777_777_123L, List.of(new float[80])));
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
+            manager.receive(completedCall(2, 1_777_777_777_124L, List.of(new float[80])));
+            manager.stop();
+
+            assertEquals(2, paths.size());
+            assertEquals(List.of(RecordFormat.MP3, RecordFormat.WAVE), formats);
+            assertEquals(1, indexed.size());
+            assertEquals(paths.getFirst(), indexed.getFirst());
+            assertTrue(paths.getFirst().startsWith(managed));
+            assertTrue(paths.getFirst().getFileName().toString().endsWith(".mp3"));
+            assertEquals("tg-56138", paths.getFirst().getParent().getFileName().toString());
+            assertEquals("unknown-channel", paths.getFirst().getParent().getParent().getFileName().toString());
+            assertTrue(paths.getFirst().getParent().getParent().getParent().getFileName().toString()
+                .matches("\\d{4}-\\d{2}-\\d{2}"));
+            assertEquals(classic, paths.get(1).getParent());
+            assertTrue(paths.get(1).getFileName().toString().endsWith(".wav"));
+            assertEquals(1, recorded.get(), "managed activity waits for the catalog commit");
+            indexedObserver.get().run();
+            assertEquals(2, recorded.get());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+            preferences.getDirectoryPreference().setDirectoryRecording(originalClassic);
+        }
+    }
+
+    @Test
+    void realCatalogCommitsBeforeRecordedActivityIsReported() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        Path managed = mTemporaryFolder.resolve("managed");
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        CountDownLatch recorded = new CountDownLatch(1);
+        try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(
+            mTemporaryFolder.resolve("managed.sqlite"), managed))
+        {
+            AudioRecordingManager manager = new AudioRecordingManager(preferences,
+                ignored -> recorded.countDown(), scheduler, (call, path, format, userPreferences) ->
+                    Files.write(path, new byte[]{'I', 'D', '3', 'a', 'b'}, StandardOpenOption.CREATE_NEW),
+                catalog::submit, managed);
+            try
+            {
+                preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+                manager.start();
+                manager.receive(completedCall());
+                manager.stop();
+                assertTrue(recorded.await(5, TimeUnit.SECONDS));
+                assertEquals(1L, catalog.stats().callCount());
+                assertTrue(Files.isRegularFile(catalog.audioPath(1L)));
+            }
+            finally
+            {
+                manager.stop();
+            }
+        }
+        finally
+        {
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+        }
+    }
+
+    @Test
+    void rejectedManagedCatalogHandoffRemovesUnindexedAudio() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> written = new ArrayList<>();
+        AtomicInteger recorded = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences,
+            ignored -> recorded.incrementAndGet(), scheduler, (call, path, format, userPreferences) -> {
+                written.add(path);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            }, (path, call, size, onIndexed) -> false, mTemporaryFolder.resolve("managed"));
+
+        try
+        {
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+            manager.start();
+            manager.receive(completedCall());
+            manager.stop();
+
+            assertEquals(1, written.size());
+            assertFalse(Files.exists(written.getFirst()));
+            assertEquals(0, recorded.get());
+            assertEquals(1, manager.getQueueStatus().droppedRecordings());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+        }
+    }
+
+    @Test
+    void managedModeWithoutCatalogDropsBeforeFileWrite()
+    {
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        AtomicInteger writes = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
+            (call, path, format, userPreferences) -> writes.incrementAndGet());
+
+        try
+        {
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+            manager.start();
+            manager.receive(completedCall());
+            assertEquals(0, manager.getQueueStatus().queuedCalls());
+            assertEquals(0, manager.getQueueStatus().queuedSourceBytes());
+            assertEquals(1, manager.getQueueStatus().droppedRecordings());
+            manager.stop();
+            assertEquals(0, writes.get());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
+        }
+    }
+
+    @Test
+    void failedManagedEncodingRemovesPartialFile() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode originalMode = preferences.getRecordPreference().getRecordingMode();
+        ManualRecordingScheduler scheduler = new ManualRecordingScheduler();
+        List<Path> written = new ArrayList<>();
+        AtomicInteger indexed = new AtomicInteger();
+        AudioRecordingManager manager = new AudioRecordingManager(preferences, null, scheduler,
+            (call, path, format, userPreferences) -> {
+                written.add(path);
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+                throw new IOException("simulated encoder failure");
+            }, (path, call, size, onIndexed) -> {
+                indexed.incrementAndGet();
+                return true;
+            }, mTemporaryFolder.resolve("managed"));
+
+        try
+        {
+            preferences.getRecordPreference().setRecordingMode(RecordingMode.MANAGED);
+            manager.start();
+            manager.receive(completedCall());
+            manager.stop();
+
+            assertEquals(1, written.size());
+            assertFalse(Files.exists(written.getFirst()));
+            assertEquals(0, indexed.get());
+            assertEquals(1, manager.getQueueStatus().droppedRecordings());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            preferences.getRecordPreference().setRecordingMode(originalMode);
         }
     }
 
