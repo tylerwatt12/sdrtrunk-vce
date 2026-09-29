@@ -71,8 +71,10 @@ class ManagedRecordingCatalogMigratorTest
             assertEquals(1, scalar(statement, "SELECT call_count FROM catalog_metadata"));
             assertEquals(17, scalar(statement, "SELECT total_bytes FROM catalog_metadata"));
             assertEquals(0, scalar(statement, "SELECT count(*) FROM recording_transcript"));
-            assertEquals(2, scalar(statement, "PRAGMA user_version"));
-            assertEquals(2, scalar(statement, "SELECT format_version FROM catalog_metadata"));
+            assertEquals(3, scalar(statement, "PRAGMA user_version"));
+            assertEquals(3, scalar(statement, "SELECT format_version FROM catalog_metadata"));
+            assertEquals("pending", text(statement,
+                "SELECT transcription_status FROM recording_call WHERE id=1"));
             assertEquals(1, scalar(statement, "SELECT seq FROM sqlite_sequence " +
                 "WHERE name='recording_call'"));
         }
@@ -92,7 +94,7 @@ class ManagedRecordingCatalogMigratorTest
             assertEquals(1, scalar(statement, "SELECT count(*) FROM recording_call_site"));
             assertEquals(1, scalar(statement, "SELECT count(*) FROM recording_patch_member"));
             assertEquals(1, scalar(statement, "SELECT id FROM recording_call"));
-            assertEquals(2, scalar(statement, "PRAGMA user_version"));
+            assertEquals(3, scalar(statement, "PRAGMA user_version"));
         }
     }
 
@@ -140,11 +142,62 @@ class ManagedRecordingCatalogMigratorTest
     }
 
     @Test
+    void preservesPopulatedFormatTwoTranscriptsAndMarksThemComplete() throws Exception
+    {
+        Path catalog = temporary.resolve("format-two.sqlite");
+        createFormatTwo(catalog);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + catalog);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms," +
+                "relative_path,size_bytes,protocol,call_type,voice_type) " +
+                "VALUES(1,1000,2000,1000,'one.mp3',17,1,1,1)");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms," +
+                "relative_path,size_bytes,protocol,call_type,voice_type) " +
+                "VALUES(2,2000,2400,400,'short.mp3',11,1,1,1)");
+            statement.executeUpdate("INSERT INTO recording_transcript(call_id,text,stored_at_ms) " +
+                "VALUES(1,'retained speech',4321)");
+            statement.executeUpdate("UPDATE catalog_metadata SET call_count=2,total_bytes=28 WHERE id=1");
+        }
+        assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
+            ManagedRecordingCatalogMigrator.inspect(catalog).state());
+        ManagedRecordingCatalogMigrator.MigrationResult result =
+            ManagedRecordingCatalogMigrator.migrate(catalog);
+        assertTrue(result.migrated());
+        assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
+            ManagedRecordingCatalogMigrator.inspect(catalog).state());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + catalog);
+            Statement statement = connection.createStatement())
+        {
+            assertEquals(3, scalar(statement, "PRAGMA user_version"));
+            assertEquals(2, scalar(statement, "SELECT call_count FROM catalog_metadata"));
+            assertEquals(28, scalar(statement, "SELECT total_bytes FROM catalog_metadata"));
+            assertEquals("complete", text(statement,
+                "SELECT transcription_status FROM recording_call WHERE id=1"));
+            assertEquals("pending", text(statement,
+                "SELECT transcription_status FROM recording_call WHERE id=2"));
+            assertEquals("retained speech", text(statement,
+                "SELECT text FROM recording_transcript WHERE call_id=1"));
+            assertEquals(4321, scalar(statement,
+                "SELECT stored_at_ms FROM recording_transcript WHERE call_id=1"));
+        }
+        assertEquals(2, scalar(result.backup(), "PRAGMA user_version"));
+        assertEquals("retained speech", text(result.backup(),
+            "SELECT text FROM recording_transcript WHERE call_id=1"));
+        Path retry = temporary.resolve("format-two-retry.sqlite");
+        Files.copy(result.backup(), retry);
+        assertTrue(ManagedRecordingCatalogMigrator.migrate(retry).migrated());
+        assertEquals(3, scalar(retry, "PRAGMA user_version"));
+        assertEquals("retained speech", text(retry,
+            "SELECT text FROM recording_transcript WHERE call_id=1"));
+    }
+
+    @Test
     void currentCatalogWithCommittedWalUsesBoundedInspection() throws Exception
     {
         Path active = temporary.resolve("current-active.sqlite");
         Path offline = temporary.resolve("managed-recordings.sqlite");
-        createFormatTwo(active);
+        createFormatThree(active);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + active);
             Statement statement = connection.createStatement())
         {
@@ -195,7 +248,7 @@ class ManagedRecordingCatalogMigratorTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + catalog);
             Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA user_version=3");
+            statement.execute("PRAGMA user_version=4");
         }
         String original = SqliteDatabaseSnapshot.sha256(catalog);
         assertThrows(SQLException.class, () -> ManagedRecordingCatalogMigrator.inspect(catalog));
@@ -260,6 +313,48 @@ class ManagedRecordingCatalogMigratorTest
             statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1,2,0,0)");
             statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
             statement.execute("PRAGMA user_version=2");
+        }
+    }
+
+    private static void createFormatThree(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            for(String ddl: ManagedRecordingSchema.ddlForFormat(3).values())
+            {
+                statement.execute(ddl);
+            }
+            statement.executeUpdate("INSERT INTO catalog_metadata VALUES(1,3,0,0)");
+            statement.execute("PRAGMA application_id=" + ManagedRecordingSchema.APPLICATION_ID);
+            statement.execute("PRAGMA user_version=3");
+        }
+    }
+
+    private static long scalar(Path database, String query) throws SQLException
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            return scalar(statement, query);
+        }
+    }
+
+    private static String text(Path database, String query) throws SQLException
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            return text(statement, query);
+        }
+    }
+
+    private static String text(Statement statement, String query) throws SQLException
+    {
+        try(ResultSet rows = statement.executeQuery(query))
+        {
+            assertTrue(rows.next());
+            return rows.getString(1);
         }
     }
 

@@ -66,6 +66,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteConnectivityService;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
@@ -147,6 +148,7 @@ public class SDRTrunk
     private RemoteConnectivityService mRemoteConnectivityService;
     private AudioRecordingManager mAudioRecordingManager;
     private ManagedRecordingCatalog mManagedRecordingCatalog;
+    private ManagedRecordingTranscriptionService mManagedRecordingTranscriptionService;
     private ScheduledFuture<?> mManagedRecordingRetention;
     private ScheduledExecutorService mManagedRecordingMaintenance;
     private AudioStreamingManager mAudioStreamingManager;
@@ -277,6 +279,12 @@ public class SDRTrunk
             new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall,
                 mManagedRecordingCatalog) :
             new AudioRecordingManager(mUserPreferences, mReceiverActivityService::receiveRecordedCall);
+        if(mManagedRecordingCatalog != null)
+        {
+            mManagedRecordingTranscriptionService = new ManagedRecordingTranscriptionService(mManagedRecordingCatalog,
+                mUserPreferences.getRecordPreference(),
+                () -> mAudioRecordingManager.getQueueStatus().queuedSourceBytes() > 0);
+        }
 
         mAudioStreamingManager = new AudioStreamingManager(mConfigurationManager.getBroadcastModel(), BroadcastFormat.MP3,
             mUserPreferences, mReceiverActivityService::receiveStreamedCall);
@@ -294,6 +302,7 @@ public class SDRTrunk
             mConfigurationManager.getRadioReferenceImportService(),
             mConfigurationManager.getStreamingAdministrationService(), mRemoteConnectivityService);
         mStatsWebServerService.setManagedRecordingCatalog(mManagedRecordingCatalog);
+        mStatsWebServerService.setManagedRecordingTranscriptionService(mManagedRecordingTranscriptionService);
 
         if(mGuiAvailable && !mStatsWebServerService.getRuntimeState().running())
         {
@@ -308,6 +317,10 @@ public class SDRTrunk
         }
         mTunerManager.start();
         mAudioRecordingManager.start();
+        if(mManagedRecordingTranscriptionService != null)
+        {
+            mManagedRecordingTranscriptionService.start();
+        }
         if(mManagedRecordingCatalog != null)
         {
             mManagedRecordingMaintenance = Executors.newSingleThreadScheduledExecutor(
@@ -1046,6 +1059,10 @@ public class SDRTrunk
             {
                 Thread.currentThread().interrupt();
             }
+        }
+        if(mManagedRecordingTranscriptionService != null)
+        {
+            mManagedRecordingTranscriptionService.close();
         }
         mAudioRecordingManager.stop();
         if(mManagedRecordingCatalog != null)

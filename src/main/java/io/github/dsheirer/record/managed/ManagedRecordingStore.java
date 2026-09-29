@@ -16,6 +16,8 @@ import io.github.dsheirer.record.managed.ManagedRecordingCatalog.RecordingCall;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchFilter;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.SearchPage;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Site;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.Transcript;
+import io.github.dsheirer.record.managed.ManagedRecordingCatalog.TranscriptionCounts;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
@@ -1080,6 +1082,145 @@ final class ManagedRecordingStore implements AutoCloseable
                 throw new SQLException("Managed recordings catalog metadata is missing");
             }
             return new StoredStats(rows.getLong(1), rows.getLong(2));
+        }
+    }
+
+    long nextPendingTranscription(long afterId, long minimumDurationMs) throws SQLException
+    {
+        try(Connection connection = openReader();
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT id FROM recording_call INDEXED BY idx_recording_call_transcription_pending " +
+                    "WHERE transcription_status='pending' AND id>? AND duration_ms>=? " +
+                    "ORDER BY id LIMIT 1"))
+        {
+            statement.setLong(1, Math.max(0L, afterId));
+            statement.setLong(2, Math.max(0L, minimumDurationMs));
+            try(ResultSet rows = statement.executeQuery())
+            {
+                return rows.next() ? rows.getLong(1) : 0L;
+            }
+        }
+    }
+
+    Transcript transcription(long id) throws SQLException
+    {
+        if(id <= 0)
+        {
+            return null;
+        }
+        try(Connection connection = openReader();
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT c.transcription_status,t.text,t.stored_at_ms FROM recording_call c " +
+                    "LEFT JOIN recording_transcript t ON t.call_id=c.id WHERE c.id=?"))
+        {
+            statement.setLong(1, id);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                if(!rows.next())
+                {
+                    return null;
+                }
+                long storedAtMs = rows.getLong(3);
+                return new Transcript(rows.getString(1), rows.getString(2),
+                    rows.wasNull() ? null : storedAtMs);
+            }
+        }
+    }
+
+    TranscriptionCounts transcriptionCounts(long minimumDurationMs) throws SQLException
+    {
+        try(Connection connection = openReader();
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT coalesce(sum(CASE WHEN transcription_status='pending' THEN 1 ELSE 0 END),0)," +
+                    "coalesce(sum(CASE WHEN transcription_status='complete' THEN 1 ELSE 0 END),0)," +
+                    "coalesce(sum(CASE WHEN transcription_status='failed' THEN 1 ELSE 0 END),0) " +
+                    "FROM recording_call WHERE duration_ms>=?"))
+        {
+            statement.setLong(1, Math.max(0L, minimumDurationMs));
+            try(ResultSet rows = statement.executeQuery())
+            {
+                rows.next();
+                return new TranscriptionCounts(rows.getLong(1), rows.getLong(2), rows.getLong(3));
+            }
+        }
+    }
+
+    /** Only the dedicated catalog writer invokes this method. The transcript and status commit together. */
+    boolean storeTranscript(long id, String text, long storedAtMs) throws SQLException
+    {
+        // An empty response is a valid no-speech result and must not be retried indefinitely.
+        if(id <= 0 || text == null || storedAtMs < 0)
+        {
+            return false;
+        }
+        mWriterConnection.setAutoCommit(false);
+        try
+        {
+            int updated;
+            try(PreparedStatement statement = mWriterConnection.prepareStatement(
+                "UPDATE recording_call SET transcription_status='complete' " +
+                    "WHERE id=? AND transcription_status='pending'"))
+            {
+                statement.setLong(1, id);
+                updated = statement.executeUpdate();
+            }
+            if(updated == 0)
+            {
+                mWriterConnection.rollback();
+                return false;
+            }
+            try(PreparedStatement statement = mWriterConnection.prepareStatement(
+                "INSERT INTO recording_transcript(call_id,text,stored_at_ms) VALUES(?,?,?)"))
+            {
+                statement.setLong(1, id);
+                statement.setString(2, text);
+                statement.setLong(3, storedAtMs);
+                statement.executeUpdate();
+            }
+            mWriterConnection.commit();
+            return true;
+        }
+        catch(SQLException exception)
+        {
+            mWriterConnection.rollback();
+            throw exception;
+        }
+        finally
+        {
+            mWriterConnection.setAutoCommit(true);
+        }
+    }
+
+    /** Only the dedicated catalog writer invokes this method. */
+    boolean failTranscription(long id) throws SQLException
+    {
+        if(id <= 0)
+        {
+            return false;
+        }
+        try(PreparedStatement statement = mWriterConnection.prepareStatement(
+            "UPDATE recording_call SET transcription_status='failed' " +
+                "WHERE id=? AND transcription_status='pending'"))
+        {
+            statement.setLong(1, id);
+            return statement.executeUpdate() > 0;
+        }
+    }
+
+    /** Admin-only retry uses its own short connection, never a receiver or catalog callback. */
+    boolean retryTranscription(long id) throws SQLException
+    {
+        if(id <= 0)
+        {
+            return false;
+        }
+        try(Connection connection = open();
+            PreparedStatement statement = connection.prepareStatement(
+                "UPDATE recording_call SET transcription_status='pending' " +
+                    "WHERE id=? AND transcription_status='failed'"))
+        {
+            statement.setLong(1, id);
+            return statement.executeUpdate() > 0;
         }
     }
 

@@ -345,10 +345,14 @@ an intermediate format 28 does not repeat that repair.
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
 adds a one-to-one `recording_transcript` table containing transcript text and its storage time in Unix epoch
-milliseconds. A missing row means no transcript has been stored. The format-1-to-2 Application Migrator step preserves
-all recording rows, IDs, paths, metadata, and counters, and adds no transcript rows. The main application database
-remains at its existing format because its SQLite contents do not change. Recognized older catalogs are backed up and
-migrated on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
+milliseconds. The format-1-to-2 Application Migrator step preserves all recording rows, IDs, paths, metadata, and
+counters, and adds no transcript rows. Catalog format 3 adds a constrained `transcription_status` to each indexed call
+(`pending`, `complete`, or `failed`) and a pending-call lookup index. The format-2-to-3 step preserves every call and
+transcript, marking calls with an existing transcript `complete` and other calls `pending`. Short calls stay pending;
+the background worker applies its configured minimum duration when selecting work. A failed call is retried only by
+an administrator action. Fresh format-3 catalogs use the same status default and index. The main application database
+remains at format 29 because its SQLite contents do not change. Recognized older catalogs are backed up and migrated
+on a staged copy at the pre-receiver setup boundary; normal catalog startup validates only.
 
 Every change to persisted DDL or persisted meaning must land with all of the following:
 

@@ -27,6 +27,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,6 +48,8 @@ class ManagedRecordingStoreTest
                 ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
             assertEquals(1, store.search(SearchFilter.builder().fromMs(0L).toMs(2000L)
                 .build()).calls().size());
+            assertTrue(store.storeTranscript(1, "hello world", 1234L));
+            assertEquals("complete", store.transcription(1).status());
         }
         assertFalse(ManagedRecordingSchema.ddlForFormat(1).containsKey("recording_transcript"));
         assertTrue(ManagedRecordingSchema.ddlForFormat(2).containsKey("recording_transcript"));
@@ -63,16 +66,14 @@ class ManagedRecordingStoreTest
             try(var version = statement.executeQuery("PRAGMA user_version"))
             {
                 assertTrue(version.next());
-                assertEquals(2, version.getInt(1));
+                assertEquals(3, version.getInt(1));
             }
             try(var metadata = statement.executeQuery(
                 "SELECT format_version FROM catalog_metadata WHERE id=1"))
             {
                 assertTrue(metadata.next());
-                assertEquals(2, metadata.getInt(1));
+                assertEquals(3, metadata.getInt(1));
             }
-            statement.executeUpdate("INSERT INTO recording_transcript(call_id,text,stored_at_ms) " +
-                "VALUES(1,'hello world',1234)");
             try(var rows = statement.executeQuery("SELECT text,stored_at_ms FROM recording_transcript " +
                 "WHERE call_id=1"))
             {
@@ -88,6 +89,10 @@ class ManagedRecordingStoreTest
                 "UPDATE recording_transcript SET text=NULL WHERE call_id=1"));
             assertThrows(SQLException.class, () -> statement.executeUpdate(
                 "UPDATE recording_transcript SET stored_at_ms=-1 WHERE call_id=1"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE recording_call SET transcription_status='unknown' WHERE id=1"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate(
+                "UPDATE recording_call SET transcription_status=NULL WHERE id=1"));
 
             statement.executeUpdate("DELETE FROM recording_call WHERE id=1");
             try(var rows = statement.executeQuery("SELECT count(*) FROM recording_transcript"))
@@ -95,6 +100,72 @@ class ManagedRecordingStoreTest
                 assertTrue(rows.next());
                 assertEquals(0, rows.getInt(1));
             }
+        }
+    }
+
+    @Test
+    void pendingSelectionUsesDurationAndStatusAndSupportsRetry() throws Exception
+    {
+        Path root = temporary.resolve("managed-pending");
+        Path db = temporary.resolve("database/pending.sqlite");
+        Files.createDirectories(root);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, root))
+        {
+            save(store, root, metadata(1000, "system-a", "first.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            save(store, root, metadata(2000, "system-a", "second.mp3", 101, 4002,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            save(store, root, metadata(3000, "system-a", "short.mp3", 101, 4003,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + db);
+                var statement = connection.createStatement())
+            {
+                statement.executeUpdate("UPDATE recording_call SET duration_ms=400 WHERE id=3");
+            }
+            assertEquals(1L, store.nextPendingTranscription(0, 500));
+            assertEquals(2L, store.nextPendingTranscription(1, 500));
+            assertEquals(0L, store.nextPendingTranscription(2, 500));
+            assertEquals(2L, store.transcriptionCounts(500).pending());
+
+            assertTrue(store.storeTranscript(1, "spoken text", 5000L));
+            assertFalse(store.storeTranscript(1, "overwritten", 6000L));
+            assertTrue(store.failTranscription(2));
+            assertEquals(0L, store.nextPendingTranscription(0, 500));
+            assertEquals(1L, store.transcriptionCounts(500).completed());
+            assertEquals(1L, store.transcriptionCounts(500).failed());
+            assertEquals("spoken text", store.transcription(1).text());
+            assertEquals(5000L, store.transcription(1).storedAtMs());
+            assertEquals("failed", store.transcription(2).status());
+            assertFalse(store.retryTranscription(1));
+            assertTrue(store.retryTranscription(2));
+            assertEquals(2L, store.nextPendingTranscription(0, 500));
+            assertEquals(3L, store.nextPendingTranscription(2, 0));
+            assertTrue(store.storeTranscript(3, "", 7000L));
+            assertEquals("complete", store.transcription(3).status());
+            assertEquals("", store.transcription(3).text());
+            assertEquals(null, store.transcription(999));
+        }
+    }
+
+    @Test
+    void catalogAcknowledgesTranscriptAfterStatusAndTextCommit() throws Exception
+    {
+        Path root = temporary.resolve("managed-catalog");
+        Path db = temporary.resolve("database/catalog.sqlite");
+        Files.createDirectories(root);
+        try(ManagedRecordingStore store = new ManagedRecordingStore(db, root))
+        {
+            save(store, root, metadata(1000, "system-a", "one.mp3", 101, 4001,
+                ManagedRecordingCatalog.CALL_GROUP, null, List.of(), List.of()));
+        }
+        try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(db, root))
+        {
+            assertEquals(1L, catalog.nextPendingTranscription(0, 500));
+            assertTrue(catalog.storeTranscript(1, "", 1234L).get(5, TimeUnit.SECONDS));
+            assertEquals("complete", catalog.transcription(1).status());
+            assertEquals("", catalog.transcription(1).text());
+            assertEquals(0L, catalog.nextPendingTranscription(0, 500));
+            assertFalse(catalog.failTranscription(1).get(5, TimeUnit.SECONDS));
         }
     }
 

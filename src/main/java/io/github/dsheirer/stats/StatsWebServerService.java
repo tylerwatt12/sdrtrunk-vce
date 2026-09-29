@@ -46,6 +46,7 @@ import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -208,6 +209,7 @@ public class StatsWebServerService implements AutoCloseable
     private volatile LogicalCallDiagnosticService mLogicalCallDiagnosticService;
     private volatile AudioCallCoordinator mAudioCallCoordinator;
     private volatile ManagedRecordingCatalog mManagedRecordingCatalog;
+    private volatile ManagedRecordingTranscriptionService mManagedRecordingTranscriptionService;
     private final ManagedRecordingMaintenance mManagedRecordingMaintenance =
         new ManagedRecordingMaintenance();
     private volatile MapSnapshotService mMapSnapshotService;
@@ -421,6 +423,11 @@ public class StatsWebServerService implements AutoCloseable
     public void setManagedRecordingCatalog(ManagedRecordingCatalog catalog)
     {
         mManagedRecordingCatalog = catalog;
+    }
+
+    public void setManagedRecordingTranscriptionService(ManagedRecordingTranscriptionService service)
+    {
+        mManagedRecordingTranscriptionService = service;
     }
 
     /**
@@ -874,7 +881,7 @@ public class StatsWebServerService implements AutoCloseable
 
         ManagedRecordingsHttpController managedRecordings = new ManagedRecordingsHttpController(
             () -> mManagedRecordingCatalog, mUserPreferences, mWebRequestSecurity,
-            mManagedRecordingMaintenance);
+            mManagedRecordingMaintenance, () -> mManagedRecordingTranscriptionService);
         server.createContext(ManagedRecordingsHttpController.BROWSE_PATH, mWebRequestSecurity.protectApi(
             WebCapability.RECORDINGS_VIEW, managedRecordings::handleBrowse));
         server.createContext(ManagedRecordingsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(

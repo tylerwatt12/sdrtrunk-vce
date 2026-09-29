@@ -39,7 +39,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Explicit, pre-receiver upgrade of the separate Managed Recordings catalog. Normal catalog startup only validates
  * its format. The Application Migrator child changes the schema of a private staged copy; this class retains a
- * recoverable format-1 backup under database/backups and promotes the checked format-2 copy only after the child
+ * recoverable source-format backup under database/backups and promotes the checked current copy only after the child
  * has exited successfully.
  */
 public final class ManagedRecordingCatalogMigrator
@@ -57,6 +57,7 @@ public final class ManagedRecordingCatalogMigrator
         "recording_site", "id",
         "recording_system_site", "system_id,site_id",
         "recording_call", "id",
+        "recording_transcript", "call_id",
         "recording_call_site", "call_id,site_id",
         "recording_patch_member", "call_id,kind,local_id,home_wacn,home_system,home_id",
         "sqlite_sequence", "name");
@@ -90,7 +91,7 @@ public final class ManagedRecordingCatalogMigrator
         SqliteDatabaseSnapshot.requireSourceUsable(source);
         if(!Files.exists(Path.of(source + "-journal"), LinkOption.NOFOLLOW_LINKS))
         {
-            // Ordinary launches of a current catalog need only bounded exact-format admission. A format-1 file
+            // Ordinary launches of a current catalog need only bounded exact-format admission. An older file
             // receives the full source-immutable snapshot and integrity scan before approval is offered. A read-only
             // live connection sees committed WAL pages when the previous launch left a WAL sidecar.
             if(readBoundedState(source) == State.CURRENT)
@@ -155,7 +156,7 @@ public final class ManagedRecordingCatalogMigrator
         FileAccessAttributeSnapshot attributes = FileAccessAttributeSnapshot.capture(source);
         Path scratch = privateScratch(source);
         Path backup = source.getParent().resolve("backups").resolve(
-            "managed-recordings-before-transcript-" + UUID.randomUUID() + ".sqlite");
+            "managed-recordings-before-upgrade-" + UUID.randomUUID() + ".sqlite");
         boolean backupCreated = false;
         boolean promoted = false;
         Throwable primaryFailure = null;
@@ -177,7 +178,7 @@ public final class ManagedRecordingCatalogMigrator
             if(inspectStandalone(backup).state() != State.UPGRADE_REQUIRED ||
                 !sameLogicalRows(snapshot, backup))
             {
-                throw new IOException("The retained format-1 catalog backup did not validate.");
+                throw new IOException("The retained managed recordings catalog backup did not validate.");
             }
             Path staged = scratch.resolve(".managed-recordings.sqlite.migration-" + UUID.randomUUID());
             Files.copy(snapshot, staged);
@@ -190,12 +191,13 @@ public final class ManagedRecordingCatalogMigrator
             SqliteDatabaseSnapshot.create(staged, promotable);
             if(inspectStandalone(promotable).state() != State.CURRENT)
             {
-                throw new SQLException("The staged managed recordings catalog did not reach format 2.");
+                throw new SQLException("The staged managed recordings catalog did not reach format " +
+                    CURRENT_FORMAT + ".");
             }
             attributes.applyTo(promotable);
             SqliteDatabaseSnapshot.requireExternalSourceUnchanged(source, sourceState);
 
-            // Checkpointing changes physical SQLite files but leaves the original valid as format 1 if a crash
+            // Checkpointing changes physical SQLite files but leaves the original valid in its old format if a crash
             // occurs before the atomic main-file replacement. The already retained backup includes committed WAL.
             checkpointOriginal(source);
             Path checkpointed = scratch.resolve("checkpointed.sqlite");
@@ -204,7 +206,7 @@ public final class ManagedRecordingCatalogMigrator
                 !sameLogicalRows(snapshot, checkpointed))
             {
                 throw new IOException("The managed recordings catalog changed during WAL checkpoint; " +
-                    "its format-1 backup was retained and the upgrade was not installed.");
+                    "its backup was retained and the upgrade was not installed.");
             }
             requireNoRecoverySidecars(source);
             try
@@ -215,7 +217,7 @@ public final class ManagedRecordingCatalogMigrator
             catch(AtomicMoveNotSupportedException exception)
             {
                 throw new IOException("Atomic replacement is unavailable for the managed recordings catalog; " +
-                    "the format-1 backup was retained.", exception);
+                    "the source backup was retained.", exception);
             }
             promoted = true;
             return new MigrationResult(true, backup);
@@ -225,7 +227,7 @@ public final class ManagedRecordingCatalogMigrator
             primaryFailure = exception;
             if(backupCreated)
             {
-                exception.addSuppressed(new IOException("Recoverable format-1 catalog backup retained " +
+                exception.addSuppressed(new IOException("Recoverable managed recordings catalog backup retained " +
                     "under the database backups directory."));
             }
             throw exception;
@@ -266,9 +268,14 @@ public final class ManagedRecordingCatalogMigrator
         {
             throw new IOException("The managed recordings migrator accepts only a private staged catalog.");
         }
+        int sourceVersion;
+        try(Connection source = SqliteDatabaseSnapshot.openImmutable(staged))
+        {
+            sourceVersion = pragmaInt(source, "user_version");
+        }
         if(inspectStandalone(staged).state() != State.UPGRADE_REQUIRED)
         {
-            throw new SQLException("The staged managed recordings catalog is not exact format 1.");
+            throw new SQLException("The staged managed recordings catalog is not an exact older format.");
         }
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + staged);
             Statement statement = connection.createStatement())
@@ -278,11 +285,19 @@ public final class ManagedRecordingCatalogMigrator
             connection.setAutoCommit(false);
             try
             {
-                statement.execute(ManagedRecordingSchema.ddlForFormat(CURRENT_FORMAT).get(
-                    "recording_transcript"));
-                statement.executeUpdate("UPDATE catalog_metadata SET format_version=" + CURRENT_FORMAT +
-                    " WHERE id=1");
-                statement.execute("PRAGMA user_version=" + CURRENT_FORMAT);
+                if(sourceVersion == 1)
+                {
+                    statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
+                    stamp(statement, 2);
+                    requireExact(connection, 2);
+                }
+                statement.execute("ALTER TABLE recording_call ADD COLUMN " +
+                    ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+                statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
+                    "WHERE id IN (SELECT call_id FROM recording_transcript)");
+                statement.execute(ManagedRecordingSchema.ddlForFormat(3).get(
+                    "idx_recording_call_transcription_pending"));
+                stamp(statement, CURRENT_FORMAT);
                 requireExact(connection, CURRENT_FORMAT);
                 requireIntegrity(connection);
                 connection.commit();
@@ -300,13 +315,13 @@ public final class ManagedRecordingCatalogMigrator
         try(Connection connection = SqliteDatabaseSnapshot.openImmutable(standalone))
         {
             int version = pragmaInt(connection, "user_version");
-            if(version != LEGACY_FORMAT && version != CURRENT_FORMAT)
+            if(version < LEGACY_FORMAT || version > CURRENT_FORMAT)
             {
                 throw new SQLException("Unsupported managed recordings catalog version " + version + ".");
             }
             requireExact(connection, version);
             requireIntegrity(connection);
-            return new Inspection(version == LEGACY_FORMAT ? State.UPGRADE_REQUIRED : State.CURRENT);
+            return new Inspection(version < CURRENT_FORMAT ? State.UPGRADE_REQUIRED : State.CURRENT);
         }
     }
 
@@ -321,7 +336,7 @@ public final class ManagedRecordingCatalogMigrator
                 requireExact(connection, CURRENT_FORMAT);
                 return State.CURRENT;
             }
-            if(version == LEGACY_FORMAT)
+            if(version >= LEGACY_FORMAT && version < CURRENT_FORMAT)
             {
                 return State.UPGRADE_REQUIRED;
             }
@@ -383,6 +398,12 @@ public final class ManagedRecordingCatalogMigrator
         }
     }
 
+    private static void stamp(Statement statement, int version) throws SQLException
+    {
+        statement.executeUpdate("UPDATE catalog_metadata SET format_version=" + version + " WHERE id=1");
+        statement.execute("PRAGMA user_version=" + version);
+    }
+
     private static int pragmaInt(Connection connection, String name) throws SQLException
     {
         try(Statement statement = connection.createStatement();
@@ -401,8 +422,13 @@ public final class ManagedRecordingCatalogMigrator
         try(Connection first = SqliteDatabaseSnapshot.openImmutable(before);
             Connection second = SqliteDatabaseSnapshot.openImmutable(after))
         {
+            int version = pragmaInt(first, "user_version");
             for(Map.Entry<String,String> entry: ROW_ORDER.entrySet())
             {
+                if(version == 1 && "recording_transcript".equals(entry.getKey()))
+                {
+                    continue;
+                }
                 String query = "SELECT * FROM " + entry.getKey() + " ORDER BY " + entry.getValue();
                 try(Statement firstStatement = first.createStatement();
                     Statement secondStatement = second.createStatement();

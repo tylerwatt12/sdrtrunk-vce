@@ -59,6 +59,11 @@ class ManagedRecordingsHttpControllerTest
     private UserPreferences mPreferences;
     private RecordingMode mOriginalMode;
     private Integer mOriginalRetention;
+    private boolean mOriginalTranscriptionEnabled;
+    private String mOriginalTranscriptionUrl;
+    private String mOriginalTranscriptionModel;
+    private String mOriginalTranscriptionApiKey;
+    private long mOriginalTranscriptionMinimumDurationMs;
     private volatile ManagedRecordingCatalog mCatalog;
     private ManagedRecordingMaintenance mMaintenance;
     private WebRequestSecurity mSecurity;
@@ -73,7 +78,18 @@ class ManagedRecordingsHttpControllerTest
         mPreferences = new UserPreferences();
         mOriginalMode = mPreferences.getRecordPreference().getRecordingMode();
         mOriginalRetention = mPreferences.getRecordPreference().getManagedRetentionDays();
+        mOriginalTranscriptionEnabled = mPreferences.getRecordPreference().isTranscriptionEnabled();
+        mOriginalTranscriptionUrl = mPreferences.getRecordPreference().getTranscriptionUrl();
+        mOriginalTranscriptionModel = mPreferences.getRecordPreference().getTranscriptionModel();
+        mOriginalTranscriptionApiKey = mPreferences.getRecordPreference().getTranscriptionApiKey();
+        mOriginalTranscriptionMinimumDurationMs =
+            mPreferences.getRecordPreference().getTranscriptionMinimumDurationMs();
         mPreferences.getRecordPreference().setRecordingMode(RecordingMode.CLASSIC);
+        mPreferences.getRecordPreference().setTranscriptionEnabled(false);
+        mPreferences.getRecordPreference().setTranscriptionUrl("");
+        mPreferences.getRecordPreference().setTranscriptionModel("");
+        mPreferences.getRecordPreference().setTranscriptionApiKey("");
+        mPreferences.getRecordPreference().setTranscriptionMinimumDurationMs(500);
         Path mainDatabase = mDirectory.resolve("main.sqlite");
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mainDatabase))
         {
@@ -133,6 +149,12 @@ class ManagedRecordingsHttpControllerTest
         {
             mPreferences.getRecordPreference().setRecordingMode(mOriginalMode);
             mPreferences.getRecordPreference().setManagedRetentionDays(mOriginalRetention);
+            mPreferences.getRecordPreference().setTranscriptionEnabled(mOriginalTranscriptionEnabled);
+            mPreferences.getRecordPreference().setTranscriptionUrl(mOriginalTranscriptionUrl);
+            mPreferences.getRecordPreference().setTranscriptionModel(mOriginalTranscriptionModel);
+            mPreferences.getRecordPreference().setTranscriptionApiKey(mOriginalTranscriptionApiKey);
+            mPreferences.getRecordPreference().setTranscriptionMinimumDurationMs(
+                mOriginalTranscriptionMinimumDurationMs);
         }
     }
 
@@ -214,6 +236,87 @@ class ManagedRecordingsHttpControllerTest
         {
             mCatalog = catalog;
         }
+    }
+
+    @Test
+    void transcriptionSettingsAndDetailsKeepKeyPrivateAndEnforceEligibility() throws Exception
+    {
+        String browse = ManagedRecordingsHttpController.BROWSE_PATH;
+        String admin = ManagedRecordingsHttpController.ADMIN_PATH;
+        Session primary = login();
+        HttpResponse<String> initial = send(request(admin + "/settings")
+            .header("Cookie", primary.cookie()).GET());
+        assertEquals(200, initial.statusCode(), initial.body());
+        assertFalse(json(initial).at("/data/transcription_enabled").booleanValue());
+        assertEquals(500, json(initial).at("/data/transcription_min_duration_ms").longValue());
+        assertFalse(json(initial).at("/data/transcription_key_configured").booleanValue());
+        assertFalse(json(initial).at("/data").has("transcription_api_key"));
+        assertEquals("disabled", json(send(request(browse + "/calls/1").GET()))
+            .at("/data/transcription/status").textValue());
+        assertEquals(400, send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_enabled\":true}"))).statusCode());
+        assertEquals(400, send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_url\":\"file:///etc/passwd\"}")))
+            .statusCode());
+        assertEquals(400, send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_min_duration_ms\":600001}")))
+            .statusCode());
+        assertEquals(400, send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_min_duration_ms\":499}")))
+            .statusCode());
+
+        String key = "test-transcription-secret";
+        HttpResponse<String> configured = send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_url\":\"http://127.0.0.1:8000/" +
+                "v1/audio/transcriptions\",\"transcription_model\":\"radio-model\"," +
+                "\"transcription_api_key\":\"" + key + "\",\"transcription_enabled\":true}")));
+        assertEquals(200, configured.statusCode(), configured.body());
+        assertTrue(json(configured).at("/data/transcription_enabled").booleanValue());
+        assertTrue(json(configured).at("/data/transcription_key_configured").booleanValue());
+        assertFalse(configured.body().contains(key));
+        assertFalse(json(configured).at("/data").has("transcription_api_key"));
+        HttpResponse<String> status = send(request(admin + "/status")
+            .header("Cookie", primary.cookie()).GET());
+        assertEquals(1, json(status).at("/data/transcription/pending").longValue());
+        assertFalse(status.body().contains(key));
+        HttpResponse<String> detail = send(request(browse + "/calls/1").GET());
+        assertEquals("pending", json(detail).at("/data/transcription/status").textValue());
+
+        HttpResponse<String> threshold = send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_min_duration_ms\":1500}")));
+        assertEquals(200, threshold.statusCode(), threshold.body());
+        assertEquals("too_short", json(send(request(browse + "/calls/1").GET()))
+            .at("/data/transcription/status").textValue());
+        assertEquals(409, send(mutation(admin + "/calls/1/transcription/retry", primary)
+            .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+
+        send(mutation(admin + "/settings", primary)
+            .PUT(HttpRequest.BodyPublishers.ofString("{\"transcription_min_duration_ms\":500," +
+                "\"transcription_clear_api_key\":true}")));
+        assertFalse(json(send(request(admin + "/settings").header("Cookie", primary.cookie()).GET()))
+            .at("/data/transcription_key_configured").booleanValue());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET transcription_status='failed' WHERE id=1");
+        }
+        assertEquals("failed", json(send(request(browse + "/calls/1").GET()))
+            .at("/data/transcription/status").textValue());
+        assertEquals(202, send(mutation(admin + "/calls/1/transcription/retry", primary)
+            .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+        assertEquals("pending", json(send(request(browse + "/calls/1").GET()))
+            .at("/data/transcription/status").textValue());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
+            mDirectory.resolve("managed-recordings.sqlite")); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_transcript(call_id,text,stored_at_ms) " +
+                "VALUES(1,'Dispatch test',3000)");
+            statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' WHERE id=1");
+        }
+        JsonNode completed = json(send(request(browse + "/calls/1").GET())).at("/data/transcription");
+        assertEquals("complete", completed.get("status").textValue());
+        assertEquals("Dispatch test", completed.get("text").textValue());
+        assertEquals(3000, completed.get("stored_at_ms").longValue());
     }
 
     @Test

@@ -8,14 +8,17 @@ package io.github.dsheirer.stats;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.record.RecordPreference;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
+import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.WebRequestSecurity;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -47,22 +50,40 @@ final class ManagedRecordingsHttpController
     private final WebRequestSecurity mSecurity;
     private final ManagedRecordingLabels mLabels;
     private final ManagedRecordingMaintenance mMaintenance;
+    private final Supplier<ManagedRecordingTranscriptionService> mTranscriptionService;
 
     ManagedRecordingsHttpController(Supplier<ManagedRecordingCatalog> catalog, UserPreferences preferences,
                                     WebRequestSecurity security, ManagedRecordingMaintenance maintenance)
     {
-        this(catalog, preferences, security, maintenance, new ManagedRecordingLabels(preferences));
+        this(catalog, preferences, security, maintenance, new ManagedRecordingLabels(preferences), () -> null);
+    }
+
+    ManagedRecordingsHttpController(Supplier<ManagedRecordingCatalog> catalog, UserPreferences preferences,
+                                    WebRequestSecurity security, ManagedRecordingMaintenance maintenance,
+                                    Supplier<ManagedRecordingTranscriptionService> transcriptionService)
+    {
+        this(catalog, preferences, security, maintenance, new ManagedRecordingLabels(preferences),
+            transcriptionService);
     }
 
     ManagedRecordingsHttpController(Supplier<ManagedRecordingCatalog> catalog, UserPreferences preferences,
                                     WebRequestSecurity security, ManagedRecordingMaintenance maintenance,
                                     ManagedRecordingLabels labels)
     {
+        this(catalog, preferences, security, maintenance, labels, () -> null);
+    }
+
+    ManagedRecordingsHttpController(Supplier<ManagedRecordingCatalog> catalog, UserPreferences preferences,
+                                    WebRequestSecurity security, ManagedRecordingMaintenance maintenance,
+                                    ManagedRecordingLabels labels,
+                                    Supplier<ManagedRecordingTranscriptionService> transcriptionService)
+    {
         mCatalog = catalog;
         mPreferences = preferences;
         mSecurity = security;
         mLabels = labels;
         mMaintenance = maintenance;
+        mTranscriptionService = transcriptionService;
     }
 
     void handleBrowse(HttpExchange exchange) throws IOException
@@ -116,8 +137,25 @@ final class ManagedRecordingsHttpController
                     {
                         throw new StatsApiException(404, "recording_not_found", "Recording was not found");
                     }
-                    ApiHttpResponse.sendData(exchange, 200,
-                        mLabels.decorate(List.of(call.toMap())).getFirst());
+                    Map<String,Object> detail = mLabels.decorate(List.of(call.toMap())).getFirst();
+                    ManagedRecordingCatalog.Transcript storedTranscript = catalog.transcription(id);
+                    if(storedTranscript == null)
+                    {
+                        throw new StatsApiException(404, "recording_not_found", "Recording was not found");
+                    }
+                    Map<String,Object> transcription = new LinkedHashMap<>(storedTranscript.toMap());
+                    if("pending".equals(transcription.get("status")) &&
+                        !mPreferences.getRecordPreference().isTranscriptionEnabled())
+                    {
+                        transcription.put("status", "disabled");
+                    }
+                    else if("pending".equals(transcription.get("status")) &&
+                        call.durationMs() < mPreferences.getRecordPreference().getTranscriptionMinimumDurationMs())
+                    {
+                        transcription.put("status", "too_short");
+                    }
+                    detail.put("transcription", transcription);
+                    ApiHttpResponse.sendData(exchange, 200, detail);
                 }
                 return;
             }
@@ -182,6 +220,19 @@ final class ManagedRecordingsHttpController
                 Map<String,Object> status = new LinkedHashMap<>(settings());
                 status.put("catalog", catalog.stats());
                 status.put("maintenance", mMaintenance.status());
+                Map<String,Object> transcription = new LinkedHashMap<>(catalog.transcriptionCounts(
+                    mPreferences.getRecordPreference().getTranscriptionMinimumDurationMs()).toMap());
+                ManagedRecordingTranscriptionService service = mTranscriptionService.get();
+                if(service != null)
+                {
+                    transcription.putAll(service.status());
+                }
+                else
+                {
+                    transcription.put("active", false);
+                    transcription.put("last_error", null);
+                }
+                status.put("transcription", transcription);
                 ApiHttpResponse.sendData(exchange, 200, status);
                 return;
             }
@@ -206,6 +257,35 @@ final class ManagedRecordingsHttpController
             {
                 requireMethod(exchange, "DELETE");
                 delete(exchange, catalog);
+                return;
+            }
+            String retryPrefix = ADMIN_PATH + "/calls/";
+            String retrySuffix = "/transcription/retry";
+            if(path.startsWith(retryPrefix) && path.endsWith(retrySuffix))
+            {
+                requireMethod(exchange, "POST");
+                long id = positiveId(path.substring(retryPrefix.length(), path.length() - retrySuffix.length()));
+                if(hasBody(exchange))
+                {
+                    throw new StatsApiException(400, "invalid_request", "This operation takes no request body");
+                }
+                ManagedRecordingCatalog.RecordingCall call = catalog.find(id);
+                if(call == null)
+                {
+                    throw new StatsApiException(404, "recording_not_found", "Recording was not found");
+                }
+                if(call.durationMs() < mPreferences.getRecordPreference().getTranscriptionMinimumDurationMs())
+                {
+                    throw new StatsApiException(409, "recording_too_short",
+                        "Recording is shorter than the minimum transcription duration");
+                }
+                if(!catalog.retryTranscription(id))
+                {
+                    throw new StatsApiException(409, "transcription_not_retryable",
+                        "Recording transcription is not retryable");
+                }
+                ApiHttpResponse.sendData(exchange, 202, Map.of("status",
+                    mPreferences.getRecordPreference().isTranscriptionEnabled() ? "pending" : "disabled"));
                 return;
             }
             throw new StatsApiException(404, "not_found", "Not found");
@@ -551,22 +631,36 @@ final class ManagedRecordingsHttpController
 
     private Map<String,Object> settings()
     {
+        RecordPreference record = mPreferences.getRecordPreference();
         Map<String,Object> result = new LinkedHashMap<>();
-        result.put("mode", mPreferences.getRecordPreference().getRecordingMode().name());
-        result.put("retention_days", mPreferences.getRecordPreference().getManagedRetentionDays());
+        result.put("mode", record.getRecordingMode().name());
+        result.put("retention_days", record.getManagedRetentionDays());
         result.put("managed_directory",
             mPreferences.getDirectoryPreference().getDirectoryManagedRecording().toString());
         result.put("available", mCatalog.get() != null);
+        result.put("transcription_enabled", record.isTranscriptionEnabled());
+        result.put("transcription_url", record.getTranscriptionUrl());
+        result.put("transcription_model", record.getTranscriptionModel());
+        result.put("transcription_min_duration_ms", record.getTranscriptionMinimumDurationMs());
+        result.put("transcription_key_configured", record.isTranscriptionApiKeyConfigured());
         return result;
     }
 
     private void updateSettings(HttpExchange exchange) throws IOException
     {
         JsonNode body = json(exchange);
-        rejectUnknownFields(body, Set.of("mode", "retention_days"));
+        rejectUnknownFields(body, Set.of("mode", "retention_days", "transcription_enabled",
+            "transcription_url", "transcription_model", "transcription_min_duration_ms",
+            "transcription_api_key", "transcription_clear_api_key"));
         JsonNode rawMode = body.get("mode");
         JsonNode rawRetention = body.get("retention_days");
-        if(rawMode == null && rawRetention == null)
+        JsonNode rawEnabled = body.get("transcription_enabled");
+        JsonNode rawUrl = body.get("transcription_url");
+        JsonNode rawModel = body.get("transcription_model");
+        JsonNode rawMinimum = body.get("transcription_min_duration_ms");
+        JsonNode rawKey = body.get("transcription_api_key");
+        JsonNode rawClearKey = body.get("transcription_clear_api_key");
+        if(body.isEmpty())
         {
             throw new StatsApiException(400, "invalid_request", "At least one setting is required");
         }
@@ -600,15 +694,152 @@ final class ManagedRecordingsHttpController
             }
             retention = rawRetention.intValue();
         }
+        RecordPreference record = mPreferences.getRecordPreference();
+        boolean enabled = record.isTranscriptionEnabled();
+        if(rawEnabled != null)
+        {
+            if(!rawEnabled.isBoolean())
+            {
+                throw new StatsApiException(400, "invalid_transcription_enabled",
+                    "Transcription enabled must be true or false", "transcription_enabled");
+            }
+            enabled = rawEnabled.booleanValue();
+        }
+        String url = record.getTranscriptionUrl();
+        if(rawUrl != null)
+        {
+            if(!rawUrl.isTextual() || rawUrl.textValue().length() > 2048)
+            {
+                throw new StatsApiException(400, "invalid_transcription_url",
+                    "Transcription URL is invalid", "transcription_url");
+            }
+            url = rawUrl.textValue().trim();
+            validateTranscriptionUrl(url);
+        }
+        String model = record.getTranscriptionModel();
+        if(rawModel != null)
+        {
+            if(!rawModel.isTextual() || rawModel.textValue().length() > 200)
+            {
+                throw new StatsApiException(400, "invalid_transcription_model",
+                    "Transcription model is invalid", "transcription_model");
+            }
+            model = rawModel.textValue().trim();
+            if(model.indexOf('\n') >= 0 || model.indexOf('\r') >= 0)
+            {
+                throw new StatsApiException(400, "invalid_transcription_model",
+                    "Transcription model is invalid", "transcription_model");
+            }
+        }
+        Long minimum = null;
+        if(rawMinimum != null)
+        {
+            if(!rawMinimum.isIntegralNumber() || !rawMinimum.canConvertToLong() ||
+                rawMinimum.longValue() < RecordPreference.DEFAULT_TRANSCRIPTION_MIN_DURATION_MS ||
+                rawMinimum.longValue() > RecordPreference.MAX_TRANSCRIPTION_MIN_DURATION_MS)
+            {
+                throw new StatsApiException(400, "invalid_transcription_min_duration_ms",
+                    "Minimum duration must be 500 to 600000 milliseconds", "transcription_min_duration_ms");
+            }
+            minimum = rawMinimum.longValue();
+        }
+        String key = null;
+        if(rawKey != null)
+        {
+            if(!rawKey.isTextual() || rawKey.textValue().length() > 1024 ||
+                rawKey.textValue().chars().anyMatch(Character::isISOControl))
+            {
+                throw new StatsApiException(400, "invalid_transcription_api_key",
+                    "Transcription API key is invalid", "transcription_api_key");
+            }
+            key = rawKey.textValue().trim();
+        }
+        boolean clearKey = false;
+        if(rawClearKey != null)
+        {
+            if(!rawClearKey.isBoolean())
+            {
+                throw new StatsApiException(400, "invalid_transcription_clear_api_key",
+                    "Clear API key must be true or false", "transcription_clear_api_key");
+            }
+            clearKey = rawClearKey.booleanValue();
+        }
+        if(clearKey && key != null && !key.isEmpty())
+        {
+            throw new StatsApiException(400, "invalid_request",
+                "API key cannot be set and cleared together");
+        }
+        if(enabled)
+        {
+            if(mCatalog.get() == null)
+            {
+                throw new StatsApiException(503, "recordings_unavailable",
+                    "Transcription cannot be enabled while the catalog is unavailable");
+            }
+            if(url.isEmpty() || model.isEmpty())
+            {
+                throw new StatsApiException(400, "incomplete_transcription_settings",
+                    "Set the transcription URL and model before enabling transcription");
+            }
+        }
         if(rawRetention != null)
         {
-            mPreferences.getRecordPreference().setManagedRetentionDays(retention);
+            record.setManagedRetentionDays(retention);
         }
         if(mode != null)
         {
-            mPreferences.getRecordPreference().setRecordingMode(mode);
+            record.setRecordingMode(mode);
+        }
+        if(rawUrl != null)
+        {
+            record.setTranscriptionUrl(url);
+        }
+        if(rawModel != null)
+        {
+            record.setTranscriptionModel(model);
+        }
+        if(minimum != null)
+        {
+            record.setTranscriptionMinimumDurationMs(minimum);
+        }
+        if(clearKey)
+        {
+            record.setTranscriptionApiKey("");
+        }
+        else if(key != null && !key.isEmpty())
+        {
+            record.setTranscriptionApiKey(key);
+        }
+        if(rawEnabled != null)
+        {
+            record.setTranscriptionEnabled(enabled);
         }
         ApiHttpResponse.sendData(exchange, 200, settings());
+    }
+
+    private static void validateTranscriptionUrl(String value)
+    {
+        if(value.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            if((!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) ||
+                uri.getHost() == null || uri.getRawUserInfo() != null ||
+                uri.getRawQuery() != null || uri.getRawFragment() != null ||
+                !uri.getPath().endsWith("/audio/transcriptions"))
+            {
+                throw new IllegalArgumentException("Invalid URL");
+            }
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, "invalid_transcription_url",
+                "Enter a full HTTP or HTTPS /audio/transcriptions endpoint", "transcription_url");
+        }
     }
 
     private void delete(HttpExchange exchange, ManagedRecordingCatalog catalog) throws IOException, SQLException

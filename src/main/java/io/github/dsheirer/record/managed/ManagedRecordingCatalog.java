@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -49,13 +50,17 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     public static final int VOICE_CLEAR = 1;
     public static final int VOICE_ENCRYPTED = 2;
     private static final int MAX_PENDING_WRITES = 512;
+    private static final int MAX_PENDING_TRANSCRIPT_WRITES = 32;
     private final Path mRoot;
     private final ManagedRecordingStore mStore;
     private final ArrayBlockingQueue<PendingRecording> mPending = new ArrayBlockingQueue<>(MAX_PENDING_WRITES);
+    private final ArrayBlockingQueue<PendingTranscription> mPendingTranscription =
+        new ArrayBlockingQueue<>(MAX_PENDING_TRANSCRIPT_WRITES);
     private final Thread mWriter;
     private final AtomicLong mDropped = new AtomicLong();
     private final AtomicLong mWriteFailures = new AtomicLong();
     private final Object mQueueHandoff = new Object();
+    private final Object mTranscriptionHandoff = new Object();
     private final ReentrantLock mMaintenanceLock = new ReentrantLock();
     private volatile boolean mAccepting = true;
 
@@ -118,7 +123,7 @@ public final class ManagedRecordingCatalog implements AutoCloseable
 
     private void writeLoop()
     {
-        while(mAccepting || !mPending.isEmpty())
+        while(mAccepting || !mPending.isEmpty() || !mPendingTranscription.isEmpty())
         {
             PendingRecording pending;
             try
@@ -131,6 +136,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             }
             if(pending == null)
             {
+                // A transcript result may wait behind recording inserts, but never delays accepting or indexing one.
+                if(mPending.isEmpty())
+                {
+                    writeTranscriptResult();
+                }
                 continue;
             }
             ManagedRecordingMetadata metadata = pending.metadata();
@@ -169,6 +179,83 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     }
 
     private record PendingRecording(ManagedRecordingMetadata metadata, Runnable onIndexed) {}
+
+    private record PendingTranscription(long id, String text, long storedAtMs, boolean failed,
+                                        CompletableFuture<Boolean> result) {}
+
+    private void writeTranscriptResult()
+    {
+        PendingTranscription pending = mPendingTranscription.poll();
+        if(pending == null)
+        {
+            return;
+        }
+        try
+        {
+            boolean persisted = pending.failed() ? mStore.failTranscription(pending.id()) :
+                mStore.storeTranscript(pending.id(), pending.text(), pending.storedAtMs());
+            pending.result().complete(persisted);
+        }
+        catch(SQLException | RuntimeException exception)
+        {
+            mLog.warn("Unable to update managed recording transcription status", exception);
+            pending.result().complete(false);
+        }
+    }
+
+    /** The worker can await the returned acknowledgement without occupying the catalog or receiver thread. */
+    public CompletableFuture<Boolean> storeTranscript(long id, String text, long storedAtMs)
+    {
+        return offerTranscription(new PendingTranscription(id, text, storedAtMs, false,
+            new CompletableFuture<>()));
+    }
+
+    public CompletableFuture<Boolean> failTranscription(long id)
+    {
+        return offerTranscription(new PendingTranscription(id, null, 0L, true,
+            new CompletableFuture<>()));
+    }
+
+    private CompletableFuture<Boolean> offerTranscription(PendingTranscription pending)
+    {
+        synchronized(mTranscriptionHandoff)
+        {
+            if(mAccepting && mPendingTranscription.offer(pending))
+            {
+                return pending.result();
+            }
+        }
+        pending.result().complete(false);
+        return pending.result();
+    }
+
+    /** Returns zero when no eligible pending call exists after the supplied catalog ID. */
+    public long nextPendingTranscription(long afterId, long minimumDurationMs) throws SQLException
+    {
+        return mStore.nextPendingTranscription(afterId, minimumDurationMs);
+    }
+
+    public Transcript transcription(long id) throws SQLException
+    {
+        return mStore.transcription(id);
+    }
+
+    public TranscriptionCounts transcriptionCounts(long minimumDurationMs) throws SQLException
+    {
+        return mStore.transcriptionCounts(minimumDurationMs);
+    }
+
+    /** Cheap backlog signal for lower-priority workers; never reads SQLite or takes a recording lock. */
+    public int pendingRecordingWrites()
+    {
+        return mPending.size();
+    }
+
+    /** Retries a failed indexed call. Admin request threads only; never invoke from a receiver callback. */
+    public boolean retryTranscription(long id) throws SQLException
+    {
+        return mStore.retryTranscription(id);
+    }
 
     public SearchPage search(SearchFilter filter) throws SQLException
     {
@@ -351,7 +438,10 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     {
         synchronized(mQueueHandoff)
         {
-            mAccepting = false;
+            synchronized(mTranscriptionHandoff)
+            {
+                mAccepting = false;
+            }
         }
         // A user-started recount/reindex may still be finishing as the web server stops. Keep the SQLite
         // connection alive until that operation exits, then drain every already accepted catalog write.
@@ -539,6 +629,29 @@ public final class ManagedRecordingCatalog implements AutoCloseable
     public record Stats(long callCount, long totalBytes, int queuedWrites, int maximumQueuedWrites,
                         long droppedWrites, long failedWrites)
     {
+    }
+
+    public record Transcript(String status, String text, Long storedAtMs)
+    {
+        public Map<String,Object> toMap()
+        {
+            Map<String,Object> value = new LinkedHashMap<>();
+            value.put("status", status);
+            if(text != null)
+            {
+                value.put("text", text);
+            }
+            put(value, "stored_at_ms", storedAtMs);
+            return value;
+        }
+    }
+
+    public record TranscriptionCounts(long pending, long completed, long failed)
+    {
+        public Map<String,Object> toMap()
+        {
+            return Map.of("pending", pending, "completed", completed, "failed", failed);
+        }
     }
 
     public record MaintenanceResult(long inspected, long removed, long corrected, long callCount, long totalBytes)

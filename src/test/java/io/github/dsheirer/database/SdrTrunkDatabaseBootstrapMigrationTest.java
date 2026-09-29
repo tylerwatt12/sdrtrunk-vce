@@ -291,8 +291,8 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertTrue(result.startApplication());
         assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
-        assertEquals("2", scalar(catalog, "PRAGMA user_version"));
-        assertEquals("2", scalar(catalog, "SELECT format_version FROM catalog_metadata WHERE id=1"));
+        assertEquals("3", scalar(catalog, "PRAGMA user_version"));
+        assertEquals("3", scalar(catalog, "SELECT format_version FROM catalog_metadata WHERE id=1"));
         assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
         assertEquals("5", scalar(catalog, "SELECT total_bytes FROM catalog_metadata WHERE id=1"));
         assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));
@@ -365,7 +365,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         try(var paths = Files.list(backupDirectory))
         {
             return paths.filter(path -> Files.isRegularFile(path) &&
-                path.getFileName().toString().startsWith("managed-recordings-before-transcript-")).toList();
+                path.getFileName().toString().startsWith("managed-recordings-before-upgrade-")).toList();
         }
     }
 

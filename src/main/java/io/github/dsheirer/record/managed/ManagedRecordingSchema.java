@@ -17,19 +17,23 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 2;
+    public static final int CURRENT_FORMAT_VERSION = 3;
+    public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
+        "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
-    static final Map<String,String> DDL = formatTwoSchema();
+    private static final Map<String,String> FORMAT_TWO_DDL = formatTwoSchema();
+    static final Map<String,String> DDL = formatThreeSchema();
 
     private ManagedRecordingSchema() {}
 
-    /** Frozen format 1 and current format 2 signatures for the dedicated catalog migrator. */
+    /** Frozen prior signatures and the current signature for the dedicated catalog migrator. */
     public static Map<String,String> ddlForFormat(int version)
     {
         return switch(version)
         {
             case 1 -> FORMAT_ONE_DDL;
-            case 2 -> DDL;
+            case 2 -> FORMAT_TWO_DDL;
+            case 3 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -40,6 +44,19 @@ public final class ManagedRecordingSchema
         schema.put("recording_transcript", "CREATE TABLE recording_transcript (" +
             "call_id INTEGER PRIMARY KEY REFERENCES recording_call(id) ON DELETE CASCADE," +
             "text TEXT NOT NULL,stored_at_ms INTEGER NOT NULL CHECK(stored_at_ms>=0)) STRICT");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    private static Map<String,String> formatThreeSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_TWO_DDL);
+        // SQLite's ADD COLUMN inserts the new definition before the table CHECK. Match that exact spelling so
+        // fresh catalogs and migrated catalogs share one signature.
+        schema.put("recording_call", FORMAT_TWO_DDL.get("recording_call").replace(
+            ",CHECK(start_ms", ", " + TRANSCRIPTION_STATUS_COLUMN + ",CHECK(start_ms"));
+        schema.put("idx_recording_call_transcription_pending",
+            "CREATE INDEX idx_recording_call_transcription_pending " +
+                "ON recording_call(id,duration_ms) WHERE transcription_status='pending'");
         return java.util.Collections.unmodifiableMap(schema);
     }
 
