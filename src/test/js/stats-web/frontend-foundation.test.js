@@ -313,16 +313,18 @@ async function main() {
   assert.match(indexSource,
     /<meta name="theme-color" content="#090e13" media="\(prefers-color-scheme: dark\)">/);
   assert.match(indexSource,
-    /<link rel="icon" href="\/assets\/vce-favicon\.svg\?v=1" type="image\/svg\+xml">/);
+    /<link rel="icon" href="\/assets\/vce-favicon\.svg\?v=2" type="image\/svg\+xml">/);
   assert.match(indexSource,
     /<link rel="icon" href="\/assets\/vce-icon-32\.png\?v=1" type="image\/png" sizes="32x32">/);
   assert.match(indexSource,
     /<link rel="apple-touch-icon" href="\/assets\/vce-apple-touch-icon\.png\?v=1" sizes="180x180">/);
   assert.match(indexSource, /<link rel="manifest" href="\/assets\/site\.webmanifest\?v=1">/);
   assert.match(indexSource,
-    /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=2" alt=""><\/a>/);
+    /<a class="brand" href="\/\?view=dashboard" aria-label="VCE home"><img class="brand-logo" src="\/assets\/vce-wordmark\.svg\?v=3" alt=""><\/a>/);
   assert.match(wordmarkSource, /<svg[^>]+viewBox="[^"]+"/);
   assert.match(wordmarkSource, /<path[^>]+fill="#f2f5f7"/);
+  assert.match(wordmarkSource, /<path[^>]+d="[^"]*C[^"]*"/,
+    'The VCE wordmark shoulders and terminals should use smooth vector curves.');
   assert.doesNotMatch(wordmarkSource, /data:image/,
     'The VCE header wordmark must remain a true vector asset.');
   assert.equal(manifest.name, 'VCE');

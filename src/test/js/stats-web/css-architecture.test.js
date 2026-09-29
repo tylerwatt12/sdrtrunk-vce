@@ -11,7 +11,7 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=1") layer(reset);',
-  '@import url("./styles/tokens.css?v=7") layer(tokens);',
+  '@import url("./styles/tokens.css?v=8") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=1") layer(components);',
   '@import url("./styles/components/controls.css?v=21") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=13") layer(compositions);',
@@ -20,6 +20,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=4") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=4") layer(compositions);',
+  '@import url("./styles/features/access-landing.css?v=1") layer(features);',
   '@import url("./styles/features/about.css?v=1") layer(features);',
   '@import url("./styles/features/channels.css?v=12") layer(features);',
   '@import url("./styles/features/entity-details.css?v=11") layer(features);',

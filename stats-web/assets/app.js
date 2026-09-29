@@ -24,6 +24,7 @@ import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
 import { createRecordingsFeature } from './features/recordings.js?v=4';
+import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -818,17 +819,8 @@ function authenticationFailureMessage(error) {
   return error?.message || 'The receiver could not process sign-in.';
 }
 
-function showLoginModal(returnFocusSelector = '#auth-action') {
-  if (accessSessionAvailable && !accessSession.configured) {
-    const body = node('div', 'admin-confirmation');
-    body.append(node('p', '',
-      'Set the primary administrator password in the desktop application before signing in.'));
-    openReadOnlyModal('Sign-in is not configured', body, {
-      id: 'sign-in-setup', returnFocusSelector, className: 'admin-modal'
-    });
-    return;
-  }
-  const form = node('form', 'admin-form login-form');
+function createSignInForm(onSignedIn = () => {}) {
+  const form = node('form', 'admin-form login-form access-login-form');
   const username = node('input');
   username.name = 'username';
   username.autocomplete = 'username';
@@ -847,9 +839,6 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
   submit.type = 'submit';
   actions.append(submit);
   form.append(formField('Username', username), formField('Password', password), message, actions);
-  const modal = openReadOnlyModal('Sign in', form, {
-    id: 'sign-in', returnFocusSelector, className: 'admin-modal'
-  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.disabled) return;
@@ -871,9 +860,16 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
       synchronizePlaybackAccess();
       liveMultiplexer.ensureConnected();
       if (!accessSession.authenticated) throw new Error('The receiver did not create a session.');
-      modal.close();
+      onSignedIn();
       void receiverHealthController.refresh();
       await render();
+      if (form.isConnected && !capabilityAllowed(ACCESS_CAPABILITIES.WEB_ACCESS)) {
+        message.textContent = 'This account does not have web access. Sign in with another account.';
+        username.disabled = false;
+        password.disabled = false;
+        submit.disabled = false;
+        password.focus();
+      }
     } catch (error) {
       liveMultiplexer.ensureConnected();
       password.value = '';
@@ -884,6 +880,85 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
       password.focus();
     }
   });
+  return { form, username };
+}
+
+let landingVisualCleanup = null;
+
+function synchronizeAccessLanding() {
+  const landing = document.getElementById('access-landing');
+  const shell = document.querySelector('.app-shell');
+  const host = document.getElementById('access-landing-form-host');
+  if (!landing || !shell || !host) return false;
+  const gated = !accessSessionAvailable ||
+    accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
+  const becameGated = gated && landing.hidden;
+  landing.hidden = !gated;
+  shell.hidden = gated;
+  shell.toggleAttribute('inert', gated);
+  if (!gated) return false;
+  if (activeReadOnlyModal) closeReadOnlyModal(true);
+  if (!landingVisualCleanup) {
+    landingVisualCleanup = mountAccessWireframe(landing.querySelector('.access-scene-canvas'));
+  }
+  if (!accessSessionAvailable) {
+    if (host.dataset.state !== 'unavailable') {
+      const retry = node('button', 'ui-button ui-button-primary', 'Retry');
+      retry.type = 'button';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        try {
+          await refreshAccessSession(false);
+          await render();
+        } finally {
+          if (retry.isConnected) retry.disabled = false;
+        }
+      });
+      host.replaceChildren(node('p', 'access-landing-message', 'Access information unavailable.'), retry);
+      host.dataset.state = 'unavailable';
+    }
+  } else if (!accessSession.configured) {
+    if (host.dataset.state !== 'unconfigured') {
+      host.replaceChildren(node('p', 'access-landing-message',
+        'Set the primary administrator password in the desktop application before signing in.'));
+      host.dataset.state = 'unconfigured';
+    }
+  } else if (host.dataset.state !== 'form') {
+    host.replaceChildren(createSignInForm().form);
+    host.dataset.state = 'form';
+  }
+  if (becameGated) host.querySelector('input:not([disabled])')?.focus();
+  return true;
+}
+
+function showLoginModal(returnFocusSelector = '#auth-action') {
+  if (accessSessionAvailable && !accessSession.configured) {
+    const body = node('div', 'admin-confirmation');
+    body.append(node('p', '',
+      'Set the primary administrator password in the desktop application before signing in.'));
+    openReadOnlyModal('Sign-in is not configured', body, {
+      id: 'sign-in-setup', returnFocusSelector, className: 'admin-modal'
+    });
+    return;
+  }
+  let modal = null;
+  const { form, username } = createSignInForm(() => modal?.close());
+  const scene = node('div', 'access-login-scene');
+  const canvas = node('canvas', 'access-scene-canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  const scrim = node('div', 'access-scene-scrim');
+  scrim.setAttribute('aria-hidden', 'true');
+  const wordmark = node('img', 'access-login-wordmark');
+  wordmark.src = '/assets/vce-wordmark.svg?v=3';
+  wordmark.alt = 'VCE';
+  scene.append(canvas, scrim, wordmark, form);
+  let stopVisual = () => {};
+  modal = openReadOnlyModal('Sign In', scene, {
+    id: 'sign-in', returnFocusSelector, className: 'admin-modal access-login-modal',
+    cleanup: () => stopVisual()
+  });
+  if (!modal) return;
+  stopVisual = mountAccessWireframe(canvas, { compact: true });
   username.focus();
 }
 
@@ -1075,6 +1150,7 @@ async function refreshAccessSession(refreshCurrentView = false) {
   }
   const accessChanged = previousSignature !== accessSessionSignature();
   await synchronizeUserPreferences();
+  synchronizeAccessLanding();
   updateAccessControls();
   synchronizePlaybackAccess(accessChanged);
   if (refreshCurrentView && accessChanged) await render();
@@ -25710,6 +25786,13 @@ async function render() {
   activeRenderController = renderController;
   const renderContext = Object.freeze({ epoch, signal: renderController.signal });
   closePageConnections();
+  if (synchronizeAccessLanding()) {
+    document.body.dataset.view = 'access-landing';
+    pageTitleController.update({ pageTitle: 'Sign In' });
+    content.replaceChildren();
+    content.setAttribute('aria-busy', 'false');
+    return;
+  }
   const aliasTab = route.get('aliasTab');
   const loadingLabel = view === 'aliases' && ['activity', 'calls', 'evidence'].includes(aliasTab) ?
     'Preparing alias activity…' : 'Loading';
@@ -25750,6 +25833,13 @@ async function render() {
     if (error?.status === 401 || error?.status === 403) {
       await refreshAccessSession(false);
       if (!renderIsCurrent(renderContext)) return;
+      if (synchronizeAccessLanding()) {
+        document.body.dataset.view = 'access-landing';
+        pageTitleController.update({ pageTitle: 'Sign In' });
+        content.replaceChildren();
+        content.setAttribute('aria-busy', 'false');
+        return;
+      }
       clearInactiveAliasSelection(false);
       document.body.dataset.view = 'access-denied';
       renderAccessDenied(effectiveView, renderContext);

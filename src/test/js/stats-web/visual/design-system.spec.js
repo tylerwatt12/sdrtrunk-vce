@@ -438,7 +438,7 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await expect(playbackMenu).toHaveAttribute('open', '');
   const header = page.locator('.visual-app-chrome-example .app-header');
   const brand = header.getByRole('link', { name: 'VCE home' });
-  await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=2');
+  await expect(brand.locator('img.brand-logo')).toHaveAttribute('src', '/assets/vce-wordmark.svg?v=3');
   await expect(header.getByText('RadioReference', { exact: true })).toBeAttached();
   await expect(header.getByText('Streaming', { exact: true })).toBeAttached();
   await expect(header.getByText('Hardware', { exact: true })).toBeAttached();
@@ -455,6 +455,42 @@ test('app chrome keeps desktop navigation and mobile playback controls distinct'
   await expect(playbackMenu).not.toHaveAttribute('open', '');
   await expect(page.locator('.visual-app-chrome-example .playback-control-menu > summary')).toBeVisible();
 });
+
+for (const [view, theme, viewport, name] of [
+  ['access-landing', 'dark', { width: 1280, height: 900 }, 'access-landing-dark-desktop'],
+  ['access-landing', 'light', { width: 390, height: 844 }, 'access-landing-light-mobile'],
+  ['access-login-modal', 'dark', { width: 1280, height: 900 }, 'access-login-modal-dark-desktop'],
+  ['access-login-modal', 'light', { width: 390, height: 844 }, 'access-login-modal-light-mobile'],
+]) {
+  test(`${name} gallery`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto(`/design-system.html?theme=${theme}&view=${view}`);
+    const example = page.locator(view === 'access-landing' ?
+      '.visual-access-landing-example' : '.visual-access-login-modal-example');
+    await expect(example).toBeVisible();
+    await expect(example).toHaveAttribute('data-scene-ready', 'true');
+    await expect(example.locator('.access-scene-canvas')).toBeVisible();
+    if (view === 'access-login-modal') {
+      await expect.poll(() => example.locator('.access-scene-canvas').evaluate((canvas) => {
+        const bounds = canvas.getBoundingClientRect();
+        const scale = Math.min(window.devicePixelRatio || 1, 2);
+        return bounds.width > 0 && bounds.height > 0 &&
+          canvas.width === Math.round(bounds.width * scale) &&
+          canvas.height === Math.round(bounds.height * scale);
+      })).toBe(true);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    }
+    await expect(example.locator('img[src="/assets/vce-wordmark.svg?v=3"]')).toBeVisible();
+    await expect(example.getByLabel('Username')).toBeVisible();
+    await expect(example.getByLabel('Password')).toBeVisible();
+    await expect(example.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible();
+    await expect(page.locator('a:visible')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(viewport.width + 1);
+    await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true });
+  });
+}
 
 for(const theme of ['light', 'dark']) {
   test(`modal-${theme}`, async ({ page }) => {

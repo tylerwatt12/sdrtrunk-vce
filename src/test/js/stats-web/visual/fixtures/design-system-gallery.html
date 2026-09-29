@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#202a33" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#090e13" media="(prefers-color-scheme: dark)">
   <title>VCE interface system</title>
-  <link rel="icon" href="/assets/vce-favicon.svg?v=1" type="image/svg+xml">
+  <link rel="icon" href="/assets/vce-favicon.svg?v=2" type="image/svg+xml">
   <link rel="icon" href="/assets/vce-icon-32.png?v=1" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/assets/vce-apple-touch-icon.png?v=1" sizes="180x180">
   <link rel="manifest" href="/assets/site.webmanifest?v=1">
@@ -71,6 +71,47 @@
     <symbol id="visual-icon-clear-queue" viewBox="0 0 24 24"><path d="M4 6h10M4 12h8M4 18h6M16 14l5 5M21 14l-5 5"></path></symbol>
   </svg>
 
+  <section class="visual-access-landing-example access-landing" aria-label="VCE sign in">
+    <canvas class="access-scene-canvas" aria-hidden="true"></canvas>
+    <div class="access-scene-scrim" aria-hidden="true"></div>
+    <div class="access-landing-layout">
+      <div class="access-landing-brand"><img class="access-landing-wordmark" src="/assets/vce-wordmark.svg?v=3" alt="VCE"></div>
+      <div class="access-landing-card ui-surface">
+        <h1>Sign In</h1>
+        <form class="admin-form login-form access-login-form">
+          <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Username</span><input class="ui-input" name="username" autocomplete="username" required></label>
+          <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Password</span><input class="ui-input" name="password" type="password" autocomplete="current-password" required></label>
+          <div class="admin-form-message" role="alert"></div>
+          <div class="admin-form-actions"><button class="ui-button ui-button-primary" type="submit">Sign In</button></div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <div class="visual-access-login-modal-example">
+    <div class="modal-backdrop">
+      <section class="read-only-modal admin-modal access-login-modal" role="dialog" aria-modal="true" aria-labelledby="visual-access-login-title">
+        <header class="modal-header">
+          <h2 id="visual-access-login-title">Sign In</h2>
+          <button class="ui-button ui-button-secondary ui-icon-button modal-close" type="button" aria-label="Close Sign In"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
+        </header>
+        <div class="modal-content">
+          <div class="access-login-scene">
+            <canvas class="access-scene-canvas" aria-hidden="true"></canvas>
+            <div class="access-scene-scrim" aria-hidden="true"></div>
+            <img class="access-login-wordmark" src="/assets/vce-wordmark.svg?v=3" alt="VCE">
+            <form class="admin-form login-form access-login-form">
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Username</span><input class="ui-input" name="username" autocomplete="username" required></label>
+              <label class="admin-form-field ui-field"><span class="admin-form-label ui-field-label">Password</span><input class="ui-input" name="password" type="password" autocomplete="current-password" required></label>
+              <div class="admin-form-message" role="alert"></div>
+              <div class="admin-form-actions"><button class="ui-button ui-button-primary" type="submit">Sign In</button></div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <main class="visual-mobile-table-example visual-feature-example">
     <header class="ui-page-header"><div><h1 class="page-title">Responsive channel activity</h1><p class="page-subtitle">Genuinely tabular data becomes labeled cards when the columns no longer fit.</p></div></header>
     <div class="ui-table-wrap"><table class="ui-data-table ui-data-table-quiet ui-mobile-cards" data-mobile-cards="true">
@@ -83,7 +124,7 @@
     <div class="app-header">
       <header class="topbar">
         <button class="navigation-toggle icon-button ui-button ui-button-header" type="button" aria-label="Open navigation"><svg aria-hidden="true"><use href="#visual-icon-menu"></use></svg></button>
-        <a class="brand" href="#" aria-label="VCE home"><img class="brand-logo" src="/assets/vce-wordmark.svg?v=2" alt=""></a>
+        <a class="brand" href="#" aria-label="VCE home"><img class="brand-logo" src="/assets/vce-wordmark.svg?v=3" alt=""></a>
         <nav class="primary-nav" aria-label="Primary navigation">
           <details class="nav-group"><summary>Listen</summary><div class="nav-group-links"><a class="active" href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radio"></use></svg><span>Main</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-live"></use></svg><span>Live</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-scanner"></use></svg><span>Scanner</span></a></div></details>
           <details class="nav-group"><summary>Manage</summary><div class="nav-group-links"><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-channel"></use></svg><span>Channels</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-aliases"></use></svg><span>Aliases</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg><span>Scan Lists</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-radioreference"></use></svg><span>RadioReference</span></a><a href="#"><svg class="nav-icon" aria-hidden="true"><use href="#visual-icon-streaming"></use></svg><span>Streaming</span></a></div></details>

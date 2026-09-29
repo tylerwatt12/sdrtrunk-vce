@@ -339,7 +339,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['mobile-table', 'gallery', 'app-chrome', 'modal', 'modal-long', 'activity-action-modal', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
+const view = ['mobile-table', 'gallery', 'app-chrome', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'activity-action-modal', 'health-alert-modal', 'focus', 'settings', 'health', 'p25', 'admin-access',
   'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -348,6 +348,16 @@ const view = ['mobile-table', 'gallery', 'app-chrome', 'modal', 'modal-long', 'a
   parameters.get('view') : 'gallery';
 document.documentElement.dataset.theme = theme;
 document.body.dataset.galleryView = view;
+if(view === 'access-landing' || view === 'access-login-modal') {
+  const example = document.querySelector(view === 'access-landing' ?
+    '.visual-access-landing-example' : '.visual-access-login-modal-example');
+  const canvas = example.querySelector('.access-scene-canvas');
+  import('/assets/features/access-wireframe.js?v=1').then(({ mountAccessWireframe }) => {
+    mountAccessWireframe(canvas, { compact: view === 'access-login-modal' });
+    example.dataset.sceneReady = 'true';
+  });
+  example.querySelector('form').addEventListener('submit', (event) => event.preventDefault());
+}
 if(view === 'gallery') initializeGuidanceTable();
 if(view === 'admin-scan-lists') initializeScanListCatalog();
 document.querySelectorAll('.radioreference-detail-header').forEach((header) =>
