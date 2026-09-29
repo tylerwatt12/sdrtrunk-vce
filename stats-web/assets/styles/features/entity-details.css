@@ -6,10 +6,19 @@
 
 .frequency-action-modal .tuner-frequency-action {
   min-height: var(--control-height-comfortable);
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
+  column-gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+@media (max-width: 600px) {
+  .frequency-action-modal .tuner-frequency-action {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-1);
+  }
 }
 
 body:is([data-view="radio-system"], [data-view="group-identity"], [data-view="radio"], [data-view="channel"]) .page-header {
