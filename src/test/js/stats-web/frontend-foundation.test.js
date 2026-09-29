@@ -219,8 +219,9 @@ async function main() {
   assert.match(appCssSource, /\.ui-icon-button-compact \{[^}]*--icon-action-size: var\(--control-height-compact\)/s);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Retry'/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'), /'Dismiss'/);
-  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(\)/);
-  assert.match(appSource, /if \(!force && active\.isBusy\?\.\(\)\) return false/);
+  assert.match(appSource, /activeReadOnlyModal === modalState && closeReadOnlyModal\(false, true\)/);
+  assert.match(appSource, /for \(let current = active; current; current = topOnly \? null : current\.parent\)/);
+  assert.match(appSource, /if \(!force && current\.isBusy\?\.\(\)\) return false/);
   const updatePreferencesSource = functionBinding(appSource, 'updateUserPreferences');
   assert.match(updatePreferencesSource, /result\?\.state === 'stale'/);
   assert.match(updatePreferencesSource, /error\.code = 'preference_session_changed'/);
@@ -669,7 +670,7 @@ async function main() {
   assert.match(radioReferenceImportSource, /selectedTalkgroups: new Set\(\)/);
   assert.match(radioReferenceImportSource, /Selections persist across filters and pages/);
   assert.match(radioReferenceImportSource, /Clear selection/);
-  assert.match(radioReferenceImportSource, /Review selected/);
+  assert.match(radioReferenceImportSource, /Import selected/);
   assert.match(radioReferenceImportSource, /Import all system talkgroups/);
   assert.match(radioReferenceImportSource,
     /\['CONTROL'[\s\S]+\['CONTROL_AND_ALTERNATES'[\s\S]+\['SELECTED'[\s\S]+\['ALL'/);
@@ -689,7 +690,7 @@ async function main() {
   assert.match(radioReferenceImportSource, /getRevision: currentAliasListRevision/);
   assert.match(radioReferenceImportSource,
     /currentAliasListRevision[\s\S]+admin\/alias-lists\?include_counts=false/,
-    'Inline creation must refresh the Alias List revision after other import mutations');
+    'Alias List creation must refresh the revision after other import mutations');
   assert.match(radioReferenceImportSource,
     /onCreated: \(\{ aliasList, revision \}\)[\s\S]+dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
   assert.equal((radioReferenceImportSource.match(/aliasListField\('/g) || []).length, 3,
@@ -701,16 +702,14 @@ async function main() {
   assert.match(aliasListCreateSource, /export async function createAliasList/);
   assert.match(aliasListCreateSource, /family: normalized\.toLowerCase\(\)/,
     'Alias List creation must use the API lowercase family contract');
-  assert.match(aliasListCreateSource, /panel\.addEventListener\('input', \(event\) => event\.stopPropagation\(\)\)/,
-    'Typing an inline Alias List name must not dirty or submit the parent editor');
-  assert.match(aliasListCreateSource, /event\.key === 'Enter'/,
-    'The inline creator must intercept Enter instead of submitting its parent form');
-  assert.doesNotMatch(aliasListCreateSource, /name\.required\s*=\s*true/,
-    'The inline creator name must not participate in parent-form validation while collapsed');
-  assert.match(aliasListCreateSource, /panel\.addEventListener\('keydown'/,
-    'Escape must close the inline creator from any of its controls');
-  assert.doesNotMatch(aliasListCreateSource, /node\('form'/,
-    'The inline creator must not nest a form inside channel or import forms');
+  assert.match(aliasListCreateSource, /openReadOnlyModal\('Create Alias List', form/,
+    'The Alias List creator must open in the shared modal foundation');
+  assert.match(aliasListCreateSource, /stack: 'child'/,
+    'Creation inside an import or channel editor must preserve the parent dialog');
+  assert.match(aliasListCreateSource, /form\.addEventListener\('submit'/,
+    'Enter must submit the child form rather than the parent editor');
+  assert.doesNotMatch(aliasListCreateSource, /ui-inline-create-panel/,
+    'Alias List creation must not inject a form into the parent layout');
   assert.doesNotMatch(radioReferenceImportSource, /Open Alias', href\('aliases'/);
   assert.match(radioReferenceImportSource, /browseCatalog/);
   assert.match(radioReferenceImportSource,

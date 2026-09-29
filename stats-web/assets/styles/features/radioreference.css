@@ -520,18 +520,6 @@
   width: 100%;
 }
 
-.radioreference-talkgroup-alias-creator {
-  position: relative;
-}
-
-.radioreference-talkgroup-alias-creator-panel {
-  position: absolute;
-  z-index: 12;
-  top: calc(100% + var(--space-2));
-  left: 0;
-  width: min(420px, calc(100vw - var(--space-4) - var(--space-4)));
-}
-
 .radioreference-talkgroup-command-row {
   min-width: 0;
   flex: 1 0 100%;
@@ -869,11 +857,6 @@
   .radioreference-category-field,
   .radioreference-talkgroup-search-field {
     flex-basis: 100%;
-  }
-
-  .radioreference-talkgroup-alias-creator-panel {
-    position: static;
-    width: 100%;
   }
 
   .radioreference-sites-toolbar > .admin-form-field:nth-child(2) {

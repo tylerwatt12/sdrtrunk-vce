@@ -124,14 +124,15 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       wrapper.append(element);
       return wrapper;
     };
-    let activeModal = null;
+    const modalStack = [];
     const closeReadOnlyModal = () => {
-      activeModal?.remove();
-      activeModal = null;
+      const active = modalStack.pop();
+      active?.backdrop.remove();
+      active?.onClose?.();
       return true;
     };
     const openReadOnlyModal = (title, modalBody, options = {}) => {
-      closeReadOnlyModal();
+      if (options.stack !== 'child') while (modalStack.length) closeReadOnlyModal();
       const backdrop = node('div', 'modal-backdrop');
       const dialog = node('section', `read-only-modal ${options.className || ''}`);
       dialog.setAttribute('role', 'dialog');
@@ -145,31 +146,43 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       dialog.append(header, modalContent);
       backdrop.append(dialog);
       document.body.append(backdrop);
-      activeModal = backdrop;
-      close.addEventListener('click', closeReadOnlyModal);
+      const entry = { backdrop, onClose: options.onClose };
+      modalStack.push(entry);
+      const closeModal = () => {
+        const index = modalStack.indexOf(entry);
+        if (index < 0) return true;
+        modalStack.splice(index, 1);
+        backdrop.remove();
+        options.onClose?.();
+        return true;
+      };
+      close.addEventListener('click', closeModal);
       return {
-        dialog, content: modalContent, close: closeReadOnlyModal,
+        dialog, content: modalContent, close: closeModal,
         setBusy(busy) { close.disabled = Boolean(busy); },
         setDirty() {}
       };
     };
     const calls = [];
-    const inlineCreators = [];
-    window.radioReferenceVisual = { calls, inlineCreators };
+    const popupTriggers = [];
     const scenario = new URLSearchParams(location.search).get('scenario');
+    const systemPreferences = new Map(scenario === 'saved-preference' ? [[2001, 10]] : []);
+    let failPreferenceSave = scenario === 'preference-save-error';
+    let preferenceGetCount = 0;
+    window.radioReferenceVisual = { calls, popupTriggers, systemPreferences, openReadOnlyModal };
     const dmr = scenario === 'dmr';
     const nxdn = scenario === 'nxdn';
     let nextAliasListId = 100;
     let aliasRevision = 41;
-    const createInlineAliasListCreator = (options) => {
+    const createAliasListPopupTrigger = (options) => {
       const record = {
         family: options.family,
         triggerLabel: options.triggerLabel,
         submitLabel: options.submitLabel,
         helperText: options.helperText
       };
-      inlineCreators.push(record);
-      const host = node('div', 'ui-inline-alias-list-create');
+      popupTriggers.push(record);
+      const host = node('div', 'ui-alias-list-create');
       host.hidden = scenario !== 'alias-create';
       const trigger = node('button', 'ui-button ui-button-secondary', options.triggerLabel);
       trigger.type = 'button';
@@ -201,9 +214,36 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
         ] : [])
       ] };
       if (path.endsWith('/countries')) return { items: [{ id: 1, name: 'United States', abbreviation: 'US' }] };
+      if (path.endsWith('/system-preferences')) {
+        if (options.method === 'PUT') {
+          if (failPreferenceSave) {
+            failPreferenceSave = false;
+            throw new Error('Preference service is temporarily unavailable.');
+          }
+          systemPreferences.set(options.body.system_id, options.body.preferred_alias_list_id);
+          return options.body;
+        }
+        if (options.method === 'DELETE') {
+          systemPreferences.set(options.body.system_id, null);
+          return { system_id: options.body.system_id, preferred_alias_list_id: null };
+        }
+        if (scenario === 'slow-initialize' && ++preferenceGetCount === 1) {
+          await new Promise((resolve) => { window.radioReferenceVisual.finishPreferenceLoad = resolve; });
+          return { items: [{ system_id: 2001, preferred_alias_list_id: 7 }] };
+        }
+        if (scenario === 'slow-initialize')
+          return { items: [{ system_id: 2001, preferred_alias_list_id: 10 }] };
+        if (scenario === 'preference-load-error')
+          throw new Error('Saved choices unavailable.');
+        return { items: [...systemPreferences].map(([system_id, preferred_alias_list_id]) =>
+          ({ system_id, preferred_alias_list_id })) };
+      }
       if (path.endsWith('/bookmarks')) {
         if (options.method === 'PUT') return [options.body];
-        return [];
+        return scenario === 'saved-preference' || scenario === 'preference-load-error' ?
+          [{ kind: 'TRUNKED_SYSTEM', id: 2001,
+          name: 'Central County P25', parent_name: 'Ohio > Franklin County',
+          preferred_alias_list_id: 10 }] : [];
       }
       if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio', abbreviation: 'OH' }] };
       if (path.includes('/counties?')) return { items: [{ id: 49, name: 'Franklin County' }] };
@@ -314,16 +354,18 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     };
     const workspace = createRadioReferenceImportWorkspace({
       node, iconGlyph, formField, uiSelectFrame, uiPill, uiStatus, uiSegmentedControl, table,
-      openReadOnlyModal, closeReadOnlyModal, requestJson, createInlineAliasListCreator,
+      openReadOnlyModal, closeReadOnlyModal, requestJson, createAliasListPopupTrigger,
       formatFrequency: (value) => (Number(value) / 1_000_000).toFixed(5),
       formatNumber: (value) => Number(value).toLocaleString('en-US'),
       href: (view, values = {}) => `/?view=${view}&${new URLSearchParams(values)}`,
       anchor, modalFooter
     });
+    window.radioReferenceVisual.workspace = workspace;
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
   });
-  await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
+  if (scenario !== 'slow-initialize')
+    await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }
 
 async function openSystem(page) {
@@ -334,10 +376,10 @@ async function openSystem(page) {
 
 async function installRealTalkgroupAliasCreator(page) {
   await page.evaluate(async () => {
-    const { createInlineAliasListCreator } = await import(
+    const { createAliasListPopupTrigger } = await import(
       '/assets/features/alias-list-create.js?visual-layout-test=1');
     const aliasField = document.querySelector('.radioreference-talkgroup-alias-field');
-    const existing = aliasField?.querySelector('.ui-inline-alias-list-create');
+    const existing = aliasField?.querySelector('.ui-alias-list-create');
     const select = aliasField?.querySelector('select');
     if (!aliasField || !existing || !select) throw new Error('Talkgroup Alias List field is unavailable.');
     const node = (tag, className = '', text = null) => {
@@ -356,21 +398,19 @@ async function installRealTalkgroupAliasCreator(page) {
       pill.append(node('span', '', label));
       return pill;
     };
-    const creator = createInlineAliasListCreator({
+    const creator = createAliasListPopupTrigger({
       node, iconGlyph, uiPill,
+      openReadOnlyModal: window.radioReferenceVisual.openReadOnlyModal,
       requestJson: async () => ({ alias_list_id: 99, revision: 42 })
     }, {
       select, family: 'P25', getRevision: async () => 41, onCreated: async () => {},
       helperText: 'Creates a compatible Alias List immediately and selects it for this import.'
     });
-    creator.classList.add('radioreference-talkgroup-alias-creator');
-    creator.querySelector('.ui-inline-create-panel')?.classList.add(
-      'radioreference-talkgroup-alias-creator-panel');
     existing.replaceWith(creator);
   });
 }
 
-test('inline Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
+test('Alias List creation updates every import picker without losing talkgroup selections', async ({ page }) => {
   await installWorkspace(page, 'light', false, false, 'alias-create');
   await openSystem(page);
 
@@ -410,7 +450,7 @@ test('inline Alias List creation updates every import picker without losing talk
     const apply = window.radioReferenceVisual.calls.find(
       ([path]) => path.endsWith('/imports/frequency-preview/apply'));
     return {
-      creators: window.radioReferenceVisual.inlineCreators,
+      creators: window.radioReferenceVisual.popupTriggers,
       previewBody: preview?.[1]?.body,
       applyBody: apply?.[1]?.body
     };
@@ -505,18 +545,16 @@ test('talkgroup tools wrap to their pane and the Alias List creator does not dis
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
     await toolbar.getByRole('button', { name: 'New list' }).click();
-    const panel = toolbar.locator('.ui-inline-create-panel');
-    await expect(panel).toBeVisible();
-    const [afterToolbarBox, afterCategoryBox, afterSearchBox, triggerBox, panelBox] = await Promise.all([
-      toolbar.boundingBox(), categoryField.boundingBox(), searchField.boundingBox(),
-      toolbar.getByRole('button', { name: 'New list' }).boundingBox(), panel.boundingBox()
+    const popup = page.getByRole('dialog', { name: 'Create Alias List' });
+    await expect(popup).toBeVisible();
+    const [afterToolbarBox, afterCategoryBox, afterSearchBox, popupBox] = await Promise.all([
+      toolbar.boundingBox(), categoryField.boundingBox(), searchField.boundingBox(), popup.boundingBox()
     ]);
     expect(Math.abs(afterToolbarBox.height - toolbarBox.height)).toBeLessThanOrEqual(1);
     expect(Math.abs(afterCategoryBox.y - categoryBox.y)).toBeLessThanOrEqual(1);
     expect(Math.abs(afterSearchBox.y - searchBox.y)).toBeLessThanOrEqual(1);
-    expect(panelBox.y).toBeGreaterThanOrEqual(triggerBox.y + triggerBox.height);
-    expect(panelBox.x).toBeGreaterThanOrEqual(8);
-    expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(972);
+    expect(popupBox.x).toBeGreaterThanOrEqual(8);
+    expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(972);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.locator('body')).toHaveScreenshot('radioreference-talkgroups-alias-create-light-compact.png',
       { fullPage: true });
@@ -531,11 +569,11 @@ test('talkgroup tools and the open Alias List creator stay inside a phone viewpo
   const toolbar = page.locator('.radioreference-talkgroup-toolbar');
   const beforeHeight = (await toolbar.boundingBox()).height;
   await toolbar.getByRole('button', { name: 'New list' }).click();
-  const panel = toolbar.locator('.ui-inline-create-panel');
-  const [toolbarBox, panelBox] = await Promise.all([toolbar.boundingBox(), panel.boundingBox()]);
-  expect(toolbarBox.height).toBeGreaterThan(beforeHeight);
-  expect(panelBox.x).toBeGreaterThanOrEqual(toolbarBox.x - 1);
-  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(toolbarBox.x + toolbarBox.width + 1);
+  const popup = page.getByRole('dialog', { name: 'Create Alias List' });
+  const [toolbarBox, popupBox] = await Promise.all([toolbar.boundingBox(), popup.boundingBox()]);
+  expect(Math.abs(toolbarBox.height - beforeHeight)).toBeLessThanOrEqual(1);
+  expect(popupBox.x).toBeGreaterThanOrEqual(0);
+  expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await expect(page.locator('body')).toHaveScreenshot('radioreference-talkgroups-alias-create-dark-mobile.png',
     { fullPage: true });
@@ -567,8 +605,8 @@ test('single changed talkgroup preview shows the RadioReference-owned field chan
   await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
   await page.getByLabel('Compare with Alias List').selectOption('7');
   await page.getByRole('checkbox', { name: 'Select Fireground 2' }).check();
-  await page.getByRole('button', { name: 'Review selected' }).click();
-  const preview = page.getByRole('dialog', { name: 'Import 1 talkgroups' });
+  await page.getByRole('button', { name: 'Import selected' }).click();
+  const preview = page.getByRole('dialog', { name: 'Import 1 talkgroup' });
   await expect(preview.getByText('RadioReference fields changing')).toBeVisible();
   await expect(preview.getByText('Fireground Two')).toBeVisible();
   await expect(preview.getByText('Fireground 2', { exact: true })).toBeVisible();
@@ -586,6 +624,151 @@ test('a talkgroup bookmark remembers its preferred Alias List', async ({ page })
   const saved = await page.evaluate(() => window.radioReferenceVisual.calls.findLast(
     ([path, options]) => path.endsWith('/bookmarks') && options.method === 'PUT'));
   expect(saved[1].body.preferredAliasListId).toBe(7);
+});
+
+test('an unstarred system saves one Alias List choice for talkgroups and site imports', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await page.getByLabel('Compare with Alias List').selectOption('10');
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.calls.some(
+    ([path, options]) => path.endsWith('/system-preferences') && options.method === 'PUT' &&
+      options.body.system_id === 2001 && options.body.preferred_alias_list_id === 10))).toBe(true);
+  const importAll = page.getByRole('button', { name: 'Import all system talkgroups' });
+  await expect(importAll).toHaveClass(/ui-button-primary/);
+  await page.getByRole('checkbox', { name: 'Select Fire Dispatch' }).check();
+  await expect(page.getByRole('button', { name: 'Import selected' }))
+    .toHaveClass(/ui-button-primary/);
+  await page.getByRole('button', { name: 'Sites & Channels' }).click();
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('10');
+  await siteModal.getByRole('button', { name: 'Close' }).click();
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.some(
+    ([path, options]) => path.endsWith('/bookmarks') && options.method === 'PUT'))).toBe(false);
+});
+
+test('saved system preference restores from Browse and Bookmarks', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'saved-preference');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+  await page.getByRole('button', { name: /Bookmarks/ }).click();
+  await expect(page.locator('.radioreference-directory-item').first())
+    .toContainText('Import talkgroups to Regional P25');
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+});
+
+test('clearing a system preference stays cleared after tab switches and reload', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'saved-preference');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+  await page.getByLabel('Compare with Alias List').selectOption('');
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.calls.some(
+    ([path, options]) => path.endsWith('/system-preferences') && options.method === 'DELETE' &&
+      options.body.system_id === 2001))).toBe(true);
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('');
+  await page.getByRole('button', { name: 'Sites & Channels' }).click();
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('');
+  await siteModal.getByRole('button', { name: 'Close' }).click();
+  await page.evaluate(() => window.radioReferenceVisual.workspace.reload());
+  await expect(page.getByRole('button', { name: /Bookmarks/ })).toBeVisible();
+  await page.getByRole('button', { name: /Bookmarks/ }).click();
+  await expect(page.locator('.radioreference-directory-item').first())
+    .not.toContainText('Import talkgroups to Regional P25');
+  await page.locator('.radioreference-result-open').first().click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('');
+});
+
+test('late initialization cannot reopen the directory after disconnect', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'slow-initialize');
+  await expect.poll(() => page.evaluate(() =>
+    typeof window.radioReferenceVisual.finishPreferenceLoad)).toBe('function');
+  await page.evaluate(() => {
+    window.radioReferenceVisual.workspace.setConfiguration({ account: { state: 'INVALID' } });
+    window.radioReferenceVisual.finishPreferenceLoad();
+  });
+  await expect(page.getByText('Connect RadioReference to import')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Browse' })).toHaveCount(0);
+});
+
+test('directory remains available when saved choices cannot load', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'preference-load-error');
+  await expect(page.getByText('Saved Alias List choices could not be loaded.', { exact: false }))
+    .toBeVisible();
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+});
+
+test('late initialization cannot replace a new account preference', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'slow-initialize');
+  await expect.poll(() => page.evaluate(() =>
+    typeof window.radioReferenceVisual.finishPreferenceLoad)).toBe('function');
+  await page.evaluate(() => window.radioReferenceVisual.workspace.setConfiguration({
+    account: { state: 'VALID_PREMIUM', user_name: 'new-account' },
+    country_id: 1, state_id: 39, county_id: 49
+  }));
+  await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+  await page.evaluate(async () => {
+    window.radioReferenceVisual.finishPreferenceLoad();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('10');
+});
+
+test('creating a list from a site saves and shares it before any import is applied', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'alias-create');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await siteModal.getByRole('button', { name: 'New list' }).click();
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('100');
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001)))
+    .toBe(100);
+  await siteModal.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await expect(page.getByLabel('Compare with Alias List')).toHaveValue('100');
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.some(
+    ([path]) => path.endsWith('/imports/site/preview')))).toBe(false);
+});
+
+test('reviewing a site saves its default Alias List for an unstarred system', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'alias-create');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Central Simulcast' }).click();
+  const siteModal = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await expect(siteModal.getByLabel('Alias List')).toHaveValue('12');
+  await siteModal.getByRole('button', { name: 'Review Channel' }).click();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001)))
+    .toBe(12);
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.some(
+    ([path, options]) => path.endsWith('/bookmarks') && options.method === 'PUT'))).toBe(false);
+});
+
+test('failed preference save remains visible and can be retried', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'preference-save-error');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases' }).click();
+  await page.getByLabel('Compare with Alias List').selectOption('10');
+  await expect(page.getByText('Alias List preference could not be saved:', { exact: false }))
+    .toBeVisible();
+  await page.getByRole('button', { name: 'Retry saving' }).click();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.systemPreferences.get(2001)))
+    .toBe(10);
+  await expect(page.getByRole('button', { name: 'Retry saving' })).toHaveCount(0);
 });
 
 test('large talkgroup catalogs filter locally without rendering thousands of rows', async ({ page }) => {

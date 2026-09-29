@@ -13,6 +13,7 @@ export const RADIO_REFERENCE_IMPORT_PATHS = Object.freeze({
   systemTalkgroups: `${API_ROOT}/systems/talkgroups`,
   talkgroupCatalog: `${API_ROOT}/systems/talkgroups/catalog`,
   bookmarks: `${API_ROOT}/bookmarks`,
+  systemPreferences: `${API_ROOT}/system-preferences`,
   conventionalCategories: `${API_ROOT}/conventional/categories`,
   conventionalFrequencies: `${API_ROOT}/conventional/frequencies`,
   sitePreview: `${API_ROOT}/imports/site/preview`,
@@ -241,7 +242,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   const {
     node, iconGlyph, formField, uiSelectFrame, uiPill, uiSegmentedControl, table,
     openReadOnlyModal, closeReadOnlyModal, requestJson, formatFrequency, formatNumber, href, anchor,
-    modalFooter, createInlineAliasListCreator, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
+    modalFooter, createAliasListPopupTrigger, directoryTimeoutMs = 15_000, mutationTimeoutMs = 65_000,
     onLocationSaved = null
   } = dependencies;
 
@@ -262,6 +263,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     directorySort: 'updated',
     directoryType: 'ALL',
     bookmarks: [],
+    systemAliasListPreferences: new Map(),
+    clearedSystemPreferences: new Set(),
+    preferenceSaves: new Map(),
+    preferenceRevisions: new Map(),
+    preferenceErrors: new Map(),
+    preferenceLoadError: '',
     siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
     talkgroupLoads: new Map(),
@@ -278,7 +285,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     talkgroupAliasListId: null,
     talkgroupOffset: 0,
     talkgroupSearch: '',
-    talkgroupCategoryId: null
+    talkgroupCategoryId: null,
+    initializeSequence: 0
   };
 
   const feedback = (message, kind = '') => node('div', `ui-feedback${kind ? ` ui-feedback-${kind}` : ''}`,
@@ -332,7 +340,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const exact = state.aliasLists.filter((value) => !normalized || aliasListFamily(value) === normalized);
     return normalized ? exact : state.aliasLists;
   };
-  const populateAliasSelect = (control, family = '', selectedId = null) => {
+  const populateAliasSelect = (control, family = '', selectedId = null, useDefault = true) => {
     const options = aliasOptions(family);
     control.replaceChildren();
     const placeholder = node('option', '', options.length ? 'Choose an Alias List' : 'No compatible Alias Lists');
@@ -347,7 +355,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
     const requested = String(selectedId || '');
     if (requested && [...control.options].some((option) => option.value === requested)) control.value = requested;
-    else {
+    else if (useDefault) {
       const canonicalName = defaultAliasListName(family).toLowerCase();
       const canonical = options.find((value) => textValue(value, ['name']).toLowerCase() === canonicalName);
       const canonicalId = aliasListId(canonical);
@@ -356,10 +364,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     }
     return control;
   };
-  const aliasSelect = (family = '', selectedId = null) => {
+  const aliasSelect = (family = '', selectedId = null, useDefault = true) => {
     const control = select();
     control.required = true;
-    populateAliasSelect(control, family, selectedId);
+    populateAliasSelect(control, family, selectedId, useDefault);
     return control;
   };
   const currentAliasListRevision = async () => {
@@ -375,7 +383,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     control.setAttribute('aria-label', label);
     const field = node('div', 'admin-form-field ui-field');
     field.append(node('span', 'admin-form-label ui-field-label', label), selectFrame(control),
-      createInlineAliasListCreator({
+      createAliasListPopupTrigger({
         select: control,
         family: normalizedAliasFamily(family),
         getRevision: currentAliasListRevision,
@@ -400,6 +408,81 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     timeoutMs: options.timeoutMs || directoryTimeoutMs,
     ...options
   });
+  const showPreferenceError = (hostValue, systemIdValue) => {
+    hostValue.replaceChildren();
+    const error = state.preferenceErrors.get(systemIdValue);
+    if (!error) return;
+    const retry = button('Retry saving');
+    retry.addEventListener('click', () => {
+      retry.disabled = true;
+      void saveSystemAliasListPreference(systemIdValue, error.aliasListId, hostValue).catch(() => {});
+    });
+    hostValue.append(feedback(`Alias List preference could not be saved: ${error.message}`, 'error'), retry);
+  };
+  const saveSystemAliasListPreference = (systemIdValue, selectedId, notice) => {
+    if (!systemIdValue) return Promise.resolve();
+    if (selectedId) {
+      state.systemAliasListPreferences.set(systemIdValue, selectedId);
+      state.clearedSystemPreferences.delete(systemIdValue);
+    } else {
+      state.systemAliasListPreferences.delete(systemIdValue);
+      state.clearedSystemPreferences.add(systemIdValue);
+    }
+    state.preferenceErrors.delete(systemIdValue);
+    if (notice) notice.replaceChildren();
+    const revision = (state.preferenceRevisions.get(systemIdValue) || 0) + 1;
+    state.preferenceRevisions.set(systemIdValue, revision);
+    const previous = state.preferenceSaves.get(systemIdValue) || Promise.resolve();
+    // Serialize changes so an earlier response cannot overwrite the last choice on the server.
+    const pending = previous.catch(() => {}).then(() => api(RADIO_REFERENCE_IMPORT_PATHS.systemPreferences, {
+      method: selectedId ? 'PUT' : 'DELETE', page: false,
+      body: selectedId ? { system_id: systemIdValue, preferred_alias_list_id: selectedId } :
+        { system_id: systemIdValue }
+    })).then((response) => {
+      if (integerValue(response, ['preferred_alias_list_id', 'preferredAliasListId']) !== selectedId) {
+        throw new Error('RadioReference did not confirm the selected Alias List.');
+      }
+      if (state.preferenceRevisions.get(systemIdValue) === revision) {
+        state.preferenceErrors.delete(systemIdValue);
+        if (notice?.isConnected) notice.replaceChildren();
+      }
+      return response;
+    }).catch((error) => {
+      if (state.preferenceRevisions.get(systemIdValue) === revision) {
+        state.preferenceErrors.set(systemIdValue, { aliasListId: selectedId, message: error.message });
+        if (notice?.isConnected) showPreferenceError(notice, systemIdValue);
+      }
+      throw error;
+    });
+    state.preferenceSaves.set(systemIdValue, pending);
+    void pending.catch(() => {});
+    return pending;
+  };
+  const chooseSystemAliasList = (systemIdValue, selectedId, notice) => {
+    const previous = state.talkgroupAliasListId;
+    state.talkgroupAliasListId = selectedId;
+    if (previous !== selectedId) state.talkgroupCatalogId = null;
+    return saveSystemAliasListPreference(systemIdValue, selectedId, notice);
+  };
+  const ensureSystemAliasListPreference = (systemIdValue, selectedId, notice) => {
+    if (state.systemAliasListPreferences.get(systemIdValue) === selectedId &&
+        !state.preferenceErrors.has(systemIdValue)) {
+      return state.preferenceSaves.get(systemIdValue) || Promise.resolve();
+    }
+    return chooseSystemAliasList(systemIdValue, selectedId, notice);
+  };
+  const preferredAliasListIdForSystem = (systemIdValue) => {
+    if (state.clearedSystemPreferences.has(systemIdValue)) return null;
+    const saved = state.systemAliasListPreferences.get(systemIdValue);
+    if (saved) return saved;
+    if (!state.preferenceLoadError) return null;
+    const systemBookmark = state.bookmarks.find((entry) =>
+      entry.kind === 'TRUNKED_SYSTEM' && entry.id === systemIdValue && entry.preferredAliasListId);
+    if (systemBookmark) return systemBookmark.preferredAliasListId;
+    return state.bookmarks.find((entry) =>
+      entry.kind === 'TALKGROUP_CATEGORY' && entry.parentId === systemIdValue &&
+      entry.preferredAliasListId)?.preferredAliasListId || null;
+  };
   const bookmarked = (value) => state.bookmarks.some((entry) => bookmarkKey(entry) === bookmarkKey(value));
   const bookmarkForEntry = (entry) => {
     const trunked = entryKind(entry) === 'TRUNKED_SYSTEM';
@@ -520,8 +603,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       });
       wrapper.append(facts);
       if (String(operation).toUpperCase().includes('UPDATE')) wrapper.append(node('div', 'ui-notice',
-        'The RadioReference frequency set will replace the saved set. Recording, Alias List, band-plan overrides, ' +
-        'decoder details, and other local settings remain unchanged.'));
+        kind === 'site' ?
+          'Refreshing this channel replaces its saved RadioReference frequencies. The channel keeps its current ' +
+          'Alias List, recording, band-plan overrides, decoder details, and other local settings. The Alias List ' +
+          'chosen for this system is used for future imports.' :
+          'The RadioReference frequency set will replace the saved set. Recording, Alias List, band-plan overrides, ' +
+          'decoder details, and other local settings remain unchanged.'));
     }
     const warnings = Array.isArray(preview?.warnings) ? preview.warnings : [];
     warnings.forEach((warning) => wrapper.append(node('div', 'ui-notice ui-notice-warning', String(warning))));
@@ -630,6 +717,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     .includes('conventional networked');
 
   const openSiteImport = (system, site, detail) => {
+    const systemIdValue = systemId(system);
     const family = compatibleFamily(detail) || compatibleFamily(system);
     const channels = siteChannels(site, detail).filter((value) => frequencyHz(value) > 0);
     const uniqueChannels = [...new Map(channels.map((value) => [frequencyHz(value), value])).values()];
@@ -641,7 +729,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     siteName.value = textValue(site, ['name', 'description'], `Site ${textValue(site, ['number', 'site_number'])}`);
     channelName.value = textValue(detail, ['channel_name'], `${systemName.value} · ${siteName.value}`);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
-    const aliases = aliasSelect(family, integerValue(detail, ['default_alias_list_id', 'defaultAliasListId']));
+    const wasCleared = state.clearedSystemPreferences.has(systemIdValue);
+    const aliases = aliasSelect(family, wasCleared ? null : preferredAliasListIdForSystem(systemIdValue) ||
+      state.talkgroupAliasListId || integerValue(detail, ['default_alias_list_id', 'defaultAliasListId']),
+    !wasCleared);
+    if (aliases.value) state.talkgroupAliasListId = Number(aliases.value);
     const modulation = detectedSiteModulation(system, site, detail);
     const hasControl = !capacityPlus(system) && !conventionalNetworked(system) &&
       channels.some(hasPrimaryControl);
@@ -717,6 +809,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       'No primary control frequency is marked for this site. All site frequencies are selected by default.'));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
+    const preferenceMessage = node('div', 'admin-form-message');
+    preferenceMessage.setAttribute('role', 'alert');
+    showPreferenceError(preferenceMessage, systemIdValue);
     const preview = button('Review Channel', 'ui-button ui-button-primary');
     preview.type = 'submit';
     const footer = modalFooter(button('Cancel'), preview);
@@ -726,21 +821,35 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       formField('Channel name', channelName), aliasListField('Alias List', aliases, family,
         'Creates a compatible Alias List immediately and selects it for this channel import.'));
     form.append(node('div', 'radioreference-modal-intro',
-      `Create one combined channel for ${siteName.value || 'this site'}.`), nameGrid, detection,
+      `Create one combined channel for ${siteName.value || 'this site'}.`), nameGrid, preferenceMessage, detection,
       formField('Frequencies', modeGrid), frequencyPanel, message, footer);
     const modal = openReadOnlyModal(`Import ${siteName.value || 'site'}`, form, {
       id: 'radioreference-site-import', className: 'radioreference-import-modal',
       returnFocusSelector: '.radioreference-site-import'
     });
     if (!modal) return;
-    form.addEventListener('input', () => modal.setDirty(true));
-    form.addEventListener('change', () => modal.setDirty(true));
+    form.addEventListener('input', (event) => {
+      if (event.target !== aliases) modal.setDirty(true);
+    });
+    form.addEventListener('change', (event) => {
+      if (event.target !== aliases) modal.setDirty(true);
+    });
+    aliases.addEventListener('change', () => {
+      void chooseSystemAliasList(systemIdValue, Number(aliases.value) || null, preferenceMessage)
+        .catch(() => {});
+    });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const mode = [...modeInputs].find(([, control]) => control.checked)?.[0] || '';
       const selected = [...selectedFrequencies.querySelectorAll('input:checked')].map((control) => Number(control.value));
       if (!form.reportValidity() || !mode || mode === 'SELECTED' && !selected.length) {
         message.textContent = 'Choose an Alias List, a frequency mode, and at least one selected frequency.';
+        return;
+      }
+      try {
+        await ensureSystemAliasListPreference(systemIdValue, Number(aliases.value), preferenceMessage);
+      } catch {
+        showPreferenceError(preferenceMessage, systemIdValue);
         return;
       }
       modal.setDirty(false);
@@ -751,7 +860,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         kind: 'site',
         returnFocusSelector: '.radioreference-site-import',
         body: {
-          system_id: systemId(system), site_id: integerValue(site, ['site_id', 'siteId', 'id']),
+          system_id: systemIdValue, site_id: integerValue(site, ['site_id', 'siteId', 'id']),
           alias_list_id: Number(aliases.value), frequency_mode: mode,
           selected_frequency_hz: selected, system_name: systemName.value.trim(), site_name: siteName.value.trim(),
           channel_name: channelName.value.trim()
@@ -886,7 +995,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const systemName = textValue(systemDocument?.system || systemDocument || system, ['name'], 'System');
     const toolbar = node('div', 'radioreference-talkgroup-toolbar ui-catalog-toolbar');
     const family = compatibleFamily(systemDocument?.system || systemDocument) || compatibleFamily(system);
-    const aliasList = aliasSelect(family, state.talkgroupAliasListId);
+    const aliasList = aliasSelect(family, state.talkgroupAliasListId,
+      !state.clearedSystemPreferences.has(systemIdValue));
     if (aliasList.value) state.talkgroupAliasListId = Number(aliasList.value);
     const category = select();
     const categoryStar = node('span', 'radioreference-category-star');
@@ -901,14 +1011,18 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const selectionBadge = uiPill('0 selected', 'blue');
     selectionBadge.classList.add('radioreference-selection-badge');
     const clear = button('Clear selection');
-    const importSelected = button('Review selected', 'ui-button ui-button-primary');
-    const importAll = button('Import all system talkgroups');
+    const importSelected = button('Import selected', 'ui-button ui-button-primary');
+    const importAll = button('Import all system talkgroups', 'ui-button ui-button-primary');
     const status = node('div', 'admin-form-message');
     status.setAttribute('role', 'status');
+    const preferenceMessage = node('div', 'admin-form-message');
+    preferenceMessage.setAttribute('role', 'alert');
+    showPreferenceError(preferenceMessage, systemIdValue);
     const tableHost = node('div', 'radioreference-talkgroup-table');
     const tableController = {};
     let offset = 0;
     let catalog = [];
+    let loadSequence = 0;
     const filter = uiSegmentedControl([
       { value: 'ALL', label: 'All' },
       { value: 'NOT_PRESENT', label: 'Not in list' },
@@ -933,14 +1047,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const aliasField = aliasListField('Compare with Alias List', aliasList, family,
       'Creates a compatible Alias List immediately, selects it for this import, and refreshes the comparison.');
     aliasField.classList.add('radioreference-talkgroup-alias-field');
-    const aliasCreator = aliasField.querySelector('.ui-inline-create');
-    aliasCreator?.classList.add('radioreference-talkgroup-alias-creator');
-    aliasCreator?.querySelector('.ui-inline-create-panel')?.classList.add(
-      'radioreference-talkgroup-alias-creator-panel');
     const searchField = formField('Search talkgroups', searchFrame);
     searchField.classList.add('radioreference-talkgroup-search-field');
     toolbar.append(aliasField, categoryField, searchField, commandRow);
-    target.replaceChildren(toolbar, actions, status, tableHost);
+    target.replaceChildren(toolbar, actions, preferenceMessage, status, tableHost);
 
     const selected = state.selectedTalkgroups;
     const updateSelection = () => {
@@ -1057,9 +1167,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     };
 
     const load = async (force = false) => {
-      const key = systemIdValue + ':' + (aliasList.value || 'raw');
+      const sequence = ++loadSequence;
+      const selectedAliasListId = aliasList.value;
+      const key = systemIdValue + ':' + (selectedAliasListId || 'raw');
       aliasList.disabled = true;
-      tableHost.replaceChildren(feedback(aliasList.value ? 'Comparing talkgroups with Alias List…' :
+      tableHost.replaceChildren(feedback(selectedAliasListId ? 'Comparing talkgroups with Alias List…' :
         'Loading all talkgroups for instant filtering…', 'loading'));
       status.textContent = '';
       try {
@@ -1067,7 +1179,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           let pending = state.talkgroupLoads.get(key);
           if (!pending) {
             pending = api(query(RADIO_REFERENCE_IMPORT_PATHS.talkgroupCatalog, {
-              system_id: systemIdValue, alias_list_id: aliasList.value || undefined,
+              system_id: systemIdValue, alias_list_id: selectedAliasListId || undefined,
               catalog_id: state.talkgroupCatalogId || undefined
             }), { timeoutMs: 65_000 });
             state.talkgroupLoads.set(key, pending);
@@ -1095,7 +1207,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             })
           });
         }
-        if (state.activeSystemId !== systemIdValue || target.dataset.rrTab !== 'talkgroups') return;
+        if (sequence !== loadSequence || state.activeSystemId !== systemIdValue ||
+            target.dataset.rrTab !== 'talkgroups' || target.firstElementChild !== toolbar ||
+            aliasList.value !== selectedAliasListId) return;
         const saved = state.talkgroupCatalogs.get(key);
         state.talkgroupCatalogId = saved.catalogId;
         catalog = saved.items;
@@ -1109,6 +1223,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         offset = 0;
         draw();
       } catch (error) {
+        if (sequence !== loadSequence || state.activeSystemId !== systemIdValue ||
+            target.dataset.rrTab !== 'talkgroups' || target.firstElementChild !== toolbar) return;
         if (state.talkgroupCatalogId && /catalog is no longer available/i.test(error.message)) {
           state.talkgroupCatalogId = null;
           state.talkgroupCatalogs.delete(key);
@@ -1120,7 +1236,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       }
     };
 
-    const previewTalkgroups = (all) => {
+    const previewTalkgroups = async (all) => {
       if (!aliasList.value) {
         status.textContent = 'Choose a compatible Alias List first.';
         aliasList.focus();
@@ -1128,8 +1244,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       }
       const selectedIds = [...selected];
       if (!all && !selectedIds.length) return;
+      try {
+        await ensureSystemAliasListPreference(systemIdValue, Number(aliasList.value), preferenceMessage);
+      } catch {
+        showPreferenceError(preferenceMessage, systemIdValue);
+        return;
+      }
       openPreview({
-        title: all ? 'Import all system talkgroups' : 'Import ' + formatNumber(selectedIds.length) + ' talkgroups',
+        title: all ? 'Import all system talkgroups' :
+          `Import ${formatNumber(selectedIds.length)} talkgroup${selectedIds.length === 1 ? '' : 's'}`,
         path: RADIO_REFERENCE_IMPORT_PATHS.talkgroupsPreview,
         kind: 'talkgroups',
         returnFocusSelector: all ? '.radioreference-import-all' : '.radioreference-import-selected',
@@ -1151,19 +1274,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     importSelected.addEventListener('click', () => previewTalkgroups(false));
     importAll.addEventListener('click', () => previewTalkgroups(true));
     aliasList.addEventListener('change', () => {
-      state.talkgroupAliasListId = Number(aliasList.value) || null;
-      const preferred = state.bookmarks.find((entry) => entry.kind === 'TALKGROUP_CATEGORY' &&
-        entry.parentId === systemIdValue && entry.id === Number(category.value)) ||
-        state.bookmarks.find((entry) => entry.kind === 'TRUNKED_SYSTEM' && entry.id === systemIdValue);
-      if (preferred && state.talkgroupAliasListId) {
-        void api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks, {
-          method: 'PUT', body: { ...preferred, preferredAliasListId: state.talkgroupAliasListId }
-        }).then((response) => {
-          state.bookmarks = rows(response).map(normalizeBookmark);
-          state.onBookmarksChanged?.();
-        })
-          .catch((error) => { status.textContent = `Alias List preference could not be saved: ${error.message}`; });
-      }
+      void chooseSystemAliasList(systemIdValue, Number(aliasList.value) || null, preferenceMessage)
+        .catch(() => {});
       if (!aliasList.value) {
         state.talkgroupStatus = 'ALL';
         filter.querySelectorAll('button').forEach((control) => {
@@ -1192,8 +1304,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     state.activeSystemId = id;
     state.talkgroupCatalogId = null;
     state.selectedTalkgroups.clear();
-    state.talkgroupAliasListId = null;
-    state.talkgroupAliasListId = options.bookmark?.preferredAliasListId || null;
+    state.talkgroupAliasListId = preferredAliasListIdForSystem(id);
     state.talkgroupCategoryId = Number(options.categoryId) || null;
     state.talkgroupStatus = 'ALL';
     state.talkgroupSearch = '';
@@ -1491,7 +1602,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     listHost.replaceChildren(tree);
   };
 
-  const buildBrowser = async () => {
+  const buildBrowser = async (initializeSequence) => {
     const browser = node('div', 'radioreference-browser');
     const browseForm = node('div', 'radioreference-browse-form ui-surface');
     const country = select();
@@ -1513,6 +1624,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     detailHost.append(empty('Choose a result', 'Select a system or agency to review.'));
     workbench.append(resultHost, detailHost);
     browser.append(browseForm, workbench);
+    if (state.preferenceLoadError) browser.prepend(feedback(
+      'Saved Alias List choices could not be loaded. Choose a list again or reload to retry.', 'error'));
     host.replaceChildren(browser);
 
     const showBookmarks = () => {
@@ -1552,8 +1665,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           bookmark.parentName;
         if (savedPath) identity.append(node('small', 'muted radioreference-bookmark-path', savedPath));
         identity.append(node('strong', '', bookmark.name));
-        const preferredList = state.aliasLists.find((entry) =>
-          aliasListId(entry) === bookmark.preferredAliasListId);
+        const preferredSystemId = bookmark.kind === 'TRUNKED_SYSTEM' ? bookmark.id :
+          bookmark.kind === 'TALKGROUP_CATEGORY' ? bookmark.parentId : null;
+        const preferredId = preferredAliasListIdForSystem(preferredSystemId);
+        const preferredList = state.aliasLists.find((entry) => aliasListId(entry) === preferredId);
         if (preferredList) identity.append(node('small', 'muted',
           `Import talkgroups to ${textValue(preferredList, ['name'], 'Alias List')}`));
         const parentType = parentEntry ? systemTypeLabel(parentEntry) : '';
@@ -1652,7 +1767,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       }
       const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.counties,
         { state_id: region.value, offset: 0, limit: 500 }));
-      if (sequence !== locationSequence) return;
+      if (sequence !== locationSequence || initializeSequence !== state.initializeSequence) return;
       setOptions(county, rows(response), selected, 'All counties', true);
       county.disabled = false;
     };
@@ -1661,7 +1776,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       county.disabled = true;
       setOptions(region, [], null, 'Loading regions…', true);
       const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.states, { country_id: country.value }));
-      if (sequence !== locationSequence) return;
+      if (sequence !== locationSequence || initializeSequence !== state.initializeSequence) return;
       setOptions(region, rows(response), selectedRegion, 'All states or regions', true);
       region.disabled = false;
       await loadCounties(selectedCounty, sequence);
@@ -1678,7 +1793,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.browseCatalog, {
           country_id: country.value, state_id: region.value || null, county_id: county.value || null
         }), { timeoutMs: 65_000 });
-        if (sequence !== state.browseSequence) return;
+        if (sequence !== state.browseSequence || initializeSequence !== state.initializeSequence) return;
         state.browseRows = rows(response);
         const location = {
           country: country.selectedOptions[0]?.textContent || '',
@@ -1702,7 +1817,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         message.textContent = formatNumber(state.browseRows.length) +
           ' systems and agencies grouped by coverage area.';
       } catch (error) {
-        if (sequence !== state.browseSequence) return;
+        if (sequence !== state.browseSequence || initializeSequence !== state.initializeSequence) return;
         if (state.browseTab === 'browse') {
           listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
         }
@@ -1712,9 +1827,11 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     setOptions(country, state.countries, state.configuration?.country_id, 'Choose a country');
     try {
       await loadStates(state.configuration?.state_id, state.configuration?.county_id);
+      if (initializeSequence !== state.initializeSequence) return;
       await browse();
     } catch (error) {
-      listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
+      if (initializeSequence === state.initializeSequence)
+        listHost.replaceChildren(directoryState(feedback(error.message, 'error')));
     }
     country.addEventListener('change', async () => {
       const sequence = ++locationSequence;
@@ -1751,13 +1868,18 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       return;
     }
     state.initializing = true;
+    const sequence = ++state.initializeSequence;
     host.replaceChildren(feedback('Loading the RadioReference directory…', 'loading'));
     try {
-      const [aliasesDocument, countriesDocument, bookmarksDocument] = await Promise.all([
+      const [aliasesDocument, countriesDocument, bookmarksDocument, preferencesResult] = await Promise.all([
         requestJson('/api/v1/admin/alias-lists?include_counts=false', { csrf: false }),
         api(RADIO_REFERENCE_IMPORT_PATHS.countries),
-        api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks)
+        api(RADIO_REFERENCE_IMPORT_PATHS.bookmarks),
+        api(RADIO_REFERENCE_IMPORT_PATHS.systemPreferences)
+          .then((value) => ({ value }), (error) => ({ error }))
       ]);
+      if (sequence !== state.initializeSequence ||
+          state.configuration?.account?.state !== 'VALID_PREMIUM') return;
       state.aliasLists = Array.isArray(aliasesDocument?.alias_lists) ? aliasesDocument.alias_lists :
         rows(aliasesDocument);
       const aliasListRevision = Number(aliasesDocument?.revision);
@@ -1765,12 +1887,20 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         aliasListRevision : 0;
       state.countries = rows(countriesDocument);
       state.bookmarks = rows(bookmarksDocument).map(normalizeBookmark);
+      state.preferenceLoadError = preferencesResult.error?.message || '';
+      const preferences = rows(preferencesResult.value).map((value) => [
+        integerValue(value, ['system_id', 'systemId']),
+        integerValue(value, ['preferred_alias_list_id', 'preferredAliasListId'])
+      ]).filter(([systemIdValue]) => systemIdValue);
+      state.systemAliasListPreferences = new Map(preferences.filter(([, listId]) => listId));
+      state.clearedSystemPreferences = new Set(preferences.filter(([, listId]) => !listId)
+        .map(([systemIdValue]) => systemIdValue));
       state.initialized = true;
-      await buildBrowser();
+      await buildBrowser(sequence);
     } catch (error) {
-      host.replaceChildren(feedback(error.message, 'error'));
+      if (sequence === state.initializeSequence) host.replaceChildren(feedback(error.message, 'error'));
     } finally {
-      state.initializing = false;
+      if (sequence === state.initializeSequence) state.initializing = false;
     }
   };
 
@@ -1781,8 +1911,23 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const previousUser = state.configuration?.account?.user_name;
       state.configuration = configuration || {};
       const connected = state.configuration?.account?.state === 'VALID_PREMIUM';
+      if (!wasConnected && connected) {
+        ++state.initializeSequence;
+        state.initializing = false;
+      }
       if (wasConnected && connected && previousUser !== state.configuration?.account?.user_name) {
+        ++state.initializeSequence;
+        ++state.detailSequence;
+        ++state.browseSequence;
+        state.initializing = false;
         state.initialized = false;
+        state.activeSystemId = null;
+        state.systemAliasListPreferences.clear();
+        state.clearedSystemPreferences.clear();
+        state.preferenceSaves.clear();
+        state.preferenceRevisions.clear();
+        state.preferenceErrors.clear();
+        state.preferenceLoadError = '';
         state.siteCatalogs.clear();
         state.talkgroupCatalogs.clear();
         state.talkgroupLoads.clear();
@@ -1790,13 +1935,24 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         state.selectedTalkgroups.clear();
       }
       if (!connected) {
+        ++state.initializeSequence;
+        ++state.detailSequence;
+        ++state.browseSequence;
+        state.initializing = false;
         state.initialized = false;
+        state.activeSystemId = null;
         state.selectedTalkgroups.clear();
         state.siteCatalogs.clear();
         state.talkgroupCatalogs.clear();
         state.talkgroupLoads.clear();
         state.talkgroupCatalogId = null;
         state.bookmarks = [];
+        state.systemAliasListPreferences.clear();
+        state.clearedSystemPreferences.clear();
+        state.preferenceSaves.clear();
+        state.preferenceRevisions.clear();
+        state.preferenceErrors.clear();
+        state.preferenceLoadError = '';
         host.replaceChildren(empty('Connect RadioReference to import',
           'A current Premium account is required for directory browsing and imports.'));
         return;
@@ -1804,7 +1960,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       if (!wasConnected || !state.initialized) void initialize();
     },
     reload() {
+      ++state.initializeSequence;
+      ++state.detailSequence;
+      ++state.browseSequence;
+      state.initializing = false;
       state.initialized = false;
+      state.activeSystemId = null;
       state.siteCatalogs.clear();
       state.talkgroupCatalogs.clear();
       state.talkgroupLoads.clear();

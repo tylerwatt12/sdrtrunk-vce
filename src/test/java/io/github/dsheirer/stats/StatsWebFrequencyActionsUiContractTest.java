@@ -55,7 +55,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(importer.contains("selectedTalkgroups: new Set()"));
         assertTrue(importer.contains("Selections persist across filters and pages"));
         assertTrue(importer.contains("Clear selection"));
-        assertTrue(importer.contains("Review selected"));
+        assertTrue(importer.contains("Import selected"));
         assertTrue(importer.contains("Import all system talkgroups"));
         assertTrue(importer.contains("Create one combined channel"));
         assertTrue(importer.contains("Import one channel at a time"));
