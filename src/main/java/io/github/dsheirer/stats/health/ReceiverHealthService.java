@@ -79,6 +79,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
     private final Set<String> mConditionsEvaluatedThisSample = new HashSet<>();
     private final Map<String,UsbDeliveryClassifier> mUsbDeliveryClassifiers = new HashMap<>();
+    private final Map<String,UsbCallbackTimingState> mUsbCallbackTimingStates = new HashMap<>();
     private final Map<String,ControlContinuity> mControlContinuityByTable = new HashMap<>();
     private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -458,6 +459,7 @@ public final class ReceiverHealthService implements AutoCloseable
         }
 
         mUsbDeliveryClassifiers.keySet().retainAll(activeUsbScopes);
+        mUsbCallbackTimingStates.keySet().retainAll(activeUsbScopes);
 
         if(mTunerManager != null)
         {
@@ -507,6 +509,9 @@ public final class ReceiverHealthService implements AutoCloseable
             ignored -> new UsbDeliveryClassifier()).evaluate(new UsbDeliveryObservation(now, usb.streaming(),
                 usb.streamSequence(), usb.expectedBytes(), usb.usableBytes(), transferStatusCount, integrityCount,
                 usb.longTransferGapCount(), lastDelivery, requiredBytesPerSecond));
+        UsbCallbackTimingState callbackTiming = mUsbCallbackTimingStates.computeIfAbsent(scope,
+            ignored -> new UsbCallbackTimingState());
+        UsbCallbackTimingWindow callbackWindow = callbackTiming.sample(usb);
         double seconds = assessment.windowMilliseconds() / 1_000.0;
         double usableBytesPerSecond = assessment.rateAvailable() && seconds > 0 ?
             assessment.usableBytesDelta() / seconds : 0;
@@ -540,6 +545,17 @@ public final class ReceiverHealthService implements AutoCloseable
             assessment.gapDelta() > 0 ? "warning" : usb.longTransferGapCount() > 0 ? "info" : "healthy",
             "Longest " + usb.worstInterTransferGapMilliseconds() + " ms · Expected transfer size " +
                 usb.expectedTransferLengthBytes() + " bytes · Long pauses " + usb.longTransferGapCount()));
+        rows.add(row(scope, display + " USB data handling time",
+            round(usb.lastCallbackToResubmitDurationNanoseconds() / 1_000_000.0), "ms", "info",
+            "Longest since tuner opened " +
+                round(usb.worstCallbackToResubmitDurationNanoseconds() / 1_000_000.0) +
+                " ms · Last 25 ms+ this stream " +
+                (usb.lastAtLeast25MsDurationNanoseconds() > 0 ?
+                    round(usb.lastAtLeast25MsDurationNanoseconds() / 1_000_000.0) + " ms" : "none") +
+                " · Transfers measured in this sample " +
+                (callbackWindow.available() ? callbackWindow.callbacks() : "warming up") +
+                " · Took at least 25 ms " +
+                (callbackWindow.available() ? callbackWindow.atLeast25Ms() : "warming up")));
         boolean ingressPressure = usb.nativeIngressCapacity() > 0 &&
             usb.nativeIngressDepth() * 4 >= usb.nativeIngressCapacity() * 3;
         rows.add(row(scope, display + " radio data waiting after USB", usb.nativeIngressDepth(), "chunks",
@@ -576,12 +592,14 @@ public final class ReceiverHealthService implements AutoCloseable
 
         if(assessment.hardLoss())
         {
+            String timingClue = callbackTiming.incidentClue(now, "usb-sample-loss", true);
             mIncidents.observe("usb-sample-loss", "critical", "USB tuner data is incomplete", display,
                 now, Math.max(1, integrityCount), assessment.integrityDelta() +
                     " new USB data errors · Delivery " +
                     (assessment.rateAvailable() ? round(displayDeliveryPercent) + "%" : "warming up") +
                     " · Estimated missing " + usb.estimatedMissingBytes() + " bytes",
-                "The USB connection, cable, power, driver, computer load, or tuner may be interrupting radio data",
+                "The USB connection, cable, power, driver, computer load, or tuner may be interrupting radio data. " +
+                    timingClue,
                 "Signal strength may still look normal while channels using this tuner lose decoding or have gaps in audio",
                 "If possible, connect high-rate tuners to separate USB controllers; then check the cable, power, and connection speed");
         }
@@ -591,22 +609,25 @@ public final class ReceiverHealthService implements AutoCloseable
             String title = assessment.gapCorrelated() ? "USB tuner data stopped arriving briefly" :
                 assessment.rateCritical() ? "USB tuner data is arriving too slowly" :
                     "USB tuner data arrived too slowly for a short time";
+            String timingClue = callbackTiming.incidentClue(now, "usb-delivery-rate-low",
+                assessment.rateCritical());
             mIncidents.observe("usb-delivery-rate-low", severity, title, display, now,
                 Math.max(1, assessment.lowRateWindowCount()), "Delivered " +
                     round(assessment.rawDeliveryPercent()) + "% of expected USB data during a " +
                     assessment.windowMilliseconds() + " ms sample · New long pauses " + assessment.gapDelta(),
-                "USB data paused or the computer was too busy to process it at the required rate",
+                timingClue,
                 assessment.rateCritical() ? "The slowdown lasted long enough to put live decoding at risk" :
                     "Repeated slowdowns can interrupt decoding",
                 "Compare this with USB data errors, USB pauses, incoming radio data loss, and the next status update");
         }
         else if(assessment.gapDelta() > 0)
         {
+            String timingClue = callbackTiming.incidentClue(now, "usb-transfer-gap", true);
             mIncidents.observe("usb-transfer-gap", "warning", "USB tuner data paused", display, now,
                 usb.longTransferGapCount(), assessment.gapDelta() + " new pauses of at least 200 ms · Latest " +
                     usb.lastInterTransferGapMilliseconds() + " ms · Longest " +
                     usb.worstInterTransferGapMilliseconds() + " ms",
-                "The USB connection, tuner, or computer briefly delayed radio data",
+                timingClue,
                 "A long pause can interrupt the control channel or clip call audio",
                 "Watch for repeated pauses together with incoming radio data or decoder losses");
         }
@@ -1180,6 +1201,124 @@ public final class ReceiverHealthService implements AutoCloseable
             {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    /**
+     * Compares monotonic callback counters on the observer thread.  The USB callback only updates primitives;
+     * wording and incident evidence remain here so a later normal sample cannot erase the triggering clue.
+     */
+    private static final class UsbCallbackTimingState
+    {
+        private long mStreamSequence = -1;
+        private long mCallbackCount;
+        private long mAtLeast25MsCount;
+        private long mAtLeast100MsCount;
+        private UsbCallbackTimingWindow mPrevious = UsbCallbackTimingWindow.unavailable();
+        private UsbCallbackTimingWindow mCurrent = UsbCallbackTimingWindow.unavailable();
+        private final Map<String,UsbCallbackIncidentEvidence> mEvidenceByCode = new HashMap<>();
+
+        UsbCallbackTimingWindow sample(USBTunerController.UsbTransferHealthSnapshot usb)
+        {
+            if(!usb.streaming() || mStreamSequence != usb.streamSequence() ||
+                usb.callbackCount() < mCallbackCount ||
+                usb.callbacksAtLeast25MsCount() < mAtLeast25MsCount ||
+                usb.callbacksAtLeast100MsCount() < mAtLeast100MsCount)
+            {
+                mStreamSequence = usb.streamSequence();
+                mPrevious = UsbCallbackTimingWindow.unavailable();
+                mCurrent = UsbCallbackTimingWindow.unavailable();
+            }
+            else
+            {
+                mPrevious = mCurrent;
+                mCurrent = new UsbCallbackTimingWindow(true,
+                    usb.callbackCount() - mCallbackCount,
+                    usb.callbacksAtLeast25MsCount() - mAtLeast25MsCount,
+                    usb.callbacksAtLeast100MsCount() - mAtLeast100MsCount);
+            }
+
+            mCallbackCount = usb.callbackCount();
+            mAtLeast25MsCount = usb.callbacksAtLeast25MsCount();
+            mAtLeast100MsCount = usb.callbacksAtLeast100MsCount();
+            return mCurrent;
+        }
+
+        String incidentClue(long now, String code, boolean includePreviousWindow)
+        {
+            UsbCallbackIncidentEvidence evidence = mEvidenceByCode.computeIfAbsent(code,
+                ignored -> new UsbCallbackIncidentEvidence());
+            evidence.observe(now, mCurrent, includePreviousWindow ? mPrevious :
+                UsbCallbackTimingWindow.unavailable());
+            return evidence.clue();
+        }
+    }
+
+    private static final class UsbCallbackIncidentEvidence
+    {
+        private long mLastIssueMs = -1;
+        private boolean mMeasuredCallbacks;
+        private int mLongestDelayBucket;
+
+        void observe(long now, UsbCallbackTimingWindow current, UsbCallbackTimingWindow previous)
+        {
+            if(mLastIssueMs < 0 || now < mLastIssueMs ||
+                now - mLastIssueMs > CONDITION_HOLD_MILLISECONDS)
+            {
+                mMeasuredCallbacks = false;
+                mLongestDelayBucket = 0;
+            }
+
+            include(current);
+            include(previous);
+            mLastIssueMs = now;
+        }
+
+        String clue()
+        {
+            if(mLongestDelayBucket >= 100)
+            {
+                return "VCE took at least 100 ms to return USB data while this was happening; that delay may have contributed";
+            }
+
+            if(mLongestDelayBucket >= 25)
+            {
+                return "VCE took at least 25 ms to return USB data while this was happening; that delay may have contributed";
+            }
+
+            if(mMeasuredCallbacks)
+            {
+                return "VCE took less than 25 ms to return the USB data it received; the pause may have happened before data reached VCE or between USB deliveries";
+            }
+
+            return "VCE could not measure how quickly it handled USB data during this issue, so the cause is still unclear";
+        }
+
+        private void include(UsbCallbackTimingWindow window)
+        {
+            if(window.available() && window.callbacks() > 0)
+            {
+                mMeasuredCallbacks = true;
+            }
+
+            if(window.atLeast100Ms() > 0)
+            {
+                mLongestDelayBucket = 100;
+            }
+            else if(window.atLeast25Ms() > 0)
+            {
+                mLongestDelayBucket = Math.max(mLongestDelayBucket, 25);
+            }
+        }
+
+    }
+
+    private record UsbCallbackTimingWindow(boolean available, long callbacks, long atLeast25Ms,
+                                           long atLeast100Ms)
+    {
+        private static UsbCallbackTimingWindow unavailable()
+        {
+            return new UsbCallbackTimingWindow(false, 0, 0, 0);
         }
     }
 

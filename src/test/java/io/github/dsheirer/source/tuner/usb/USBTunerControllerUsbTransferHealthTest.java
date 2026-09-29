@@ -114,6 +114,10 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(20, firstSession.worstInterTransferGapMilliseconds());
         assertEquals(10_000, firstSession.lastCallbackToResubmitDurationNanoseconds());
         assertEquals(20_000, firstSession.worstCallbackToResubmitDurationNanoseconds());
+        assertEquals(2, firstSession.callbackCount());
+        assertEquals(0, firstSession.callbacksAtLeast25MsCount());
+        assertEquals(0, firstSession.callbacksAtLeast100MsCount());
+        assertEquals(0, firstSession.lastAtLeast25MsDurationNanoseconds());
 
         health.endStreaming();
         assertFalse(health.snapshot().streaming());
@@ -130,8 +134,70 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(0, secondSession.lastInterTransferGapMilliseconds());
         assertEquals(20, secondSession.worstInterTransferGapMilliseconds());
         assertEquals(20_000, secondSession.worstCallbackToResubmitDurationNanoseconds());
+        assertEquals(2, secondSession.callbackCount());
         assertEquals(4, secondSession.transferCount(), "cumulative transfer counters survive stream restarts");
         assertTrue(secondSession.streamStartedTimestampMilliseconds() > 0);
+    }
+
+    @Test
+    void countsCallbackDurationsAtInclusiveThresholdsWithoutLosingTheLastSlowSample()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordCallbackToResubmitDuration(-1);
+        health.recordCallbackToResubmitDuration(24_999_999);
+        health.recordCallbackToResubmitDuration(25_000_000);
+
+        USBTunerController.UsbTransferHealthSnapshot firstThreshold = health.snapshot();
+        assertEquals(3, firstThreshold.callbackCount());
+        assertEquals(1, firstThreshold.callbacksAtLeast25MsCount());
+        assertEquals(0, firstThreshold.callbacksAtLeast100MsCount());
+        assertEquals(25_000_000, firstThreshold.lastAtLeast25MsDurationNanoseconds());
+
+        health.recordCallbackToResubmitDuration(99_999_999);
+        health.recordCallbackToResubmitDuration(100_000_000);
+        health.recordCallbackToResubmitDuration(1_000_000);
+
+        USBTunerController.UsbTransferHealthSnapshot recovered = health.snapshot();
+        assertEquals(6, recovered.callbackCount());
+        assertEquals(3, recovered.callbacksAtLeast25MsCount());
+        assertEquals(1, recovered.callbacksAtLeast100MsCount());
+        assertEquals(100_000_000, recovered.lastAtLeast25MsDurationNanoseconds(),
+            "a later fast callback must not erase the slow callback that preceded it");
+        assertEquals(1_000_000, recovered.lastCallbackToResubmitDurationNanoseconds());
+        assertEquals(100_000_000, recovered.worstCallbackToResubmitDurationNanoseconds());
+    }
+
+    @Test
+    void clearsLastSlowCallbackAcrossStreamingSessionsButKeepsCumulativeCounts()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordCallbackToResubmitDuration(125_000_000);
+        health.endStreaming();
+
+        USBTunerController.UsbTransferHealthSnapshot stopped = health.snapshot();
+        assertEquals(0, stopped.lastAtLeast25MsDurationNanoseconds());
+        assertEquals(1, stopped.callbackCount());
+        assertEquals(1, stopped.callbacksAtLeast25MsCount());
+        assertEquals(1, stopped.callbacksAtLeast100MsCount());
+
+        health.beginStreaming(1_024, 2);
+        health.recordCallbackToResubmitDuration(2_000_000);
+
+        USBTunerController.UsbTransferHealthSnapshot resumed = health.snapshot();
+        assertEquals(0, resumed.lastAtLeast25MsDurationNanoseconds());
+        assertEquals(2, resumed.callbackCount());
+        assertEquals(1, resumed.callbacksAtLeast25MsCount());
+        assertEquals(1, resumed.callbacksAtLeast100MsCount());
+        assertEquals(125_000_000, resumed.worstCallbackToResubmitDurationNanoseconds());
+
+        health.recordCallbackToResubmitDuration(30_000_000);
+        USBTunerController.UsbTransferHealthSnapshot newSlowCallback = health.snapshot();
+        assertEquals(3, newSlowCallback.callbackCount());
+        assertEquals(2, newSlowCallback.callbacksAtLeast25MsCount());
+        assertEquals(1, newSlowCallback.callbacksAtLeast100MsCount());
+        assertEquals(30_000_000, newSlowCallback.lastAtLeast25MsDurationNanoseconds());
     }
 
     @Test

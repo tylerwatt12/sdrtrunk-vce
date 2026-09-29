@@ -192,6 +192,167 @@ class ReceiverHealthServiceTest
     }
 
     @Test
+    void usbAlertKeepsMeasuredSlowHandlingClueAfterLaterSamplesAndResolution() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
+            measurements.clear();
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 1_200_000L, 100, 1, 0));
+
+            Map<String,Object> alert = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
+            assertTrue(measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("label")).contains("USB data handling time") &&
+                    String.valueOf(row.get("detail")).contains("Took at least 25 ms 1")));
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
+                usbTimingSnapshot(3_000L, 2_200_000L, 200, 1, 0));
+            alert = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
+
+            incidents.beginSample();
+            incidents.endSample(14_000L);
+            Map<String,Object> cleared = incidents.resolved().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(cleared.get("likely_cause")).contains("VCE took at least 25 ms"));
+        }
+    }
+
+    @Test
+    void usbAlertDoesNotBlameVceWhenMeasuredCallbacksWereFast() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 100, 1, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 1_200_000L, 200, 1, 0));
+
+            Map<String,Object> alert = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            String cause = String.valueOf(alert.get("likely_cause"));
+            assertTrue(cause.contains("took less than 25 ms"));
+            assertTrue(cause.contains("may have happened before data reached VCE or between USB deliveries"));
+        }
+    }
+
+    @Test
+    void usbAlertSaysWhenNoCallbackTimingWasAvailable() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 1_200_000L, 0, 0, 0));
+
+            Map<String,Object> alert = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(alert.get("likely_cause")).contains("could not measure"));
+        }
+    }
+
+    @Test
+    void usbTimingClueDoesNotLeakFromAnEarlierDifferentAlert() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 2_400_000L, 100, 1, 0, 1, 1, 0));
+            Map<String,Object> pause = incidents.active().stream()
+                .filter(row -> "usb-transfer-gap".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(pause.get("likely_cause")).contains("VCE took at least 25 ms"));
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
+                usbTimingSnapshot(3_000L, 4_800_000L, 200, 1, 0, 1, 1, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 4_000L,
+                usbTimingSnapshot(4_000L, 6_000_000L, 300, 1, 0, 1, 1, 0));
+            Map<String,Object> rate = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(rate.get("likely_cause")).contains("took less than 25 ms"));
+        }
+    }
+
+    @Test
+    void usbAlertKeepsItsClueWhenTheTunerRestartsBeforeItClears() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 1_200_000L, 100, 1, 1));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
+                usbTimingSnapshot(3_000L, 0, 100, 1, 1, 2, 0, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 4_000L,
+                usbTimingSnapshot(4_000L, 1_200_000L, 200, 1, 1, 2, 0, 0));
+
+            Map<String,Object> alert = incidents.active().stream()
+                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 100 ms"));
+        }
+    }
+
+    @Test
+    void incompleteUsbDataAlertAlsoIncludesTheTimingClue() throws Exception
+    {
+        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        {
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
+            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
+                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
+            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
+                usbTimingSnapshot(2_000L, 2_400_000L, 100, 1, 0, 1, 0, 1));
+
+            Map<String,Object> alert = incidents.active().stream()
+                .filter(row -> "usb-sample-loss".equals(row.get("code"))).findFirst().orElseThrow();
+            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
+        }
+    }
+
+    @Test
     void closeInterruptsAndJoinsAnInProgressObserverSample() throws Exception
     {
         CountDownLatch entered = new CountDownLatch(1);
@@ -398,14 +559,8 @@ class ReceiverHealthServiceTest
 
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 2_000L))
         {
-            Field incidentsField = ReceiverHealthService.class.getDeclaredField("mIncidents");
-            incidentsField.setAccessible(true);
-            ReceiverHealthIncidentTracker incidents =
-                (ReceiverHealthIncidentTracker)incidentsField.get(service);
-            Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class,
-                String.class, String.class, Tuner.class, USBTunerController.UsbTransferHealthSnapshot.class,
-                List.class);
-            collectUsb.setAccessible(true);
+            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
+            Method collectUsb = usbCollector();
             List<Map<String,Object>> rows = new java.util.ArrayList<>();
 
             incidents.beginSample();
@@ -427,12 +582,79 @@ class ReceiverHealthServiceTest
                                                                              long listenerFailures)
     {
         long deliveredBytes = now == 1_000L ? 0 : 2_400_000L;
-        return new USBTunerController.UsbTransferHealthSnapshot(true, 1, 1_024, 1, 0, "unknown",
+        return usbSnapshot(now, saturationDrops, copyFailures, conversionFailures, listenerFailures,
+            deliveredBytes, 0, 0, 0);
+    }
+
+    private static USBTunerController.UsbTransferHealthSnapshot usbTimingSnapshot(long now, long deliveredBytes,
+                                                                                   long callbacks, long slow25,
+                                                                                   long slow100)
+    {
+        return usbTimingSnapshot(now, deliveredBytes, callbacks, slow25, slow100, 1, 0, 0);
+    }
+
+    private static USBTunerController.UsbTransferHealthSnapshot usbTimingSnapshot(long now, long deliveredBytes,
+                                                                                   long callbacks, long slow25,
+                                                                                   long slow100, long streamSequence,
+                                                                                   long longGaps, long shortTransfers)
+    {
+        return usbSnapshot(now, 0, 0, 0, 0, deliveredBytes, callbacks, slow25, slow100, streamSequence,
+            longGaps, shortTransfers);
+    }
+
+    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
+                                                                             long copyFailures,
+                                                                             long conversionFailures,
+                                                                             long listenerFailures,
+                                                                             long deliveredBytes, long callbacks,
+                                                                             long slow25, long slow100)
+    {
+        return usbSnapshot(now, saturationDrops, copyFailures, conversionFailures, listenerFailures,
+            deliveredBytes, callbacks, slow25, slow100, 1, 0, 0);
+    }
+
+    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
+                                                                             long copyFailures,
+                                                                             long conversionFailures,
+                                                                             long listenerFailures,
+                                                                             long deliveredBytes, long callbacks,
+                                                                             long slow25, long slow100,
+                                                                             long streamSequence, long longGaps,
+                                                                             long shortTransfers)
+    {
+        return new USBTunerController.UsbTransferHealthSnapshot(true, streamSequence, 1_024, 1, 0, "unknown",
             8, 8, 0, 0, deliveredBytes > 0 ? 1 : 0, deliveredBytes > 0 ? 1 : 0,
             0, 0, 0, 0, 0, deliveredBytes, deliveredBytes, deliveredBytes, 0, 0,
-            0, 0, 0, 0, 1_000L, now, now, 0, 0, 0, 0, 0,
+            shortTransfers, 0, 0, 0, 1_000L, now, now, 0, 0, longGaps, 0, 0,
+            callbacks, slow25, slow100, slow25 > 0 ? 25_000_000L : 0,
             16, 0, 0, saturationDrops, saturationDrops * 1_024, copyFailures, conversionFailures,
             listenerFailures, 0, 0);
+    }
+
+    private static ReceiverHealthIncidentTracker usbIncidentTracker(ReceiverHealthService service) throws Exception
+    {
+        Field incidentsField = ReceiverHealthService.class.getDeclaredField("mIncidents");
+        incidentsField.setAccessible(true);
+        return (ReceiverHealthIncidentTracker)incidentsField.get(service);
+    }
+
+    private static Method usbCollector() throws Exception
+    {
+        Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class,
+            String.class, String.class, Tuner.class, USBTunerController.UsbTransferHealthSnapshot.class,
+            List.class);
+        collectUsb.setAccessible(true);
+        return collectUsb;
+    }
+
+    private static void collectUsbSample(ReceiverHealthIncidentTracker incidents, Method collectUsb,
+                                         ReceiverHealthService service, Tuner tuner,
+                                         List<Map<String,Object>> measurements, long now,
+                                         USBTunerController.UsbTransferHealthSnapshot snapshot) throws Exception
+    {
+        incidents.beginSample();
+        collectUsb.invoke(service, now, "usb-test", "USB test tuner", tuner, snapshot, measurements);
+        incidents.endSample(now);
     }
 
     @SuppressWarnings("unchecked")

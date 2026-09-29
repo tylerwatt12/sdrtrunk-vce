@@ -829,8 +829,9 @@ public abstract class USBTunerController extends TunerController
     }
 
     /**
-     * Immutable USB transfer measurements.  Counts and the worst gap are cumulative for the life of this controller.
-     * The first/last timestamps and last gap apply to the latest streaming session and exclude time while stopped.
+     * Immutable USB transfer measurements.  Counts and worst values are cumulative for the life of this controller.
+     * The first/last timestamps, last gap, and last slow callback apply to the latest streaming session and exclude
+     * time while stopped.
      */
     public record UsbTransferHealthSnapshot(boolean streaming, long streamSequence,
                                             int expectedTransferLengthBytes, int sampleFrameSizeBytes,
@@ -851,6 +852,9 @@ public abstract class USBTunerController extends TunerController
                                             long worstInterTransferGapMilliseconds, long longTransferGapCount,
                                             long lastCallbackToResubmitDurationNanoseconds,
                                             long worstCallbackToResubmitDurationNanoseconds,
+                                            long callbackCount, long callbacksAtLeast25MsCount,
+                                            long callbacksAtLeast100MsCount,
+                                            long lastAtLeast25MsDurationNanoseconds,
                                             int nativeIngressCapacity, int nativeIngressDepth,
                                             int nativeIngressHighWaterDepth,
                                             long nativeIngressSaturationDroppedBuffers,
@@ -904,6 +908,10 @@ public abstract class USBTunerController extends TunerController
         private volatile long mLongTransferGapCount;
         private volatile long mLastCallbackToResubmitDurationNanoseconds;
         private volatile long mWorstCallbackToResubmitDurationNanoseconds;
+        private volatile long mCallbackCount;
+        private volatile long mCallbacksAtLeast25MsCount;
+        private volatile long mCallbacksAtLeast100MsCount;
+        private volatile long mLastAtLeast25MsDurationNanoseconds;
 
         void beginStreaming(int expectedTransferLengthBytes, int sampleFrameSizeBytes)
         {
@@ -914,6 +922,7 @@ public abstract class USBTunerController extends TunerController
             mPreviousTransferTimestampMilliseconds = 0;
             mLastInterTransferGapMilliseconds = 0;
             mLastCallbackToResubmitDurationNanoseconds = 0;
+            mLastAtLeast25MsDurationNanoseconds = 0;
             mStreamStartedTimestampMilliseconds = System.currentTimeMillis();
             mStreamSequence++;
             mStreaming = true;
@@ -925,6 +934,7 @@ public abstract class USBTunerController extends TunerController
             mPreviousTransferTimestampMilliseconds = 0;
             mLastInterTransferGapMilliseconds = 0;
             mLastCallbackToResubmitDurationNanoseconds = 0;
+            mLastAtLeast25MsDurationNanoseconds = 0;
         }
 
         void setNegotiatedDeviceSpeed(int speedCode)
@@ -1037,6 +1047,22 @@ public abstract class USBTunerController extends TunerController
             {
                 mWorstCallbackToResubmitDurationNanoseconds = duration;
             }
+
+            // Coarse diagnostic buckets let the observer identify a new slow callback without retaining samples.
+            // They do not create an alert or change USB transfer handling.
+            if(duration >= 25_000_000L)
+            {
+                mCallbacksAtLeast25MsCount++;
+                mLastAtLeast25MsDurationNanoseconds = duration;
+
+                if(duration >= 100_000_000L)
+                {
+                    mCallbacksAtLeast100MsCount++;
+                }
+            }
+
+            // Publish the completed measurement after its timing bucket.
+            mCallbackCount++;
         }
 
         UsbTransferHealthSnapshot snapshot()
@@ -1068,6 +1094,8 @@ public abstract class USBTunerController extends TunerController
                     mLastTransferTimestampMilliseconds, mLastInterTransferGapMilliseconds,
                     mWorstInterTransferGapMilliseconds, mLongTransferGapCount,
                     mLastCallbackToResubmitDurationNanoseconds, mWorstCallbackToResubmitDurationNanoseconds,
+                    mCallbackCount, mCallbacksAtLeast25MsCount, mCallbacksAtLeast100MsCount,
+                    mLastAtLeast25MsDurationNanoseconds,
                     ingressCapacity, ingressDepth, ingressHighWaterDepth, ingressSaturationDroppedBuffers,
                     ingressSaturationDroppedSamples, ingressCopyFailures, ingressConversionFailures,
                     ingressListenerFailures, ingressLastQueueDelay, ingressWorstQueueDelay);
