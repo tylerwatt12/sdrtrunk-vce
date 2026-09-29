@@ -221,6 +221,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+.ui-fact-help {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-size: var(--font-size-label);
+  font-weight: normal;
+  line-height: var(--line-height-body);
+}
+
 .ui-fact-list {
   min-width: 0;
   display: grid;

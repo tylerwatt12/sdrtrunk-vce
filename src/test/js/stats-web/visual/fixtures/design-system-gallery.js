@@ -262,8 +262,8 @@ function initializeScanListCatalog() {
     badges.append(status);
     description.textContent = selector.dataset.description || '';
     description.hidden = !description.textContent;
-    aliasCount.textContent = String(aliases);
-    routeCount.textContent = String(routes.length);
+    aliasCount.firstChild.textContent = String(aliases);
+    routeCount.firstChild.textContent = String(routes.length);
     routeLinks.replaceChildren();
     if(routes.length) {
       routes.forEach((name) => {

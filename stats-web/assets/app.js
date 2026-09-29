@@ -21300,11 +21300,16 @@ function adminScanListDetail(scanList, revision) {
 
   const facts = node('dl', 'scan-list-detail-facts ui-facts');
   const assigned = node('div', 'ui-fact ui-fact-emphasis');
-  assigned.append(node('dt', '', 'Assigned aliases'),
-    node('dd', '', number(scanList.alias_count || 0)));
+  const assignedValue = node('dd', '', number(scanList.alias_count || 0));
+  assignedValue.append(node('small', 'ui-fact-help',
+    'Existing Aliases explicitly included in this Scan List.'));
+  assigned.append(node('dt', '', 'Assigned aliases'), assignedValue);
   const defaults = node('div', 'ui-fact ui-fact-emphasis');
-  defaults.append(node('dt', '', 'Alias List defaults'),
-    node('dd', '', number(scanList.unmatched_alias_list_count || 0)));
+  const defaultsValue = node('dd', '', number(scanList.unmatched_alias_list_count || 0));
+  defaultsValue.append(node('small', 'ui-fact-help',
+    'Alias Lists set to send calls here when no talkgroup or patch-group Alias matches. ' +
+    'Their existing Aliases are not automatically included.'));
+  defaults.append(node('dt', '', 'Alias Lists routing unmatched calls'), defaultsValue);
   facts.append(assigned, defaults);
 
   const routes = node('div', 'scan-list-detail-routes');
