@@ -21,6 +21,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
+import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -25103,6 +25104,8 @@ function adminSettingsGroups() {
     { label: 'Receiving & output', items: [
       { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose how calls are streamed and recorded, and whether activity is saved.' },
+      { id: 'retained-statistics', label: 'Retained statistics', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
+        description: 'Review and remove saved observations.' },
       { id: 'spectrum', label: 'Spectrum country', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose the country used for Spectrum frequency labels and cursor snapping.' },
       { id: 'protocol-p25', label: 'P25 band plans', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -25162,6 +25165,13 @@ async function renderAdmin() {
   }
   else if (active === 'spectrum') await renderAdminSpectrumSnapSettings();
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
+  else if (active === 'retained-statistics') {
+    content.append(createRetainedStatisticsWorkspace({
+      node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
+      table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
+      formatNumber: number, signal: activeRenderController?.signal
+    }));
+  }
   else if (active === 'protocol-p25') {
     pageTitleController.update({ pageTitle: 'P25 band plans' });
     await renderAdminP25BandplanOverrides();

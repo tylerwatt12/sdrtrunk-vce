@@ -1,0 +1,141 @@
+/* Retained statistics uses shared controls, tables, feedback, and modal styling.
+ * Feature rules only place those components in the Administration workspace. */
+.retained-statistics-page {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.retained-statistics-page > .section {
+  min-width: 0;
+  margin: 0;
+}
+
+.retained-statistics-picker-body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.retained-statistics-source-block,
+.retained-statistics-type-block,
+.retained-statistics-site-block {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.retained-statistics-label {
+  margin: 0;
+  font-size: var(--font-size-section-title);
+  font-weight: var(--font-weight-heading);
+}
+
+.retained-statistics-source-mode {
+  justify-self: start;
+}
+
+.retained-statistics-source-choices,
+.retained-statistics-site-choices {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.retained-statistics-types {
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.retained-statistics-results-body {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.retained-statistics-search {
+  min-width: 0;
+  width: min(420px, 100%);
+}
+
+.retained-statistics-search input {
+  width: 100%;
+}
+
+.retained-statistics-context {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.retained-statistics-result-count {
+  font-size: var(--font-size-meta);
+}
+
+.retained-statistics-result-status:empty,
+.retained-statistics-job-notice:empty,
+.retained-statistics-review-error:empty {
+  display: none;
+}
+
+.retained-statistics-pager {
+  justify-content: flex-end;
+}
+
+.retained-statistics-pager > :first-child {
+  margin-right: auto;
+}
+
+.retained-statistics-review {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.retained-statistics-review-target {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.retained-statistics-scope-control {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.retained-statistics-impact {
+  margin: 0;
+}
+
+.retained-statistics-review-actions {
+  justify-content: flex-end;
+}
+
+.retained-statistics-modal {
+  width: min(var(--modal-size-small), 96vw);
+}
+
+@media (max-width: 620px) {
+  .retained-statistics-source-choices,
+  .retained-statistics-site-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .retained-statistics-types {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retained-statistics-type-option {
+    min-width: 0;
+  }
+
+  .retained-statistics-scope-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

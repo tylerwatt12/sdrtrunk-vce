@@ -30,6 +30,7 @@
 @import url("./styles/features/scan-lists.css?v=1") layer(features);
 @import url("./styles/features/dashboard.css?v=3") layer(features);
 @import url("./styles/features/administration.css?v=6") layer(features);
+@import url("./styles/features/retained-statistics.css?v=1") layer(features);
 @import url("./styles/features/call-matching.css?v=2") layer(features);
 @import url("./styles/features/signal-quality.css?v=3") layer(features);
 @import url("./styles/features/radioreference.css?v=14") layer(features);
