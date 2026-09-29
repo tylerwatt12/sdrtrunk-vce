@@ -133,7 +133,8 @@ function afterCall(row, selected) {
 function appendFact(node, host, name, detail) {
   if (detail === null || detail === undefined || detail === '') return;
   const term = node('dt', '', name);
-  const description = node('dd', '', detail);
+  const description = node('dd', '');
+  description.append(detail);
   host.append(term, description);
 }
 
@@ -161,7 +162,8 @@ function select(node, options, labelText) {
 // owns only recordings geometry and the historical audio lifecycle.
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
-    captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, stopLiveAudio, href, anchor } = deps;
+    captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
+    entityRefHref, stopLiveAudio, href, anchor } = deps;
   const search = {
     q: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -196,6 +198,11 @@ export function createRecordingsFeature(deps) {
     const notice = node('div', `ui-feedback${type ? ` ui-feedback-${type}` : ''}`, text);
     notice.setAttribute('role', type === 'error' ? 'alert' : 'status');
     return notice;
+  };
+
+  const entityLink = (text, reference) => {
+    const target = canViewRadio?.() ? entityRefHref?.(reference) : null;
+    return target ? anchor(String(text), target) : String(text);
   };
 
   function query(filters, extra = {}) {
@@ -478,34 +485,40 @@ export function createRecordingsFeature(deps) {
 
   function callFacts(row) {
     const receivedSites = value(row, 'also_received_on', 'also_received_sites');
+    const groupLabel = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
     const values = [
       ['Duration', duration(row)], ['Call type', prettify(value(row, 'call_type'))],
       ['Voice', prettify(value(row, 'voice_type'))], ['Frequency', frequency(row)],
       ['Audio from', winningSite(row)],
       ['Also received on', Array.isArray(receivedSites) ? receivedSites.map(siteText)
         .filter(Boolean).join(', ') : ''],
-      ['Talkgroup ID', value(row, 'talkgroup_id', 'group_id')],
-      ['Talkgroup alias', value(row, 'talkgroup_alias', 'group_alias')],
-      ['Talkgroup description', value(row, 'talkgroup_description', 'group_description')],
-      ['Talkgroup group', value(row, 'talkgroup_group', 'group_group')],
-      ['Destination radio', value(row, 'destination_radio_id')],
-      ['Destination alias', value(row, 'destination_radio_alias')],
+      ['Saved channel', value(row, 'channel_name', 'analog_channel_name') ||
+        (row?.channel_entity_ref ? 'Open channel' : null), 'channel_entity_ref'],
+      [`${groupLabel} ID`, value(row, 'talkgroup_id', 'group_id'), 'target_entity_ref'],
+      [`${groupLabel} alias`, value(row, 'talkgroup_alias', 'group_alias'), 'target_entity_ref'],
+      [`${groupLabel} description`, value(row, 'talkgroup_description', 'group_description')],
+      [`${groupLabel} group`, value(row, 'talkgroup_group', 'group_group')],
+      ['Destination radio', value(row, 'destination_radio_id'), 'target_entity_ref'],
+      ['Destination alias', value(row, 'destination_radio_alias'), 'target_entity_ref'],
       ['Destination description', value(row, 'destination_radio_description')],
       ['Destination group', value(row, 'destination_radio_group')],
-      ['Source ID', value(row, 'source_id', 'radio_id')],
-      ['Source alias', value(row, 'source_alias', 'radio_alias')],
+      ['Source ID', value(row, 'source_id', 'radio_id'), 'source_entity_ref'],
+      ['Source alias', value(row, 'source_alias', 'radio_alias'), 'source_entity_ref'],
       ['Source description', value(row, 'source_description', 'radio_description')],
-      ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias')],
+      ['Latest OTA name', value(row, 'source_ota_alias', 'source_ota_ta', 'ota_alias', 'talker_alias'),
+        'source_entity_ref'],
       ['Source group', value(row, 'source_group', 'radio_group')],
-      ['Radio system', value(row, 'system_name', 'radio_system_name')],
-      ['Analog channel', value(row, 'channel_name')],
+      ['Radio system', value(row, 'system_name', 'radio_system_name', 'system_key'),
+        'radio_system_entity_ref'],
       ['Protocol', protocolLabel(value(row, 'protocol'))],
       ['WACN', value(row, 'wacn')], ['SysID', value(row, 'system_id', 'sysid')],
       ['RFSS', value(row, 'rfss_id', 'rfss')], ['Site ID', value(row, 'site_id')],
       ['NAC', value(row, 'nac')], ['Tone', value(row, 'tone')],
       ['PL', value(row, 'pl')], ['DPL', value(row, 'dpl')]
     ];
-    return values.filter(([, detail]) => detail !== null && detail !== undefined && detail !== '');
+    return values.filter(([, detail]) => detail !== null && detail !== undefined && detail !== '')
+      .map(([name, detail, reference]) => [name,
+        reference ? entityLink(detail, row?.[reference]) : detail]);
   }
 
   async function openDetails(row) {
@@ -522,9 +535,16 @@ export function createRecordingsFeature(deps) {
       const facts = node('dl', 'ui-fact-list recordings-detail-facts');
       callFacts(call).forEach(([name, fact]) => appendFact(node, facts, name, fact));
       const patchMembers = value(call, 'patch_members', 'patch_talkgroups');
-      if (Array.isArray(patchMembers) && patchMembers.length) appendFact(node, facts, 'Patch members',
-        patchMembers.map((member) => typeof member === 'object' ?
-          value(member, 'alias', 'name', 'id', 'talkgroup_id') : member).filter(Boolean).join(', '));
+      if (Array.isArray(patchMembers) && patchMembers.length) {
+        const members = node('span', '');
+        patchMembers.forEach((member) => {
+          const name = typeof member === 'object' ? value(member, 'alias', 'name', 'id', 'talkgroup_id') : member;
+          if (name === null || name === undefined || name === '') return;
+          if (members.childNodes.length) members.append(', ');
+          members.append(entityLink(name, member?.entity_ref));
+        });
+        if (members.childNodes.length) appendFact(node, facts, 'Patch members', members);
+      }
       const actions = actionBar(call);
       body.replaceChildren(heading, facts, actions);
     } catch (error) {
@@ -545,12 +565,40 @@ export function createRecordingsFeature(deps) {
       () => void openDetails(row), 'link-button recordings-call-title');
     main.append(heading);
     const id = value(row, 'talkgroup_id', 'group_id');
-    if (id !== null && !sharedGroup) main.append(node('span', 'recordings-call-id', `TG ${id}`));
-    if (source && !sharedSource && !sharedGroup) main.append(node('div', 'recordings-call-source', source));
+    if (id !== null && !sharedGroup) {
+      const groupId = node('span', 'recordings-call-id');
+      groupId.append(entityLink(`${value(row, 'call_type') === 'PATCH' ? 'Patch' : 'TG'} ${id}`,
+        row?.target_entity_ref));
+      main.append(groupId);
+    }
+    const destinationId = value(row, 'destination_radio_id');
+    if (destinationId !== null) {
+      const destination = node('span', 'recordings-call-id');
+      destination.append(entityLink(`To Radio ${destinationId}`, row?.target_entity_ref));
+      main.append(destination);
+    }
+    if (source && !sharedSource && !sharedGroup) {
+      const sourceLine = node('div', 'recordings-call-source');
+      sourceLine.append(entityLink(source, row?.source_entity_ref));
+      main.append(sourceLine);
+    }
     const meta = node('div', 'recordings-call-meta');
-    [winningSite(row), duration(row), prettify(value(row, 'call_type')),
-      protocolLabel(value(row, 'protocol')), prettify(value(row, 'voice_type'))]
-      .filter(Boolean).forEach((text) => meta.append(node('span', '', text)));
+    const system = value(row, 'system_name', 'radio_system_name');
+    const channel = value(row, 'channel_name', 'analog_channel_name');
+    const site = winningSite(row);
+    const metadata = [
+      [!currentFilters.system_key && row?.radio_system_entity_ref ? system || 'Radio system' : null,
+        row?.radio_system_entity_ref],
+      [site && site !== channel ? site : null, null],
+      [channel || (row?.channel_entity_ref ? 'Channel' : null), row?.channel_entity_ref],
+      [duration(row), null], [prettify(value(row, 'call_type')), null],
+      [protocolLabel(value(row, 'protocol')), null], [prettify(value(row, 'voice_type')), null]
+    ];
+    metadata.filter(([text]) => text).forEach(([text, reference]) => {
+      const item = node('span', '');
+      item.append(entityLink(text, reference));
+      meta.append(item);
+    });
     main.append(meta);
     const actions = actionBar(row);
     if (isPrimaryAdmin()) {

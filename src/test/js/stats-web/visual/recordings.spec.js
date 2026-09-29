@@ -18,11 +18,39 @@ const call = {
   site_name: 'North Ridge', call_type: 'GROUP', protocol: 'APCO25_PHASE2', voice_type: 'CLEAR'
 };
 
+const systemKey = 'p25:00001:001';
+const channelId = '00000000-0000-4000-8000-000000000017';
+const linkedCall = {
+  ...call,
+  system_key: systemKey,
+  channel_id: channelId,
+  channel_name: 'North Ridge Channel',
+  radio_system_entity_ref: { kind: 'radio_system', key: systemKey },
+  channel_entity_ref: { kind: 'channel', key: channelId },
+  target_entity_ref: {
+    kind: 'talkgroup', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1201'
+  },
+  source_entity_ref: {
+    kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30914'
+  }
+};
+
+const linkedHrefs = [
+  '/?view=radio-system&radio_system_key=p25%3A00001%3A001',
+  `/?view=channel&configuration_id=${channelId}`,
+  '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-g-00001-001-1201',
+  '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00001-001-30914'
+];
+
+function entityLink(host, href) {
+  return host.locator(`a[href="${href}"]`);
+}
+
 async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
-    requestedFilters: []
+    call: options.call || call, callDetail: options.callDetail || null, requestedFilters: []
   };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
@@ -33,7 +61,8 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ json: { data: { configured: true, authenticated: state.admin,
         username: state.admin ? 'admin' : null, tier: state.admin ? 'admin' : 'public',
         primary: state.admin, capabilities: { recordings: true,
-          'admin-recordings': state.admin, 'admin-settings': state.admin, dashboard: true } } } });
+          'admin-recordings': state.admin, 'admin-settings': state.admin, dashboard: true,
+          radio: options.radio !== false } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/recordings/status') {
@@ -42,8 +71,10 @@ async function openRecordings(page, options = {}) {
     } else if (pathname === '/api/v1/recordings/calls') {
       state.requestedFilters.push(Object.fromEntries(url.searchParams));
       const matching = state.hasCalls && state.matchCalls;
-      await route.fulfill({ json: { data: { calls: matching ? [call] : [],
+      await route.fulfill({ json: { data: { calls: matching ? [state.call] : [],
         next_cursor: null, total: null } } });
+    } else if (pathname === '/api/v1/recordings/calls/17') {
+      await route.fulfill({ json: { data: { call: state.callDetail || state.call } } });
     } else if (pathname === '/api/v1/recordings/suggestions') {
       const q = url.searchParams.get('q') || '';
       if (q === 'error') {
@@ -204,3 +235,106 @@ for (const theme of ['light', 'dark']) {
     expect(state.requestedFilters.length).toBeGreaterThan(1);
   });
 }
+
+test('linked recording cards and details open canonical entity pages', async ({ page }) => {
+  await openRecordings(page, { call: linkedCall });
+  const card = page.locator('.recordings-call');
+  await expect(card).toHaveCount(1);
+  await expect(card.getByRole('button', { name: 'Fire Dispatch' })).toBeVisible();
+  const cardLabels = ['Metro Public Safety', 'North Ridge Channel', '1201', 'Engine 4'];
+  for (const [index, target] of linkedHrefs.entries()) {
+    await expect(entityLink(card, target).first()).toBeVisible();
+    await expect(entityLink(card, target).first()).toContainText(cardLabels[index]);
+  }
+  await expect(card).toHaveScreenshot('recordings-linked-desktop.png');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(card).toHaveScreenshot('recordings-linked-mobile.png');
+  await card.getByRole('button', { name: 'Fire Dispatch' }).click();
+  const detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail).toBeVisible();
+  for (const target of linkedHrefs) {
+    await expect(entityLink(detail, target).first()).toBeVisible();
+  }
+  await expect(detail).toHaveScreenshot('recordings-linked-detail-mobile.png');
+});
+
+test('conventional recordings link their configured channel without a radio system', async ({ page }) => {
+  const analog = {
+    ...call, system_name: null, site_name: null, talkgroup_id: null, talkgroup_alias: null,
+    source_id: null, source_alias: null, source_ota_alias: null,
+    call_type: 'CONVENTIONAL', protocol: 'NBFM',
+    channel_id: channelId, channel_name: 'Hilltop FM',
+    channel_entity_ref: { kind: 'channel', key: channelId }
+  };
+  await openRecordings(page, { call: analog });
+  const card = page.locator('.recordings-call');
+  const channelHref = `/?view=channel&configuration_id=${channelId}`;
+  await expect(card.getByRole('button', { name: 'Hilltop FM' })).toBeVisible();
+  await expect(entityLink(card, channelHref).first()).toContainText('Hilltop FM');
+  await card.getByRole('button', { name: 'Hilltop FM' }).click();
+  const detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(entityLink(detail, channelHref).first()).toContainText('Hilltop FM');
+});
+
+test('direct destination and patch member facts link to their identities', async ({ page }) => {
+  const direct = {
+    ...linkedCall, call_type: 'DIRECT', talkgroup_id: null, talkgroup_alias: null,
+    destination_radio_id: 42137, destination_radio_alias: 'Unit 12',
+    target_entity_ref: {
+      kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-42137'
+    }
+  };
+  await openRecordings(page, { call: direct });
+  await expect(entityLink(page.locator('.recordings-call'),
+    '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00001-001-42137').first())
+    .toContainText('To Radio 42137');
+  await page.locator('.recordings-call-title').click();
+  let detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(entityLink(detail,
+    '/?view=radio&radio_system_key=p25%3A00001%3A001&identity_key=v1-r-00001-001-42137').first())
+    .toBeVisible();
+
+  const patch = {
+    ...linkedCall, call_type: 'PATCH', talkgroup_alias: 'Dispatch Patch',
+    target_entity_ref: {
+      kind: 'patch_group', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201'
+    },
+    patch_members: [{ kind: 'talkgroup', id: 1202, alias: 'Fireground',
+      entity_ref: { kind: 'talkgroup', radio_system_key: systemKey,
+        identity_key: 'v1-g-00001-001-1202' } }]
+  };
+  await openRecordings(page, { call: patch });
+  await expect(entityLink(page.locator('.recordings-call'),
+    '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-p-00001-001-1201').first())
+    .toContainText('Patch 1201');
+  await page.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(entityLink(detail,
+    '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-p-00001-001-1201').first())
+    .toBeVisible();
+  await expect(entityLink(detail,
+    '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-g-00001-001-1202').first())
+    .toContainText('Fireground');
+});
+
+test('recording identities remain readable when references or radio access are absent', async ({ page }) => {
+  await openRecordings(page);
+  let card = page.locator('.recordings-call');
+  await expect(card).toContainText('Fire Dispatch');
+  await expect(card).toContainText('Engine 4');
+  await expect(card.locator('a[href*="view="]')).toHaveCount(0);
+  await card.locator('.recordings-call-title').click();
+  let detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail).toContainText('Fire Dispatch');
+  await expect(detail.locator('a[href*="view="]')).toHaveCount(0);
+
+  await openRecordings(page, { call: linkedCall, radio: false });
+  card = page.locator('.recordings-call');
+  await expect(card).toContainText('Fire Dispatch');
+  await expect(card).toContainText('Engine 4');
+  await expect(card.locator('a[href*="view="]')).toHaveCount(0);
+  await card.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail).toContainText('North Ridge Channel');
+  await expect(detail.locator('a[href*="view="]')).toHaveCount(0);
+});
