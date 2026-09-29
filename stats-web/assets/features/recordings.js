@@ -163,7 +163,7 @@ function select(node, options, labelText) {
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
-    entityRefHref, stopLiveAudio, href, anchor } = deps;
+    entityRefHref, stopLiveAudio, href, anchor, uiToggleField } = deps;
   const search = {
     q: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -546,7 +546,44 @@ export function createRecordingsFeature(deps) {
         if (members.childNodes.length) appendFact(node, facts, 'Patch members', members);
       }
       const actions = actionBar(call);
-      body.replaceChildren(heading, facts, actions);
+      const transcription = detail?.transcription || call?.transcription;
+      const transcriptPanel = transcription && node('section', 'recordings-transcript');
+      if (transcriptPanel) {
+        const drawTranscript = (current) => {
+          const state = String(current?.status || 'PENDING').toUpperCase();
+          const title = node('h4', '', 'Transcript');
+          const message = state === 'COMPLETE' ?
+            (current?.text ? `Transcribed ${dateTime(current.stored_at_ms)}` : 'No speech was returned.') :
+            state === 'FAILED' ? 'Transcription failed.' :
+            state === 'DISABLED' ? 'Transcription is off.' :
+            state === 'TOO_SHORT' || current?.too_short ? 'Call is shorter than the minimum length.' :
+            state === 'PENDING' ? 'Pending transcription.' : prettify(state);
+          const summary = node('p', 'recordings-transcript-status', message);
+          transcriptPanel.replaceChildren(title, summary);
+          if (state === 'COMPLETE' && current?.text) {
+            transcriptPanel.append(node('p', 'recordings-transcript-text', String(current.text)));
+          }
+          if (state === 'FAILED' && isPrimaryAdmin()) {
+            const retryStatus = node('div', 'recordings-form-status');
+            retryStatus.setAttribute('role', 'status');
+            const retry = button(node, 'Retry transcription', async () => {
+              retry.disabled = true;
+              try {
+                const result = await requestJson(`${ADMIN}/calls/${encodeURIComponent(String(call.id))}/transcription/retry`,
+                  { method: 'POST', page: false });
+                if (modal.dialog.isConnected) drawTranscript(result);
+              } catch (error) {
+                if (modal.dialog.isConnected) retryStatus.replaceChildren(makeNotice(error.message ||
+                  'Transcription could not be retried. Try again.', 'error'));
+                retry.disabled = false;
+              }
+            });
+            transcriptPanel.append(retry, retryStatus);
+          }
+        };
+        drawTranscript(transcription);
+      }
+      body.replaceChildren(heading, facts, ...(transcriptPanel ? [transcriptPanel] : []), actions);
     } catch (error) {
       if (modal.dialog.isConnected) body.replaceChildren(makeNotice(error.message ||
         'Call details are unavailable. Refresh the results and try again.', 'error'));
@@ -1258,6 +1295,108 @@ export function createRecordingsFeature(deps) {
         } finally { saveAge.disabled = false; }
       }, 'ui-button ui-button-primary');
       ageBody.append(field('Remove managed calls older than (days)', age), saveAge, ageStatus);
+      const transcriptionBody = node('div', 'recordings-admin-body');
+      const enabledField = uiToggleField('Transcribe managed calls',
+        settings?.transcription_enabled === true, 'Transcribe managed calls',
+        'Includes retained calls that have not been transcribed.');
+      const enabled = enabledField.querySelector('input');
+      const endpoint = textInput('http://127.0.0.1:8000/v1/audio/transcriptions', 'url');
+      endpoint.value = settings?.transcription_url || '';
+      const model = textInput('Model ID', 'text');
+      model.value = settings?.transcription_model || '';
+      const minimum = textInput('500', 'number');
+      minimum.min = '500';
+      minimum.max = '600000';
+      minimum.step = '1';
+      minimum.value = String(settings?.transcription_min_duration_ms ?? 500);
+      const key = textInput(settings?.transcription_key_configured ? 'Leave blank to keep saved key' :
+        'Optional API key', 'password');
+      key.autocomplete = 'new-password';
+      const keyField = field('API key', key);
+      const keyState = node('small', 'ui-field-detail', settings?.transcription_key_configured ?
+        'An API key is saved on this receiver.' : 'No API key is saved.');
+      keyField.append(keyState);
+      const clearKey = button(node, 'Clear saved key', async () => {
+        clearKey.disabled = true;
+        try {
+          await requestJson(`${ADMIN}/settings`, { method: 'PUT',
+            body: { transcription_clear_api_key: true }, page: false });
+          key.value = '';
+          settings.transcription_key_configured = false;
+          keyState.textContent = 'No API key is saved.';
+          key.placeholder = 'Optional API key';
+          clearKey.hidden = true;
+          transcriptionStatus.replaceChildren(makeNotice('Saved API key cleared.'));
+        } catch (error) {
+          transcriptionStatus.replaceChildren(makeNotice(error.message || 'API key could not be cleared.', 'error'));
+        } finally { clearKey.disabled = false; }
+      });
+      clearKey.hidden = settings?.transcription_key_configured !== true;
+      const transcriptionFields = node('div', 'recordings-transcription-fields');
+      transcriptionFields.append(field('Transcription endpoint URL', endpoint), field('Model ID', model),
+        field('Minimum call length (ms)', minimum), keyField);
+      const transcriptionStatus = node('div', 'recordings-form-status');
+      transcriptionStatus.setAttribute('role', 'status');
+      const saveTranscription = button(node, 'Save transcription settings', async () => {
+        const milliseconds = numberOrNull(minimum.value);
+        if (!Number.isInteger(milliseconds) || milliseconds < 500 || milliseconds > 600_000) {
+          transcriptionStatus.replaceChildren(makeNotice('Enter a whole number from 500 to 600,000 milliseconds.',
+            'error'));
+          return;
+        }
+        if (enabled.checked && (!endpoint.value.trim() || !model.value.trim())) {
+          transcriptionStatus.replaceChildren(makeNotice('Enter a transcription endpoint URL and model ID.', 'error'));
+          return;
+        }
+        const body = { transcription_enabled: enabled.checked, transcription_url: endpoint.value.trim(),
+          transcription_model: model.value.trim(), transcription_min_duration_ms: milliseconds };
+        if (key.value) body.transcription_api_key = key.value;
+        saveTranscription.disabled = true;
+        try {
+          await requestJson(`${ADMIN}/settings`, { method: 'PUT', body, page: false });
+          if (key.value) {
+            settings.transcription_key_configured = true;
+            key.value = '';
+            key.placeholder = 'Leave blank to keep saved key';
+            keyState.textContent = 'An API key is saved on this receiver.';
+            clearKey.hidden = false;
+          }
+          transcriptionStatus.replaceChildren(makeNotice('Transcription settings saved.'));
+        } catch (error) {
+          transcriptionStatus.replaceChildren(makeNotice(error.message ||
+            'Transcription settings could not be saved.', 'error'));
+        } finally { saveTranscription.disabled = false; }
+      }, 'ui-button ui-button-primary');
+      const transcriptionFacts = node('dl', 'ui-facts recordings-admin-facts');
+      const drawTranscription = (snapshot) => {
+        transcriptionFacts.replaceChildren();
+        const progress = snapshot?.transcription || {};
+        for (const [name, count] of [
+          ['Pending', progress.pending], ['Completed', progress.completed], ['Failed', progress.failed]
+        ]) {
+          if (count === null || count === undefined) continue;
+          const fact = node('div', 'ui-fact');
+          fact.append(node('dt', '', name), node('dd', '', Number(count).toLocaleString()));
+          transcriptionFacts.append(fact);
+        }
+        if (progress.active) {
+          const fact = node('div', 'ui-fact');
+          fact.append(node('dt', '', 'Worker'), node('dd', '', 'Transcribing a call'));
+          transcriptionFacts.append(fact);
+        }
+        if (progress.last_error) {
+          const fact = node('div', 'ui-fact');
+          fact.append(node('dt', '', 'Last error'), node('dd', '', String(progress.last_error)));
+          transcriptionFacts.append(fact);
+        }
+      };
+      drawTranscription(catalog);
+      const keyActions = node('div', 'ui-action-row');
+      keyActions.append(clearKey, saveTranscription);
+      transcriptionBody.append(enabledField, transcriptionFields,
+        node('p', 'recordings-admin-note', 'Only calls at or above this length are eligible. ' +
+          'The backlog processes in the background.'),
+        keyActions, transcriptionStatus, transcriptionFacts);
       const catalogBody = node('div', 'recordings-admin-body');
       const catalogFacts = node('dl', 'ui-facts recordings-admin-facts');
       const stat = (name, detail) => {
@@ -1287,9 +1426,21 @@ export function createRecordingsFeature(deps) {
       };
       const refreshCatalog = async () => {
         const latest = await requestJson(`${ADMIN}/status`, { page: false });
-        if (wrapper.isConnected) drawCatalog(latest);
+        if (wrapper.isConnected) {
+          drawCatalog(latest);
+          drawTranscription(latest);
+        }
         return latest;
       };
+      const refreshTranscription = button(node, 'Refresh status', async () => {
+        refreshTranscription.disabled = true;
+        try { await refreshCatalog(); }
+        catch (error) {
+          transcriptionStatus.replaceChildren(makeNotice(error.message ||
+            'Transcription status could not be loaded. Try again.', 'error'));
+        } finally { refreshTranscription.disabled = false; }
+      });
+      transcriptionBody.append(refreshTranscription);
       const watchMaintenance = async (initial) => {
         let latest = initial;
         while (wrapper.isConnected && activeOperation(latest)) {
@@ -1337,6 +1488,7 @@ export function createRecordingsFeature(deps) {
       catalogBody.append(catalogFacts, maintenance, operationStatus,
         node('p', 'recordings-admin-note', 'Reindex checks listed calls. It does not recover unlisted audio files.'));
       wrapper.append(section('Recording mode', modeBody), section('Managed call retention', ageBody),
+        section('Transcription', transcriptionBody),
         section('Call catalog', catalogBody));
       if (activeOperation(catalog)) void watchMaintenance(catalog);
     } catch (error) {

@@ -340,6 +340,29 @@
   gap: var(--space-2) var(--space-4);
 }
 
+.recordings-transcript {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.recordings-transcript h4,
+.recordings-transcript p {
+  margin: 0;
+}
+
+.recordings-transcript-status {
+  color: var(--muted);
+}
+
+.recordings-transcript-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .recordings-detail-modal .read-only-modal {
   max-width: min(680px, calc(100vw - 2 * var(--modal-viewport-gap)));
 }
@@ -480,6 +503,12 @@
   margin: 0;
 }
 
+.recordings-transcription-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
 .recordings-admin-note {
   color: var(--muted);
 }
@@ -545,7 +574,8 @@
 @media (max-width: 700px) {
   .recordings-search-fields,
   .recordings-custom-dates,
-  .recordings-mode-choices {
+  .recordings-mode-choices,
+  .recordings-transcription-fields {
     grid-template-columns: minmax(0, 1fr);
   }
 

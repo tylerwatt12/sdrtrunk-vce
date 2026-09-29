@@ -23,7 +23,7 @@ import { createRadioReferenceImportWorkspace } from './features/radioreference-i
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
 import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=1';
 import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
-import { createRecordingsFeature } from './features/recordings.js?v=3';
+import { createRecordingsFeature } from './features/recordings.js?v=4';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -25391,7 +25391,7 @@ function adminSettingsGroups() {
       { id: 'operations', label: 'Call output & activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose how calls are streamed and recorded, and whether activity is saved.' },
       { id: 'recordings', label: 'Recordings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
-        description: 'Choose how new calls are saved and how long managed calls are kept.' },
+        description: 'Manage recording mode, retention, and transcription.' },
       { id: 'retained-statistics', label: 'Retained statistics', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Review and remove saved observations.' },
       { id: 'remote-links', label: 'Remote Links', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -25687,7 +25687,7 @@ applicationRoutes = routeFoundation.createRegistry({
 }, routeDefinitionAllowed);
 
 const recordingsFeature = createRecordingsFeature({
-  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
+  node, requestJson, openReadOnlyModal, section, pageHeader, beginPage, uiToggleField,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   isPrimaryAdmin: () => accessSession.primary === true &&

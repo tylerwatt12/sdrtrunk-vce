@@ -50,7 +50,12 @@ async function openRecordings(page, options = {}) {
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
-    call: options.call || call, callDetail: options.callDetail || null, requestedFilters: []
+    call: options.call || call, callDetail: options.callDetail || null, requestedFilters: [],
+    transcription: options.transcription || null, settingsWrites: [],
+    settings: { mode: options.mode || 'MANAGED', managed_directory: '/recordings',
+      retention_days: null, transcription_enabled: false, transcription_url: '',
+      transcription_model: '', transcription_min_duration_ms: 500,
+      transcription_key_configured: Boolean(options.keyConfigured) }
   };
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = options.theme || 'light';
@@ -74,7 +79,23 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ json: { data: { calls: matching ? [state.call] : [],
         next_cursor: null, total: null } } });
     } else if (pathname === '/api/v1/recordings/calls/17') {
-      await route.fulfill({ json: { data: { call: state.callDetail || state.call } } });
+      await route.fulfill({ json: { data: { call: state.callDetail || state.call,
+        ...(state.transcription ? { transcription: state.transcription } : {}) } } });
+    } else if (pathname === '/api/v1/admin/recordings/settings') {
+      if (route.request().method() === 'PUT') {
+        const update = route.request().postDataJSON();
+        state.settingsWrites.push(update);
+        Object.assign(state.settings, update);
+        if (update.transcription_api_key) state.settings.transcription_key_configured = true;
+        if (update.transcription_clear_api_key) state.settings.transcription_key_configured = false;
+      }
+      await route.fulfill({ json: { data: state.settings } });
+    } else if (pathname === '/api/v1/admin/recordings/status') {
+      await route.fulfill({ json: { data: { catalog: { call_count: 1 },
+        transcription: { pending: 3, completed: 1, failed: 1, active: false } } } });
+    } else if (pathname === '/api/v1/admin/recordings/calls/17/transcription/retry') {
+      state.transcription = { status: 'PENDING', text: null, stored_at_ms: null };
+      await route.fulfill({ json: { data: state.transcription } });
     } else if (pathname === '/api/v1/recordings/suggestions') {
       const q = url.searchParams.get('q') || '';
       if (q === 'error') {
@@ -93,7 +114,8 @@ async function openRecordings(page, options = {}) {
       await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
     }
   });
-  await page.goto('/app.html?view=recordings');
+  await page.goto(options.view === 'admin' ? '/app.html?view=admin&tab=recordings' :
+    '/app.html?view=recordings');
   return state;
 }
 
@@ -337,4 +359,74 @@ test('recording identities remain readable when references or radio access are a
   detail = page.getByRole('dialog', { name: 'Call details' });
   await expect(detail).toContainText('North Ridge Channel');
   await expect(detail.locator('a[href*="view="]')).toHaveCount(0);
+});
+
+test('transcription settings save a write-only key and show catalog progress', async ({ page }) => {
+  const state = await openRecordings(page, { view: 'admin', keyConfigured: true });
+  await expect(page.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeVisible();
+  await expect(page.locator('.recordings-admin')).toContainText('3');
+  await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeVisible();
+  await page.locator('.recordings-admin .ui-toggle').click();
+  await expect(page.getByRole('checkbox', { name: 'Transcribe managed calls' })).toBeChecked();
+  await page.getByLabel('Transcription endpoint URL').fill('http://127.0.0.1:8000/v1/audio/transcriptions');
+  await page.getByLabel('Model ID').fill('test-model');
+  await page.getByLabel('Minimum call length (ms)').fill('750');
+  await page.getByLabel('API key').fill('replacement-key');
+  await page.getByRole('button', { name: 'Save transcription settings' }).click();
+  await expect(page.locator('.recordings-admin')).toContainText('Transcription settings saved.');
+  expect(state.settingsWrites.at(-1)).toMatchObject({ transcription_enabled: true,
+    transcription_url: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+    transcription_model: 'test-model', transcription_min_duration_ms: 750,
+    transcription_api_key: 'replacement-key' });
+  await expect(page.getByLabel('API key')).toHaveValue('');
+  await expect(page.locator('.recordings-admin')).not.toContainText('replacement-key');
+  await page.getByRole('button', { name: 'Save transcription settings' }).click();
+  expect(state.settingsWrites.at(-1)).not.toHaveProperty('transcription_api_key');
+  await page.getByRole('button', { name: 'Clear saved key' }).click();
+  expect(state.settingsWrites.at(-1)).toMatchObject({ transcription_clear_api_key: true });
+  await expect(page.getByRole('button', { name: 'Clear saved key' })).toBeHidden();
+});
+
+test('transcription settings fit a narrow dark viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRecordings(page, { view: 'admin', theme: 'dark', keyConfigured: true });
+  await expect(page.getByLabel('Transcription endpoint URL')).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('call details show a transcript and allow administrators to retry failures', async ({ page }) => {
+  await openRecordings(page, { transcription: { status: 'complete',
+    text: 'Engine four arriving.\nRequesting another unit.', stored_at_ms: Date.parse('2026-09-28T10:09:00Z') } });
+  await page.locator('.recordings-call-title').click();
+  let detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail.locator('.recordings-transcript')).toContainText('Engine four arriving.');
+  await expect(detail.locator('.recordings-transcript')).toContainText('Requesting another unit.');
+  await expect(detail.getByRole('button', { name: 'Retry transcription' })).toHaveCount(0);
+
+  const retryState = await openRecordings(page, { transcription: { status: 'failed',
+    text: null, stored_at_ms: null } });
+  await page.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail.getByRole('button', { name: 'Retry transcription' })).toBeVisible();
+  await detail.getByRole('button', { name: 'Retry transcription' }).click();
+  await expect(detail.locator('.recordings-transcript')).toContainText('Pending transcription.');
+  expect(retryState.transcription.status).toBe('PENDING');
+
+  await openRecordings(page, { admin: false,
+    transcription: { status: 'failed', text: null, stored_at_ms: null } });
+  await page.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail.locator('.recordings-transcript')).toContainText('Transcription failed.');
+  await expect(detail.getByRole('button', { name: 'Retry transcription' })).toHaveCount(0);
+
+  await openRecordings(page, { transcription: { status: 'too_short', text: null, stored_at_ms: null } });
+  await page.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail.locator('.recordings-transcript')).toContainText('shorter than the minimum length');
+
+  await openRecordings(page, { transcription: { status: 'disabled', text: null, stored_at_ms: null } });
+  await page.locator('.recordings-call-title').click();
+  detail = page.getByRole('dialog', { name: 'Call details' });
+  await expect(detail.locator('.recordings-transcript')).toContainText('Transcription is off.');
 });
