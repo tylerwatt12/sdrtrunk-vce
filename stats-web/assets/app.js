@@ -3563,6 +3563,75 @@ function aliasListCountLabel(row) {
   return Number.isInteger(value) && value >= 0 ? `${number(value)} aliases` : 'Alias count unavailable';
 }
 
+function aliasListChannelUsage(channels) {
+  const grouped = new Map();
+  (channels || []).forEach((channel) => {
+    const listId = aliasListId(channel);
+    const configurationId = canonicalConfigurationId(channel.configuration_id);
+    if (!listId || !configurationId) return;
+    if (!grouped.has(listId)) grouped.set(listId, new Map());
+    grouped.get(listId).set(configurationId, {
+      id: configurationId, name: String(channel.name || '').trim() || 'Unnamed channel'
+    });
+  });
+  return new Map([...grouped].map(([id, rows]) => [id, [...rows.values()]
+    .sort((left, right) => left.name.localeCompare(right.name, undefined,
+      { numeric: true, sensitivity: 'base' }))]));
+}
+
+function aliasListChannelPreview(row, usage) {
+  const channels = usage.channelsByList?.get(aliasListId(row));
+  if (channels?.length) {
+    const names = channels.slice(0, 2).map((channel) => channel.name).join(', ');
+    const remaining = channels.length - 2;
+    return `Used by ${names}${remaining > 0 ? ` +${number(remaining)} more` : ''}`;
+  }
+  const count = Number(row?.assigned_channel_count);
+  if (!Number.isInteger(count) || count < 0) return '';
+  return count === 0 ? 'No channels' : `${number(count)} channel${count === 1 ? '' : 's'}`;
+}
+
+function aliasListChannelUsageCard(selectedList, usage) {
+  const card = node('section', 'alias-channel-usage ui-summary-card');
+  card.append(node('h3', '', 'Channels using this Alias List'));
+  const body = node('div', 'alias-channel-usage-body');
+  card.append(body);
+  const channelLinks = (channels) => {
+    const list = node('ul', 'alias-channel-usage-links');
+    channels.forEach((channel) => {
+      const item = node('li');
+      item.append(usage.canEditChannels ?
+        anchor(channel.name, href('channel-setup', { channel: channel.id })) : channel.name);
+      list.append(item);
+    });
+    return list;
+  };
+  const update = () => {
+    body.replaceChildren();
+    const count = Number(selectedList?.assigned_channel_count || 0);
+    const channels = usage.channelsByList?.get(aliasListId(selectedList)) || [];
+    if (usage.error) {
+      body.append(node('p', 'ui-field-detail', 'Channel names could not be loaded. Reload to try again.'));
+    } else if (!usage.channelsByList) {
+      body.append(node('p', 'ui-field-detail', count > 0 ? 'Loading channel names…' :
+        'No channels use this Alias List.'));
+    } else if (!channels.length) {
+      body.append(node('p', 'ui-field-detail', count > 0 ?
+        'Channel names could not be found. Reload to try again.' : 'No channels use this Alias List.'));
+    } else {
+      body.append(channelLinks(channels.slice(0, 4)));
+      if (channels.length > 4) {
+        const more = node('details', 'alias-channel-usage-more');
+        more.append(node('summary', '', `Show ${number(channels.length - 4)} more channels`),
+          channelLinks(channels.slice(4)));
+        body.append(more);
+      }
+    }
+  };
+  update();
+  return { element: card, update };
+}
+
 function aliasOptionLimit(options, name) {
   const values = Array.isArray(options?.[name]) ? options[name] : [];
   const reportedTotal = Number(options?.[`${name}_total`]);
@@ -3589,7 +3658,7 @@ function aliasOptionLimitNotice(options, name, label, guidance = '') {
     `Showing ${number(limit.shown)} of ${number(limit.total)} ${label}.${guidance ? ` ${guidance}` : ''}`);
 }
 
-function aliasListRail(lists, selectedList) {
+function aliasListRail(lists, selectedList, usage) {
   const rail = node('aside', 'alias-list-rail');
   const header = node('div', 'alias-list-rail-header');
   header.append(node('strong', '', 'Alias Lists'));
@@ -3603,11 +3672,20 @@ function aliasListRail(lists, selectedList) {
   search.setAttribute('aria-label', 'Find an alias list');
   const list = node('nav', 'alias-list-items');
   list.setAttribute('aria-label', 'Alias lists');
+  const previews = new Map();
+  const updateChannelUsage = () => {
+    previews.forEach((preview, id) => {
+      const row = lists.find((entry) => aliasListId(entry) === id);
+      preview.textContent = aliasListChannelPreview(row, usage);
+      preview.hidden = !preview.textContent;
+    });
+  };
   const draw = () => {
     const query = search.value.trim().toLowerCase();
     const matches = lists.filter((row) => !query || String(row.name || '').toLowerCase().includes(query) ||
       aliasListFamily(row).toLowerCase().includes(query) || aliasListFamilyLabel(row).toLowerCase().includes(query));
     list.replaceChildren();
+    previews.clear();
     if (!matches.length) {
       list.append(node('div', 'empty alias-list-empty', 'No matching alias lists'));
       return;
@@ -3623,9 +3701,12 @@ function aliasListRail(lists, selectedList) {
       const detail = node('span', 'alias-list-item-detail');
       detail.append(node('span', 'alias-list-family', aliasListFamilyLabel(row)),
         node('span', '', aliasListCountLabel(row)));
-      link.append(label, detail);
+      const preview = node('span', 'alias-list-item-channels');
+      previews.set(id, preview);
+      link.append(label, detail, preview);
       list.append(link);
     });
+    updateChannelUsage();
   };
   search.addEventListener('input', draw);
   draw();
@@ -3652,7 +3733,7 @@ function aliasListRail(lists, selectedList) {
   mobileCreate.addEventListener('click', () => openAliasListCreateModal());
   mobile.append(mobileCreate);
   rail.append(header, search, list, mobile);
-  return rail;
+  return { element: rail, updateChannelUsage };
 }
 
 function aliasEditorView(selectedList) {
@@ -6597,11 +6678,29 @@ async function renderAliases() {
   const workspace = node('div', scanListMode ?
     'alias-editor-workspace scan-list-members-workspace data-workspace' :
     'alias-editor-workspace editor-workspace');
-  if (!scanListMode) workspace.append(aliasListRail(lists, selectedList));
+  const usage = { canEditChannels: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),
+    channelsByList: null, error: false };
+  const rail = scanListMode ? null : aliasListRail(lists, selectedList, usage);
+  if (rail) workspace.append(rail.element);
   const main = node('div', 'alias-editor-main');
   workspace.append(main);
   if (!beginPage(renderContext, pageHeader(scanListMode ? 'Scan List Members' : 'Alias Editor', subtitle),
     workspace)) return;
+  let updateUsageCard = () => {};
+  if (rail) {
+    const channelCatalogPath = usage.canEditChannels ? '/api/v1/admin/channels' : '/api/v1/channel-catalog';
+    requestJson(channelCatalogPath, { csrf: false, signal: renderContext.signal })
+      .then((catalog) => {
+        if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
+        usage.channelsByList = aliasListChannelUsage(catalog?.channels || []);
+        rail.updateChannelUsage();
+        updateUsageCard();
+      }).catch((error) => {
+        if (!renderIsCurrent(renderContext) || !workspace.isConnected || error?.name === 'AbortError') return;
+        usage.error = true;
+        updateUsageCard();
+      });
+  }
 
   if (scanListScope) {
     await renderScanListMembers(main, scanListCatalog, scanListScope, renderContext);
@@ -6709,7 +6808,9 @@ async function renderAliases() {
   }
   listActions.append(remove);
   summary.append(listActions);
-  main.append(summary, aliasEditorViewTabs(selectedList), view === 'discover' ?
+  const usageCard = aliasListChannelUsageCard(selectedList, usage);
+  updateUsageCard = usageCard.update;
+  main.append(summary, usageCard.element, aliasEditorViewTabs(selectedList), view === 'discover' ?
     observedGroupIdentityToolbar(selectedList) : aliasEditorFilterToolbar(page, options));
 
   if (view === 'discover') {

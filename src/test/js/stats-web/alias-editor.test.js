@@ -74,7 +74,10 @@ vm.runInContext(`
   let aliasEditorSelectionRequest = 0;
   let aliasEditorLastSelectionIndex = null;
   ${functionSource('function aliasListId(row)')}
+  ${functionSource('function canonicalConfigurationId(value)')}
   ${functionSource('function aliasEditorLists(configurationRows, metadataRows = [])')}
+  ${functionSource('function aliasListChannelUsage(channels)')}
+  ${functionSource('function aliasListChannelPreview(row, usage)')}
   ${functionSource('function aliasOptionLimit(options, name)')}
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
@@ -101,6 +104,8 @@ vm.runInContext(`
   ${functionSource('function clearAliasSelectionOutsideEditor(view)')}
   ${functionSource('async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)')}
   globalThis.editorLists = aliasEditorLists;
+  globalThis.channelUsage = aliasListChannelUsage;
+  globalThis.channelPreview = aliasListChannelPreview;
   globalThis.optionLimit = aliasOptionLimit;
   globalThis.cloneOptionValue = aliasCloneOptionValue;
   globalThis.streamOptionSelected = aliasStreamOptionSelected;
@@ -157,6 +162,19 @@ const aliasListMetadata = adminLists.slice(0, 100).map((row) => ({
 }));
 const merged = context.editorLists(adminLists, aliasListMetadata);
 assert.equal(merged.length, 150, 'The complete Alias Editor catalog must drive list visibility.');
+const channelsByList = context.channelUsage([
+  { configuration_id: '00000000-0000-0000-0000-000000000002', alias_list_id: 2, name: 'Dispatch 10' },
+  { configuration_id: '00000000-0000-0000-0000-000000000001', alias_list_id: 2, name: 'Dispatch 2' },
+  { configuration_id: '00000000-0000-0000-0000-000000000001', alias_list_id: 2, name: 'Dispatch 2' },
+  { configuration_id: '00000000-0000-0000-0000-000000000003', alias_list_id: 1, name: 'Fire' },
+  { configuration_id: 'invalid', alias_list_id: 2, name: 'Ignored' }
+]);
+assert.deepEqual(Array.from(channelsByList.get(2), (channel) => channel.name),
+  ['Dispatch 2', 'Dispatch 10'], 'Assigned channel names should be unique and naturally sorted.');
+assert.equal(context.channelPreview({ alias_list_id: 2, assigned_channel_count: 2 },
+  { channelsByList }), 'Used by Dispatch 2, Dispatch 10');
+assert.equal(context.channelPreview({ alias_list_id: 3, assigned_channel_count: 4 },
+  { channelsByList }), '4 channels', 'Counts should remain available when channel names cannot be loaded.');
 const first = merged.find((row) => row.alias_list_id === 1);
 assert.equal(first.name, 'Admin 001', 'Statistics metadata must not replace editor-owned list identity.');
 assert.equal(first.family, 'P25');
