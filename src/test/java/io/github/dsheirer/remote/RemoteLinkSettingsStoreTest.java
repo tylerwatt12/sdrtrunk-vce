@@ -91,4 +91,24 @@ class RemoteLinkSettingsStoreTest
         assertFalse(error.toString().contains("sensitive-sentinel"));
         assertNull(error.getCause());
     }
+
+    @Test
+    void loadsLegacySenderWithDisabledAutoAdoptAndNoAliasList() throws Exception
+    {
+        String senderId = UUID.randomUUID().toString();
+        Path saved = mTemp.resolve("remote-links/settings.json");
+        Files.createDirectories(saved.getParent());
+        Files.writeString(saved, "{\"revision\":2,\"listenerEnabled\":true," +
+            "\"bindAddress\":\"127.0.0.1\",\"listenPort\":53800," +
+            "\"trustedSenders\":[{\"senderId\":\"" + senderId +
+            "\",\"displayName\":\"Older receiver\",\"secret\":\"synthetic-test-key\"," +
+            "\"autoAdopt\":false,\"pairedAtMs\":123,\"revoked\":false}]," +
+            "\"outbound\":{\"enabled\":false,\"host\":\"\",\"port\":53800}}");
+
+        Settings loaded = new RemoteLinkSettingsStore(mTemp).load();
+
+        assertEquals(senderId, loaded.trustedSenders().getFirst().senderId());
+        assertFalse(loaded.trustedSenders().getFirst().autoAdopt());
+        assertNull(loaded.trustedSenders().getFirst().defaultAliasListId());
+    }
 }

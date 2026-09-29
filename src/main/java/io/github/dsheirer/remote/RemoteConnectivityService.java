@@ -11,6 +11,7 @@
 package io.github.dsheirer.remote;
 
 import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -56,6 +57,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.UnaryOperator;
+import javafx.collections.ListChangeListener;
 
 /**
  * Receiver-owned remote link control plane.  Runtime identities and discovery are kept separate from host-owned
@@ -68,7 +70,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private static final int MAXIMUM_ACTIVE_OPENS_PER_SENDER = 96;
     private static final int MAXIMUM_TRAFFIC_OPENS_PER_FEED = 16;
     private static final int MAXIMUM_TRAFFIC_OPENS_GLOBALLY = 128;
-    private static final int MAXIMUM_ADOPTED_FEEDS_GLOBALLY = 128;
+    private static final int MAXIMUM_REMOTE_FEEDS_GLOBALLY = 128;
     private static final int OUTBOUND_PACKET_CAPACITY = 2_048;
     private static final long MAXIMUM_OUTBOUND_QUEUE_AGE_NANOS = TimeUnit.SECONDS.toNanos(2);
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -86,10 +88,14 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final Map<StreamKey,BoundStream> mOpenSources = new ConcurrentHashMap<>();
     private final Object mPeerAdmissionLock = new Object();
     private final Object mOutboundLifecycleLock = new Object();
-    private final Set<String> mAutoAdoptDirty = ConcurrentHashMap.newKeySet();
-    private final Set<String> mAutoAdoptRunning = ConcurrentHashMap.newKeySet();
+    private final Set<String> mCatalogSetupDirty = ConcurrentHashMap.newKeySet();
+    private final Set<String> mCatalogSetupRunning = ConcurrentHashMap.newKeySet();
     private final Object mChannelIndexLock = new Object();
     private final Listener<ChannelEvent> mSavedChannelListener = this::indexSavedChannel;
+    private final ListChangeListener<AliasListDefinition> mAliasListListener = change ->
+    {
+        for(String senderId: mPeers.keySet()) scheduleCatalogSetup(senderId);
+    };
     private volatile Map<String,SavedChannel> mSavedChannels = Map.of();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final AtomicBoolean mCatalogDirty = new AtomicBoolean();
@@ -121,6 +127,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         mStore = new RemoteLinkSettingsStore(preferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mSettings = mStore.load();
         mConfiguration.getChannelModel().addListener(mSavedChannelListener);
+        mConfiguration.getAliasModel().aliasListDefinitions().addListener(mAliasListListener);
         mPublisher = Thread.ofPlatform().daemon().name("remote-p25-publisher").unstarted(this::publishLoop);
         mConnector = Thread.ofPlatform().daemon().name("remote-p25-connector").unstarted(this::connectLoop);
     }
@@ -351,7 +358,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         List<ExportChannelOption> exports = mSavedChannels.values().stream()
             .filter(SavedChannel::exportable).map(channel -> new ExportChannelOption(channel.id(),
                 channel.name(), channel.system(), channel.site(), channel.decoderDisplay())).toList();
-        List<SenderSnapshot> senders = settings.trustedSenders().stream().map(this::senderSnapshot).toList();
+        List<SenderSnapshot> senders = settings.trustedSenders().stream()
+            .map(sender -> senderSnapshot(sender, aliases)).toList();
         Outbound outbound = settings.outbound();
         return new RemoteLinkSnapshot(settings.revision(), new ListenerSnapshot(settings.listenerEnabled(),
             settings.bindAddress(), settings.listenPort(), mListenerState, mListenerStatus, List.of()),
@@ -453,12 +461,12 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         requireRevision(expectedRevision);
         Objects.requireNonNull(request);
-        if(request.autoAdopt()) requireP25AliasList(request.defaultAliasListId());
+        if(request.defaultAliasListId() != null) requireP25AliasList(request.defaultAliasListId());
         String name = boundedText(request.displayName(), 120, "Sender name");
         if(name.isBlank()) throw new IllegalArgumentException("Sender name is required");
         replaceSender(senderId, sender -> new TrustedSender(sender.senderId(), name, sender.secret(),
-            request.autoAdopt(), request.defaultAliasListId(), sender.pairedAtMs(), sender.revoked()));
-        if(request.autoAdopt()) scheduleAutoAdopt(canonicalUuid(senderId));
+            sender.autoAdopt(), request.defaultAliasListId(), sender.pairedAtMs(), sender.revoked()));
+        scheduleCatalogSetup(canonicalUuid(senderId));
         publishOriginSnapshot();
         return snapshot();
     }
@@ -476,24 +484,6 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     }
 
     @Override
-    public synchronized RemoteLinkSnapshot adoptFeed(long expectedRevision, String senderId, String feedId,
-                                                      AdoptFeedRequest request)
-    {
-        requireRevision(expectedRevision);
-        requireP25AliasList(request.aliasListId());
-        FeedKey key = new FeedKey(canonicalUuid(senderId), canonicalUuid(feedId));
-        TrustedSender sender = trusted(key.senderId());
-        if(sender == null || sender.revoked()) throw new NotFoundException();
-        ObservedFeed feed = observedFeed(key);
-        if(feed == null) throw new NotFoundException();
-        if(findHostChannel(key) != null) throw new ConflictException();
-        bumpRevision();
-        adopt(key, feed, boundedText(request.displayName(), 120, "Channel name"), request.aliasListId());
-        publishOriginSnapshot();
-        return snapshot();
-    }
-
-    @Override
     public synchronized RemoteLinkSnapshot updateFeed(long expectedRevision, String senderId, String feedId,
                                                        UpdateFeedRequest request)
     {
@@ -503,21 +493,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         Channel channel = findHostChannel(key);
         if(channel == null) throw new NotFoundException();
         bumpRevision();
-        updateAdoptedChannel(channel, boundedText(request.displayName(), 120, "Channel name"),
+        updateRemoteChannel(channel, boundedText(request.displayName(), 120, "Channel name"),
             request.aliasListId(), request.enabled());
-        publishOriginSnapshot();
-        return snapshot();
-    }
-
-    @Override
-    public synchronized RemoteLinkSnapshot forgetFeed(long expectedRevision, String senderId, String feedId)
-    {
-        requireRevision(expectedRevision);
-        FeedKey key = new FeedKey(canonicalUuid(senderId), canonicalUuid(feedId));
-        Channel channel = findHostChannel(key);
-        if(channel == null) throw new NotFoundException();
-        bumpRevision();
-        mChannels.deleteChannels(List.of(channel.getConfigurationId()), mChannels.currentRevision());
         publishOriginSnapshot();
         return snapshot();
     }
@@ -597,6 +574,23 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
     }
 
+    /** Existing sender preferences are hints, not prerequisites for receiving a feed. */
+    static AliasListOption preferredAliasList(TrustedSender sender, List<AliasListOption> aliases)
+    {
+        if(sender.defaultAliasListId() != null)
+        {
+            for(AliasListOption alias: aliases)
+            {
+                if(alias.aliasListId() == sender.defaultAliasListId()) return alias;
+            }
+        }
+        String factoryName = AliasListFamily.P25.getDefaultAliasListName();
+        return aliases.stream().filter(alias -> factoryName.equals(alias.name()))
+            .min(Comparator.comparingLong(AliasListOption::aliasListId))
+            .orElseGet(() -> aliases.stream().min(Comparator.comparingLong(AliasListOption::aliasListId))
+                .orElse(null));
+    }
+
     private boolean exportable(Channel channel)
     {
         if(channel == null || !channel.isStandardChannel() || channel.getSourceConfiguration() instanceof
@@ -611,51 +605,62 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         return saved != null && saved.exportable();
     }
 
-    private SenderSnapshot senderSnapshot(TrustedSender sender)
+    private SenderSnapshot senderSnapshot(TrustedSender sender, List<AliasListOption> aliases)
     {
         PeerState peer = mPeers.get(sender.senderId());
         boolean connected = peer != null && peer.connection != null && peer.connection.isOpen();
         SenderState state = sender.revoked() ? SenderState.REVOKED : connected ? SenderState.CONNECTED :
             peer != null && peer.lastSeenAtMs > 0 ? SenderState.DISCONNECTED : SenderState.WAITING;
-        List<FeedSnapshot> feeds = feedsFor(sender, peer, connected);
+        List<FeedSnapshot> feeds = feedsFor(sender, peer, connected, aliases);
         return new SenderSnapshot(sender.senderId(), sender.displayName(), state, sender.secret() != null,
-            sender.pairedAtMs(), peer != null ? peer.lastSeenAtMs : 0L, sender.autoAdopt(),
-            sender.defaultAliasListId(), null, feeds);
+            sender.pairedAtMs(), peer != null ? peer.lastSeenAtMs : 0L, sender.defaultAliasListId(), null, feeds);
     }
 
-    private List<FeedSnapshot> feedsFor(TrustedSender sender, PeerState peer, boolean connected)
+    private List<FeedSnapshot> feedsFor(TrustedSender sender, PeerState peer, boolean connected,
+                                        List<AliasListOption> aliases)
     {
         Map<String,ObservedFeed> observed = peer != null ? peer.feeds : Map.of();
-        Map<String,SavedChannel> adopted = new HashMap<>();
+        Map<String,SavedChannel> savedFeeds = new HashMap<>();
         for(SavedChannel channel: mSavedChannels.values())
         {
             if(sender.senderId().equals(channel.remoteSenderId()))
             {
-                adopted.put(channel.remoteFeedId(), channel);
+                savedFeeds.put(channel.remoteFeedId(), channel);
             }
         }
         Set<String> feedIds = new HashSet<>(observed.keySet());
-        feedIds.addAll(adopted.keySet());
+        feedIds.addAll(savedFeeds.keySet());
+        boolean aliasListAvailable = preferredAliasList(sender, aliases) != null;
         return feedIds.stream().sorted().map(feedId ->
         {
             ObservedFeed feed = observed.get(feedId);
-            SavedChannel channel = adopted.get(feedId);
+            SavedChannel channel = savedFeeds.get(feedId);
             boolean advertised = feed != null && feed.present;
             FeedState state = !advertised ? FeedState.REMOVED :
-                !"P25_PHASE1".equals(feed.advertisement.decoder()) ? FeedState.UNSUPPORTED :
+                !"P25_PHASE1".equals(feed.advertisement.decoder()) ||
+                    feed.advertisement.frequency() <= 0L ? FeedState.UNSUPPORTED :
                     !connected ? FeedState.DISCONNECTED : channel == null ? FeedState.PENDING :
                         channel.autoStart() && feed.advertisement.running() && isControlLive(sender.senderId(),
                             feedId, channel.channel()) ? FeedState.CONNECTED : FeedState.DISCONNECTED;
-            String statusMessage = channel != null && !channel.autoStart() ? "Host channel is disabled" :
-                state == FeedState.DISCONNECTED && connected && advertised && feed.advertisement.running() ?
-                    "Waiting for decoded control packets" : null;
+            String statusMessage = switch(state)
+            {
+                case PENDING -> !aliasListAvailable ? "Create a P25 Alias List on this host to receive this feed" :
+                    feed.setupError != null ? feed.setupError : "Setting up remote channel";
+                case UNSUPPORTED -> "Only P25 Phase 1 control feeds with a valid frequency are supported";
+                case DISCONNECTED -> channel != null && !channel.autoStart() ? "Host channel is disabled" :
+                    channel != null && connected && advertised && feed.advertisement.running() &&
+                        !mActiveChains.containsKey(channel.channel()) ? "Host channel is not running" :
+                    connected && advertised && feed.advertisement.running() ?
+                        "Waiting for decoded control packets" : null;
+                default -> null;
+            };
             return new FeedSnapshot(feedId, feed != null ? feed.advertisement.name() : null,
                 channel != null ? channel.name() : null,
                 feed != null ? feed.advertisement.decoder() : null,
                 feed != null ? feed.advertisement.system() : null,
                 feed != null ? feed.advertisement.site() : null,
                 null, null, null, null,
-                feed != null ? feed.advertisement.frequency() : 0L, state, channel != null,
+                feed != null ? feed.advertisement.frequency() : 0L, state,
                 channel != null && channel.autoStart(), channel != null ? channel.id() : null,
                 channel != null ? channel.aliasListId() : null, feed != null ? feed.lastSeenAtMs : 0L,
                 feed != null ? feed.lagMs : null, feed != null ? feed.droppedPackets.get() : 0L,
@@ -712,12 +717,6 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             .findFirst().orElse(null);
     }
 
-    private ObservedFeed observedFeed(FeedKey key)
-    {
-        PeerState peer = mPeers.get(key.senderId());
-        return peer != null ? peer.feeds.get(key.feedId()) : null;
-    }
-
     private Channel findHostChannel(FeedKey key)
     {
         SavedChannel saved = findHostChannelState(key);
@@ -731,18 +730,18 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             .findFirst().orElse(null);
     }
 
-    private void adopt(FeedKey key, ObservedFeed feed, String name, long aliasListId)
+    private void createRemoteChannel(FeedKey key, ObservedFeed feed, String name, long aliasListId)
     {
         if(name == null || name.isBlank()) throw new IllegalArgumentException("Channel name is required");
         if(mSavedChannels.values().stream().filter(channel -> channel.remoteSenderId() != null).count() >=
-            MAXIMUM_ADOPTED_FEEDS_GLOBALLY)
+            MAXIMUM_REMOTE_FEEDS_GLOBALLY)
         {
-            throw new IllegalArgumentException("Maximum number of adopted remote feeds reached");
+            throw new IllegalArgumentException("Maximum number of remote feeds reached");
         }
         if(!feed.present || !"P25_PHASE1".equals(feed.advertisement.decoder()) ||
             feed.advertisement.frequency() <= 0L)
         {
-            throw new IllegalArgumentException("Only advertised P25 control channels with a known frequency can be adopted");
+            throw new IllegalArgumentException("Only advertised P25 control channels with a known frequency can be used");
         }
         ChannelDefinition template = mChannels.template("p25-phase1");
         ChannelDefinition.Source source = new ChannelDefinition.Source(
@@ -774,7 +773,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             .forEach(open -> acceptOpen(key.senderId(), connection, open));
     }
 
-    private void updateAdoptedChannel(Channel channel, String name, long aliasListId, boolean enabled)
+    private void updateRemoteChannel(Channel channel, String name, long aliasListId, boolean enabled)
     {
         if(name == null || name.isBlank()) throw new IllegalArgumentException("Channel name is required");
         ChannelDefinition current = mChannels.get(channel.getConfigurationId()).channel();
@@ -1139,52 +1138,49 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
         peer.feeds = Map.copyOf(next);
         publishOriginSnapshot();
-        TrustedSender trusted = trusted(senderId);
-        if(trusted != null && trusted.autoAdopt() && trusted.defaultAliasListId() != null)
-        {
-            scheduleAutoAdopt(senderId);
-        }
+        scheduleCatalogSetup(senderId);
     }
 
-    /** Coalesce catalog bursts into at most one pending adoption worker per trusted sender. */
-    private void scheduleAutoAdopt(String senderId)
+    /** Coalesce catalog bursts into at most one background setup worker per trusted sender. */
+    private void scheduleCatalogSetup(String senderId)
     {
         if(mClosed.get()) return;
-        mAutoAdoptDirty.add(senderId);
-        if(mAutoAdoptRunning.add(senderId))
+        mCatalogSetupDirty.add(senderId);
+        if(mCatalogSetupRunning.add(senderId))
         {
             Thread.ofVirtual().start(() ->
             {
                 try
                 {
-                    while(!mClosed.get() && mAutoAdoptDirty.remove(senderId))
+                    while(!mClosed.get() && mCatalogSetupDirty.remove(senderId))
                     {
-                        try { autoAdopt(senderId); }
+                        try { setupCatalogFeeds(senderId); }
                         catch(RuntimeException ignored)
                         {
-                            // Keep the advertised feed Pending for administrator review.
+                            markCatalogSetupUnavailable(senderId);
                         }
                     }
                 }
                 finally
                 {
-                    mAutoAdoptRunning.remove(senderId);
-                    if(!mClosed.get() && mAutoAdoptDirty.contains(senderId)) scheduleAutoAdopt(senderId);
+                    mCatalogSetupRunning.remove(senderId);
+                    if(!mClosed.get() && mCatalogSetupDirty.contains(senderId)) scheduleCatalogSetup(senderId);
                 }
             });
         }
     }
 
-    private synchronized void autoAdopt(String senderId)
+    private synchronized void setupCatalogFeeds(String senderId)
     {
         TrustedSender sender = trusted(senderId);
-        if(sender == null || sender.revoked() || !sender.autoAdopt() ||
-            sender.defaultAliasListId() == null) return;
-        long aliasListId = sender.defaultAliasListId();
-        try { requireP25AliasList(aliasListId); }
-        catch(IllegalArgumentException ignored) { return; }
+        if(sender == null || sender.revoked()) return;
+        List<AliasListOption> aliases = mChannels.options().aliasLists().stream()
+            .filter(alias -> "P25".equals(alias.family()))
+            .map(alias -> new AliasListOption(alias.id(), alias.name())).toList();
+        AliasListOption alias = preferredAliasList(sender, aliases);
+        if(alias == null) return;
         PeerState peer = mPeers.get(senderId);
-        if(peer == null || peer.connection == null) return;
+        if(peer == null || peer.connection == null || !peer.connection.isOpen()) return;
         for(ObservedFeed feed: peer.feeds.values())
         {
             FeedKey key = new FeedKey(senderId, feed.advertisement.feedId());
@@ -1194,17 +1190,33 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             {
                 try
                 {
-                    bumpRevision();
-                    adopt(key, feed, feed.advertisement.name().isBlank() ? "Remote P25" :
-                        feed.advertisement.name(), aliasListId);
+                    feed.setupError = null;
+                    createRemoteChannel(key, feed, feed.advertisement.name().isBlank() ? "Remote P25" :
+                        feed.advertisement.name(), alias.aliasListId());
                 }
                 catch(RuntimeException ignored)
                 {
-                    // Leave this feed Pending for administrator review when it cannot be adopted safely.
+                    // Do not expose database exceptions, identifiers, or credentials to the page.
+                    feed.setupError = "Unable to set up remote channel; check the channel limit and host configuration";
                 }
             }
         }
         publishOriginSnapshot();
+    }
+
+    private void markCatalogSetupUnavailable(String senderId)
+    {
+        PeerState peer = mPeers.get(senderId);
+        if(peer == null) return;
+        for(ObservedFeed feed: peer.feeds.values())
+        {
+            if(feed.present && "P25_PHASE1".equals(feed.advertisement.decoder()) &&
+                feed.advertisement.frequency() > 0L &&
+                findHostChannel(new FeedKey(senderId, feed.advertisement.feedId())) == null)
+            {
+                feed.setupError = "Unable to set up remote channel; check host configuration";
+            }
+        }
     }
 
     private void acceptOpen(String senderId, RemoteLinkTransport.Connection connection, RemoteWireMessages.Open open)
@@ -1415,6 +1427,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             if(outbound != null) outbound.close();
             for(PeerState peer: mPeers.values()) if(peer.connection != null) peer.connection.close();
             mConfiguration.getChannelModel().removeListener(mSavedChannelListener);
+            mConfiguration.getAliasModel().aliasListDefinitions().removeListener(mAliasListListener);
             refreshExports();
             mConnector.interrupt();
             mPublisher.interrupt();
@@ -1469,6 +1482,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         private final AtomicLong sequenceGaps = new AtomicLong();
         private volatile boolean present = true;
         private volatile Long lagMs;
+        private volatile String setupError;
 
         private ObservedFeed(RemoteWireMessages.Feed advertisement)
         {
@@ -1481,6 +1495,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             advertisement = current;
             present = true;
             lastSeenAtMs = System.currentTimeMillis();
+            setupError = null;
         }
     }
 

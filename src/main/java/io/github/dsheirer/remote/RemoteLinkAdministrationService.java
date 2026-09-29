@@ -33,11 +33,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
 
     RemoteLinkSnapshot revokeSender(long expectedRevision, String senderId);
 
-    RemoteLinkSnapshot adoptFeed(long expectedRevision, String senderId, String feedId, AdoptFeedRequest request);
-
     RemoteLinkSnapshot updateFeed(long expectedRevision, String senderId, String feedId, UpdateFeedRequest request);
-
-    RemoteLinkSnapshot forgetFeed(long expectedRevision, String senderId, String feedId);
 
     enum ListenerState
     {
@@ -153,7 +149,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     }
 
     record SenderSnapshot(String senderId, String displayName, SenderState state, boolean credentialConfigured,
-                          long pairedAtMs, long lastSeenAtMs, boolean autoAdopt, Long defaultAliasListId,
+                          long pairedAtMs, long lastSeenAtMs, Long defaultAliasListId,
                           String statusMessage, List<FeedSnapshot> feeds)
     {
         public SenderSnapshot
@@ -166,7 +162,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     record FeedSnapshot(String feedId, String advertisedName, String displayName, String protocol,
                         String systemName, String siteName, Integer wacn, Integer system, Integer rfss, Integer site,
                         long frequencyHz,
-                        FeedState state, boolean adopted, boolean enabled, String channelConfigurationId,
+                        FeedState state, boolean enabled, String channelConfigurationId,
                         Long aliasListId, long lastSeenAtMs, Long lagMilliseconds, long droppedPacketCount,
                         long sequenceGapCount, String statusMessage)
     {
@@ -217,11 +213,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
         }
     }
 
-    record UpdateSenderRequest(String displayName, boolean autoAdopt, Long defaultAliasListId)
-    {
-    }
-
-    record AdoptFeedRequest(String displayName, long aliasListId)
+    record UpdateSenderRequest(String displayName, Long defaultAliasListId)
     {
     }
 

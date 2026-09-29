@@ -13,7 +13,6 @@ package io.github.dsheirer.web.http;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService;
-import io.github.dsheirer.remote.RemoteLinkAdministrationService.AdoptFeedRequest;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService.CreateSenderRequest;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService.CreateSenderResult;
 import io.github.dsheirer.remote.RemoteLinkAdministrationService.FeedSnapshot;
@@ -38,8 +37,6 @@ public final class RemoteLinksHttpController
     public static final String PATH = "/api/v1/admin/remote-links";
     private static final Pattern SENDER_PATH = Pattern.compile("^" + PATH + "/senders/([^/]+)$");
     private static final Pattern FEED_PATH = Pattern.compile("^" + PATH + "/senders/([^/]+)/feeds/([^/]+)$");
-    private static final Pattern ADOPT_PATH = Pattern.compile(
-        "^" + PATH + "/senders/([^/]+)/feeds/([^/]+)/adopt$");
     private static final int MAXIMUM_ID_CHARACTERS = 36;
     private static final int MAXIMUM_NAME_CHARACTERS = 120;
     private static final int MAXIMUM_HOST_CHARACTERS = 255;
@@ -171,44 +168,17 @@ public final class RemoteLinksHttpController
             return;
         }
 
-        Matcher adopt = ADOPT_PATH.matcher(path);
-        if(adopt.matches())
-        {
-            requireMethod(exchange, method, "POST");
-            JsonNode body = WebHttpSupport.readJsonObject(exchange,
-                Set.of("revision", "display_name", "alias_list_id"));
-            RemoteLinkSnapshot result = mService.adoptFeed(revision(body), decodedId(adopt.group(1)),
-                decodedId(adopt.group(2)), new AdoptFeedRequest(
-                requiredText(body, "display_name", MAXIMUM_NAME_CHARACTERS), positiveId(body, "alias_list_id")));
-            WebHttpSupport.sendData(exchange, 200, snapshotDocument(result));
-            return;
-        }
-
         Matcher feed = FEED_PATH.matcher(path);
         if(feed.matches())
         {
+            requireMethod(exchange, method, "PUT");
             String senderId = decodedId(feed.group(1));
             String feedId = decodedId(feed.group(2));
-            JsonNode body;
-            RemoteLinkSnapshot result;
-            if("PUT".equals(method))
-            {
-                body = WebHttpSupport.readJsonObject(exchange,
-                    Set.of("revision", "display_name", "alias_list_id", "enabled"));
-                result = mService.updateFeed(revision(body), senderId, feedId,
-                    new UpdateFeedRequest(requiredText(body, "display_name", MAXIMUM_NAME_CHARACTERS),
-                        positiveId(body, "alias_list_id"), requiredBoolean(body, "enabled")));
-            }
-            else if("DELETE".equals(method))
-            {
-                body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));
-                result = mService.forgetFeed(revision(body), senderId, feedId);
-            }
-            else
-            {
-                WebHttpSupport.methodNotAllowed(exchange, "PUT, DELETE");
-                return;
-            }
+            JsonNode body = WebHttpSupport.readJsonObject(exchange,
+                Set.of("revision", "display_name", "alias_list_id", "enabled"));
+            RemoteLinkSnapshot result = mService.updateFeed(revision(body), senderId, feedId,
+                new UpdateFeedRequest(requiredText(body, "display_name", MAXIMUM_NAME_CHARACTERS),
+                    positiveId(body, "alias_list_id"), requiredBoolean(body, "enabled")));
             WebHttpSupport.sendData(exchange, 200, snapshotDocument(result));
             return;
         }
@@ -222,10 +192,10 @@ public final class RemoteLinksHttpController
             if("PUT".equals(method))
             {
                 body = WebHttpSupport.readJsonObject(exchange,
-                    Set.of("revision", "display_name", "auto_adopt", "default_alias_list_id"));
+                    Set.of("revision", "display_name", "default_alias_list_id"));
                 result = mService.updateSender(revision(body), senderId,
                     new UpdateSenderRequest(requiredText(body, "display_name", MAXIMUM_NAME_CHARACTERS),
-                        requiredBoolean(body, "auto_adopt"), optionalPositiveId(body, "default_alias_list_id")));
+                        optionalPositiveId(body, "default_alias_list_id")));
             }
             else if("DELETE".equals(method))
             {
@@ -431,7 +401,6 @@ public final class RemoteLinksHttpController
         value.put("credential_configured", sender.credentialConfigured());
         value.put("paired_at_ms", sender.pairedAtMs());
         value.put("last_seen_at_ms", sender.lastSeenAtMs());
-        value.put("auto_adopt", sender.autoAdopt());
         put(value, "default_alias_list_id", sender.defaultAliasListId());
         put(value, "status_message", sender.statusMessage());
         value.put("feeds", sender.feeds().stream().map(RemoteLinksHttpController::feedDocument).toList());
@@ -453,7 +422,6 @@ public final class RemoteLinksHttpController
         put(value, "site", feed.site());
         value.put("frequency_hz", feed.frequencyHz());
         value.put("state", feed.state().name());
-        value.put("adopted", feed.adopted());
         value.put("enabled", feed.enabled());
         put(value, "channel_configuration_id", feed.channelConfigurationId());
         put(value, "alias_list_id", feed.aliasListId());

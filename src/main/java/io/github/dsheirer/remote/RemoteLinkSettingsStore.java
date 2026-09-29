@@ -191,6 +191,7 @@ public final class RemoteLinkSettingsStore
         if(!protectedByFileSystem) throw new IOException("Remote-link settings filesystem has no access controls");
     }
 
+    /** autoAdopt is retained only to read and safely rewrite existing credential files; setup is unconditional. */
     public record TrustedSender(String senderId, String displayName, String secret, boolean autoAdopt,
                                 Long defaultAliasListId, long pairedAtMs, boolean revoked)
     {

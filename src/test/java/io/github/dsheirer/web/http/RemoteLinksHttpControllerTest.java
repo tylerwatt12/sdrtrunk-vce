@@ -49,6 +49,8 @@ class RemoteLinksHttpControllerTest
             assertEquals("Metro", data.at("/senders/0/feeds/0/system_name").textValue());
             assertEquals("North Site", data.at("/senders/0/feeds/0/site_name").textValue());
             assertEquals("DEGRADED", data.at("/listener/dependencies/0/state").textValue());
+            assertFalse(data.at("/senders/0").has("auto_adopt"));
+            assertFalse(data.at("/senders/0/feeds/0").has("adopted"));
             assertFalse(response.body().contains("shared-secret"));
             assertFalse(response.body().contains("secret\""));
         }
@@ -152,6 +154,63 @@ class RemoteLinksHttpControllerTest
         }
     }
 
+    @Test
+    void feedsAreManagedWithoutAnAdoptionOrForgetEndpoint() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            String feedPath = "/senders/sender-1/feeds/feed-1";
+            HttpResponse<String> removedAdopt = server.send(server.jsonRequest(feedPath + "/adopt")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"revision\":7}")));
+            assertEquals(404, removedAdopt.statusCode());
+
+            HttpResponse<String> removedForget = server.send(server.jsonRequest(feedPath)
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7}")));
+            assertEquals(405, removedForget.statusCode());
+            assertEquals("PUT", removedForget.headers().firstValue("Allow").orElseThrow());
+
+            HttpResponse<String> updated = server.send(server.jsonRequest(feedPath)
+                .PUT(HttpRequest.BodyPublishers.ofString("""
+                    {"revision":7,"display_name":"North simulcast","alias_list_id":2,"enabled":false}
+                    """)));
+            assertEquals(200, updated.statusCode(), updated.body());
+            assertEquals("North simulcast", service.mFeedRequest.displayName());
+            assertEquals(2L, service.mFeedRequest.aliasListId());
+            assertFalse(service.mFeedRequest.enabled());
+        }
+    }
+
+    @Test
+    void senderPreferenceNeedsNoAdoptionToggle() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            String senderPath = "/senders/sender-1";
+            HttpResponse<String> updated = server.send(server.jsonRequest(senderPath)
+                .PUT(HttpRequest.BodyPublishers.ofString("""
+                    {"revision":7,"display_name":"Hilltop","default_alias_list_id":2}
+                    """)));
+            assertEquals(200, updated.statusCode(), updated.body());
+            assertEquals("Hilltop", service.mSenderRequest.displayName());
+            assertEquals(2L, service.mSenderRequest.defaultAliasListId());
+
+            HttpResponse<String> automatic = server.send(server.jsonRequest(senderPath)
+                .PUT(HttpRequest.BodyPublishers.ofString("""
+                    {"revision":7,"display_name":"Hilltop","default_alias_list_id":null}
+                    """)));
+            assertEquals(200, automatic.statusCode(), automatic.body());
+            assertEquals(null, service.mSenderRequest.defaultAliasListId());
+
+            HttpResponse<String> legacyToggle = server.send(server.jsonRequest(senderPath)
+                .PUT(HttpRequest.BodyPublishers.ofString("""
+                    {"revision":7,"display_name":"Hilltop","auto_adopt":false,"default_alias_list_id":2}
+                    """)));
+            assertEquals(400, legacyToggle.statusCode());
+        }
+    }
+
     private static JsonNode data(HttpResponse<String> response) throws Exception
     {
         JsonNode document = MAPPER.readTree(response.body());
@@ -200,6 +259,8 @@ class RemoteLinksHttpControllerTest
     {
         private SenderConnectionUpdate mSenderUpdate;
         private CreateSenderRequest mCreateRequest;
+        private UpdateSenderRequest mSenderRequest;
+        private UpdateFeedRequest mFeedRequest;
 
         @Override
         public RemoteLinkSnapshot snapshot()
@@ -211,10 +272,10 @@ class RemoteLinksHttpControllerTest
             SenderConnectionSnapshot connection = new SenderConnectionSnapshot(true, "10.8.0.2", 35_300,
                 "sender-local", true, SenderConnectionState.CONNECTED, 1_000L, null, List.of("channel-a"));
             FeedSnapshot feed = new FeedSnapshot("feed-1", "North", "North simulcast", "P25_PHASE_1",
-                "Metro", "North Site", 0xbee00, 0x123, 1, 2, 851_012_500L, FeedState.CONNECTED, true, true,
+                "Metro", "North Site", 0xbee00, 0x123, 1, 2, 851_012_500L, FeedState.CONNECTED, true,
                 "remote-channel-1", 2L, 1_100L, 24L, 0L, 0L, null);
             SenderSnapshot sender = new SenderSnapshot("sender-1", "Hilltop", SenderState.CONNECTED, true,
-                500L, 1_100L, false, 2L, null, List.of(feed));
+                500L, 1_100L, 2L, null, List.of(feed));
             return new RemoteLinkSnapshot(7L, listener, connection,
                 List.of(new ExportChannelOption("channel-a", "Downtown", "Metro", "Central", "P25_PHASE_1")),
                 List.of(new AliasListOption(2L, "Metro aliases")), List.of(sender));
@@ -243,6 +304,7 @@ class RemoteLinksHttpControllerTest
         @Override
         public RemoteLinkSnapshot updateSender(long expectedRevision, String senderId, UpdateSenderRequest request)
         {
+            mSenderRequest = request;
             return snapshot();
         }
 
@@ -253,22 +315,10 @@ class RemoteLinksHttpControllerTest
         }
 
         @Override
-        public RemoteLinkSnapshot adoptFeed(long expectedRevision, String senderId, String feedId,
-                                            AdoptFeedRequest request)
-        {
-            return snapshot();
-        }
-
-        @Override
         public RemoteLinkSnapshot updateFeed(long expectedRevision, String senderId, String feedId,
                                              UpdateFeedRequest request)
         {
-            return snapshot();
-        }
-
-        @Override
-        public RemoteLinkSnapshot forgetFeed(long expectedRevision, String senderId, String feedId)
-        {
+            mFeedRequest = request;
             return snapshot();
         }
 

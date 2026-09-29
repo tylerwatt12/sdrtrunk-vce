@@ -23,6 +23,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
@@ -58,6 +59,7 @@ public final class ChannelAdministrationService
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
     private static final long SQUELCH_PREVIEW_LEASE_SECONDS = 10L;
+    private static final Map<String,Boolean> REMOTE_ORIGIN = Map.of("remote", true);
     private final ConfigurationManager mConfigurationManager;
     private final ChannelProtocolRegistry mProtocolRegistry;
     private final ChannelDefinitionCodec mCodec;
@@ -536,6 +538,8 @@ public final class ChannelAdministrationService
     {
         AliasListDefinition aliasList = mConfigurationManager.getAliasModel()
             .getAliasListDefinition(channel.getAliasListId());
+        Map<String,Boolean> remoteOrigin = channel.getSourceConfiguration() instanceof SourceConfigRemote ?
+            REMOTE_ORIGIN : null;
         try
         {
             ChannelDefinition definition = mCodec.fromChannel(channel);
@@ -544,7 +548,7 @@ public final class ChannelAdministrationService
                 ChannelConfigurationPolicy.requireChannelKind(channel).name(), channel.getSystem(), channel.getSite(),
                 channel.getName(), definition.source().frequenciesHz(), processingState(channel), autoStartOrder,
                 channel.getAliasListId(), aliasList != null ? aliasList.getName() : channel.getAliasListName(), true,
-                null);
+                null, remoteOrigin);
         }
         catch(RuntimeException exception)
         {
@@ -555,7 +559,7 @@ public final class ChannelAdministrationService
                 processingState(channel), autoStartOrder, channel.getAliasListId(),
                 aliasList != null ? aliasList.getName() : channel.getAliasListName(), false,
                 "This compatibility channel can be viewed, started, stopped, reordered, cloned, or deleted, but " +
-                    "its decoder configuration cannot be edited on the web.");
+                    "its decoder configuration cannot be edited on the web.", remoteOrigin);
         }
     }
 
@@ -813,9 +817,15 @@ public final class ChannelAdministrationService
     public record ChannelSummary(String configurationId, String protocolId, String protocolLabel, String channelKind,
                                  String system, String site, String name, List<Long> frequenciesHz,
                                  ProcessingState processingState, Integer autoStartOrder, long aliasListId,
-                                 String aliasListName, boolean editable, String restrictionMessage)
+                                 String aliasListName, boolean editable, String restrictionMessage,
+                                 Map<String,Boolean> remoteOrigin)
     {
-        public ChannelSummary { frequenciesHz = List.copyOf(frequenciesHz); }
+        public ChannelSummary
+        {
+            frequenciesHz = List.copyOf(frequenciesHz);
+            remoteOrigin = remoteOrigin != null && Boolean.TRUE.equals(remoteOrigin.get("remote")) ?
+                REMOTE_ORIGIN : null;
+        }
     }
 
     public record Entry(long revision, ChannelDefinition channel, ProcessingState processingState,

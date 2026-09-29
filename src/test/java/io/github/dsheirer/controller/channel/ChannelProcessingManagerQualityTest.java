@@ -16,6 +16,7 @@ import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import org.junit.jupiter.api.Test;
 
 class ChannelProcessingManagerQualityTest
@@ -27,6 +28,10 @@ class ChannelProcessingManagerQualityTest
             channel(ChannelType.STANDARD, new DecodeConfigP25Phase1())));
         assertTrue(ChannelProcessingManager.supportsControlChannelQuality(
             channel(ChannelType.STANDARD, new DecodeConfigP25Phase2())));
+        Channel remoteP25 = channel(ChannelType.STANDARD, new DecodeConfigP25Phase1());
+        remoteP25.setSourceConfiguration(new SourceConfigRemote());
+        assertTrue(ChannelProcessingManager.supportsControlChannelQuality(remoteP25),
+            "remote P25 bitstreams still publish decoded control-channel quality");
         assertTrue(ChannelProcessingManager.supportsControlChannelQuality(
             channel(ChannelType.STANDARD, new DecodeConfigDMR())));
         assertTrue(ChannelProcessingManager.supportsControlChannelQuality(
