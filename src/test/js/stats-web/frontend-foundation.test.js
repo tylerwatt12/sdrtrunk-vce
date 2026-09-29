@@ -901,28 +901,40 @@ async function main() {
     return true;
   });
   const scanListRenderer = functionBinding(appSource, 'renderAdminScanLists');
-  const scanListCard = functionBinding(appSource, 'adminScanListCard');
+  const scanListSelector = functionBinding(appSource, 'adminScanListSelector');
+  const scanListDetail = functionBinding(appSource, 'adminScanListDetail');
   const scanListActions = functionBinding(appSource, 'adminScanListActions');
   assert.doesNotMatch(scanListRenderer, /\btable\s*\(/,
-    'Scan Lists must remain a card catalog instead of returning to a generic data table');
+    'Scan Lists use a focused selection layout instead of a generic data table');
   assert.doesNotMatch(scanListRenderer, /layoutMenuHost|admin-scan-lists/,
-    'Scan List cards must not expose table column customization');
+    'Scan Lists must not expose table column customization');
   assert.match(scanListRenderer, /admin-scan-list-search/);
   assert.match(scanListRenderer, /admin-scan-list-filter/);
   assert.match(scanListRenderer, /search\.addEventListener\('input', applyFilters\)/);
   assert.match(scanListRenderer, /activeFilter === 'available'/);
   assert.match(scanListRenderer, /admin-scan-list-count/);
-  assert.match(scanListRenderer, /admin-scan-list-filter-empty scan-list-card-empty ui-empty-state/);
-  assert.match(scanListCard,
-    /node\('article', 'admin-scan-list-card scan-list-card ui-surface'\)/);
-  assert.match(scanListCard, /card\.setAttribute\('aria-labelledby', titleId\)/);
-  assert.match(scanListCard, /node\('h2', '', name\)/);
-  assert.match(scanListCard, /badge\('Hidden from listeners', 'state-stale'\)/);
-  assert.match(scanListCard, /badge\('Available to listeners'\)/);
-  assert.match(scanListCard, /'Routes unmatched calls here'/);
-  assert.match(scanListActions, /anchor\('Manage Members'/);
-  assert.match(appSource,
-    /`Manage \$\{number\(count\)\} assigned alias\$\{count === 1 \? '' : 'es'\} for \$\{scanList\.name\}`/);
+  assert.match(scanListRenderer, /admin-scan-list-filter-empty/);
+  assert.match(scanListRenderer, /scan-list-layout/);
+  assert.match(scanListRenderer, /scan-list-list/);
+  assert.match(scanListRenderer, /scan-list-detail-host/);
+  assert.match(scanListRenderer, /detailHost\.setAttribute\('aria-live', 'off'\)/);
+  assert.match(scanListRenderer, /selector\.tabIndex = selected \? 0 : -1/);
+  assert.match(scanListRenderer, /'ArrowUp', 'ArrowDown', 'Home', 'End'/);
+  assert.match(scanListSelector, /scan-list-selector/);
+  assert.match(scanListSelector, /ui-select-list-item/);
+  assert.match(scanListSelector, /aria-pressed/);
+  assert.match(scanListSelector, /scanList\.id/);
+  assert.match(scanListDetail, /scan-list-detail/);
+  assert.match(scanListDetail, /ui-surface/);
+  assert.match(scanListDetail, /node\('h2', 'scan-list-detail-title', name\)/);
+  assert.match(scanListDetail, /scan-list-detail-badges/);
+  assert.match(scanListDetail, /'Hidden from listeners'/);
+  assert.match(scanListDetail, /'Available to listeners'/);
+  assert.match(scanListDetail, /adminScanListUnmatchedAliasLists/);
+  assert.match(scanListActions, /anchor\('Manage aliases'/);
+  assert.match(scanListActions, /scanListId: scanList\.id/);
+  assert.match(scanListActions, /members\.setAttribute\('aria-label'/);
+  assert.match(scanListActions, /count === 1 \? 'alias' : 'aliases'/);
   const callMatchingRenderer = functionBinding(appSource, 'renderAdminCallMatching');
   assert.match(callMatchingRenderer, /type: 'call-matching-duplicates'/);
   assert.match(callMatchingRenderer, /mobileCards: true/);

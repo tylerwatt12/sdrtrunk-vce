@@ -221,23 +221,95 @@ function initializeScanListCatalog() {
   const catalog = document.querySelector('.visual-admin-scan-lists-example .scan-list-catalog');
   const search = catalog?.querySelector('#admin-scan-list-search');
   const filters = [...(catalog?.querySelectorAll('.admin-scan-list-filter') || [])];
-  const cards = [...(catalog?.querySelectorAll('.admin-scan-list-card') || [])];
+  const selectors = [...(catalog?.querySelectorAll('.scan-list-selector') || [])];
   const count = catalog?.querySelector('.admin-scan-list-count');
   const empty = catalog?.querySelector('.admin-scan-list-filter-empty');
-  if(!search || !filters.length || !cards.length || !count || !empty) return;
+  const detailHost = catalog?.querySelector('.scan-list-detail-host');
+  const detail = catalog?.querySelector('.scan-list-detail');
+  if(!search || !filters.length || !selectors.length || !count || !empty || !detailHost || !detail) return;
+  const detailTitle = detail.querySelector('.scan-list-detail-title');
+  const badges = detail.querySelector('.scan-list-detail-badges');
+  const description = detail.querySelector('.scan-list-detail-description');
+  const aliasCount = detail.querySelector('.scan-list-detail-alias-count');
+  const routeCount = detail.querySelector('.scan-list-detail-route-count');
+  const routeLinks = detail.querySelector('.scan-list-detail-route-links');
+  const manageLink = detail.querySelector('.admin-scan-list-members');
+  const editButton = detail.querySelector('.admin-scan-list-edit');
+  const deleteButton = detail.querySelector('.admin-scan-list-delete');
   let activeFilter = 'all';
+  let selectedId = 'county';
+  const drawDetail = (selector) => {
+    if(!selector) {
+      detailHost.hidden = true;
+      return;
+    }
+    detailHost.hidden = false;
+    const name = selector.dataset.scanListName || '';
+    const aliases = Number(selector.dataset.aliases || 0);
+    const routes = (selector.dataset.routeNames || '').split('|').filter(Boolean);
+    const isDefault = selector.dataset.default === 'true';
+    detailTitle.textContent = name;
+    badges.replaceChildren();
+    if(isDefault) {
+      const badge = document.createElement('span');
+      badge.className = 'ui-pill state-current';
+      badge.textContent = 'Default';
+      badges.append(badge);
+    }
+    const status = document.createElement('span');
+    status.className = selector.dataset.state === 'hidden' ? 'ui-pill state-stale' : 'ui-pill';
+    status.textContent = selector.dataset.state === 'hidden' ? 'Hidden from listeners' : 'Available to listeners';
+    badges.append(status);
+    description.textContent = selector.dataset.description || '';
+    description.hidden = !description.textContent;
+    aliasCount.textContent = String(aliases);
+    routeCount.textContent = String(routes.length);
+    routeLinks.replaceChildren();
+    if(routes.length) {
+      routes.forEach((name) => {
+        const link = document.createElement('a');
+        link.className = 'badge ui-pill';
+        link.href = '#';
+        link.textContent = name;
+        routeLinks.append(link);
+      });
+    } else {
+      const none = document.createElement('span');
+      none.className = 'muted';
+      none.textContent = 'No Alias Lists';
+      routeLinks.append(none);
+    }
+    manageLink.setAttribute('aria-label', `Manage ${aliases} aliases for ${name}`);
+    editButton.setAttribute('aria-label', `Edit ${name} details`);
+    deleteButton.setAttribute('aria-label', `Delete ${name}`);
+    if(isDefault) {
+      deleteButton.setAttribute('aria-disabled', 'true');
+      deleteButton.title = 'Choose another default scan list before deleting this one';
+    } else {
+      deleteButton.removeAttribute('aria-disabled');
+      deleteButton.removeAttribute('title');
+    }
+  };
   const draw = () => {
     const term = search.value.trim().toLocaleLowerCase();
-    let visible = 0;
-    cards.forEach((card) => {
-      const stateMatches = activeFilter === 'all' || card.dataset.state === activeFilter;
-      const searchMatches = !term || (card.dataset.search || '').toLocaleLowerCase().includes(term);
-      card.hidden = !(stateMatches && searchMatches);
-      if(!card.hidden) visible += 1;
+    const visible = selectors.filter((selector) => {
+      const stateMatches = activeFilter === 'all' || selector.dataset.state === activeFilter;
+      const searchMatches = !term || (selector.dataset.search || '').toLocaleLowerCase().includes(term);
+      selector.hidden = !(stateMatches && searchMatches);
+      return !selector.hidden;
     });
-    count.textContent = visible === cards.length ?
-      `${cards.length} scan lists` : `${visible} of ${cards.length} scan lists`;
-    empty.hidden = visible !== 0;
+    if(!visible.some((selector) => selector.dataset.scanListId === selectedId)) {
+      selectedId = visible[0]?.dataset.scanListId || null;
+    }
+    selectors.forEach((selector) => {
+      const selected = !selector.hidden && selector.dataset.scanListId === selectedId;
+      selector.setAttribute('aria-pressed', String(selected));
+      selector.tabIndex = selected ? 0 : -1;
+    });
+    count.textContent = visible.length === selectors.length ?
+      `${selectors.length} scan lists` : `${visible.length} of ${selectors.length} scan lists`;
+    empty.hidden = visible.length !== 0;
+    drawDetail(visible.find((selector) => selector.dataset.scanListId === selectedId));
   };
   search.addEventListener('input', draw);
   filters.forEach((filter) => filter.addEventListener('click', () => {
@@ -245,6 +317,22 @@ function initializeScanListCatalog() {
     filters.forEach((candidate) => candidate.setAttribute('aria-pressed',
       String(candidate === filter)));
     draw();
+  }));
+  selectors.forEach((selector) => selector.addEventListener('click', () => {
+    selectedId = selector.dataset.scanListId;
+    draw();
+  }));
+  selectors.forEach((selector) => selector.addEventListener('keydown', (event) => {
+    if(!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const visible = selectors.filter((candidate) => !candidate.hidden);
+    const position = visible.indexOf(selector);
+    if(position < 0) return;
+    const target = event.key === 'Home' ? visible[0] : event.key === 'End' ? visible.at(-1) :
+      visible[(position + (event.key === 'ArrowDown' ? 1 : -1) + visible.length) % visible.length];
+    event.preventDefault();
+    selectedId = target.dataset.scanListId;
+    draw();
+    target.focus();
   }));
   draw();
 }

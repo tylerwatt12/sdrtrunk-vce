@@ -258,59 +258,99 @@ test('disabled icon hint stays visible outside a table', async ({ page }) => {
   await expect(hint).toBeVisible();
 });
 
-test('scan list catalog uses semantic cards with useful search and availability filters', async ({ page }) => {
+test('scan list catalog keeps one selected detail in sync with search and availability filters', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/design-system.html?theme=light&view=admin-scan-lists');
   const catalog = page.locator('.visual-admin-scan-lists-example .scan-list-catalog');
-  const cards = catalog.locator('article.admin-scan-list-card');
+  const selectors = catalog.locator('button.scan-list-selector');
+  const detail = catalog.locator('.scan-list-detail');
   await expect(catalog.locator('table')).toHaveCount(0);
   await expect(catalog.getByRole('button', { name: 'Choose table columns' })).toHaveCount(0);
-  await expect(cards).toHaveCount(3);
-  await expect(cards.locator('h2')).toHaveText(['County Public Safety', 'City Services', 'Training']);
-  await expect(cards.first().getByRole('link', {
-    name: 'Manage 124 assigned aliases for County Public Safety'
-  })).toHaveText('124');
-  expect(await cards.evaluateAll((elements) => elements.every((element) => {
-    const labelledBy = element.getAttribute('aria-labelledby');
-    return element.tagName === 'ARTICLE' && labelledBy && element.querySelector(`#${labelledBy}`);
-  }))).toBe(true);
-  await expect(catalog.getByText('Default', { exact: true })).toHaveCount(1);
-  await expect(catalog.getByText('Available to listeners', { exact: true })).toHaveCount(2);
-  await expect(catalog.getByText('Hidden from listeners', { exact: true })).toHaveCount(1);
-  await expect(page.locator('.scan-list-overview .ui-summary-card > span')).toHaveText([
-    'Scan lists', 'Alias assignments', 'Alias List default routes'
-  ]);
+  await expect(selectors).toHaveCount(3);
+  await expect(selectors.first()).toHaveAttribute('data-scan-list-id', /\S+/);
+  await expect(selectors.first()).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectors.nth(1)).toHaveAttribute('aria-pressed', 'false');
+  await expect(detail.getByRole('heading', { level: 2 })).toHaveText('County Public Safety');
+  await expect(detail.getByText('Default', { exact: true })).toBeVisible();
+  await expect(detail.getByText('Available to listeners', { exact: true })).toBeVisible();
+  await expect(detail.locator('.admin-scan-list-members')).toHaveText('Manage aliases');
+  await expect(detail.locator('.admin-scan-list-members')).toHaveAttribute('aria-label',
+    'Manage 124 aliases for County Public Safety');
+  await expect(detail.getByRole('link', { name: 'Default P25' })).toBeVisible();
+  await selectors.nth(1).focus();
+  await page.keyboard.press('Enter');
+  await expect(selectors.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectors.first()).toHaveAttribute('aria-pressed', 'false');
+  await expect(detail.getByRole('heading', { level: 2 })).toHaveText('City Services');
 
   const search = catalog.getByLabel('Search scan lists');
   await search.fill('roads');
-  await expect(catalog.locator('article.admin-scan-list-card:visible')).toHaveCount(1);
-  await expect(catalog.locator('article.admin-scan-list-card:visible h2')).toHaveText('City Services');
+  await expect(catalog.locator('button.scan-list-selector:visible')).toHaveCount(1);
+  await expect(detail.getByRole('heading', { level: 2 })).toHaveText('City Services');
   await expect(catalog.locator('.admin-scan-list-count')).toHaveText('1 of 3 scan lists');
 
   await search.fill('');
   await catalog.getByRole('button', { name: 'Hidden', exact: true }).click();
   await expect(catalog.getByRole('button', { name: 'Hidden', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(catalog.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await expect(catalog.locator('article.admin-scan-list-card:visible h2')).toHaveText('Training');
+  await expect(catalog.locator('button.scan-list-selector:visible')).toHaveCount(1);
+  await expect(detail.getByRole('heading', { level: 2 })).toHaveText('Training');
+  await expect(detail.getByText('Hidden from listeners', { exact: true })).toBeVisible();
   await search.fill('county');
   await expect(catalog.locator('.admin-scan-list-filter-empty')).toBeVisible();
   await expect(catalog.locator('.admin-scan-list-count')).toHaveText('0 of 3 scan lists');
+  await expect(catalog.locator('.scan-list-detail-host')).toBeHidden();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   const mobileCatalog = page.locator('.visual-admin-scan-lists-example .scan-list-catalog');
-  const mobileCards = mobileCatalog.locator('.admin-scan-list-card');
-  const [firstCard, secondCard] = await Promise.all([
-    mobileCards.nth(0).boundingBox(), mobileCards.nth(1).boundingBox()
+  const mobileSelectors = mobileCatalog.locator('.scan-list-selector');
+  const [firstSelector, secondSelector, mobileDetail, mobileList] = await Promise.all([
+    mobileSelectors.nth(0).boundingBox(), mobileSelectors.nth(1).boundingBox(),
+    mobileCatalog.locator('.scan-list-detail').boundingBox(), mobileCatalog.locator('.scan-list-list').boundingBox()
   ]);
-  expect(secondCard.y).toBeGreaterThan(firstCard.y + firstCard.height);
-  const firstActions = mobileCards.first().locator('.scan-list-card-actions');
-  const [manage, edit] = await Promise.all([
-    firstActions.getByRole('link', { name: 'Manage Members' }).boundingBox(),
-    firstActions.getByRole('button', { name: 'Edit County Public Safety details' }).boundingBox()
-  ]);
-  expect(edit.y).toBeGreaterThan(manage.y);
+  expect(secondSelector.y).toBeGreaterThanOrEqual(firstSelector.y + firstSelector.height);
+  expect(mobileDetail.y).toBeGreaterThanOrEqual(mobileList.y + mobileList.height);
+  const listOverflow = await mobileCatalog.locator('.scan-list-list').evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { overflowY: style.overflowY, maxHeight: Number.parseFloat(style.maxHeight) };
+  });
+  expect(listOverflow.overflowY).toBe('auto');
+  expect(listOverflow.maxHeight).toBeGreaterThan(0);
+  expect(mobileList.height).toBeLessThanOrEqual(listOverflow.maxHeight + 1);
   expect(await page.locator('body').evaluate((body) => body.scrollWidth <= body.clientWidth)).toBe(true);
+});
+
+test('scan list keyboard navigation uses one list tab stop and reaches selected actions', async ({ page }) => {
+  await page.goto('/design-system.html?theme=light&view=admin-scan-lists');
+  const catalog = page.locator('.visual-admin-scan-lists-example .scan-list-catalog');
+  const selectors = catalog.locator('.scan-list-selector');
+  const manage = catalog.locator('.admin-scan-list-members');
+  await expect(selectors.first()).toHaveAttribute('tabindex', '0');
+  await expect(selectors.nth(1)).toHaveAttribute('tabindex', '-1');
+  await selectors.first().focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(selectors.nth(1)).toBeFocused();
+  await expect(selectors.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectors.nth(1)).toHaveAttribute('tabindex', '0');
+  await expect(selectors.first()).toHaveAttribute('tabindex', '-1');
+  await expect(catalog.locator('.scan-list-detail h2')).toHaveText('City Services');
+  await page.keyboard.press('End');
+  await expect(selectors.nth(2)).toBeFocused();
+  await expect(catalog.locator('.scan-list-detail h2')).toHaveText('Training');
+  await page.keyboard.press('Home');
+  await expect(selectors.first()).toBeFocused();
+  await expect(catalog.locator('.scan-list-detail h2')).toHaveText('County Public Safety');
+  await page.keyboard.press('ArrowUp');
+  await expect(selectors.nth(2)).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(selectors.first()).toBeFocused();
+  for (let index = 0; index < 4; index += 1) {
+    await page.keyboard.press('Tab');
+    await expect(catalog.locator('.scan-list-selector:focus')).toHaveCount(0);
+    if (await manage.evaluate((element) => element === document.activeElement)) break;
+  }
+  await expect(manage).toBeFocused();
 });
 
 test('table columns action is compact and stays in the owning title bar', async ({ page }) => {

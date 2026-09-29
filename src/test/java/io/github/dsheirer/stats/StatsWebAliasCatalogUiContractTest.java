@@ -335,7 +335,6 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String actions = function(source, "function adminScanListActions(scanList, revision)");
-        String count = function(source, "function adminScanListMemberCount(scanList)");
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
             "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext)");
@@ -343,9 +342,8 @@ class StatsWebAliasCatalogUiContractTest
         String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
 
-        assertTrue(actions.contains("'Manage Members'"));
+        assertTrue(actions.contains("'Manage aliases'"));
         assertTrue(actions.contains("scanListId: scanList.id"));
-        assertTrue(count.contains("scanListId: scanList.id"));
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(renderer.contains("await renderScanListMembers"));
         assertTrue(members.contains("apiPage('/api/v1/aliases'"));

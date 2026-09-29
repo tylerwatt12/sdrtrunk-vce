@@ -662,14 +662,8 @@
   </main>
 
   <main class="visual-feature-example visual-admin-scan-lists-example">
-    <header class="page-header ui-page-header visual-feature-header scan-list-page-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Scan Lists</h1><p>Choose which calls listeners can hear together.</p></div><div class="scan-list-heading-actions ui-section-actions"><a class="ui-button ui-button-secondary" href="#"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg>Assign aliases</a><button class="ui-button ui-button-primary" type="button"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg>Create scan list</button></div></header>
+    <header class="page-header ui-page-header visual-feature-header scan-list-page-header"><div><p class="visual-settings-eyebrow">Administration</p><h1>Scan Lists</h1><p>Choose which calls listeners can hear together.</p></div><div class="scan-list-heading-actions ui-section-actions"><button class="ui-button ui-button-primary" type="button"><svg aria-hidden="true"><use href="#visual-icon-plus"></use></svg>Create scan list</button></div></header>
     <div class="scan-list-page editor-workspace">
-      <p class="scan-list-intro ui-notice">A Scan List is a listening group. Add individual aliases from any Alias List to control which known calls listeners hear. To include calls that do not match an alias, open that Alias List and choose this Scan List under Call Handling Defaults.</p>
-        <div class="scan-list-overview ui-metric-grid" aria-label="Scan List summary">
-          <div class="ui-summary-card ui-summary-blue"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg><strong>3</strong><span>Scan lists</span></div>
-          <div class="ui-summary-card ui-summary-success"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg><strong>174</strong><span>Alias assignments</span></div>
-          <div class="ui-summary-card ui-summary-neutral"><svg aria-hidden="true"><use href="#visual-icon-trunked"></use></svg><strong>3</strong><span>Alias List default routes</span></div>
-        </div>
       <section class="scan-list-catalog ui-catalog" aria-label="Listener Scan Lists">
         <div class="scan-list-catalog-toolbar ui-catalog-toolbar">
           <label class="scan-list-search-control ui-field" for="admin-scan-list-search">
@@ -685,30 +679,27 @@
             </div>
           </div>
         </div>
-        <div class="scan-list-catalog-meta"><span class="admin-scan-list-count" aria-live="polite">3 scan lists</span></div>
-        <div class="scan-list-card-grid">
-          <article class="ui-surface admin-scan-list-card scan-list-card" data-search="county public safety fire ems county dispatch default p25" data-state="available" aria-labelledby="visual-scan-list-county-title">
-            <header class="scan-list-card-header"><span class="ui-icon-tile"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg></span><div class="scan-list-card-title"><h2 id="visual-scan-list-county-title">County Public Safety</h2><div class="ui-badge-group"><span class="ui-pill state-current">Default</span><span class="ui-pill">Available to listeners</span></div></div></header>
-            <p class="scan-list-card-description muted">Fire, EMS, and county dispatch</p>
-            <dl class="ui-facts scan-list-card-facts"><div class="ui-fact scan-list-card-fact"><dt>Assigned aliases</dt><dd><a class="admin-scan-list-member-count" href="#" aria-label="Manage 124 assigned aliases for County Public Safety">124</a></dd></div><div class="ui-fact scan-list-card-fact"><dt>Alias List defaults</dt><dd>2</dd></div></dl>
-            <div class="scan-list-card-routes"><p class="muted">Routes unmatched calls here</p><div class="ui-badge-group"><a class="badge ui-pill" href="#">Default P25</a><a class="badge ui-pill" href="#">Regional P25</a></div></div>
-            <div class="admin-row-actions scan-list-card-actions"><a class="ui-button ui-button-secondary admin-scan-list-members" href="#"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg>Manage Members</a><button class="ui-button ui-button-secondary ui-icon-button admin-scan-list-edit" type="button" aria-label="Edit County Public Safety details"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button admin-scan-list-delete" type="button" aria-disabled="true" aria-label="Delete County Public Safety" title="Choose another default scan list before deleting this one"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
-          </article>
-          <article class="ui-surface admin-scan-list-card scan-list-card" data-search="city services roads public works" data-state="available" aria-labelledby="visual-scan-list-city-title">
-            <header class="scan-list-card-header"><span class="ui-icon-tile"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg></span><div class="scan-list-card-title"><h2 id="visual-scan-list-city-title">City Services</h2><div class="ui-badge-group"><span class="ui-pill">Available to listeners</span></div></div></header>
-            <p class="scan-list-card-description muted">Roads and public works</p>
-            <dl class="ui-facts scan-list-card-facts"><div class="ui-fact scan-list-card-fact"><dt>Assigned aliases</dt><dd><a class="admin-scan-list-member-count" href="#" aria-label="Manage 38 assigned aliases for City Services">38</a></dd></div><div class="ui-fact scan-list-card-fact"><dt>Alias List defaults</dt><dd>0</dd></div></dl>
-            <div class="scan-list-card-routes"><p class="muted">Routes unmatched calls here</p><span class="muted">None</span></div>
-            <div class="admin-row-actions scan-list-card-actions"><a class="ui-button ui-button-secondary admin-scan-list-members" href="#"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg>Manage Members</a><button class="ui-button ui-button-secondary ui-icon-button admin-scan-list-edit" type="button" aria-label="Edit City Services details"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button admin-scan-list-delete" type="button" aria-label="Delete City Services"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
-          </article>
-          <article class="ui-surface admin-scan-list-card scan-list-card" data-search="training exercises private" data-state="hidden" aria-labelledby="visual-scan-list-training-title">
-            <header class="scan-list-card-header"><span class="ui-icon-tile"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg></span><div class="scan-list-card-title"><h2 id="visual-scan-list-training-title">Training</h2><div class="ui-badge-group"><span class="ui-pill state-stale">Hidden from listeners</span></div></div></header>
-            <p class="scan-list-card-description muted">Exercises and temporary operations</p>
-            <dl class="ui-facts scan-list-card-facts"><div class="ui-fact scan-list-card-fact"><dt>Assigned aliases</dt><dd><a class="admin-scan-list-member-count" href="#" aria-label="Manage 12 assigned aliases for Training">12</a></dd></div><div class="ui-fact scan-list-card-fact"><dt>Alias List defaults</dt><dd>1</dd></div></dl>
-            <div class="scan-list-card-routes"><p class="muted">Routes unmatched calls here</p><div class="ui-badge-group"><a class="badge ui-pill" href="#">Training P25</a></div></div>
-            <div class="admin-row-actions scan-list-card-actions"><a class="ui-button ui-button-secondary admin-scan-list-members" href="#"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg>Manage Members</a><button class="ui-button ui-button-secondary ui-icon-button admin-scan-list-edit" type="button" aria-label="Edit Training details"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg></button><button class="ui-button ui-button-danger-quiet ui-icon-button admin-scan-list-delete" type="button" aria-label="Delete Training"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
-          </article>
-          <div class="admin-scan-list-filter-empty scan-list-card-empty ui-empty-state" hidden><h2>No scan lists match</h2><p>Try another search or choose a different availability filter.</p></div>
+        <div class="scan-list-catalog-meta"><span class="admin-scan-list-count" aria-live="polite">3 scan lists</span><a href="#">Browse aliases</a></div>
+        <div class="scan-list-layout">
+          <div class="scan-list-list ui-surface" role="group" aria-label="Select a scan list. Use Up and Down arrow keys to switch lists.">
+            <button class="scan-list-selector ui-select-list-item" type="button" data-scan-list-id="county" data-search="county public safety fire ems county dispatch default p25 regional p25" data-state="available" data-scan-list-name="County Public Safety" data-description="Fire, EMS, and county dispatch" data-aliases="124" data-route-names="Default P25|Regional P25" data-default="true" aria-pressed="true" tabindex="0">
+              <span class="scan-list-selector-main"><strong>County Public Safety</strong><small>Default</small></span><span class="scan-list-selector-count">124 aliases</span>
+            </button>
+            <button class="scan-list-selector ui-select-list-item" type="button" data-scan-list-id="city" data-search="city services roads public works" data-state="available" data-scan-list-name="City Services" data-description="Roads and public works" data-aliases="38" data-route-names="" data-default="false" aria-pressed="false" tabindex="-1">
+              <span class="scan-list-selector-main"><strong>City Services</strong></span><span class="scan-list-selector-count">38 aliases</span>
+            </button>
+            <button class="scan-list-selector ui-select-list-item" type="button" data-scan-list-id="training" data-search="training exercises private training p25" data-state="hidden" data-scan-list-name="Training" data-description="Exercises and temporary operations" data-aliases="12" data-route-names="Training P25" data-default="false" aria-pressed="false" tabindex="-1">
+              <span class="scan-list-selector-main"><strong>Training</strong><small>Hidden from listeners</small></span><span class="scan-list-selector-count">12 aliases</span>
+            </button>
+            <div class="admin-scan-list-filter-empty ui-empty-state" hidden><h2>No scan lists match</h2><p>Try another search or choose a different availability filter.</p></div>
+          </div>
+          <div class="scan-list-detail-host" aria-live="off"><article class="scan-list-detail ui-surface" aria-labelledby="visual-scan-list-detail-title">
+            <header class="scan-list-detail-header"><div><h2 class="scan-list-detail-title" id="visual-scan-list-detail-title">County Public Safety</h2><div class="ui-badge-group scan-list-detail-badges"><span class="ui-pill state-current">Default</span><span class="ui-pill">Available to listeners</span></div></div></header>
+            <p class="scan-list-detail-description muted">Fire, EMS, and county dispatch</p>
+            <dl class="scan-list-detail-facts ui-facts"><div class="ui-fact ui-fact-emphasis"><dt>Assigned aliases</dt><dd class="scan-list-detail-alias-count">124</dd></div><div class="ui-fact ui-fact-emphasis"><dt>Alias List defaults</dt><dd class="scan-list-detail-route-count">2</dd></div></dl>
+            <div class="scan-list-detail-routes"><h3>Routes unmatched calls from</h3><div class="ui-badge-group scan-list-detail-route-links"><a class="badge ui-pill" href="#">Default P25</a><a class="badge ui-pill" href="#">Regional P25</a></div></div>
+            <div class="admin-row-actions scan-list-detail-actions"><a class="ui-button ui-button-primary admin-scan-list-members" href="#"><svg aria-hidden="true"><use href="#visual-icon-identities"></use></svg>Manage aliases</a><button class="ui-button ui-button-secondary admin-scan-list-edit" type="button"><svg aria-hidden="true"><use href="#visual-icon-edit"></use></svg>Edit details</button><button class="ui-button ui-button-danger-quiet ui-icon-button admin-scan-list-delete" type="button" aria-disabled="true" aria-label="Delete County Public Safety" title="Choose another default scan list before deleting this one"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg></button></div>
+          </article></div>
         </div>
       </section>
     </div>

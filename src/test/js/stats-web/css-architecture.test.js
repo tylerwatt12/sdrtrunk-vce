@@ -13,8 +13,8 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=1") layer(reset);',
   '@import url("./styles/tokens.css?v=7") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=1") layer(components);',
-  '@import url("./styles/components/controls.css?v=20") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=11") layer(compositions);',
+  '@import url("./styles/components/controls.css?v=21") layer(components);',
+  '@import url("./styles/compositions/workspaces.css?v=12") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=8") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=11") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=3") layer(compositions);',
@@ -31,7 +31,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/network-visualizer.css?v=8") layer(features);',
   '@import url("./styles/features/scanner.css?v=5") layer(features);',
   '@import url("./styles/features/aliases.css?v=9") layer(features);',
-  '@import url("./styles/features/scan-lists.css?v=1") layer(features);',
+  '@import url("./styles/features/scan-lists.css?v=3") layer(features);',
   '@import url("./styles/features/dashboard.css?v=3") layer(features);',
   '@import url("./styles/features/administration.css?v=6") layer(features);',
   '@import url("./styles/features/retained-statistics.css?v=1") layer(features);',
@@ -44,7 +44,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/receiver-health.css?v=5") layer(features);',
   '@import url("./styles/features/activity.css?v=2") layer(features);',
   '@import url("./styles/features/recordings.css?v=2") layer(features);',
-  '@import url("./styles/utilities/reduced-motion.css?v=9") layer(utilities);',
+  '@import url("./styles/utilities/reduced-motion.css?v=10") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
@@ -754,20 +754,20 @@ function validateAliasesFeature(stylesheets, entry) {
 function validateScanListsFeature(stylesheets, entry) {
   const scanLists = stylesheetModule(stylesheets, entry, 'features/scan-lists.css').source;
   for(const selector of ['.scan-list-catalog', '.scan-list-catalog-toolbar',
-    '.scan-list-card-grid', '.scan-list-card', '.scan-list-card-actions']) {
+    '.scan-list-layout', '.scan-list-list', '.scan-list-selector-main', '.scan-list-detail']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(scanLists, new RegExp(`(?:^|\\n)${escaped}\\s*\\{`),
       `Missing Scan Lists rule ${selector}`);
   }
   assert.match(scanLists,
-    /@media \(max-width: 1180px\)[\s\S]*\.scan-list-card-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/,
-    'Scan List cards must reduce to two columns before space becomes cramped');
+    /\.scan-list-layout\s*\{[^}]*grid-template-columns:\s*[^;}]*\b(?:fr|minmax)\b/,
+    'Scan List catalog must present a two-pane layout on desktop');
   assert.match(scanLists,
-    /@media \(max-width: 720px\)[\s\S]*\.scan-list-card-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/,
-    'Scan List cards must become one column on small screens');
+    /@media\s*\(max-width:\s*\d+px\)[\s\S]*\.scan-list-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+    'Scan List panes must stack on small screens');
   assert.match(scanLists,
-    /@media \(max-width: 480px\)[\s\S]*\.scan-list-card-actions\s*\{[\s\S]*flex-wrap:\s*wrap/,
-    'Scan List card actions must wrap on phone-sized screens');
+    /@media\s*\(max-width:\s*\d+px\)[\s\S]*\.scan-list-list\s*\{[^}]*max-height:\s*[^;]+;[^}]*overflow-y:\s*auto/,
+    'The stacked Scan List selector list must have bounded scrolling');
   assert.doesNotMatch(scanLists, /:root\[data-theme="dark"\]/,
     'Scan Lists presentation must adapt through semantic tokens instead of feature theme overrides');
   assert.doesNotMatch(scanLists, /#[0-9a-f]{3,8}\b|\brgba?\(/i,

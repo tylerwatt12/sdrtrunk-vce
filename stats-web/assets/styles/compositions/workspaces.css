@@ -216,6 +216,11 @@
   overflow-wrap: anywhere;
 }
 
+.ui-fact-emphasis > dd {
+  font-size: var(--font-size-section-title);
+  font-variant-numeric: tabular-nums;
+}
+
 .ui-fact-list {
   min-width: 0;
   display: grid;

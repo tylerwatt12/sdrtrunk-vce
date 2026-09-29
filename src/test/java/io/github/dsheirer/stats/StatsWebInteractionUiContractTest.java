@@ -318,7 +318,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"242\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"245\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -669,7 +669,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=211"));
+        assertTrue(html.contains("/assets/app.css?v=214"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -921,11 +921,12 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void rendersScanListsAsSearchableResponsiveCards() throws Exception
+    void rendersScanListsAsSearchableResponsiveFocusedList() throws Exception
     {
         String source = source();
         String renderer = function(source, "async function renderAdminScanLists()");
-        String card = function(source, "function adminScanListCard(scanList, revision)");
+        String selector = function(source, "function adminScanListSelector(");
+        String detail = function(source, "function adminScanListDetail(");
         String actions = function(source, "function adminScanListActions(scanList, revision)");
 
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
@@ -936,19 +937,29 @@ class StatsWebInteractionUiContractTest
         assertTrue(renderer.contains("admin-scan-list-filter-empty"));
         assertTrue(renderer.contains("search.addEventListener('input', applyFilters)"));
         assertTrue(renderer.contains("activeFilter === 'available'"));
+        assertTrue(renderer.contains("scan-list-layout"));
+        assertTrue(renderer.contains("scan-list-list"));
+        assertTrue(renderer.contains("scan-list-detail-host"));
+        assertTrue(renderer.contains("detailHost.setAttribute('aria-live', 'off')"));
+        assertTrue(renderer.contains("selector.tabIndex = selected ? 0 : -1"));
+        assertTrue(renderer.contains("'ArrowUp', 'ArrowDown', 'Home', 'End'"));
         assertFalse(renderer.contains("table("));
         assertFalse(renderer.contains("layoutMenuHost"));
 
-        assertTrue(card.contains("node('article', 'admin-scan-list-card scan-list-card ui-surface')"));
-        assertTrue(card.contains("card.setAttribute('aria-labelledby', titleId)"));
-        assertTrue(card.contains("node('h2', '', name)"));
-        assertTrue(card.contains("'Hidden from listeners'"));
-        assertTrue(card.contains("'Available to listeners'"));
-        assertTrue(card.contains("'Routes unmatched calls here'"));
-        assertTrue(card.contains("adminScanListUnmatchedAliasLists"));
-        assertTrue(actions.contains("anchor('Manage Members'"));
-        assertTrue(source.contains(
-            "`Manage ${number(count)} assigned alias${count === 1 ? '' : 'es'} for ${scanList.name}`"));
+        assertTrue(selector.contains("scan-list-selector"));
+        assertTrue(selector.contains("ui-select-list-item"));
+        assertTrue(selector.contains("aria-pressed"));
+        assertTrue(selector.contains("scanList.id"));
+        assertTrue(detail.contains("scan-list-detail"));
+        assertTrue(detail.contains("ui-surface"));
+        assertTrue(detail.contains("node('h2', 'scan-list-detail-title', name)"));
+        assertTrue(detail.contains("scan-list-detail-badges"));
+        assertTrue(detail.contains("'Hidden from listeners'"));
+        assertTrue(detail.contains("'Available to listeners'"));
+        assertTrue(detail.contains("adminScanListUnmatchedAliasLists"));
+        assertTrue(actions.contains("anchor('Manage aliases'"));
+        assertTrue(actions.contains("scanListId: scanList.id"));
+        assertTrue(actions.contains("members.setAttribute('aria-label'"));
     }
 
     @Test
@@ -1084,22 +1095,23 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("href('configuration', { tab: 'scan-lists' })"));
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));
-        assertTrue(scanLists.contains("Call Handling Defaults"));
         assertFalse(scanLists.contains("table("));
         assertFalse(scanLists.contains("layoutMenuHost"));
         assertTrue(scanLists.contains("admin-scan-list-search"));
         assertTrue(scanLists.contains("admin-scan-list-filter"));
         assertTrue(scanLists.contains("admin-scan-list-count"));
         assertTrue(scanLists.contains("admin-scan-list-filter-empty"));
-        String scanListCard = function(source, "function adminScanListCard(scanList, revision)");
-        assertTrue(scanListCard.contains("node('article', 'admin-scan-list-card scan-list-card ui-surface')"));
-        assertTrue(scanListCard.contains("card.setAttribute('aria-labelledby', titleId)"));
-        assertTrue(scanListCard.contains("node('h2', '', name)"));
-        assertTrue(scanListCard.contains("unmatched_alias_list_count"));
-        assertTrue(scanListCard.contains("adminScanListUnmatchedAliasLists"));
-        assertTrue(scanListCard.contains("'Routes unmatched calls here'"));
-        assertTrue(scanListCard.contains("'Hidden from listeners'"));
-        assertTrue(scanListCard.contains("'Available to listeners'"));
+        assertTrue(scanLists.contains("scan-list-layout"));
+        String scanListSelector = function(source, "function adminScanListSelector(");
+        assertTrue(scanListSelector.contains("scan-list-selector"));
+        assertTrue(scanListSelector.contains("aria-pressed"));
+        String scanListDetail = function(source, "function adminScanListDetail(");
+        assertTrue(scanListDetail.contains("scan-list-detail"));
+        assertTrue(scanListDetail.contains("node('h2', 'scan-list-detail-title', name)"));
+        assertTrue(scanListDetail.contains("unmatched_alias_list_count"));
+        assertTrue(scanListDetail.contains("adminScanListUnmatchedAliasLists"));
+        assertTrue(scanListDetail.contains("'Hidden from listeners'"));
+        assertTrue(scanListDetail.contains("'Available to listeners'"));
         String unmatchedAliasLists = function(source, "function adminScanListUnmatchedAliasLists(scanList)");
         assertTrue(unmatchedAliasLists.contains("scanList?.unmatched_alias_lists"));
         assertTrue(unmatchedAliasLists.contains("list: id, aliasTab: 'configure'"));
