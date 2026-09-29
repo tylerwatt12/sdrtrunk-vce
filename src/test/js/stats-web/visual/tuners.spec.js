@@ -133,6 +133,7 @@ async function mockTuners(page, mutations, state = {}) {
       current.operator_state = target;
       current.available = target !== 'disabled';
       if (target !== 'live') current.channel_count = 0;
+      if (target === 'live') current.stopped_channels = [];
       current.spectrum_available = target === 'setup';
       await respond({ status: 'applied' });
       return;
@@ -207,36 +208,40 @@ async function mockTuners(page, mutations, state = {}) {
   });
 }
 
-test('compact tuner workspace keeps recording tuners in the Add tuner dialog', async ({ page }) => {
+test('three-column tuner workspace keeps controls visible and recordings in the Add tuner dialog', async ({ page }) => {
   const mutations = [];
   const state = { currentTuner: operatorTuner() };
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1680, height: 1000 });
   await mockTuners(page, mutations, state);
   await page.goto('/app.html?view=tuners');
 
   await expect(page.getByRole('heading', { name: 'Tuners', exact: true })).toBeVisible();
   await expect(page.getByText('Signal', { exact: true })).toBeVisible();
-  await expect(page.locator('.tuners-spectrum-toolbar-gain')).toBeVisible();
+  await expect(page.locator('.tuners-controls')).toBeVisible();
   await expect(page.locator('.tuners-selected-section')).toHaveCount(1);
-  await expect(page.locator('.tuners-selected-section > .tuners-details > .tuners-selected-header'))
+  await expect(page.locator('.tuners-controls > .tuners-selected-section > .tuners-details > .tuners-selected-header'))
     .toHaveCount(1);
   await expect(page.locator('.tuners-signal-section')).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Configure tuner' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Configure tuner' })).toHaveCount(0);
+  await expect(page.locator('.tuners-gain-section')).toBeVisible();
+  await expect(page.locator('.tuners-device-section')).toBeVisible();
+  await expect(page.locator('.tuners-controls').getByText('Common tuning', { exact: true })).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
   await expect(page.locator('.tuners-frequency-digits')).toContainText('0851.01250MHz');
   await expect(page.locator('.tuners-detail-fact').filter({ hasText: 'Sample rate' }).locator('dd'))
     .toHaveText('10 MHz');
+  const sampleRateChoice = page.locator('.tuners-controls').getByLabel('Sample rate');
+  await expect(sampleRateChoice.locator('option')).toHaveText(['10 MHz', '2.5 MHz']);
+  await expect(sampleRateChoice).toHaveValue('10 MHz');
   await expect(page.locator('.tuners-main').getByRole('button', { name: /Queue/i })).toHaveCount(0);
 
-  await page.getByLabel('LNA gain (dB)').fill('10');
+  await page.getByLabel('LNA gain (dB)').focus();
+  await page.getByLabel('LNA gain (dB)').press('ArrowRight');
+  await page.getByLabel('LNA gain (dB)').press('ArrowRight');
   await page.locator('[data-setting-id="lna_gain"]').getByRole('button', { name: 'Save' }).click();
   await expect.poll(() => mutations.at(-1)).toEqual({ type: 'setting', setting: 'lna_gain', value: 10 });
 
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
-  await expect(configure.getByText('Common tuning', { exact: true })).toBeVisible();
-  await expect(configure.getByText('Device settings', { exact: true })).toBeVisible();
-  await configure.getByRole('button', { name: 'Close Configure Airspy R2' }).click();
+  await expect(page.getByRole('dialog', { name: 'Configure Airspy R2' })).toHaveCount(0);
 
   expect(state.recordingReads || 0).toBe(0);
   await page.getByRole('button', { name: 'Add tuner' }).click();
@@ -248,7 +253,7 @@ test('compact tuner workspace keeps recording tuners in the Add tuner dialog', a
     center_frequency_hz: 851_012_500 });
 });
 
-test('embedded signal view reuses cursor, zoom, and selectable quality without tuner actions', async ({ page }) => {
+test('embedded signal view reuses cursor and zoom with a compact quality toggle', async ({ page }) => {
   const mutations = [];
   const current = operatorTuner({ channel_count: 2, spectrum_available: true,
     spectrum_target_id: 'diagnostic-a' });
@@ -271,19 +276,21 @@ test('embedded signal view reuses cursor, zoom, and selectable quality without t
   await expect(embedded.getByRole('button', { name: 'Zoom out' })).toBeVisible();
   await expect(embedded.getByRole('button', { name: 'Reset zoom' })).toBeVisible();
 
-  const profile = embedded.locator('.tuner-spectrum-toolbar-profile select');
-  await expect(profile).toBeVisible();
-  await expect(profile.locator('option')).toHaveText([
-    'Efficient · 2,048 bins / 5 FPS',
-    'Balanced · 8,192 bins / 10 FPS',
-    'High detail · 16,384 bins / 20 FPS · high load',
-    'Maximum detail · 32,768 bins / 20 FPS · highest load'
-  ]);
-  await expect(profile).toHaveValue('efficient');
-  for (const value of ['efficient', 'balanced', 'high-detail', 'maximum-detail']) {
-    await profile.selectOption(value);
-    await expect(profile).toHaveValue(value);
-  }
+  const quality = embedded.locator('.tuner-spectrum-quality-control');
+  const qualityButton = quality.locator('.tuner-spectrum-quality-button');
+  const qualityDescription = quality.locator('.tuner-spectrum-quality-description');
+  await expect(qualityButton).toBeVisible();
+  await expect(qualityButton).toHaveText('Detail');
+  await expect(qualityButton).toHaveAttribute('aria-label', 'More signal detail');
+  await expect(qualityButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(qualityDescription).toBeVisible();
+  const efficientDescription = await qualityDescription.textContent();
+  await qualityButton.click();
+  await expect(qualityButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(qualityDescription).not.toHaveText(efficientDescription);
+  await qualityButton.click();
+  await expect(qualityButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(embedded.locator('.tuner-spectrum-toolbar-profile select')).toHaveCount(0);
 
   await canvases.first().hover({ position: { x: 100, y: 60 } });
   await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toBeVisible();
@@ -313,7 +320,7 @@ test('embedded signal view reuses cursor, zoom, and selectable quality without t
   expect(plot.height).toBeGreaterThanOrEqual(400);
 });
 
-test('operator workspace stays compact on a narrow screen', async ({ page }) => {
+test('operator workspace keeps inline controls usable on a narrow screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockTuners(page, [], { currentTuner: operatorTuner() });
   await page.goto('/app.html?view=tuners');
@@ -321,8 +328,8 @@ test('operator workspace stays compact on a narrow screen', async ({ page }) => 
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await page.evaluate(() => { document.querySelector('main').scrollTop = 0; });
   await expect(page.locator('main')).toHaveScreenshot('tuners-operator-light-mobile.png');
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  await page.getByRole('dialog', { name: 'Configure Airspy R2' }).getByText('Limits & sample rate').click();
+  await expect(page.locator('.tuners-controls .tuners-device-section')).toBeVisible();
+  await expect(page.locator('.tuners-controls').getByLabel('Frequency correction (ppm)')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
 });
 
@@ -332,19 +339,17 @@ test('inventory polling preserves a focused draft while updating the selected pa
   await page.goto('/app.html?view=tuners');
   const gain = page.getByLabel('LNA gain (dB)');
   await gain.focus();
-  await gain.fill('12');
+  for (let step = 0; step < 4; step += 1) await gain.press('ArrowRight');
   await page.clock.runFor(5_100);
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('12');
   await expect(page.getByLabel('LNA gain (dB)')).toBeFocused();
 });
 
-test('configuration modal preserves a focused draft while inventory refreshes', async ({ page }) => {
+test('inline tuner settings preserve a focused draft while inventory refreshes', async ({ page }) => {
   await page.clock.install();
   await mockTuners(page, []);
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  const manualPpm = page.getByRole('dialog', { name: 'Configure Airspy R2' })
-    .getByLabel('Frequency correction (ppm)');
+  const manualPpm = page.locator('.tuners-controls').getByLabel('Frequency correction (ppm)');
   await manualPpm.focus();
   await manualPpm.fill('12');
   await page.clock.runFor(5_100);
@@ -352,19 +357,19 @@ test('configuration modal preserves a focused draft while inventory refreshes', 
   await expect(manualPpm).toBeFocused();
 });
 
-test('discarding configuration changes restores confirmed values when reopened', async ({ page }) => {
-  await mockTuners(page, []);
+test('inline setting drafts survive tuner selection and can be discarded', async ({ page }) => {
+  const second = operatorTuner({ id: 'tuner-b', name: 'RTL-SDR', tuner_class: 'RTL',
+    tuner_type: 'RTL2832', channel_count: 0 });
+  await mockTuners(page, [], { tuners: [operatorTuner(), second] });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  let configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
-  await configure.getByLabel('Frequency correction (ppm)').fill('12');
-  page.once('dialog', (dialog) => dialog.accept());
-  await configure.getByRole('button', { name: 'Close Configure Airspy R2' }).click();
-  await expect(configure).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
-  await expect(configure.getByLabel('Frequency correction (ppm)')).toHaveValue('0');
+  const ppm = page.locator('.tuners-controls').getByLabel('Frequency correction (ppm)');
+  await ppm.fill('12');
+  await page.locator('.tuners-list-item').filter({ hasText: 'RTL-SDR' }).click();
+  await page.locator('.tuners-list-item').filter({ hasText: 'Airspy R2' }).click();
+  await expect(ppm).toHaveValue('12');
+  await page.locator('[data-setting-id="frequency_correction_ppm"]')
+    .getByRole('button', { name: 'Discard' }).click();
+  await expect(ppm).toHaveValue('0');
 });
 
 test('descriptor availability and dependencies control common and device settings', async ({ page }) => {
@@ -375,34 +380,24 @@ test('descriptor availability and dependencies control common and device setting
   });
   await mockTuners(page, [], { currentTuner: operatorTuner({ settings }) });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
+  const controls = page.locator('.tuners-controls');
 
-  const automaticPpm = configure.getByLabel('Automatic PPM');
-  const manualPpm = configure.getByLabel('Frequency correction (ppm)');
+  const automaticPpm = controls.getByLabel('Automatic PPM');
+  const manualPpm = controls.getByLabel('Frequency correction (ppm)');
   await expect(manualPpm).toBeDisabled();
   await expect(manualPpm).toHaveValue('0');
   await expect(page.locator('[data-setting-id="frequency_correction_ppm"]')).toHaveAttribute(
     'aria-disabled', 'true');
-  await expect(configure.getByText('Turn off Auto PPM')).toBeVisible();
-  const [automaticBox, manualBox] = await Promise.all([
-    page.locator('[data-setting-id="automatic_ppm"] .ui-toggle').boundingBox(),
-    manualPpm.boundingBox()
-  ]);
-  expect(automaticBox).not.toBeNull();
-  expect(manualBox).not.toBeNull();
-  expect(Math.abs(automaticBox.y - manualBox.y)).toBeLessThanOrEqual(1);
-  expect(Math.abs(automaticBox.height - manualBox.height)).toBeLessThanOrEqual(1);
+  await expect(controls.getByText('Turn off Auto PPM')).toBeVisible();
   expect(await automaticPpm.evaluate((control) => control.compareDocumentPosition(
     document.querySelector('[data-tuner-setting="frequency_correction_ppm"]')) & Node.DOCUMENT_POSITION_FOLLOWING))
     .toBeTruthy();
   await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '-1');
   await expect(page.getByText('Unlock center')).toBeVisible();
-  await configure.getByText('Limits & sample rate').click();
-  await expect(configure.getByLabel('Sample rate')).toBeDisabled();
-  await expect(configure.getByText('Available in Setup')).toBeVisible();
-  await expect(configure.getByLabel('Bias T')).toBeEnabled();
-  await expect(configure.getByText(/queued/i)).toHaveCount(0);
+  await expect(controls.getByLabel('Sample rate')).toBeDisabled();
+  await expect(controls.getByText('Available in Setup')).toBeVisible();
+  await expect(controls.locator('.tuners-device-section').getByLabel('Bias T')).toBeEnabled();
+  await expect(controls.getByText(/queued/i)).toHaveCount(0);
 });
 
 test('manual PPM presents and applies whole-number steps', async ({ page }) => {
@@ -412,10 +407,8 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   });
   await mockTuners(page, mutations, { currentTuner: operatorTuner({ settings }) });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
 
-  const manualPpm = page.getByRole('dialog', { name: 'Configure Airspy R2' })
-    .getByLabel('Frequency correction (ppm)');
+  const manualPpm = page.locator('.tuners-controls').getByLabel('Frequency correction (ppm)');
   await expect(manualPpm).toHaveAttribute('step', '1');
   await expect(manualPpm).toHaveValue('0');
   await manualPpm.press('Enter');
@@ -429,7 +422,7 @@ test('manual PPM presents and applies whole-number steps', async ({ page }) => {
   });
 });
 
-test('preset gain hides unusable controls and uses the Signal toolbar', async ({ page }) => {
+test('preset gain hides unusable controls and stays in the tuner controls column', async ({ page }) => {
   const settings = operatorSettings({
     lna_gain: { editable: false, unavailable_reason: 'Use manual gain' }
   });
@@ -439,7 +432,7 @@ test('preset gain hides unusable controls and uses the Signal toolbar', async ({
   settings.push(setting('mixer_agc', 'Mixer AGC', 'gain', 'boolean', false, {
     editable: false, unavailable_reason: 'Unavailable'
   }));
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1680, height: 1000 });
   await mockTuners(page, [], { currentTuner: operatorTuner({ settings, spectrum_available: true,
     spectrum_target_id: 'diagnostic-a' }),
     targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2',
@@ -449,23 +442,15 @@ test('preset gain hides unusable controls and uses the Signal toolbar', async ({
   await expect(page.getByLabel('Gain preset')).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveCount(0);
   await expect(page.getByLabel('Mixer AGC')).toHaveCount(0);
-  await expect(page.locator('.tuners-spectrum-toolbar-gain .tuners-setting')).toHaveCount(1);
-  await expect(page.locator('.tuner-spectrum-toolbar-actions > .tuners-spectrum-toolbar-gain')).toHaveCount(1);
-  const [gainBox, toolbarBox, spectrumBox, signalBox] = await Promise.all([
-    page.locator('.tuners-spectrum-toolbar-gain').boundingBox(),
-    page.locator('.tuner-spectrum-toolbar').boundingBox(),
-    page.locator('.tuners-spectrum').boundingBox(),
-    page.locator('.tuners-signal-layout').boundingBox()
+  await expect(page.locator('.tuners-gain-section .tuners-setting')).toHaveCount(1);
+  await expect(page.locator('.tuners-signal-section').getByLabel('Gain preset')).toHaveCount(0);
+  const [gainBox, signalBox] = await Promise.all([
+    page.locator('.tuners-gain-section').boundingBox(),
+    page.locator('.tuners-signal-section').boundingBox()
   ]);
   expect(gainBox).not.toBeNull();
-  expect(toolbarBox).not.toBeNull();
-  expect(spectrumBox).not.toBeNull();
   expect(signalBox).not.toBeNull();
-  expect(gainBox.y).toBeGreaterThanOrEqual(toolbarBox.y);
-  expect(gainBox.y + gainBox.height).toBeLessThanOrEqual(toolbarBox.y + toolbarBox.height + 1);
-  expect(Math.abs(spectrumBox.x - signalBox.x)).toBeLessThanOrEqual(1);
-  expect(Math.abs(spectrumBox.width - signalBox.width)).toBeLessThanOrEqual(1);
-  expect(Math.abs((spectrumBox.y + spectrumBox.height) - (signalBox.y + signalBox.height))).toBeLessThanOrEqual(1);
+  expect(gainBox.x).toBeGreaterThanOrEqual(signalBox.x + signalBox.width);
 });
 
 test('gain controls stay available when spectrum setup fails', async ({ page }) => {
@@ -474,20 +459,22 @@ test('gain controls stay available when spectrum setup fails', async ({ page }) 
   await page.goto('/app.html?view=tuners');
 
   await expect(page.getByText('Spectrum setup failed')).toBeVisible();
-  await expect(page.locator('.tuners-spectrum-toolbar-fallback > .tuners-spectrum-toolbar-gain')).toBeVisible();
+  await expect(page.locator('.tuners-controls .tuners-gain-section')).toBeVisible();
   await expect(page.getByLabel('LNA gain (dB)')).toHaveValue('8');
-  await page.getByLabel('LNA gain (dB)').fill('10');
+  await page.getByLabel('LNA gain (dB)').focus();
+  await page.getByLabel('LNA gain (dB)').press('ArrowRight');
+  await page.getByLabel('LNA gain (dB)').press('ArrowRight');
   await page.locator('[data-setting-id="lna_gain"]').getByRole('button', { name: 'Save' }).click();
   await expect.poll(() => mutations.at(-1)).toEqual({ type: 'setting', setting: 'lna_gain', value: 10 });
 });
 
-test('wide tuner summary and common controls use their available row', async ({ page }) => {
+test('desktop receiver picker, signal, and inline controls form three columns', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await mockTuners(page, [], { currentTuner: operatorTuner({
     sample_rate_hz: 2_400_000, configured_sample_rate_hz: 2_400_000
   }) });
   await page.goto('/app.html?view=tuners');
-  await expect(page.locator('.tuners-selected-section > .tuners-details')).toHaveCount(1);
+  await expect(page.locator('.tuners-controls > .tuners-selected-section > .tuners-details')).toHaveCount(1);
   await expect(page.locator('.tuners-selected-section .tuners-selected-content')).toHaveCount(1);
   await expect(page.locator('.tuners-signal-section')).toHaveCount(1);
   const facts = page.locator('.tuners-detail-facts');
@@ -495,35 +482,22 @@ test('wide tuner summary and common controls use their available row', async ({ 
   const sampleRate = facts.locator('.tuners-detail-fact').filter({ hasText: 'Sample rate' }).locator('dd');
   await expect(activeCount).toHaveText('0');
   await expect(sampleRate).toHaveText('2.4 MHz');
-  const typography = async (locator) => locator.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight };
-  });
-  const centerTypography = await typography(page.locator('.tuners-frequency-digit').first());
-  expect(await typography(activeCount)).toEqual(centerTypography);
-  expect(await typography(sampleRate)).toEqual(centerTypography);
-
-  const [factsBox, centerBox, headingBox, actionsBox, selectedBox, signalBox] = await Promise.all([
-    page.locator('.tuners-detail-facts').boundingBox(),
-    page.locator('.tuners-center-host').boundingBox(),
-    page.locator('.tuners-detail-heading').boundingBox(),
-    page.locator('.tuners-detail-actions').boundingBox(),
-    page.locator('.tuners-selected-section').boundingBox(),
-    page.locator('.tuners-signal-section').boundingBox()
+  const [receiverBox, signalBox, controlsBox] = await Promise.all([
+    page.locator('.tuners-receivers').boundingBox(),
+    page.locator('.tuners-main').boundingBox(),
+    page.locator('.tuners-controls').boundingBox()
   ]);
-  expect(factsBox).not.toBeNull();
-  expect(centerBox).not.toBeNull();
-  expect(headingBox).not.toBeNull();
-  expect(actionsBox).not.toBeNull();
-  expect(selectedBox).not.toBeNull();
+  expect(receiverBox).not.toBeNull();
   expect(signalBox).not.toBeNull();
-  expect(factsBox.x + factsBox.width).toBeLessThanOrEqual(centerBox.x + 1);
-  expect(Math.abs((headingBox.y + headingBox.height / 2) -
-    (actionsBox.y + actionsBox.height / 2))).toBeLessThanOrEqual(1);
-  expect(selectedBox.y + selectedBox.height).toBeLessThanOrEqual(signalBox.y + 1);
+  expect(controlsBox).not.toBeNull();
+  expect(receiverBox.width).toBeGreaterThanOrEqual(400);
+  expect(receiverBox.width).toBeLessThanOrEqual(440);
+  expect(receiverBox.x + receiverBox.width).toBeLessThan(signalBox.x);
+  expect(signalBox.x + signalBox.width).toBeLessThan(controlsBox.x);
+  expect(Math.abs(receiverBox.y - signalBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(signalBox.y - controlsBox.y)).toBeLessThanOrEqual(1);
 
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  await page.getByRole('dialog', { name: 'Configure Airspy R2' }).getByText('Limits & sample rate').click();
+  await page.locator('.tuners-common-details > summary').click();
   const limits = page.locator('.tuners-common-limits');
   const sample = page.locator('.tuners-common-sample');
   await expect(limits.locator(':scope > [data-setting-id="minimum_frequency_mhz"]')).toHaveCount(1);
@@ -531,16 +505,26 @@ test('wide tuner summary and common controls use their available row', async ({ 
   await expect(limits.locator(':scope > [data-setting-id="reset_frequency_extents"]')).toHaveCount(1);
   await expect(limits.locator(':scope > [data-setting-id="sample_rate"]')).toHaveCount(0);
   await expect(sample.locator(':scope > [data-setting-id="sample_rate"]')).toHaveCount(1);
-  const [minimumBox, maximumBox, resetBox, limitsBox, sampleBox] = await Promise.all([
-    limits.locator('[data-setting-id="minimum_frequency_mhz"]').boundingBox(),
-    limits.locator('[data-setting-id="maximum_frequency_mhz"]').boundingBox(),
-    limits.locator('[data-setting-id="reset_frequency_extents"]').boundingBox(),
-    limits.boundingBox(), sample.boundingBox()
+  const [limitsBox, sampleBox] = await Promise.all([limits.boundingBox(), sample.boundingBox()]);
+  expect(limitsBox.y).toBeGreaterThan(sampleBox.y);
+});
+
+test('medium-width tuner controls follow the signal without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await mockTuners(page, []);
+  await page.goto('/app.html?view=tuners');
+
+  const [receiverBox, signalBox, controlsBox] = await Promise.all([
+    page.locator('.tuners-receivers').boundingBox(),
+    page.locator('.tuners-main').boundingBox(),
+    page.locator('.tuners-controls').boundingBox()
   ]);
-  expect(Math.max(minimumBox.y + minimumBox.height, maximumBox.y + maximumBox.height,
-    resetBox.y + resetBox.height) - Math.min(minimumBox.y + minimumBox.height,
-    maximumBox.y + maximumBox.height, resetBox.y + resetBox.height)).toBeLessThanOrEqual(1);
-  expect(limitsBox.x + limitsBox.width).toBeLessThanOrEqual(sampleBox.x + 1);
+  expect(receiverBox.width).toBeGreaterThanOrEqual(400);
+  expect(signalBox.x).toBeGreaterThan(receiverBox.x + receiverBox.width);
+  expect(controlsBox.y).toBeGreaterThan(signalBox.y + signalBox.height);
+  expect(Math.abs(controlsBox.x - signalBox.x)).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+    .toBeLessThanOrEqual(1);
 });
 
 test('tuner without center-frequency control uses the full summary width', async ({ page }) => {
@@ -576,12 +560,10 @@ test('Setup unlocks setup-only controls and remains unavailable to channels', as
     targets: [{ target_id: 'diagnostic-a', label: 'Airspy R2' }] });
   await page.goto('/app.html?view=tuners');
 
-  await expect(page.getByText('Not available to channels')).toBeVisible();
+  await expect(page.locator('.tuners-mode-description')).toContainText('unavailable to channels');
   await expect(page.getByRole('button', { name: 'Go live' })).toBeVisible();
-  await page.getByRole('button', { name: 'Configure tuner' }).click();
-  const configure = page.getByRole('dialog', { name: 'Configure Airspy R2' });
-  await configure.getByText('Limits & sample rate').click();
-  await expect(configure.getByLabel('Sample rate')).toBeEnabled();
+  await expect(page.locator('.tuners-controls').getByLabel('Sample rate')).toBeEnabled();
+  await expect(page.locator('.tuners-device-section')).toBeVisible();
   await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '0');
 });
 
@@ -628,26 +610,29 @@ test('leaving Live stops channels once and offers one restore attempt', async ({
   await page.goto('/app.html?view=tuners');
 
   const setup = page.getByRole('button', { name: 'Enter setup' });
-  await expect(setup).toHaveClass(/\bui-icon-button\b/);
-  await expect(setup).toHaveAttribute('title', 'Enter setup');
-  await expect(setup).toHaveText('');
-  await expect(setup.locator('svg[aria-hidden="true"]')).toHaveCount(1);
-  await setup.hover();
-  await expect(page.locator('.ui-icon-hint')).toHaveText('Enter setup');
-  await expect(page.locator('.ui-icon-hint')).toBeVisible();
+  await expect(setup).toBeVisible();
+  await expect(setup).toHaveText('Enter setup');
+  await expect(page.locator('.tuners-action-choice').filter({ has: setup }))
+    .toContainText('keeps the tuner on for adjustments');
   await setup.click();
   const stop = page.getByRole('dialog', { name: 'Enter Setup' });
-  await expect(stop.getByText('Stop 2 channels?')).toBeVisible();
+  await expect(stop).toContainText('2 active channels will stop');
+  await expect(stop).toContainText('unavailable to channels until you return to Live');
   await stop.getByRole('button', { name: 'Enter Setup', exact: true }).click();
   await expect(stop).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Stopped 2 channels · View' })).toBeVisible();
+  await expect(page.locator('.tuners-mode-description')).toContainText('2 channels stopped for Setup');
+  await expect(page.getByRole('button', { name: 'View stopped channels' })).toBeVisible();
   expect(mutations.filter((mutation) => mutation.type === 'state')).toEqual([{ type: 'state', state: 'setup' }]);
 
-  await page.getByRole('button', { name: 'Restart 2' }).click();
-  const restore = page.getByRole('dialog', { name: 'Tuner ready' });
-  await restore.getByRole('button', { name: 'Restart 2' }).click();
+  await expect(page.getByRole('button', { name: 'Go live without resuming' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume previous channels' }).click();
+  const restore = page.getByRole('dialog', { name: 'Resume previous channels' });
+  await expect(restore).toContainText('2 channels stopped');
+  await expect(restore).toContainText('Temporary call channels may not restart');
+  await restore.getByRole('button', { name: 'Resume channels' }).click();
   await expect(restore).toBeHidden();
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(1);
+  await expect(page.getByRole('button', { name: /^Restart \d/ })).toHaveCount(0);
 });
 
 test('starting a disabled tuner enters Setup and prompts for stopped channels', async ({ page }) => {
@@ -656,11 +641,32 @@ test('starting a disabled tuner enters Setup and prompts for stopped channels', 
     stopped_channels: [{ id: 'channel-a', name: 'County Control' }], settings: operatorSettings() });
   await mockTuners(page, mutations, { currentTuner: current });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Start Setup' }).click();
-  await expect(page.getByRole('dialog', { name: 'Tuner ready' })).toBeVisible();
-  await expect(page.getByText('Restart 1 stopped channel?')).toBeVisible();
+  await page.getByRole('button', { name: 'Start setup' }).click();
+  await expect(page.getByRole('dialog', { name: 'Resume previous channels' })).toBeVisible();
+  await expect(page.getByText('1 channel stopped when this tuner entered Setup')).toBeVisible();
   await page.getByRole('button', { name: 'Not now' }).click();
-  await expect(page.getByText('Not available to channels')).toBeVisible();
+  await expect(page.locator('.tuners-mode-description')).toContainText('unavailable to channels');
+});
+
+test('Go live without resuming explains and clears the stopped-channel choice', async ({ page }) => {
+  const mutations = [];
+  const current = operatorTuner({ operator_state: 'setup', stopped_channels: [
+    { id: 'channel-a', name: 'County Control' }, { id: 'channel-b', name: 'City Dispatch' }
+  ] });
+  await mockTuners(page, mutations, { currentTuner: current });
+  await page.goto('/app.html?view=tuners');
+
+  const action = page.getByRole('button', { name: 'Go live without resuming' });
+  await expect(page.locator('.tuners-action-choice').filter({ has: action }))
+    .toContainText('channels stopped for Setup stay off');
+  await action.click();
+  const confirmation = page.getByRole('dialog', { name: 'Go live without resuming' });
+  await expect(confirmation).toContainText('will no longer remember them for the Resume action');
+  await confirmation.getByRole('button', { name: 'Go live without resuming', exact: true }).click();
+  await expect(confirmation).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Enter setup' })).toBeVisible();
+  expect(mutations.filter((mutation) => mutation.type === 'state')).toEqual([{ type: 'state', state: 'live' }]);
+  expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(0);
 });
 
 test('delayed restore failure reports only channels that could not start', async ({ page }) => {
@@ -671,10 +677,10 @@ test('delayed restore failure reports only channels that could not start', async
   await mockTuners(page, mutations, { currentTuner: current, restoreCompleteAfter: 3,
     restoreFailed: [{ id: 'channel-b', name: 'City Dispatch' }] });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Restart 2' }).click();
-  const restoring = page.getByRole('dialog', { name: 'Tuner ready' });
-  await restoring.getByRole('button', { name: 'Restart 2' }).click();
-  await expect(restoring.getByText('Restarting…')).toBeVisible();
+  await page.getByRole('button', { name: 'Resume previous channels' }).click();
+  const restoring = page.getByRole('dialog', { name: 'Resume previous channels' });
+  await restoring.getByRole('button', { name: 'Resume channels' }).click();
+  await expect(restoring.getByText('Resuming channels…')).toBeVisible();
   const failed = page.getByRole('dialog', { name: 'Couldn’t start' });
   await expect(failed).toContainText('City Dispatch');
   await expect(failed).not.toContainText('County Control');
@@ -689,11 +695,11 @@ test('restore operation error stays in the prompt without reporting success', as
   await mockTuners(page, mutations, { currentTuner: current, restoreCompleteAfter: 2,
     restoreError: 'Tuner unavailable' });
   await page.goto('/app.html?view=tuners');
-  await page.getByRole('button', { name: 'Restart 1' }).click();
-  const restore = page.getByRole('dialog', { name: 'Tuner ready' });
-  await restore.getByRole('button', { name: 'Restart 1' }).click();
+  await page.getByRole('button', { name: 'Resume previous channels' }).click();
+  const restore = page.getByRole('dialog', { name: 'Resume previous channels' });
+  await restore.getByRole('button', { name: 'Resume channels' }).click();
   await expect(restore.getByText('Tuner unavailable')).toBeVisible();
-  await expect(page.getByText('Channels restarted')).toHaveCount(0);
+  await expect(page.getByText('Eligible channels resumed')).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'Couldn’t start' })).toHaveCount(0);
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(1);
 });

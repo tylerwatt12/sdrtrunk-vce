@@ -334,6 +334,10 @@ body[data-gallery-view="modal-long"] .visual-modal-long-content {
   padding: 28px 0 48px;
 }
 
+.visual-tuners-example {
+  width: min(1760px, calc(100% - 32px));
+}
+
 .visual-feature-header {
   display: flex;
   align-items: flex-start;

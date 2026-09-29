@@ -318,7 +318,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"241\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"242\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -669,7 +669,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=210"));
+        assertTrue(html.contains("/assets/app.css?v=211"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
@@ -1741,7 +1741,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
         assertTrue(tuner.contains(
-            "optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions, profilePanel)"));
+            "optionsPanel.append(optionsHeader, displayOptions, fftOptions, waterfallOptions)"));
+        assertTrue(tuner.contains("if (!basicOperator) optionsPanel.append(profilePanel)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', String(options.open))"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));

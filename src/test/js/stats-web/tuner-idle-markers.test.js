@@ -500,10 +500,14 @@ test('maximum detail persists while inactive and only updates a running spectrum
 test('embedded quality stays session-local and does not overwrite the Spectrum preference', () => {
   const stored = [];
   const profileSelect = Object.assign(new Element('select'), { value: 'high-detail' });
+  const qualityButton = new Element('button');
   const context = {
     basicOperator: true,
+    profileSelection: true,
     tunerOperatorSpectrumProfile: 'efficient',
     profileSelect,
+    qualityButton,
+    syncOperatorQuality: () => {},
     TUNER_SPECTRUM_PROFILE_PREFERENCE: 'profile',
     storeTunerChoice: (key, value) => stored.push([key, value]),
     shouldRun: () => false,
@@ -517,6 +521,11 @@ test('embedded quality stays session-local and does not overwrite the Spectrum p
 
   profileSelect.dispatch('change');
   assert.equal(context.tunerOperatorSpectrumProfile, 'high-detail');
+  qualityButton.dispatch('click');
+  assert.equal(profileSelect.value, 'efficient');
+  qualityButton.dispatch('click');
+  assert.equal(profileSelect.value, 'balanced');
+  assert.equal(context.tunerOperatorSpectrumProfile, 'balanced');
   assert.deepEqual(stored, []);
 });
 

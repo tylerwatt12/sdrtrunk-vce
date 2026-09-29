@@ -501,7 +501,9 @@ test('tuner-spectrum-light-mobile', async ({ page }) => {
 });
 
 for (const [name, theme, viewport] of [
-  ['tuners-operator-light-desktop', 'light', { width: 1280, height: 900 }],
+  ['tuners-operator-light-desktop', 'light', { width: 1680, height: 1000 }],
+  ['tuners-operator-dark-desktop', 'dark', { width: 1680, height: 1000 }],
+  ['tuners-operator-light-mobile', 'light', { width: 390, height: 844 }],
   ['tuners-operator-dark-mobile', 'dark', { width: 390, height: 844 }]
 ]) {
   test(name, async ({ page }) => {

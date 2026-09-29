@@ -1,23 +1,28 @@
 .tuners-workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 330px) minmax(0, 1fr);
+  grid-template-columns: minmax(400px, 440px) minmax(0, 1fr) minmax(360px, 400px);
   align-items: start;
   gap: var(--space-4);
 }
 
 .tuners-workspace > section,
 .tuners-main,
-.tuners-main > section {
+.tuners-controls,
+.tuners-main > section,
+.tuners-controls > section {
   min-width: 0;
 }
 
-.tuners-main {
+.tuners-main,
+.tuners-controls {
   display: grid;
+  align-content: start;
   gap: var(--space-4);
 }
 
 .tuners-receivers,
-.tuners-main > section {
+.tuners-main > section,
+.tuners-controls > section {
   margin-bottom: 0;
 }
 
@@ -36,7 +41,7 @@
 }
 
 .tuners-main > section[hidden],
-.tuners-spectrum-toolbar-gain[hidden],
+.tuners-controls > section[hidden],
 .tuners-setting-actions[hidden],
 .tuners-common-details[hidden] {
   display: none;
@@ -139,24 +144,18 @@
 
 .tuners-selected-header {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
 }
 
 .tuners-selected-content {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, auto);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-4);
   padding: var(--space-4);
-}
-
-.tuners-selected-content:has(> .tuners-center-host[hidden]) {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .tuners-detail-heading {
@@ -205,15 +204,45 @@
 }
 
 .tuners-detail-actions {
-  flex: 0 0 auto;
-  justify-content: flex-end;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.tuners-mode-description {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--muted);
+  line-height: var(--line-height-body);
+}
+
+.tuners-action-choice {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tuners-action-choice > button {
+  width: 100%;
+}
+
+.tuners-action-choice > :not(button) {
+  margin: 0;
 }
 
 .tuners-center-host {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+.tuners-controls .tuners-frequency-digit {
+  width: clamp(20px, 1.55vw, 25px);
+  height: 40px;
 }
 
 .tuners-center-host[hidden] {
@@ -380,12 +409,6 @@
   margin: 0 var(--space-4) var(--space-4);
 }
 
-.tuners-signal-layout {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .tuners-spectrum {
   min-width: 0;
   display: grid;
@@ -416,9 +439,9 @@
 
 .tuners-spectrum .tuner-spectrum-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 0;
+  gap: 0 var(--space-3);
   padding: 0;
   background: transparent;
   border: 0;
@@ -439,25 +462,26 @@
   font-size: var(--font-size-section-title);
 }
 
-.tuners-spectrum .tuner-spectrum-toolbar-actions {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  justify-content: flex-start;
+.tuners-spectrum .tuner-spectrum-quality-control {
+  min-width: 0;
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--line);
+  gap: var(--space-1) var(--space-2);
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.tuners-spectrum .tuner-spectrum-quality-description {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-size-label);
 }
 
 .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   margin-right: var(--space-4);
-}
-
-.tuners-spectrum .tuner-spectrum-toolbar-profile {
-  width: auto;
-  grid-template-columns: auto minmax(190px, 1fr);
 }
 
 .tuners-spectrum .tuner-spectrum-layout-basic .tuner-spectrum-visual-window {
@@ -499,56 +523,11 @@
   max-height: 270px;
 }
 
-.tuners-spectrum-toolbar-gain {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.tuners-spectrum-toolbar-fallback {
-  min-width: 0;
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-}
-
-.tuners-spectrum-toolbar-fallback:empty {
-  display: none;
-}
-
 .tuners-setting-group-body {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 0 var(--space-4);
   padding: var(--space-2) var(--space-4) var(--space-3);
-}
-
-.tuners-spectrum-toolbar-gain .tuners-setting-group-body {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  padding: 0;
-}
-
-.tuners-spectrum-toolbar-gain .tuners-setting {
-  min-width: 225px;
-  padding: 0;
-}
-
-.tuners-spectrum-toolbar-gain .tuners-gain-control {
-  grid-template-columns: auto minmax(160px, 1fr);
-  align-items: center;
-}
-
-.tuners-spectrum-toolbar-gain .tuners-gain-control.tuners-gain-field {
-  grid-template-columns: auto minmax(140px, 1fr) 70px;
-}
-
-.tuners-spectrum-toolbar-gain .tuners-gain-control.tuners-gain-field > span:first-child {
-  grid-column: auto;
 }
 
 .tuners-setting {
@@ -605,7 +584,7 @@
 }
 
 .tuners-common-primary {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .tuners-common-primary [data-setting-id="automatic_ppm"] {
@@ -645,13 +624,8 @@
 }
 
 .tuners-common-more {
-  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
-  align-items: start;
-}
-
-.tuners-common-more:has(.tuners-common-limits:empty),
-.tuners-common-more:has(.tuners-common-sample:empty) {
   grid-template-columns: minmax(0, 1fr);
+  align-items: start;
 }
 
 .tuners-common-limits:empty,
@@ -662,7 +636,7 @@
 .tuners-common-limits {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: 0 var(--space-3);
 }
@@ -670,6 +644,10 @@
 .tuners-common-sample {
   min-width: 0;
   display: grid;
+}
+
+.tuners-common-content > .tuners-common-sample {
+  padding: 0 var(--space-4) var(--space-3);
 }
 
 .tuners-common-limits .tuners-setting-action {
@@ -718,28 +696,65 @@
   width: min(var(--modal-size-large), 96vw);
 }
 
-.tuners-settings-modal {
-  width: min(var(--modal-size-large), 96vw);
+@media (min-width: 1481px) {
+  .tuners-workspace {
+    align-items: stretch;
+  }
+
+  .tuners-receivers {
+    align-self: start;
+  }
+
+  .tuners-main {
+    align-content: stretch;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .tuners-signal-section,
+  .tuners-spectrum {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .tuners-spectrum .tuner-spectrum-layout-basic {
+    height: 100%;
+  }
 }
 
-.tuners-settings-modal-body {
-  display: grid;
-  gap: var(--space-3);
-}
+@media (max-width: 1480px) {
+  .tuners-workspace {
+    grid-template-columns: minmax(400px, 440px) minmax(0, 1fr);
+  }
 
-.tuners-settings-modal-body > section {
-  margin-bottom: 0;
+  .tuners-controls {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 1120px) {
-  .tuners-common-more {
-    grid-template-columns: minmax(0, 1fr);
+  .tuners-spectrum .tuner-spectrum-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .tuners-spectrum .tuner-spectrum-quality-control {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding: var(--space-2) var(--space-4);
+    border-top: 1px solid var(--line);
+  }
+
+  .tuners-spectrum .tuner-spectrum-toolbar > .tuner-spectrum-zoom-actions {
+    grid-column: 2;
   }
 }
 
 @media (max-width: 900px) {
   .tuners-workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tuners-controls {
+    grid-column: auto;
   }
 
   .tuners-receivers {
@@ -750,34 +765,19 @@
   .tuners-list {
     display: flex;
     overflow-x: auto;
+    overflow-y: hidden;
     scroll-snap-type: x proximity;
   }
 
   .tuners-list-item {
-    flex: 0 0 min(280px, 84vw);
+    flex: 0 0 min(340px, 84vw);
     scroll-snap-align: start;
   }
 }
 
 @media (max-width: 680px) {
-  .tuners-selected-content {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .tuners-detail-actions {
-    justify-content: flex-start;
-  }
-
-  .tuners-center-host {
-    justify-content: flex-start;
-  }
-
-  .tuners-center-lock {
-    min-width: 0;
-  }
-
   .tuners-frequency-digit {
-    width: clamp(22px, 7.2vw, 32px);
+    width: clamp(20px, 6vw, 25px);
     height: 44px;
   }
 
@@ -794,15 +794,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .tuners-spectrum .tuner-spectrum-toolbar-actions {
-    display: flex;
-  }
-
-  .tuners-spectrum .tuner-spectrum-toolbar-profile {
-    width: 100%;
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
   .tuners-spectrum .tuner-spectrum-layout-basic {
     grid-template-rows: auto minmax(390px, 1fr);
   }
@@ -815,45 +806,6 @@
     grid-template-rows: minmax(90px, .25fr) minmax(270px, .75fr);
   }
 
-  .tuners-common-primary,
-  .tuners-common-more,
-  .tuners-setting-group-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .tuners-spectrum-toolbar-gain {
-    width: 100%;
-  }
-
-  .tuners-spectrum-toolbar-gain .tuners-setting-group-body {
-    width: 100%;
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .tuners-spectrum-toolbar-gain .tuners-setting {
-    width: 100%;
-    min-width: 0;
-    max-width: none;
-  }
-
-  .tuners-spectrum-toolbar-gain .tuners-gain-control {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
-  }
-
-  .tuners-spectrum-toolbar-gain .tuners-gain-control.tuners-gain-field {
-    grid-template-columns: minmax(0, 1fr) 70px;
-  }
-
-  .tuners-spectrum-toolbar-gain .tuners-gain-control.tuners-gain-field > span:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .tuners-common-limits {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .tuners-common-limits .tuners-setting-action {
     justify-self: start;
   }
@@ -862,9 +814,6 @@
     width: 100vw;
   }
 
-  .tuners-settings-modal {
-    width: 100vw;
-  }
 }
 
 @media (max-width: 420px) {
