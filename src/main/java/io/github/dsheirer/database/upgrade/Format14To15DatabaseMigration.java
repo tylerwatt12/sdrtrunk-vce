@@ -594,7 +594,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
                     {
                         try
                         {
-                            SetupProgress.decode(json);
+                            SetupProgress.decodeLegacy(json);
                         }
                         catch(SQLException exception)
                         {
@@ -675,7 +675,7 @@ final class Format14To15DatabaseMigration implements DatabaseMigrationStep
 
         if(!setupProgressPresent)
         {
-            settings.add(new SettingRow(SetupProgress.KEY, SetupProgress.replacementReview().encode(), 1));
+            settings.add(new SettingRow(SetupProgress.KEY, SetupProgress.replacementReview().encodeLegacy(), 1));
             defaulted++;
         }
         if(!spectrumSnapPresent)

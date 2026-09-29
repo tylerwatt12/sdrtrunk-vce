@@ -65,15 +65,39 @@ public final class SetupProgress
 
     public String encode()
     {
+        return encode(false);
+    }
+
+    /** Historical format 13-28 representation; only adjacent migrations create it. */
+    public String encodeLegacy()
+    {
+        return encode(true);
+    }
+
+    private String encode(boolean legacy)
+    {
         var root = JSON.createObjectNode();
         root.put("complete", complete);
         root.put("imported", imported);
         var steps = root.putObject("steps");
-        states.forEach((step, state) -> steps.put(step.name(), state.name()));
+        states.forEach((step, state) -> {
+            if(!legacy || step != SetupStep.RECORDINGS) steps.put(step.name(), state.name());
+        });
         return root.toString();
     }
 
     public static SetupProgress decode(String encoded) throws SQLException
+    {
+        return decode(encoded, false);
+    }
+
+    /** Reads the exact progress shape stored before the Recordings step existed. */
+    public static SetupProgress decodeLegacy(String encoded) throws SQLException
+    {
+        return decode(encoded, true);
+    }
+
+    private static SetupProgress decode(String encoded, boolean legacy) throws SQLException
     {
         try
         {
@@ -81,10 +105,16 @@ public final class SetupProgress
             JsonNode root = JSON.readTree(encoded);
             if(!root.isObject() || root.size() != 3 || !root.path("complete").isBoolean() ||
                 !root.path("imported").isBoolean() || !root.path("steps").isObject() ||
-                root.path("steps").size() != SetupStep.values().length) throw new IllegalArgumentException();
+                root.path("steps").size() != SetupStep.values().length - (legacy ? 1 : 0))
+                throw new IllegalArgumentException();
             SetupProgress result = new SetupProgress(root.get("complete").asBoolean(), root.get("imported").asBoolean());
             for(SetupStep step: SetupStep.values())
             {
+                if(legacy && step == SetupStep.RECORDINGS)
+                {
+                    result.set(step, State.CARRIED_OVER);
+                    continue;
+                }
                 State state = State.valueOf(root.get("steps").path(step.name()).asText());
                 result.set(step, state == State.RUNNING ? State.PENDING : state);
             }
@@ -95,13 +125,23 @@ public final class SetupProgress
 
     public static SetupProgress read(Connection connection) throws SQLException
     {
+        return read(connection, false);
+    }
+
+    public static SetupProgress readLegacy(Connection connection) throws SQLException
+    {
+        return read(connection, true);
+    }
+
+    private static SetupProgress read(Connection connection, boolean legacy) throws SQLException
+    {
         try(var query = connection.prepareStatement("SELECT settings_json FROM application_settings WHERE key=?"))
         {
             query.setString(1, KEY);
             try(var rows = query.executeQuery())
             {
                 if(!rows.next()) throw new SQLException("Missing setup progress. Run the Application Migrator.");
-                return decode(rows.getString(1));
+                return legacy ? decodeLegacy(rows.getString(1)) : decode(rows.getString(1));
             }
         }
     }
@@ -115,13 +155,23 @@ public final class SetupProgress
     }
     public static void write(Connection connection, SetupProgress progress) throws SQLException
     {
+        write(connection, progress.encode());
+    }
+
+    public static void writeLegacy(Connection connection, SetupProgress progress) throws SQLException
+    {
+        write(connection, progress.encodeLegacy());
+    }
+
+    private static void write(Connection connection, String encoded) throws SQLException
+    {
         try(var update = connection.prepareStatement("""
             INSERT INTO application_settings(key,settings_json,updated_at_ms) VALUES(?,?,?)
             ON CONFLICT(key) DO UPDATE SET settings_json=excluded.settings_json,updated_at_ms=excluded.updated_at_ms
             """))
         {
             update.setString(1, KEY);
-            update.setString(2, progress.encode());
+            update.setString(2, encoded);
             update.setLong(3, System.currentTimeMillis());
             update.executeUpdate();
         }

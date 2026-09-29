@@ -44,13 +44,13 @@ class Format27To28DatabaseMigrationTest
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
-            assertEquals(1, preflight.steps().size());
+            assertEquals(2, preflight.steps().size());
             assertEquals("format-27-to-28", preflight.steps().getFirst().id());
 
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(1, report.steps().size());
-            assertEquals("format-27-to-28", report.steps().getFirst().id());
-            assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
+            new Format27To28DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 28);
+            assertEquals(28, DatabaseFormatCatalog.inspect(connection).version());
+            assertEffect(validated, DatabaseMigrationEffect.Kind.DEFAULT,
                 "remote P25 source assignments", 0);
             assertEquals(configurationBefore, configurationDigest(statement));
             assertEquals(settingsBefore, settingsDigest(statement));
@@ -60,7 +60,7 @@ class Format27To28DatabaseMigrationTest
                 WHERE json_extract(config_json, '$.sourceConfiguration.type')='sourceConfigRemote'
                 """));
             assertEquals("28", metadata(statement));
-            assertEquals(28, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(28, DatabaseFormatCatalog.inspect(connection).version());
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
         }
     }
@@ -75,7 +75,7 @@ class Format27To28DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(28, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -86,8 +86,8 @@ class Format27To28DatabaseMigrationTest
             assertEquals(27, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("27", metadata(statement));
             assertEquals(before, configurationDigest(statement));
-            assertEquals(28, DatabaseMigrationChain.migrate(connection).target().version());
-            assertEquals(28, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
+            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

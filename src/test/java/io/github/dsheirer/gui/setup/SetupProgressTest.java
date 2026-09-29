@@ -1,6 +1,7 @@
 package io.github.dsheirer.gui.setup;
 
 import java.sql.SQLException;
+import io.github.dsheirer.preference.record.RecordingMode;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
@@ -9,7 +10,7 @@ class SetupProgressTest
 {
     @Test void fixedLineageAndOnlyValidCompletionIsSkipped()
     {
-        assertEquals(9, SetupStep.values().length);
+        assertEquals(10, SetupStep.values().length);
         var progress = new SetupProgress(false,true);
         progress.set(SetupStep.ADMINISTRATOR,CARRIED_OVER);
         progress.set(SetupStep.WEB,COMPLETE);
@@ -57,5 +58,29 @@ class SetupProgressTest
         output.accept("final status");
         assertTrue(output.snapshot().length()<=65536);
         assertTrue(output.snapshot().endsWith("final status\n"));
+    }
+
+    @Test void freshRecordingChoiceRecommendsManagedButExistingAndImportedModesArePreserved()
+    {
+        SetupProgress fresh = new SetupProgress(false, false);
+        assertTrue(SetupWizard.selectManagedByDefault(fresh, RecordingMode.CLASSIC));
+        fresh.set(SetupStep.RECORDINGS, COMPLETE);
+        assertFalse(SetupWizard.selectManagedByDefault(fresh, RecordingMode.CLASSIC));
+        assertTrue(SetupWizard.selectManagedByDefault(fresh, RecordingMode.MANAGED));
+        SetupProgress imported = SetupProgress.replacementReview();
+        assertFalse(SetupWizard.selectManagedByDefault(imported, RecordingMode.CLASSIC));
+        assertTrue(SetupWizard.selectManagedByDefault(imported, RecordingMode.MANAGED));
+        assertFalse(SetupWizard.selectManagedByDefault(new SetupProgress(true, false), RecordingMode.CLASSIC));
+    }
+
+    @Test void legacyProgressHasExactNineStepShapeAndCarriesOverRecordingChoice() throws Exception
+    {
+        SetupProgress legacy = new SetupProgress(false, false);
+        legacy.set(SetupStep.ACTIVITY, COMPLETE);
+        SetupProgress upgraded = SetupProgress.decodeLegacy(legacy.encodeLegacy());
+        assertEquals(COMPLETE, upgraded.get(SetupStep.ACTIVITY));
+        assertEquals(CARRIED_OVER, upgraded.get(SetupStep.RECORDINGS));
+        assertThrows(SQLException.class, () -> SetupProgress.decode(legacy.encodeLegacy()));
+        assertThrows(SQLException.class, () -> SetupProgress.decodeLegacy(legacy.encode()));
     }
 }

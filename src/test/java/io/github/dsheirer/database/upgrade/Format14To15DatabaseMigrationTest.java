@@ -19,6 +19,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.gui.setup.SetupProgress;
+import io.github.dsheirer.gui.setup.SetupStep;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -99,7 +100,7 @@ class Format14To15DatabaseMigrationTest
             {
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals("format-27-to-28", report.steps().getLast().id());
+                assertEquals("format-28-to-29", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -793,6 +794,8 @@ class Format14To15DatabaseMigrationTest
             DatabaseFormatCatalog.stampForMigration(connection, 27);
             new Format27To28DatabaseMigration().migrateAndReport(connection, false);
             DatabaseFormatCatalog.stampForMigration(connection, 28);
+            new Format28To29DatabaseMigration().migrateAndReport(connection, false);
+            DatabaseFormatCatalog.stampForMigration(connection, 29);
             connection.commit();
 
             assertTrue(effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
@@ -1390,7 +1393,7 @@ class Format14To15DatabaseMigrationTest
                 "unusable administrator-owned configuration").affectedRows());
             assertEquals(baselineDefaults + 2, effect(effects, DatabaseMigrationEffect.Kind.DEFAULT,
                 "recoverable configuration values").affectedRows());
-            assertTrue(SetupProgress.read(connection).isImported());
+            assertTrue(SetupProgress.readLegacy(connection).isImported());
             assertEquals(SpectrumSnapSettings.defaults(), SpectrumSnapSettings.read(connection));
             assertEquals(2, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
             connection.rollback();
@@ -2588,6 +2591,18 @@ class Format14To15DatabaseMigrationTest
         {
             ApplicationSetting expected = entry.getValue();
             ApplicationSetting actual = after.get(entry.getKey());
+            if(SetupProgress.KEY.equals(entry.getKey()) &&
+                MAPPER.readTree(actual.json()).path("steps").has(SetupStep.RECORDINGS.name()))
+            {
+                SetupProgress legacy = SetupProgress.decodeLegacy(expected.json());
+                SetupProgress upgraded = SetupProgress.decode(actual.json());
+                for(SetupStep step: SetupStep.values())
+                {
+                    if(step != SetupStep.RECORDINGS) assertEquals(legacy.get(step), upgraded.get(step), step.name());
+                }
+                assertEquals(SetupProgress.State.CARRIED_OVER, upgraded.get(SetupStep.RECORDINGS));
+                continue;
+            }
             assertEquals(expected.updatedAtMs(), actual.updatedAtMs(), entry.getKey());
             if(!"portable_java_preferences_v1".equals(entry.getKey()))
             {

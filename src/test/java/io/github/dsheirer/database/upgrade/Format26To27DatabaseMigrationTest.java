@@ -74,9 +74,9 @@ class Format26To27DatabaseMigrationTest
                 statement.execute("PRAGMA foreign_keys=ON");
             }
 
-            assertEquals(2, report.steps().size());
+            assertEquals(3, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals("format-27-to-28", report.steps().getLast().id());
+            assertEquals("format-28-to-29", report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -99,7 +99,7 @@ class Format26To27DatabaseMigrationTest
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(28, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
 
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 UPDATE web_user SET tier='ADMIN' WHERE username='listener'
@@ -131,7 +131,7 @@ class Format26To27DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(28, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -146,7 +146,7 @@ class Format26To27DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(28, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(29, DatabaseMigrationChain.migrate(connection).target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -159,7 +159,7 @@ class Format26To27DatabaseMigrationTest
                 connection.setAutoCommit(true);
                 statement.execute("PRAGMA foreign_keys=ON");
             }
-            assertEquals(28, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals("USER", text(statement,
                 "SELECT tier FROM web_user WHERE username='operator'"));
         }
@@ -168,7 +168,7 @@ class Format26To27DatabaseMigrationTest
     @Test
     void currentFormatStartupDoesNotRewriteAccounts() throws Exception
     {
-        Path database = Format28TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
+        Path database = Format29TestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         Map<String,AccountSnapshot> accountsBefore;
         Map<String,byte[]> verifierDigestsBefore;
         long sequenceBefore;
@@ -192,7 +192,7 @@ class Format26To27DatabaseMigrationTest
             }
             assertEquals(sequenceBefore, number(statement,
                 "SELECT seq FROM sqlite_sequence WHERE name='web_user'"));
-            assertEquals(28, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(29, DatabaseFormatCatalog.requireCurrent(connection).version());
         }
     }
 

@@ -84,8 +84,10 @@ class DatabaseFormatCatalogTest
             .anyMatch(policy -> policy.contains("action/time indexes")));
         assertTrue(DatabaseFormatCatalog.requireVersion(25).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("absent ignoreEncryptedCalls setting as disabled")));
-        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+        assertTrue(DatabaseFormatCatalog.requireVersion(28).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("stable sender and feed UUIDs")));
+        assertTrue(DatabaseFormatCatalog.current().migrationPolicy().stream()
+            .anyMatch(policy -> policy.contains("carry over the new Recordings step")));
 
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
@@ -227,8 +229,8 @@ class DatabaseFormatCatalogTest
             SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
             SQLException migration = assertThrows(SQLException.class,
                 () -> DatabaseFormatCatalog.inspectForMigration(connection));
-            assertTrue(strict.getMessage().contains("ambiguous across formats [27, 28]"));
-            assertTrue(migration.getMessage().contains("ambiguous across formats [27, 28]"));
+            assertTrue(strict.getMessage().contains("ambiguous across formats [27, 28, 29]"));
+            assertTrue(migration.getMessage().contains("ambiguous across formats [27, 28, 29]"));
         }
     }
 

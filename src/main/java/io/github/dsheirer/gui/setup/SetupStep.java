@@ -5,6 +5,7 @@ public enum SetupStep
 {
     SOURCE("Starting point"), ADMINISTRATOR("Administrator"), WEB("Web access"),
     JMBE("Digital audio"), RADIO_REFERENCE("RadioReference"), ACTIVITY("Statistics & history"),
+    RECORDINGS("Recordings"),
     HARDWARE("Your radios"), CALIBRATION("Optimize decoding"), REVIEW("Review & finish");
 
     private final String title;

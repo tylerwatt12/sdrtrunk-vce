@@ -131,6 +131,9 @@ public final class SetupWizardSmoke
                 preferences(target).getApplicationPreference().getStatsLoggingRetentionDays()!=30))
                 throw new AssertionError("Off did not preserve the dormant retention setting");
         }
+        await(target,SetupStep.RECORDINGS);
+        capture(target,root,"07-recordings");
+        click(target,"Continue");
         await(target,SetupStep.HARDWARE);
         capture(target,root,"07-hardware");
         if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&

@@ -60,9 +60,14 @@ final class CurrentDatabaseAdministrativeRepair
 
     static Inspection inspect(Connection connection) throws SQLException
     {
+        return inspect(connection, usesLegacySetupProgress(connection));
+    }
+
+    static Inspection inspect(Connection connection, boolean legacySetup) throws SQLException
+    {
         WebInspection web = inspectWebState(connection);
         CoreInspection core = inspectCoreRows(connection, web);
-        boolean setupInvalid = invalidSetupProgress(connection);
+        boolean setupInvalid = invalidSetupProgress(connection, legacySetup);
         boolean spectrumInvalid = invalidSpectrumSettings(connection);
         boolean resetSetupForAuthentication = web.resetWebAccounts() > 0;
         return new Inspection(setupInvalid || resetSetupForAuthentication ? 1 : 0,
@@ -78,7 +83,12 @@ final class CurrentDatabaseAdministrativeRepair
 
     static Inspection repair(Connection connection) throws SQLException
     {
-        Inspection before = inspect(connection);
+        return repair(connection, usesLegacySetupProgress(connection));
+    }
+
+    static Inspection repair(Connection connection, boolean legacySetup) throws SQLException
+    {
+        Inspection before = inspect(connection, legacySetup);
         if(!before.requiresRepair())
         {
             return before;
@@ -87,7 +97,8 @@ final class CurrentDatabaseAdministrativeRepair
         long now = Math.max(1, System.currentTimeMillis());
         if(before.defaultedSetupProgress() > 0)
         {
-            SetupProgress.write(connection, SetupProgress.replacementReview());
+            if(legacySetup) SetupProgress.writeLegacy(connection, SetupProgress.replacementReview());
+            else SetupProgress.write(connection, SetupProgress.replacementReview());
         }
         if(before.defaultedSpectrumSettings() > 0)
         {
@@ -101,7 +112,7 @@ final class CurrentDatabaseAdministrativeRepair
         }
         repairCoreRows(connection, before.core(), now);
 
-        Inspection remaining = inspect(connection);
+        Inspection remaining = inspect(connection, legacySetup);
         if(remaining.requiresRepair())
         {
             throw new SQLException("Bounded current-format administrative repair did not restore every targeted " +
@@ -163,7 +174,7 @@ final class CurrentDatabaseAdministrativeRepair
                 "Allow the application to rebuild defaults when its stored default icon set was unusable"));
     }
 
-    private static boolean invalidSetupProgress(Connection connection) throws SQLException
+    private static boolean invalidSetupProgress(Connection connection, boolean legacySetup) throws SQLException
     {
         if(!validSpecialSettingStorage(connection, SetupProgress.KEY))
         {
@@ -171,12 +182,23 @@ final class CurrentDatabaseAdministrativeRepair
         }
         try
         {
-            SetupProgress.read(connection);
+            if(legacySetup) SetupProgress.readLegacy(connection);
+            else SetupProgress.read(connection);
             return false;
         }
         catch(SQLException ignored)
         {
             return true;
+        }
+    }
+
+    private static boolean usesLegacySetupProgress(Connection connection) throws SQLException
+    {
+        try(var query = connection.prepareStatement(
+            "SELECT value FROM database_metadata WHERE key='database_format_version'");
+            var row = query.executeQuery())
+        {
+            return !row.next() || !Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION).equals(row.getString(1));
         }
     }
 

@@ -58,9 +58,9 @@ class Format23To24DatabaseMigrationTest
 
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
 
-            assertEquals(5, report.steps().size());
+            assertEquals(6, report.steps().size());
             assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals("format-27-to-28", report.steps().getLast().id());
+            assertEquals("format-28-to-29", report.steps().getLast().id());
             assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));

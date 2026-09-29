@@ -25,7 +25,7 @@ final class Format12To13DatabaseMigration implements DatabaseMigrationStep
     public void migrate(Connection connection) throws SQLException
     {
         requireSourceFormat(connection);
-        SetupProgress.write(connection, new SetupProgress(true, false));
+        SetupProgress.writeLegacy(connection, new SetupProgress(true, false));
     }
 
     private static void requireSourceFormat(Connection connection) throws SQLException

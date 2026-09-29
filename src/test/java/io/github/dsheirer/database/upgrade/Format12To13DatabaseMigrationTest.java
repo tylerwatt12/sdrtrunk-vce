@@ -34,7 +34,7 @@ class Format12To13DatabaseMigrationTest
             connection.commit();
             assertEquals(13, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before,settings(connection));
-            assertTrue(SetupProgress.read(connection).isComplete());
+            assertTrue(SetupProgress.readLegacy(connection).isComplete());
         }
     }
 

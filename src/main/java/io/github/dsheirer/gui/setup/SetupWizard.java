@@ -20,6 +20,7 @@ import io.github.dsheirer.jmbe.github.GitHub;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.TunerHardwareDiscovery;
@@ -243,7 +244,11 @@ public final class SetupWizard extends JDialog
             button.addActionListener(e -> { if(!busy && preferences != null) showPage(id); });
             steps.put(id, button); lineage.add(button);
         }
-        rail.add(lineage, BorderLayout.CENTER);
+        JScrollPane stepsScroll = new JScrollPane(lineage,
+            JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        stepsScroll.setBorder(BorderFactory.createEmptyBorder());
+        stepsScroll.getVerticalScrollBar().setUnitIncrement(18);
+        rail.add(stepsScroll, BorderLayout.CENTER);
         shell.add(rail, BorderLayout.WEST);
         JPanel body = new JPanel(new BorderLayout(8, 22));
         body.setBorder(new EmptyBorder(30, 0, 22, 30));
@@ -458,6 +463,7 @@ public final class SetupWizard extends JDialog
             case JMBE -> jmbePage();
             case RADIO_REFERENCE -> radioReferencePage();
             case ACTIVITY -> activityPage();
+            case RECORDINGS -> recordingsPage();
             case HARDWARE -> hardwarePage();
             case CALIBRATION -> calibrationPage();
             case REVIEW -> reviewPage();
@@ -941,6 +947,40 @@ public final class SetupWizard extends JDialog
         };
     }
 
+    private void recordingsPage()
+    {
+        RecordingMode savedMode = preferences.getRecordPreference().getRecordingMode();
+        boolean managedSelected = selectManagedByDefault(progress, savedMode);
+        paragraph("Make VCE your call recording library. Managed Recordings organizes new calls as they arrive, " +
+            "lets you search and play them in the browser, and can remove recordings after the age you choose.");
+        ButtonGroup group = new ButtonGroup();
+        JRadioButton managed = card(group, "Managed Recordings · Recommended",
+            "Organized folders, searchable call details, browser playback, and optional age retention. " +
+                "Choose this for the full VCE recording experience.", managedSelected);
+        card(group, "Basic Recordings",
+            "Keep placing new recordings in one flat folder for other software that watches it, such as " +
+                "Trunking Recorder. Previously saved Managed calls stay searchable in VCE.", !managedSelected);
+        if(progress.isImported() || progress.isDone(step))
+        {
+            notice("Your current choice is preserved",
+                "Changing this setting affects future calls only. Earlier Managed recordings remain in the library.",
+                false);
+        }
+        accept = () -> {
+            preferences.getRecordPreference().setRecordingMode(managed.isSelected() ?
+                RecordingMode.MANAGED : RecordingMode.CLASSIC);
+            completeAndContinue();
+        };
+    }
+
+    static boolean selectManagedByDefault(SetupProgress progress, RecordingMode savedMode)
+    {
+        //Only a fresh, unfinished profile gets the recommendation as a default. Imported and previously configured
+        //profiles always present their current saved mode without changing it.
+        return (!progress.isImported() && !progress.isComplete() &&
+            progress.get(SetupStep.RECORDINGS) == PENDING) || savedMode == RecordingMode.MANAGED;
+    }
+
     private void hardwarePage()
     {
         paragraph("Let’s see which radios are connected. We’re only looking for devices — nothing will start receiving yet.");
@@ -1027,7 +1067,10 @@ public final class SetupWizard extends JDialog
         append(summary); append(Box.createVerticalStrut(24));
         if(!selectedScope.isBlank()) paragraph(selectedScope);
         var dirs = preferences.getDirectoryPreference();
+        paragraph("New recordings: " + (preferences.getRecordPreference().getRecordingMode() == RecordingMode.MANAGED ?
+            "Managed Recordings · organized and searchable" : "Basic Recordings · flat folder"));
         details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() +
+            "\nManaged recordings: " + dirs.getDirectoryManagedRecording() +
             "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " +
             dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
         var app = preferences.getApplicationPreference();

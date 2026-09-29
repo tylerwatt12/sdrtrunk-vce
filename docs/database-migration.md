@@ -80,7 +80,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 (current)
+format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -331,6 +331,15 @@ transport state and are not saved. This semantic-only format shares the format-2
 format-27/28 file is ambiguous and requires its authoritative global format marker. When format 27 is the directly
 selected source, the step first applies the bounded current-component repair policy; an intermediate format 27 does
 not repeat those repairs.
+
+The format 28-to-29 step adds a dedicated Recordings choice to the bounded setup progress record. Existing Classic or
+Managed recording preferences and the previous step states are preserved. The new step is marked carried over for
+existing profiles, so migration never changes where their next call is saved. New profiles begin with the step pending
+and the wizard recommends Managed Recordings. A missing or malformed legacy progress record is replaced with a bounded
+review state and counted; independent usable settings remain. Format 29 uses the same DDL fingerprint as format 28,
+so a markerless file in this shared-layout family still requires its authoritative global format marker. When format
+28 is the directly selected source, the step also applies bounded current-component repair before its final stamp;
+an intermediate format 28 does not repeat that repair.
 
 ## Schema-Change Rule
 
