@@ -25085,6 +25085,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   let latest = null;
   let sessionKey = null;
   let historyPage = 0;
+  const highlightedSequences = new Set();
   const columns = [
     { id: 'time', label: 'Matched at', render: (row) => dateTime(row.decided_at_ms) || '—' },
     { id: 'talkgroup', label: 'Talkgroup', render: (row) => {
@@ -25134,7 +25135,10 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
     type: 'call-matching-duplicates', layoutMenuHost: tableActions, controller: tableController,
     sortable: false, mobileCards: true, tableClass: 'admin-responsive-table',
     rowKey: (row) => row.decision_sequence,
-    rowClass: (row) => Number(row.decision_sequence) === selectedSequence ? 'selected' : ''
+    rowClass: (row) => [
+      Number(row.decision_sequence) === selectedSequence ? 'selected' : '',
+      highlightedSequences.has(String(row.decision_sequence)) ? 'activity-row-new' : ''
+    ].filter(Boolean).join(' ')
   });
   const historyPager = node('div', 'call-matching-history-pagination');
   const historySection = section('Recent duplicate calls', fragment(tableWrap, historyPager), tableActions);
@@ -25153,6 +25157,7 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
   };
 
   const update = (value) => {
+    const previous = latest;
     latest = callMatchingSnapshot(value);
     const nextSessionKey = `${latest.session_id || ''}:${latest.resolver.session_id || ''}`;
     if (sessionKey !== null && sessionKey !== nextSessionKey) {
@@ -25160,6 +25165,19 @@ async function renderAdminCallMatching(renderContext = captureRenderContext()) {
       selectedModal?.close();
       selectedModal = null;
       historyPage = 0;
+      highlightedSequences.clear();
+    } else if (previous) {
+      const previousSequences = new Set(previous.duplicates.map((row) => String(row.decision_sequence)));
+      const newSequences = latest.duplicates.map((row) => String(row.decision_sequence))
+        .filter((sequence) => !previousSequences.has(sequence));
+      if (newSequences.length) {
+        newSequences.forEach((sequence) => highlightedSequences.add(sequence));
+        pageTimeout(() => {
+          if (sessionKey !== nextSessionKey) return;
+          newSequences.forEach((sequence) => highlightedSequences.delete(sequence));
+          if (workspace.isConnected) renderHistory();
+        }, 8_000);
+      }
     }
     sessionKey = nextSessionKey;
     const resolver = latest.resolver;

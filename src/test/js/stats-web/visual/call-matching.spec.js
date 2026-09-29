@@ -187,6 +187,24 @@ test('bounded duplicate history keeps the selected sequence across refreshes', a
   await expect(page.getByRole('dialog', { name: 'Duplicate call details' })).not.toBeVisible({ timeout: 3500 });
 });
 
+test('new duplicate calls use the shared row fade across refreshes', async ({ page }) => {
+  let current = snapshot([duplicate(71)]);
+  const app = await openApp(page, { matching: async () => ({ data: current }) });
+  const table = page.locator('table[data-table-type="call-matching-duplicates"]');
+  const initial = table.locator('tbody tr[data-id="71"]');
+  await expect(initial).not.toHaveClass(/activity-row-new/);
+
+  current = snapshot([duplicate(72), duplicate(71)]);
+  const added = table.locator('tbody tr[data-id="72"]');
+  await expect(added).toHaveClass(/activity-row-new/, { timeout: 3500 });
+  await expect(initial).not.toHaveClass(/activity-row-new/);
+  expect(await added.locator('td').first().evaluate((cell) => getComputedStyle(cell).animationName))
+    .toBe('activity-row-highlight');
+  await expect.poll(() => app.requests()).toBeGreaterThanOrEqual(3);
+  await expect(added).toHaveClass(/activity-row-new/);
+  await expect(added).not.toHaveClass(/activity-row-new/, { timeout: 10_000 });
+});
+
 test('confirmed duplicate history paginates and clamps after live history shrinks', async ({ page }) => {
   let current = snapshot(Array.from({ length: 45 }, (_, index) => duplicate(index + 1)));
   await openApp(page, { matching: async () => ({ data: current }) });
