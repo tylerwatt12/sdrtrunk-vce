@@ -53,6 +53,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('liveDetailsPanelPercent')}
   ${functionSource('liveIdentityHasDisplayLabel')}
   ${functionSource('liveRemoteOriginLabel')}
+  ${functionSource('liveShowRowRemoteOrigin')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -63,6 +64,7 @@ const behavior = vm.runInNewContext(`(() => {
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
     liveRemoteOriginLabel,
+    liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
@@ -98,6 +100,9 @@ assert.equal(behavior.liveRemoteOriginLabel({ remote: true, sender_id: 'private-
   feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Remote source');
 assert.equal(behavior.liveRemoteOriginLabel({ remote: false }), '');
 assert.equal(behavior.liveRemoteOriginLabel(null), '');
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'remote-site', remote_origin: { remote: true } }), false);
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'conventional', remote_origin: { remote: true } }), true);
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'local-site' }), true);
 
 const sourceIdentity = {
   source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1, alias_list_id: 2 }],
@@ -225,6 +230,7 @@ assert.equal(untouched, idle, 'Rows that need no presentation change should not 
 
 const channels = functionSource('liveChannelsSection');
 const channelValue = functionSource('liveChannelValue');
+const channelMeta = functionSource('liveChannelViewMeta');
 const selectedViewAction = functionSource('liveSelectedViewAction');
 const settingsActivation = functionSource('activateLivePresentationSettings');
 assert.match(selectedViewAction, /ui-icon-button section-title-icon live-selected-view-action/,
@@ -306,8 +312,12 @@ assert.match(channelValue,
   /const conventional = channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\);[\s\S]*const value = conventional \? liveConventionalChannelValue\(row\) :[\s\S]*`LCN \$\{row\.lcn\}`/,
   'Conventional channel names must remain distinct from trunked LCN values');
 assert.match(channelValue,
-  /const remote = liveRemoteOriginBadge\(row\.remote_origin\);[\s\S]*wrapper\.append\(remote\)/,
-  'Remote Live rows must append their cloud badge without replacing the channel value');
+  /const remote = showRemoteOrigin \? liveRemoteOriginBadge\(row\.remote_origin\) : null;[\s\S]*wrapper\.append\(remote\)/,
+  'Mixed Live rows keep their cloud badge without replacing the channel value');
+assert.match(channels, /liveChannelValue\(row, liveShowRowRemoteOrigin\(tables\.get\(activeTableId\)\)\)/,
+  'A dedicated remote Live detail must omit redundant per-LCN clouds');
+assert.doesNotMatch(channelMeta, /liveRemoteOriginLabel/,
+  'The selected Live subtitle must not repeat the Remote title badge');
 assert.match(channels, /class="live-decode-quality-text"|node\('span', 'live-decode-quality-text', text\)/,
   'Decode quality retains an exact text value for desktop and accessibility');
 assert.match(channels,

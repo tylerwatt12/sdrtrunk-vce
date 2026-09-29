@@ -16,14 +16,13 @@ export function createRemoteLinksWorkspace(deps) {
   const senderHeading = node('div');
   senderHeading.append(node('h2', '', 'Trusted senders'),
     node('p', 'muted', 'Create credentials for installations allowed to send P25 feeds to this receiver.'));
-  const addSender = button('Add trusted sender', () => openCreateSender(), true);
+  const addSender = button('Add trusted sender', () => openCreateSender(), true, 'add-sender');
   senderHeader.append(senderHeading, addSender);
   const senderHost = node('div', 'remote-links-sender-grid');
   const pageMeta = node('footer', 'remote-links-page-meta');
   const freshness = node('span', 'muted');
   pageMeta.append(freshness,
-    node('span', 'muted', 'Managed feeds remain visible after a sender disconnects or stops advertising them, until ' +
-      'you remove the local channel.'));
+    node('span', 'muted', 'Remote channels use this receiver’s Alias Lists and depend on their sender for live traffic.'));
   host.append(summary, message, overview, senderHeader, senderHost, pageMeta);
 
   let snapshot = null;
@@ -31,10 +30,15 @@ export function createRemoteLinksWorkspace(deps) {
   let disposed = false;
   let modalActive = false;
   let timer = null;
+  let activationReleaseTimer = null;
+  let pointerActivation = false;
+  let keyboardActivation = '';
+  let pendingSnapshot = null;
 
-  function button(label, action, primary = false) {
+  function button(label, action, primary = false, actionKey = '') {
     const control = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`, label);
     control.type = 'button';
+    if (actionKey) control.dataset.remoteAction = actionKey;
     if (action) control.addEventListener('click', action);
     return control;
   }
@@ -42,8 +46,9 @@ export function createRemoteLinksWorkspace(deps) {
   const read = () => requestJson(ROOT, { csrf: false, signal });
   const write = (path, method, body, requestSignal = signal) => requestJson(ROOT + path,
     { method, body, signal: requestSignal, timeoutMs: 30000, page: false });
-  const statusLabel = (value) => String(value || 'UNKNOWN').replaceAll('_', ' ').toLowerCase()
-    .replace(/^./, (letter) => letter.toUpperCase());
+  const statusLabel = (value) => stateKey(value) === 'PENDING' ? 'Setting up' :
+    String(value || 'UNKNOWN').replaceAll('_', ' ').toLowerCase()
+      .replace(/^./, (letter) => letter.toUpperCase());
   const stateKey = (value) => String(value || 'UNKNOWN').toUpperCase();
   const statusTone = (value) => ['CONNECTED', 'LISTENING', 'READY'].includes(stateKey(value)) ? 'success' :
     ['ERROR', 'MISSING', 'AUTHENTICATION_FAILED', 'UNSUPPORTED'].includes(stateKey(value)) ? 'danger' :
@@ -59,38 +64,17 @@ export function createRemoteLinksWorkspace(deps) {
     return `${Math.floor(seconds / 86400)}d ago`;
   };
   const frequency = (hz) => Number(hz) > 0 ? `${(Number(hz) / 1_000_000).toFixed(5)} MHz` : 'Unavailable';
+  const protocolLabel = (value) => ({ P25_PHASE1: 'P25 Phase 1', P25_PHASE2: 'P25 Phase 2' })[value] ||
+    String(value || 'P25').replaceAll('_', ' ');
   const notice = (text, tone = '') => node('div', tone ? `ui-notice ui-notice-${tone}` : 'ui-feedback', text);
   const showError = (target, error) => target.replaceChildren(notice(error?.message || 'The request failed', 'danger'));
   const pathPart = (value) => encodeURIComponent(String(value));
   const aliasLists = () => Array.isArray(snapshot?.alias_lists) ? snapshot.alias_lists : [];
 
-  function feedAction(feed) {
-    if (feed.adopted) return { allowed: true, label: 'Manage feed', detail: '' };
-    const state = stateKey(feed.state);
-    if (state === 'REMOVED') return {
-      allowed: false,
-      label: 'No longer advertised',
-      detail: 'This feed is no longer advertised by the sender.'
-    };
-    if (state === 'UNSUPPORTED') return {
-      allowed: false,
-      label: 'Unsupported feed',
-      detail: 'This feed cannot be adopted by this version.'
-    };
-    if (!aliasLists().length) return {
-      allowed: false,
-      label: 'P25 Alias List required',
-      detail: 'Create a P25 Alias List before adopting remote feeds.'
-    };
-    return { allowed: true, label: 'Adopt feed', detail: 'Waiting for adoption' };
-  }
-
   function heading(title, detail, stateValue = null) {
     const header = node('header', 'remote-links-card-header');
     const identity = node('div', 'remote-links-card-identity');
-    const titleRow = node('div', 'remote-links-card-title-row');
-    titleRow.append(iconGlyph('icon-cloud'), node('h2', '', title));
-    identity.append(titleRow);
+    identity.append(node('h2', '', title));
     if (detail) identity.append(node('p', 'muted', detail));
     header.append(identity);
     if (stateValue) header.append(status(stateValue));
@@ -111,18 +95,26 @@ export function createRemoteLinksWorkspace(deps) {
     const card = node('article', 'remote-links-card ui-surface');
     card.append(heading('Receive remote feeds', listener.enabled ?
       `${listener.bind_address || 'All interfaces'}:${listener.port}` : 'Listener disabled', listener.state));
-    const dependencies = node('div', 'remote-links-dependencies');
     const rows = Array.isArray(listener.dependencies) ? listener.dependencies : [];
-    if (rows.length) rows.forEach((dependency) => {
-      const item = node('div', 'remote-links-dependency');
-      item.append(node('span', '', dependency.label || dependency.id || 'Dependency'), status(dependency.state));
-      if (dependency.status_message) item.append(node('small', 'muted', dependency.status_message));
-      dependencies.append(item);
-    });
-    else dependencies.append(node('span', 'muted', 'No optional dependency status reported.'));
+    if (rows.length) {
+      const dependencies = node('div', 'remote-links-dependencies');
+      rows.forEach((dependency) => {
+        const item = node('div', 'remote-links-dependency');
+        item.append(node('span', '', dependency.label || dependency.id || 'Dependency'), status(dependency.state));
+        if (dependency.status_message) item.append(node('small', 'muted', dependency.status_message));
+        dependencies.append(item);
+      });
+      card.append(dependencies);
+    }
     const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Configure listener', openListener));
-    card.append(dependencies);
+    actions.append(button('Configure listener', openListener, false, 'listener'));
+    if (listener.bind_address === '127.0.0.1' || listener.bind_address === '::1') {
+      card.append(notice('This address accepts connections only from this receiver. Choose its VPN address to receive remote feeds.',
+        'warning'));
+    } else if (listener.enabled && ['0.0.0.0', '::', '0:0:0:0:0:0:0:0'].includes(listener.bind_address)) {
+      card.append(notice('Listening on every interface. Restrict access with a VPN or firewall; authentication does not encrypt traffic.',
+        'warning'));
+    }
     if (listener.status_message) card.append(notice(listener.status_message,
       stateKey(listener.state) === 'ERROR' ? 'danger' : 'warning'));
     card.append(actions);
@@ -143,7 +135,7 @@ export function createRemoteLinksWorkspace(deps) {
     if (connection.status_message) card.append(notice(connection.status_message,
       ['ERROR', 'AUTHENTICATION_FAILED'].includes(stateKey(connection.state)) ? 'danger' : 'warning'));
     const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Configure sender', openSenderConnection));
+    actions.append(button('Configure sender', openSenderConnection, false, 'sender-connection'));
     card.append(actions);
     return card;
   }
@@ -154,8 +146,8 @@ export function createRemoteLinksWorkspace(deps) {
     const title = node('div', 'remote-links-feed-title');
     title.append(iconGlyph('icon-cloud'), node('strong', '', feed.display_name || feed.advertised_name || feed.feed_id));
     header.append(title, status(feed.state));
-    const action = feedAction(feed);
-    const identity = [feed.protocol, frequency(feed.frequency_hz)].filter(Boolean).join(' · ');
+    const managed = Boolean(feed.channel_configuration_id);
+    const identity = [protocolLabel(feed.protocol), frequency(feed.frequency_hz)].filter(Boolean).join(' · ');
     const catalog = [feed.system_name, feed.site_name].filter(Boolean).join(' · ');
     const site = [feed.wacn != null ? `WACN ${feed.wacn}` : '', feed.system != null ? `System ID ${feed.system}` : '',
       feed.rfss != null ? `RFSS ${feed.rfss}` : '', feed.site != null ? `Site ${feed.site}` : '']
@@ -164,14 +156,18 @@ export function createRemoteLinksWorkspace(deps) {
     detail.append(node('span', '', identity));
     if (catalog) detail.append(node('span', '', catalog));
     if (site) detail.append(node('span', 'muted', site));
-    detail.append(node('span', 'muted', feed.adopted ?
-      `Managed locally · ${feed.enabled ? 'enabled' : 'disabled'}` : action.detail));
+    detail.append(node('span', 'muted', managed ?
+      `Managed locally · ${feed.enabled ? 'enabled' : 'disabled'}` :
+      stateKey(feed.state) === 'UNSUPPORTED' ? 'This feed is not supported by this version.' :
+        stateKey(feed.state) === 'REMOVED' ? 'No longer advertised by the sender.' :
+          'Setting up a local channel.'));
     if (feed.lag_milliseconds != null) detail.append(node('span', 'muted',
       `${Math.max(0, Number(feed.lag_milliseconds))} ms link delay · ${feed.sequence_gap_count || 0} sequence gaps`));
-    if (feed.status_message) detail.append(node('span', 'semantic-danger', feed.status_message));
-    const manage = button(action.label, action.allowed ? () => openFeed(sender, feed) : null, !feed.adopted && action.allowed);
-    manage.disabled = !action.allowed;
-    card.append(header, detail, manage);
+    if (feed.status_message) detail.append(node('span', statusTone(feed.state) === 'danger' ?
+      'ui-status-danger' : 'muted', feed.status_message));
+    card.append(header, detail);
+    if (managed) card.append(button('Manage feed', () => openFeed(sender, feed), false,
+      `feed:${sender.sender_id}:${feed.feed_id}`));
     return card;
   }
 
@@ -182,7 +178,8 @@ export function createRemoteLinksWorkspace(deps) {
       sender.state), facts([
       ['Sender ID', sender.sender_id],
       ['Last seen', age(sender.last_seen_at_ms)],
-      ['New feeds', sender.auto_adopt ? 'Adopt automatically' : 'Wait for approval']
+      ['Preferred P25 Alias List', aliasLists().find((item) => item.alias_list_id === sender.default_alias_list_id)?.name ||
+        'Host default']
     ]));
     if (sender.status_message) card.append(notice(sender.status_message,
       stateKey(sender.state) === 'ERROR' ? 'danger' : 'warning'));
@@ -190,7 +187,7 @@ export function createRemoteLinksWorkspace(deps) {
     if (feeds.length) feedHost.append(...feeds.map((feed) => drawFeed(sender, feed)));
     else feedHost.append(node('div', 'ui-feedback', 'No feeds have been advertised by this sender.'));
     const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button('Manage sender', () => openSender(sender)));
+    actions.append(button('Manage sender', () => openSender(sender), false, `sender:${sender.sender_id}`));
     card.append(feedHost, actions);
     return card;
   }
@@ -198,11 +195,9 @@ export function createRemoteLinksWorkspace(deps) {
   function draw(value) {
     snapshot = value;
     const senders = Array.isArray(snapshot.senders) ? snapshot.senders : [];
-    const feeds = senders.flatMap((sender) => Array.isArray(sender.feeds) ? sender.feeds : []);
-    const waiting = feeds.filter((feed) => !feed.adopted && !['REMOVED', 'UNSUPPORTED'].includes(stateKey(feed.state)));
+    const connectedCount = senders.filter((sender) => stateKey(sender.state) === 'CONNECTED').length;
     summary.replaceChildren(status(snapshot.listener?.state),
-      uiStatus(`${senders.filter((sender) => stateKey(sender.state) === 'CONNECTED').length} connected sender${senders.length === 1 ? '' : 's'}`, 'neutral'),
-      uiStatus(`${waiting.length} feed${waiting.length === 1 ? '' : 's'} waiting`, waiting.length ? 'warning' : 'neutral'));
+      uiStatus(`${connectedCount} connected sender${connectedCount === 1 ? '' : 's'}`, 'neutral'));
     overview.replaceChildren(drawListener(snapshot.listener || {}),
       drawSenderConnection(snapshot.sender_connection || {}));
     if (senders.length) senderHost.replaceChildren(...senders.map(drawSender));
@@ -215,12 +210,71 @@ export function createRemoteLinksWorkspace(deps) {
     freshness.textContent = 'Status updated just now';
   }
 
-  async function refresh() {
+  function present(value, force = false) {
+    snapshot = value;
+    // A press in progress must finish on the same control; ordinary focus does not pause status updates.
+    const focused = host.contains(document.activeElement) ? document.activeElement.dataset.remoteAction : '';
+    if ((pointerActivation || keyboardActivation) && !force) pendingSnapshot = value;
+    else {
+      pendingSnapshot = null;
+      draw(value);
+      if (focused) [...host.querySelectorAll('[data-remote-action]')]
+        .find((control) => control.dataset.remoteAction === focused)?.focus();
+    }
+  }
+
+  function flushPending() {
+    if (disposed || modalActive || pointerActivation || keyboardActivation || !pendingSnapshot) return;
+    const value = pendingSnapshot;
+    pendingSnapshot = null;
+    present(value, true);
+  }
+
+  host.addEventListener('pointerdown', (event) => {
+    if (event.isPrimary && event.button === 0 && event.target.closest('button[data-remote-action]')) {
+      window.clearTimeout(activationReleaseTimer);
+      pointerActivation = true;
+    }
+  });
+  const pointerUp = () => {
+    if (!pointerActivation) return;
+    // Click follows pointerup. The timer is a fallback for a release that produces no click.
+    activationReleaseTimer = window.setTimeout(() => { pointerActivation = false; flushPending(); }, 0);
+  };
+  const pointerCancel = () => { pointerActivation = false; flushPending(); };
+  document.addEventListener('pointerup', pointerUp);
+  document.addEventListener('pointercancel', pointerCancel);
+  host.addEventListener('click', () => {
+    if (!pointerActivation) return;
+    window.clearTimeout(activationReleaseTimer);
+    pointerActivation = false;
+    flushPending();
+  });
+  host.addEventListener('keydown', (event) => {
+    if (['Enter', ' '].includes(event.key) && event.target.closest('button[data-remote-action]')) {
+      window.clearTimeout(activationReleaseTimer);
+      keyboardActivation = event.key;
+    }
+  });
+  const keyUp = (event) => {
+    if (event.key !== keyboardActivation) return;
+    keyboardActivation = '';
+    // Space activates on keyup, so let its click finish before replacing controls.
+    activationReleaseTimer = window.setTimeout(flushPending, 0);
+  };
+  document.addEventListener('keyup', keyUp);
+
+  async function refresh(force = false) {
     if (disposed || loading || modalActive) return;
     loading = true;
     try {
       const value = await read();
-      if (!disposed) { draw(value); message.replaceChildren(); }
+      if (!disposed) {
+        // Keep the editor's opening revision stable until its mutation completes.
+        if (modalActive) pendingSnapshot = value;
+        else present(value, force);
+        message.replaceChildren();
+      }
     } catch (error) {
       if (!disposed && error?.name !== 'AbortError') {
         showError(message, error);
@@ -237,8 +291,13 @@ export function createRemoteLinksWorkspace(deps) {
   function openFormModal(title, form, options = {}) {
     modalActive = true;
     const modal = openReadOnlyModal(title, form, {
-      id: options.id || 'remote-links-editor', className: 'remote-links-modal',
-      cleanup: () => { modalActive = false; options.cleanup?.(); void refresh(); }
+      id: options.id || 'remote-links-editor',
+      className: `remote-links-modal${options.modalSize ? ` remote-links-modal-${options.modalSize}` : ''}`,
+      cleanup: () => {
+        modalActive = false;
+        options.cleanup?.();
+        queueMicrotask(() => { if (!disposed) void refresh(true); });
+      }
     });
     if (!modal) modalActive = false;
     return modal;
@@ -254,7 +313,7 @@ export function createRemoteLinksWorkspace(deps) {
   function selectAlias(value, allowEmpty = false) {
     const control = node('select', 'ui-select');
     if (allowEmpty) {
-      const option = node('option', '', 'Choose when adopting');
+      const option = node('option', '', 'Use host default');
       option.value = '';
       control.append(option);
     }
@@ -271,7 +330,7 @@ export function createRemoteLinksWorkspace(deps) {
     const form = node('form', 'remote-links-editor');
     const localMessage = node('div');
     localMessage.setAttribute('role', 'status');
-    const body = node('div', 'remote-links-fields');
+    const body = node('div', `remote-links-fields${options.fieldLayout ? ` remote-links-fields-${options.fieldLayout}` : ''}`);
     body.append(...fields);
     const cancel = button('Cancel');
     const save = button(saveLabel, null, true);
@@ -293,7 +352,7 @@ export function createRemoteLinksWorkspace(deps) {
         if (result === false) return;
         modal.setDirty(false);
         modal.setBusy(false);
-        if (modal.close()) { if (result?.revision) draw(result); else await refresh(); }
+        if (modal.close()) { if (result?.revision) present(result, true); else await refresh(true); }
       } catch (error) {
         showError(localMessage, error);
         modal.setBusy(false);
@@ -306,15 +365,17 @@ export function createRemoteLinksWorkspace(deps) {
   function openListener() {
     const current = snapshot.listener || {};
     const enabled = uiToggleField('Listen for remote senders', Boolean(current.enabled),
-      'Listen for remote senders', 'Starts an authenticated listener for decoded P25 traffic.');
+      'Listen for remote senders', 'Accept decoded P25 feeds from trusted senders.');
     const address = input('text', current.bind_address || '0.0.0.0');
     address.required = true; address.maxLength = 255;
     const port = input('number', current.port || 53800);
     port.required = true; port.min = '1'; port.max = '65535'; port.step = '1';
     submitModal('Remote listener', [enabled, formField('Bind address', address,
-      'Use an address reachable through the VPN, or 0.0.0.0 for all interfaces.'), formField('Port', port)],
+      'Use a VPN address or restrict access with a firewall. 0.0.0.0 listens on every interface; authentication does not encrypt traffic.'),
+    formField('Port', port)],
     'Save listener', () => write('/listener', 'PUT', { revision: snapshot.revision,
-      enabled: enabled.querySelector('input').checked, bind_address: address.value.trim(), port: Number(port.value) }));
+      enabled: enabled.querySelector('input').checked, bind_address: address.value.trim(), port: Number(port.value) }),
+    { modalSize: 'compact', fieldLayout: 'network' });
   }
 
   function openSenderConnection() {
@@ -369,45 +430,59 @@ export function createRemoteLinksWorkspace(deps) {
     const editor = submitModal('Add trusted sender', [formField('Sender name', name,
       'Use a name that identifies the remote installation.')], 'Create credential', async () => {
       const result = await write('/senders', 'POST', { revision: snapshot.revision, display_name: name.value.trim() });
-      editor.modal.setDirty(false);
+      editor.modal.setDirty(true);
+      editor.modal.setDiscardMessage('Close this one-time credential? The shared secret will not be shown again.');
+      editor.modal.setTitle('Credential created');
+      editor.modal.dialog.classList.remove('remote-links-modal-compact');
       const credential = node('div', 'remote-links-credential');
-      credential.append(notice('Copy this credential now. The shared secret will not be shown again.', 'warning'));
+      const reminder = notice('Copy this credential now. The shared secret will not be shown again.', 'warning');
+      reminder.setAttribute('role', 'alert');
+      reminder.tabIndex = -1;
+      credential.append(reminder);
+      const copyStatus = node('small', 'ui-field-detail');
+      copyStatus.setAttribute('role', 'status');
+      copyStatus.setAttribute('aria-live', 'polite');
       [['Sender ID', result.sender_id], ['Shared secret', result.secret]].forEach(([label, value]) => {
         const row = node('div', 'remote-links-credential-row');
         const text = input('text', value);
         text.readOnly = true;
-        const copy = button(`Copy ${label}`, async () => {
-          try { await navigator.clipboard.writeText(value); copy.textContent = 'Copied'; }
-          catch (_) { text.focus(); text.select(); }
+        const copy = button('Copy', async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            copyStatus.textContent = `${label} copied.`;
+            if (label === 'Shared secret') editor.modal.setDirty(false);
+          } catch (_) {
+            text.focus(); text.select();
+            copyStatus.textContent = `Clipboard access failed. ${label} is selected; copy it manually.`;
+          }
         });
+        copy.prepend(iconGlyph('icon-copy'));
+        copy.setAttribute('aria-label', `Copy ${label}`);
         row.append(formField(label, text), copy);
         credential.append(row);
       });
-      const done = button('Done', () => { if (editor.modal.close()) void refresh(); }, true);
+      credential.append(copyStatus);
+      const done = button('Done', () => { editor.modal.close(); }, true);
       editor.form.replaceChildren(credential, modalFooter(done));
       editor.modal.setBusy(false);
+      reminder.focus();
       return false;
-    });
+    }, { modalSize: 'compact', fieldLayout: 'single' });
   }
 
   function openSender(sender) {
     const name = input('text', sender.display_name || '');
     name.required = true; name.maxLength = 120;
-    const auto = uiToggleField('Adopt newly advertised feeds automatically', Boolean(sender.auto_adopt),
-      'Adopt newly advertised feeds automatically', 'Uses the Alias List selected below.');
     const alias = selectAlias(sender.default_alias_list_id, true);
-    const autoInput = auto.querySelector('input');
-    const syncAliasRequirement = () => { alias.required = autoInput.checked; };
-    autoInput.addEventListener('change', syncAliasRequirement);
-    syncAliasRequirement();
     const revoke = button('Revoke sender');
     revoke.className = 'ui-button ui-button-danger';
-    const editor = submitModal('Trusted sender', [formField('Sender name', name), auto,
-      formField('Default Alias List', uiSelectFrame(alias), 'Applied only to feeds adopted after this change.')],
+    const editor = submitModal('Trusted sender', [formField('Sender name', name),
+      formField('Preferred P25 Alias List', uiSelectFrame(alias),
+        'Used for new feeds. If blank, this receiver chooses Default P25 or the first available P25 Alias List.')],
     'Save sender', () => write(`/senders/${pathPart(sender.sender_id)}`, 'PUT', {
-      revision: snapshot.revision, display_name: name.value.trim(), auto_adopt: auto.querySelector('input').checked,
+      revision: snapshot.revision, display_name: name.value.trim(),
       default_alias_list_id: alias.value ? Number(alias.value) : null
-    }), { danger: revoke });
+    }), { danger: revoke, fieldLayout: 'single' });
     if (!editor) return;
     revoke.addEventListener('click', async () => {
       if (!window.confirm(`Revoke ${sender.display_name || sender.sender_id}? Existing remote channels will stop receiving.`)) return;
@@ -416,47 +491,37 @@ export function createRemoteLinksWorkspace(deps) {
         const result = await write(`/senders/${pathPart(sender.sender_id)}`, 'DELETE',
           { revision: snapshot.revision });
         editor.modal.setDirty(false); editor.modal.setBusy(false);
-        if (editor.modal.close()) draw(result);
+        if (editor.modal.close()) present(result, true);
       } catch (error) { showError(editor.message, error); editor.modal.setBusy(false); }
     });
   }
 
   function openFeed(sender, feed) {
-    if (!feedAction(feed).allowed) return;
+    if (!feed.channel_configuration_id) return;
     const name = input('text', feed.display_name || feed.advertised_name || '');
     name.required = true; name.maxLength = 120;
     const alias = selectAlias(feed.alias_list_id, false);
     alias.required = true;
-    const enabled = uiToggleField('Enable this remote channel', feed.adopted ? Boolean(feed.enabled) : true,
+    const enabled = uiToggleField('Enable this remote channel', Boolean(feed.enabled),
       'Enable this remote channel', 'Disabled feeds remain configured but do not process traffic.');
-    const forget = feed.adopted ? button('Remove local channel') : null;
-    if (forget) forget.className = 'ui-button ui-button-danger';
     const path = `/senders/${pathPart(sender.sender_id)}/feeds/${pathPart(feed.feed_id)}`;
-    const editor = submitModal(feed.adopted ? 'Remote feed' : 'Adopt remote feed', [
-      notice(`${feed.protocol || 'P25'} · ${frequency(feed.frequency_hz)} · advertised by ${sender.display_name || sender.sender_id}`),
+    submitModal('Remote feed', [
+      notice(`${protocolLabel(feed.protocol)} · ${frequency(feed.frequency_hz)} · advertised by ${sender.display_name || sender.sender_id}`),
       formField('Local channel name', name), formField('Alias List', uiSelectFrame(alias),
         'Aliases, streaming, recording, and activity use this host’s Alias List.'), enabled
-    ], feed.adopted ? 'Save feed' : 'Adopt feed', () => feed.adopted ? write(path, 'PUT', {
+    ], 'Save feed', () => write(path, 'PUT', {
       revision: snapshot.revision, display_name: name.value.trim(), alias_list_id: Number(alias.value),
       enabled: enabled.querySelector('input').checked
-    }) : write(`${path}/adopt`, 'POST', { revision: snapshot.revision,
-      display_name: name.value.trim(), alias_list_id: Number(alias.value) }), { danger: forget });
-    if (!editor || !forget) return;
-    forget.addEventListener('click', async () => {
-      if (!window.confirm(`Remove the local channel for ${feed.display_name || feed.advertised_name || feed.feed_id}? ` +
-        'The sender may continue advertising this feed.')) return;
-      editor.modal.setBusy(true);
-      try {
-        const result = await write(path, 'DELETE', { revision: snapshot.revision });
-        editor.modal.setDirty(false); editor.modal.setBusy(false);
-        if (editor.modal.close()) draw(result);
-      } catch (error) { showError(editor.message, error); editor.modal.setBusy(false); }
-    });
+    }), { fieldLayout: 'single' });
   }
 
   function close() {
     disposed = true;
     window.clearTimeout(timer);
+    window.clearTimeout(activationReleaseTimer);
+    document.removeEventListener('pointerup', pointerUp);
+    document.removeEventListener('pointercancel', pointerCancel);
+    document.removeEventListener('keyup', keyUp);
   }
 
   signal?.addEventListener('abort', close, { once: true });

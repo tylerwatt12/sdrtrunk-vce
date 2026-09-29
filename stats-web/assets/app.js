@@ -21,7 +21,7 @@ import {
 } from './features/alias-list-create.js?v=1';
 import { createRadioReferenceImportWorkspace } from './features/radioreference-import.js?v=17';
 import { createStreamingWorkspace } from './features/streaming.js?v=4';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=3';
+import { createRemoteLinksWorkspace } from './features/remote-links.js?v=7';
 import { WebCallPlayer } from './web-call-player.js?v=4';
 
 let route = new URLSearchParams(window.location.search);
@@ -1880,7 +1880,8 @@ function closeReadOnlyModal(force = false) {
   const active = activeReadOnlyModal;
   if (!active) return true;
   if (!force && active.isBusy?.()) return false;
-  if (!force && active.isDirty?.() && !window.confirm('Discard your unsaved changes?')) return false;
+  if (!force && active.isDirty?.() && !window.confirm(active.discardMessage?.() ||
+    'Discard your unsaved changes?')) return false;
   activeReadOnlyModal = null;
   document.removeEventListener('keydown', active.keydown);
   active.cleanup?.();
@@ -1966,9 +1967,11 @@ function openReadOnlyModal(title, body, options = {}) {
   });
   let dirty = false;
   let busy = false;
+  let discardMessage = options.discardMessage || 'Discard your unsaved changes?';
   modalState = {
     backdrop, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isDirty: () => dirty,
+    discardMessage: () => discardMessage,
     isBusy: () => busy,
     cleanup: options.cleanup || null,
     onClose: options.onClose || null
@@ -1980,7 +1983,13 @@ function openReadOnlyModal(title, body, options = {}) {
   close.focus();
   return {
     dialog, content: contentNode, close: dismiss, state: modalState,
+    setTitle: (value) => {
+      heading.textContent = String(value);
+      close.setAttribute('aria-label', `Close ${value}`);
+      close.title = `Close ${value}`;
+    },
     setDirty: (value = true) => { dirty = Boolean(value); },
+    setDiscardMessage: (value) => { discardMessage = String(value || 'Discard your unsaved changes?'); },
     setBusy: (value = true) => {
       busy = Boolean(value);
       close.disabled = busy;
@@ -7391,7 +7400,7 @@ function sharedSignalDomain(channels) {
   return { minimum, maximum: Math.min(0, maximum) };
 }
 
-function qualityHistoryChart(channel, response, metric, domain) {
+function qualityHistoryChart(channel, response, metric, domain, decodeOnly = false) {
   const signal = metric === 'signal';
   const nominalWidth = 520;
   const maximumHeight = 190;
@@ -7513,8 +7522,8 @@ function qualityHistoryChart(channel, response, metric, domain) {
           detail = [`30s average: ${point.average.toFixed(1)} dBFS`, `Range: ${rangeText}`,
             `Decode health: ${percentNumber(point.decode)}`];
         } else {
-          detail = [`Decode health: ${point.decode.toFixed(1)}%`,
-            `30s signal average: ${signalNumber(point.average)}`];
+          detail = [`Decode health: ${point.decode.toFixed(1)}%`];
+          if (!decodeOnly) detail.push(`30s signal average: ${signalNumber(point.average)}`);
         }
         return [exactDateTime(point.last_observed_ms || point.timestamp), ...detail, frequencyText,
           `${number(point.sample_count)} retained sample${Number(point.sample_count) === 1 ? '' : 's'}`];
@@ -7585,9 +7594,10 @@ function sortSignalChannels(channels) {
       String(left.configuration_id || '').localeCompare(String(right.configuration_id || '')));
 }
 
-function signalOverview(channel, includeName = true) {
+function signalOverview(channel, includeName = true, decodeOnly = false) {
   const overview = node('div', 'signal-history-overview ui-metric-grid');
   overview.classList.toggle('without-identity', !includeName);
+  overview.classList.toggle('decode-only', decodeOnly);
   if (includeName) {
     const identity = node('div', 'signal-history-identity');
     const system = node('span');
@@ -7595,9 +7605,13 @@ function signalOverview(channel, includeName = true) {
     identity.append(channelLink(channel), system);
     overview.append(identity);
   }
-  [['Current', signalNumber(channel.signal_dbfs)], ['30s average', signalNumber(channel.average_signal_dbfs)],
-    ['Decode', percentNumber(channel.decode_health_pct)],
-    ['Last sample', elapsedLabel(channel.last_observed_ms)]].forEach(([label, value]) => {
+  const metrics = decodeOnly ?
+    [['Decode', percentNumber(channel.decode_health_pct)],
+      ['Last sample', elapsedLabel(channel.last_observed_ms)]] :
+    [['Current', signalNumber(channel.signal_dbfs)], ['30s average', signalNumber(channel.average_signal_dbfs)],
+      ['Decode', percentNumber(channel.decode_health_pct)],
+      ['Last sample', elapsedLabel(channel.last_observed_ms)]];
+  metrics.forEach(([label, value]) => {
     const metric = metricCard(label, null, value);
     metric.classList.add('ui-metric-compact');
     overview.append(metric);
@@ -7725,6 +7739,7 @@ async function channelSignalHistorySection(channel) {
   const host = node('div', 'site-signal-history');
   const block = section('Control Channel Quality History', host);
   block.classList.add('site-signal-history-section');
+  const decodeOnly = channel?.remote_origin?.remote === true;
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
@@ -7760,17 +7775,22 @@ async function channelSignalHistorySection(channel) {
       host.replaceChildren();
       if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
         host.append(node('div', 'empty',
-          `No retained control channel quality samples are available in the selected ${selectedRange} range`));
+          decodeOnly ? `No remote decode quality samples are available in the selected ${selectedRange} range` :
+            `No retained control channel quality samples are available in the selected ${selectedRange} range`));
         return;
       }
       const charts = node('div', 'quality-chart-stack');
-      charts.append(
-        qualityChartPanel('Signal Strength', '30-second average and observed range · dBFS',
-          qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))),
-        qualityChartPanel('Decode Quality', '30-second rolling successful-frame rate · percent',
-          qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }))
-      );
-      host.append(signalOverview(qualitySite, false), charts);
+      if (!decodeOnly) {
+        charts.append(qualityChartPanel('Signal Strength', '30-second average and observed range · dBFS',
+          qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
+      }
+      charts.append(qualityChartPanel('Decode Quality', '30-second rolling successful-frame rate · percent',
+        qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
+      if (decodeOnly) {
+        host.append(node('p', 'ui-section-note',
+          'Decode quality reflects frames decoded from the remote bits, not RF signal strength.'));
+      }
+      host.append(signalOverview(qualitySite, false, decodeOnly), charts);
       host.removeAttribute('title');
     } catch (error) {
       if (pageOwned) rethrowPageHandlingError(error);
@@ -10930,6 +10950,7 @@ function liveDetailSelection(tableValue, row, bindingRow = row) {
     configurationId,
     bindingFrequencyHz,
     bindingTimeslot,
+    remote: tableValue?.remote_origin?.remote === true || row?.remote_origin?.remote === true,
     label: [tableLabel, kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL ? '' : rowLabel].filter(Boolean).join(' · '),
     channelLabel: [tableLabel, rowLabel].filter(Boolean).join(' · ')
   };
@@ -10967,14 +10988,14 @@ function liveDetailSelectionAfterRowsChanged(tableValue, selection) {
 
 function liveDetailSelectionDelta(previous, next) {
   return {
-    logicalChanged: next?.logicalKey !== previous?.logicalKey,
+    logicalChanged: next?.logicalKey !== previous?.logicalKey || next?.remote !== previous?.remote,
     transportChanged: next?.transportKey !== previous?.transportKey
   };
 }
 
 function liveDetailSelectionUnchanged(previous, next) {
   return ['kind', 'role', 'logicalKey', 'transportKey', 'rowKey', 'configurationId',
-    'bindingFrequencyHz', 'bindingTimeslot', 'label', 'channelLabel']
+    'bindingFrequencyHz', 'bindingTimeslot', 'remote', 'label', 'channelLabel']
     .every((field) => previous?.[field] === next?.[field]);
 }
 
@@ -11919,6 +11940,20 @@ function liveChannelPane() {
     selection?.configurationId && selection?.bindingFrequencyHz;
 
   const sync = () => {
+    const remote = selection?.remote === true;
+    signalViewToggle.hidden = remote;
+    signalDiagnostic.readouts.hidden = remote;
+    symbolDiagnostic.readouts.hidden = remote;
+    if (remote) {
+      closeStream();
+      setStatus('Unavailable');
+      clearPlots('');
+      signalDiagnostic.overlay.textContent = 'Signal is not available for remote linked VCE data';
+      symbolDiagnostic.overlay.textContent = 'Symbols are not available for remote linked VCE data';
+      signalDiagnostic.overlay.hidden = false;
+      symbolDiagnostic.overlay.hidden = false;
+      return;
+    }
     if (!shouldRun()) {
       closeStream();
       if (!selection) {
@@ -15189,11 +15224,11 @@ function liveRemoteOriginBadge(origin, showLabel = false) {
   return badge;
 }
 
-function liveChannelValue(row) {
+function liveChannelValue(row, showRemoteOrigin = true) {
   const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
   const value = conventional ? liveConventionalChannelValue(row) :
     (row.lcn == null || row.lcn === '' ? '' : `LCN ${row.lcn}`);
-  const remote = liveRemoteOriginBadge(row.remote_origin);
+  const remote = showRemoteOrigin ? liveRemoteOriginBadge(row.remote_origin) : null;
   if (!remote) return value;
   const wrapper = node('span', 'live-channel-origin');
   if (value) wrapper.append(value);
@@ -15215,8 +15250,11 @@ function liveChannelViewMeta(value, label = '') {
       candidate.toLowerCase() === item.toLowerCase()) === index)
     .filter((item) => item.toLowerCase() !== normalizedLabel);
   const local = values.slice(0, 2).join(' · ') || 'Trunked channel';
-  const remote = liveRemoteOriginLabel(value?.remote_origin);
-  return remote ? `${local} · ${remote}` : local;
+  return local;
+}
+
+function liveShowRowRemoteOrigin(tableValue) {
+  return tableValue?.table_id === 'conventional' || tableValue?.remote_origin?.remote !== true;
 }
 
 function liveRequestedChannelMatch(tableValue, configurationId) {
@@ -15433,7 +15471,8 @@ function liveChannelsSection(onSelectionChange) {
       sortValue: (row) => row.status || '' },
     { id: 'tags', label: 'Tags', render: channelTagText, title: channelTagTitle,
       sortValue: channelTagText },
-    { id: 'channel', label: 'Channel', render: liveChannelValue,
+    { id: 'channel', label: 'Channel', render: (row) =>
+      liveChannelValue(row, liveShowRowRemoteOrigin(tables.get(activeTableId))),
       title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
       className: channelStateClass, sortValue: (row) =>
         channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || ''),
@@ -18232,6 +18271,17 @@ function channelSummaryCards(catalog, editable) {
   return wrapper;
 }
 
+function channelOriginName(label, row) {
+  if (row?.remote_origin?.remote !== true) return label;
+  const line = node('span', 'channel-origin-line');
+  const origin = uiPill('Remote', 'neutral', 'icon-cloud');
+  origin.classList.add('ui-pill-compact');
+  origin.title = 'Remote channel; depends on another receiver';
+  origin.setAttribute('aria-label', origin.title);
+  line.append(label, origin);
+  return line;
+}
+
 function channelViewLabel(row, context = '') {
   if (context === 'system') return 'View System';
   if (context === 'site' || String(row?.channel_kind || '').toUpperCase() === 'TRUNKED') return 'View Site';
@@ -18318,15 +18368,17 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
     } },
     { id: 'name', label: 'Name', render: (row) => {
       const actions = node('div', 'channel-name-actions');
+      let name;
       if (row.editable !== false) {
         const edit = node('button', 'link-button channel-edit-button', row.name || 'Unnamed channel');
         edit.type = 'button';
         edit.addEventListener('click', () => openChannelEditorModal('edit', row.configuration_id));
-        actions.append(edit);
+        name = edit;
       } else {
-        actions.append(anchor(row.name || 'Unnamed channel',
-          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link'));
+        name = anchor(row.name || 'Unnamed channel',
+          href('channel', { configuration_id: row.configuration_id }), 'channel-name-link');
       }
+      actions.append(channelOriginName(name, row));
       actions.append(node('span', 'channel-row-context',
         [row.system, row.site].filter(Boolean).join(' · ') || 'No system or site'));
       if (row.editable === false) {
@@ -18592,9 +18644,10 @@ function radioDirectorySystemMetadata(row) {
 function radioDirectorySiteRow(row) {
   const site = node('div', 'radio-directory-site-row');
   const identity = node('div', 'radio-directory-item-identity');
-  identity.append(anchor(row.name || 'Unnamed site', href('channel', {
+  const name = anchor(row.name || 'Unnamed site', href('channel', {
     configuration_id: row.configuration_id
-  }), 'channel-name-link'), node('span', 'channel-row-context',
+  }), 'channel-name-link');
+  identity.append(channelOriginName(name, row), node('span', 'channel-row-context',
     row.site || row.site_name || 'Site not identified'));
   const frequencies = node('span', 'radio-directory-frequency-list',
     channelAdminFrequencyList(row.frequencies_hz) || 'No frequencies configured');
@@ -20604,11 +20657,22 @@ async function renderChannel() {
   const configurationId = String(route.get('configuration_id') || '').trim();
   if (!configurationId) throw new Error('Channel configuration ID is missing from the URL');
   const data = await api(channelApiPath(configurationId));
-  const channel = data?.channel;
+  let channel = data?.channel;
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('The channel response is invalid');
   }
   if (String(channel.channel_kind || '').toUpperCase() === 'TRUNKED') {
+    if (route.get('tab') === 'quality' && channel.remote_origin?.remote !== true) {
+      try {
+        const catalog = await requestChannelConfigurationJson('/api/v1/channel-catalog', { csrf: false });
+        if (!renderIsCurrent(renderContext)) return;
+        const configured = (catalog.channels || []).find((row) =>
+          row.configuration_id === configurationId);
+        if (configured?.remote_origin?.remote === true) {
+          channel = { ...channel, remote_origin: { remote: true } };
+        }
+      } catch (_) { /* Historical or temporarily unavailable catalogs retain normal quality behavior. */ }
+    }
     await renderTrunkedChannel(channel, configurationId, renderContext);
   } else {
     await renderConventionalChannel(data, channel, configurationId, renderContext);

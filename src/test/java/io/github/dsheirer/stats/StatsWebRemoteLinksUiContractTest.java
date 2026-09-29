@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
-/** Protects Remote Links discovery, one-time credentials, and remote provenance in Live. */
+/** Protects automatic Remote Links setup, one-time credentials, and remote provenance in Live. */
 class StatsWebRemoteLinksUiContractTest
 {
     private static final Path APP = Path.of("stats-web", "assets", "app.js");
@@ -30,10 +30,9 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(feature.contains("'Receive remote feeds'"));
         assertTrue(feature.contains("'Send local P25 feeds'"));
         assertTrue(feature.contains("'Add trusted sender'"));
-        assertTrue(feature.contains("'Adopt remote feed'"));
-        assertTrue(feature.contains(
-            "'Managed feeds remain visible after a sender disconnects or stops advertising them, until '"));
-        assertTrue(feature.contains("'you remove the local channel.'"));
+        assertTrue(feature.contains("'Setting up a local channel.'"));
+        assertTrue(feature.contains("'Manage feed'"));
+        assertTrue(feature.contains("'Preferred P25 Alias List'"));
         assertTrue(feature.contains("'Copy this credential now. The shared secret will not be shown again.'"));
         assertTrue(feature.contains("exported_channel_configuration_ids"));
         assertTrue(feature.contains("default_alias_list_id"));
@@ -42,6 +41,10 @@ class StatsWebRemoteLinksUiContractTest
         assertTrue(feature.contains("senderId.maxLength = 36"));
         assertTrue(feature.contains("secret.maxLength = 256"));
         assertTrue(feature.contains("name.required = true; name.maxLength = 120"));
+        assertFalse(feature.contains("/adopt"));
+        assertFalse(feature.contains("auto_adopt"));
+        assertFalse(feature.contains("feed.adopted"));
+        assertFalse(feature.contains("Forget feed"));
         assertFalse(feature.contains("innerHTML"));
         assertFalse(feature.contains("style="));
     }
