@@ -283,6 +283,7 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
     @Override
     public void stop()
     {
+        mSymbolProcessor.flushBitstream();
         super.stop();
         mMessageFramer.stop();
     }

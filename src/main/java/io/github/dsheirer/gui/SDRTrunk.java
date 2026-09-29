@@ -63,6 +63,7 @@ import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.portable.PortableDataRootLock;
 import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.record.AudioRecordingManager;
+import io.github.dsheirer.remote.RemoteConnectivityService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -137,6 +138,7 @@ public class SDRTrunk
     private ReceiverActivityService mReceiverActivityService;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
+    private RemoteConnectivityService mRemoteConnectivityService;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
@@ -221,6 +223,15 @@ public class SDRTrunk
         AliasModel aliasModel = new AliasModel();
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
+        try
+        {
+            mRemoteConnectivityService = new RemoteConnectivityService(mConfigurationManager, mUserPreferences);
+            mConfigurationManager.getChannelProcessingManager().setP25RemoteBitstreamService(mRemoteConnectivityService);
+        }
+        catch(IOException exception)
+        {
+            mLog.error("Remote-link settings are unavailable; remote connectivity is disabled", exception);
+        }
 
         if(mGuiAvailable)
         {
@@ -252,7 +263,7 @@ public class SDRTrunk
             mConfigurationManager.getScanListModel(), mConfigurationManager.getChannelAdministrationService(),
             mConfigurationManager.getRadioReferenceDirectoryService(),
             mConfigurationManager.getRadioReferenceImportService(),
-            mConfigurationManager.getStreamingAdministrationService());
+            mConfigurationManager.getStreamingAdministrationService(), mRemoteConnectivityService);
 
         if(mGuiAvailable && !mStatsWebServerService.getRuntimeState().running())
         {
@@ -299,6 +310,10 @@ public class SDRTrunk
         mStatsWebServerService.setMapSnapshotService(mMapSnapshotService);
 
         mConfigurationManager.init();
+        if(mRemoteConnectivityService != null)
+        {
+            mRemoteConnectivityService.start();
+        }
 
         if(!mGuiAvailable)
         {
@@ -911,6 +926,10 @@ public class SDRTrunk
         ChannelProcessingManager channelProcessingManager =
             mConfigurationManager.getChannelProcessingManager();
         channelProcessingManager.close();
+        if(mRemoteConnectivityService != null)
+        {
+            mRemoteConnectivityService.close();
+        }
         if(mMapSnapshotService != null)
         {
             mMapSnapshotService.close();

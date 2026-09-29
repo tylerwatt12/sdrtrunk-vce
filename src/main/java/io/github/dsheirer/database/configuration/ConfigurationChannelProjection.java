@@ -15,6 +15,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.source.config.SourceConfigRecording;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
@@ -135,6 +136,11 @@ public record ConfigurationChannelProjection(String decoderType, int addressDoma
         else if(configuration instanceof SourceConfigRecording recording)
         {
             long frequency = recording.getFrequency();
+            return frequency > 0 ? frequency : null;
+        }
+        else if(configuration instanceof SourceConfigRemote remote)
+        {
+            long frequency = remote.getFrequency();
             return frequency > 0 ? frequency : null;
         }
 

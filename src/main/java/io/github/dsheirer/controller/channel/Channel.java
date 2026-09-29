@@ -35,6 +35,7 @@ import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigFactory;
 import io.github.dsheirer.source.config.SourceConfigRecording;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
@@ -284,6 +285,10 @@ public class Channel extends Configuration
         else if(mSourceConfiguration instanceof SourceConfigTunerMultipleFrequency)
         {
             getFrequencyList().addAll(((SourceConfigTunerMultipleFrequency)mSourceConfiguration).getFrequencies());
+        }
+        else if(mSourceConfiguration instanceof SourceConfigRemote)
+        {
+            getFrequencyList().add(((SourceConfigRemote)mSourceConfiguration).getFrequency());
         }
     }
 
@@ -1034,6 +1039,9 @@ public class Channel extends Configuration
                         mTunerChannels.add(new TunerChannel(recordingConfig.getFrequency(),
                                 mDecodeConfiguration.getChannelSpecification().getBandwidth()));
                     }
+                    break;
+                case REMOTE:
+                    //Remote sources contain already-demodulated P25 bits and do not reserve a local tuner channel.
                     break;
                 default:
                     mLog.warn("Unrecognized channel source type: " + mSourceConfiguration.getSourceType());

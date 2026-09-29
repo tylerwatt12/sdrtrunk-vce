@@ -6,6 +6,7 @@
 package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -141,6 +142,30 @@ class ChannelAdminHttpControllerTest
                 "POST", create.substring(0, create.lastIndexOf('}')) + ",\"unexpected\":true}");
             assertEquals(400, unknown.statusCode());
             assertTrue(unknown.body().contains("invalid_request"));
+
+            String senderId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+            String feedId = "11111111-2222-4333-8444-555555555555";
+            String remoteCreate = """
+                {"revision":%d,"protocol_id":"p25-phase1","system":"County","site":"Remote",
+                 "name":"Remote Control","alias_list_id":%d,
+                 "source":{"frequencies_hz":[851012500],"source_type":"REMOTE",
+                           "sender_id":"%s","feed_id":"%s"},
+                 "settings":{},"frequency_map":[],"event_logs":[],
+                 "recorders":[],"auxiliary_decoders":[]}
+                """.formatted(channels.currentRevision(), aliasListId, senderId, feedId);
+            HttpResponse<String> remoteCreated = sendJson(client, origin.resolve(ChannelAdminHttpController.PATH),
+                "POST", remoteCreate);
+            assertEquals(201, remoteCreated.statusCode(), remoteCreated.body());
+            HttpResponse<String> catalogWithRemote = client.send(HttpRequest.newBuilder(
+                origin.resolve(ChannelAdminHttpController.READ_PATH)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, catalogWithRemote.statusCode());
+            JsonNode remoteRows = MAPPER.readTree(catalogWithRemote.body()).path("data").path("channels");
+            assertEquals(2, remoteRows.size());
+            assertFalse(remoteRows.get(0).path("remote_origin").path("remote").asBoolean());
+            assertTrue(remoteRows.get(1).path("remote_origin").path("remote").asBoolean());
+            assertFalse(catalogWithRemote.body().contains(senderId));
+            assertFalse(catalogWithRemote.body().contains(feedId));
         }
         finally
         {

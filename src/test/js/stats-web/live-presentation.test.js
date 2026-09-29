@@ -52,6 +52,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePickerNavigationIndex')}
   ${functionSource('liveDetailsPanelPercent')}
   ${functionSource('liveIdentityHasDisplayLabel')}
+  ${functionSource('liveRemoteOriginLabel')}
+  ${functionSource('liveShowRowRemoteOrigin')}
   ${functionSource('liveIdentityType')}
   ${functionSource('liveIdentityLabel')}
   ${functionSource('identityKind')}
@@ -61,6 +63,8 @@ const behavior = vm.runInNewContext(`(() => {
   return { liveRowIsActive, livePresentedRow, livePresentedTableRows,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent, liveIdentityHasDisplayLabel,
+    liveRemoteOriginLabel,
+    liveShowRowRemoteOrigin,
     liveIdentityType, liveIdentityLabel,
     rowGroupIdentityKind, groupIdentityLabel, activityTargetKind };
 })()`);
@@ -92,6 +96,13 @@ assert.equal(behavior.activityTargetKind({ target_kind: 'patch_group' }), 'patch
 assert.equal(behavior.activityTargetKind({ target_kind: 'talkgroup' }), 'talkgroup');
 assert.equal(behavior.activityTargetKind({ target_kind: 'radio' }), 'radio');
 assert.equal(behavior.activityTargetKind({ target_kind: 'channel' }), '');
+assert.equal(behavior.liveRemoteOriginLabel({ remote: true, sender_id: 'private-sender',
+  feed_id: 'private-feed', state: 'CONNECTED', dependency_state: 'READY' }), 'Remote source');
+assert.equal(behavior.liveRemoteOriginLabel({ remote: false }), '');
+assert.equal(behavior.liveRemoteOriginLabel(null), '');
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'remote-site', remote_origin: { remote: true } }), false);
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'conventional', remote_origin: { remote: true } }), true);
+assert.equal(behavior.liveShowRowRemoteOrigin({ table_id: 'local-site' }), true);
 
 const sourceIdentity = {
   source_id: '1201', source_alias: 'Engine 1', source_aliases: [{ alias_id: 1, alias_list_id: 2 }],
@@ -218,6 +229,8 @@ const untouched = behavior.livePresentedRow(idle, {
 assert.equal(untouched, idle, 'Rows that need no presentation change should not be copied');
 
 const channels = functionSource('liveChannelsSection');
+const channelValue = functionSource('liveChannelValue');
+const channelMeta = functionSource('liveChannelViewMeta');
 const selectedViewAction = functionSource('liveSelectedViewAction');
 const settingsActivation = functionSource('activateLivePresentationSettings');
 assert.match(selectedViewAction, /ui-icon-button section-title-icon live-selected-view-action/,
@@ -244,11 +257,17 @@ assert.match(channels, /stateLabel\.textContent = operatingState/,
 assert.match(channels,
   /channels-tab-quality ui-quality-bars ui-quality-\$\{state\} ui-quality-level-\$\{level\}/,
   'The Live picker must keep decode-quality color and signal-strength bar count as separate cues');
-assert.match(channels, /tab\.title = `\$\{label\} · \$\{operatingState\} · \$\{signalLabel\} · \$\{qualityLabel\}`/,
+assert.match(channels,
+  /tab\.title = `\$\{label\} · \$\{operatingState\} · \$\{signalLabel\} · \$\{qualityLabel\}\$\{originSuffix\}`/,
   'Exact signal strength and decode quality must remain available as a pointer hint');
 assert.match(channels,
-  /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}`/,
+  /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}\$\{originSuffix\}`/,
   'Operational state, signal strength, and decode quality must remain in the accessible picker name');
+assert.match(channels,
+  /const remote = liveRemoteOriginBadge\(value\.remote_origin\);[\s\S]*if \(remote\) title\.append\(remote\)/,
+  'A remote Live system must carry its cloud badge in the picker title');
+assert.match(channels, /const originSuffix = remoteLabel \? ` · \$\{remoteLabel\}` : ''/,
+  'A generic remote marker must remain available in pointer and accessible picker labels');
 assert.match(channels, /liveTable\.tableController\.setSortable\(!activeFilter\)/,
   'Conventional tables stay sortable while active-only trunked tables retain activation order');
 assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)/,
@@ -289,9 +308,16 @@ assert.match(channels,
 assert.match(channels,
   /liveIdentityHasDisplayLabel\(row, 'target'\) \? 'live-row-has-target-label' : ''/,
   'Target-label availability must be reflected on each responsive row');
-assert.match(channels,
-  /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? liveConventionalChannelValue\(row\) :[\s\S]*`LCN \$\{row\.lcn\}`/,
+assert.match(channelValue,
+  /const conventional = channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\);[\s\S]*const value = conventional \? liveConventionalChannelValue\(row\) :[\s\S]*`LCN \$\{row\.lcn\}`/,
   'Conventional channel names must remain distinct from trunked LCN values');
+assert.match(channelValue,
+  /const remote = showRemoteOrigin \? liveRemoteOriginBadge\(row\.remote_origin\) : null;[\s\S]*wrapper\.append\(remote\)/,
+  'Mixed Live rows keep their cloud badge without replacing the channel value');
+assert.match(channels, /liveChannelValue\(row, liveShowRowRemoteOrigin\(tables\.get\(activeTableId\)\)\)/,
+  'A dedicated remote Live detail must omit redundant per-LCN clouds');
+assert.doesNotMatch(channelMeta, /liveRemoteOriginLabel/,
+  'The selected Live subtitle must not repeat the Remote title badge');
 assert.match(channels, /class="live-decode-quality-text"|node\('span', 'live-decode-quality-text', text\)/,
   'Decode quality retains an exact text value for desktop and accessibility');
 assert.match(channels,

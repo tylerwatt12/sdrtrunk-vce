@@ -16,6 +16,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.source.SourceType;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfiguration;
 
 /**
@@ -45,7 +46,19 @@ public final class ChannelConfigurationPolicy
         DecoderType decoderType = channel.getDecodeConfiguration().getDecoderType();
         SourceConfiguration sourceConfiguration = channel.getSourceConfiguration();
         SourceType sourceType = sourceConfiguration != null ? sourceConfiguration.getSourceType() : null;
-        return decoderType != null && decoderType.isActive() && sourceType != null && sourceType.isActive();
+        if(decoderType == null || !decoderType.isActive() || sourceType == null || !sourceType.isActive())
+        {
+            return false;
+        }
+
+        if(sourceType == SourceType.REMOTE)
+        {
+            return sourceConfiguration instanceof SourceConfigRemote remote && remote.hasSenderId() &&
+                remote.hasFeedId() && remote.getFrequency() > 0 &&
+                (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
+        }
+
+        return true;
     }
 
     public static boolean isRetired(Channel channel)

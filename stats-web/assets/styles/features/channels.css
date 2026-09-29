@@ -101,6 +101,14 @@
   gap: 5px;
 }
 
+.channel-origin-line {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .channel-name-actions .link-button,
 .channel-name-link {
   width: fit-content;

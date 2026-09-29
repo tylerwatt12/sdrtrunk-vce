@@ -301,6 +301,13 @@ assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(cont
   logicalChanged: false, transportChanged: true
 });
 assert.equal(controlB.bindingFrequencyHz, 852_012_500);
+const remoteControl = context.liveDetailSelection({ ...site, remote_origin: { remote: true } }, {
+  key: 'control-a', role: 'CURRENT_CONTROL', frequency_hz: 851_012_500
+});
+assert.equal(remoteControl.remote, true);
+assert.deepEqual(JSON.parse(JSON.stringify(context.liveDetailSelectionDelta(controlA, remoteControl))), {
+  logicalChanged: true, transportChanged: false
+}, 'Remote provenance changes refresh diagnostic availability without retuning a channel');
 const currentRow = { key: 'control-b', role: 'CURRENT_CONTROL', frequency_hz: 852_012_500 };
 const alternateRow = { key: 'alternate', role: 'ALTERNATE_CONTROL', frequency_hz: 853_012_500 };
 const alternateIntent = context.liveDetailRowSelection({
@@ -365,6 +372,10 @@ const conventional = context.liveDetailSelection({
 }, { key: 'channel-a', role: 'CONVENTIONAL', frequency_hz: 155_730_000 });
 assert.equal(conventional.kind, 'EXACT');
 assert.equal(conventional.logicalKey, 'EXACT:channel-config:155730000:');
+assert.equal(context.liveDetailSelection({ table_id: 'conventional' }, {
+  key: 'remote-conventional', configuration_id: 'channel-config', role: 'CONVENTIONAL',
+  frequency_hz: 155_730_000, remote_origin: { remote: true }
+}).remote, true, 'Mixed Live lists retain the remote flag on individual rows');
 const sameFrequencyDifferentConfiguration = context.liveDetailSelection({
   table_id: 'conventional', title: 'Conventional', configuration_id: 'other-channel-config'
 }, { key: 'channel-b', role: 'CONVENTIONAL', frequency_hz: 155_730_000 });

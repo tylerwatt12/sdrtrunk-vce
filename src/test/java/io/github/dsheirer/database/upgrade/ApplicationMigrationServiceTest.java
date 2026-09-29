@@ -953,7 +953,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void plansMarkerAdoptionForExactMarkerlessFormat27() throws Exception
+    void refusesMarkerlessFormat27And28SharedLayout() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("markerless-format-27-plan"));
@@ -964,11 +964,9 @@ class ApplicationMigrationServiceTest
                 "DELETE FROM database_metadata WHERE key='database_format_version'"));
         }
 
-        DatabaseMigrationChain.PreflightReport plan = ApplicationMigrationService.readMigrationPlan(database);
-
-        assertFormat(plan.source(), 27, DatabaseFormatCatalog.current().id(), false);
-        assertEquals(1, plan.steps().size());
-        assertEquals("adopt-global-format-marker", plan.steps().getFirst().id());
+        SQLException exception = assertThrows(SQLException.class,
+            () -> ApplicationMigrationService.readMigrationPlan(database));
+        assertTrue(exception.getMessage().contains("ambiguous across formats [27, 28]"), exception::getMessage);
     }
 
     @Test
@@ -1281,11 +1279,13 @@ class ApplicationMigrationServiceTest
             "Safety backup and full-file integrity checks were skipped by operator choice"));
         assertFalse(result.helperOutput().contains("repair-portable-preferences"));
         assertTrue(progress.contains(
-            "Step 1 of 3 — Add opt-in encrypted traffic-channel suppression"));
+            "Step 1 of 4 — Add opt-in encrypted traffic-channel suppression"));
         assertTrue(progress.contains(
-            "Step 2 of 3 — Retain exact P25 radio inhibit and uninhibit activity"));
+            "Step 2 of 4 — Retain exact P25 radio inhibit and uninhibit activity"));
         assertTrue(progress.contains(
-            "Step 3 of 3 — Keep one administrator account"));
+            "Step 3 of 4 — Keep one administrator account"));
+        assertTrue(progress.contains(
+            "Step 4 of 4 — Add saved remote P25 source identity"));
         assertTrue(progress.contains("Updating database directly"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
@@ -1318,7 +1318,8 @@ class ApplicationMigrationServiceTest
         assertEquals(preferencesBefore, scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);
-        assertTrue(progress.contains("Step 1 of 1 — Keep one administrator account"));
+        assertTrue(progress.contains("Step 1 of 2 — Keep one administrator account"));
+        assertTrue(progress.contains("Step 2 of 2 — Add saved remote P25 source identity"));
         assertEquals("Database update committed", progress.getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }

@@ -25,10 +25,13 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.remote.RemoteLinkAdministrationService;
+import io.github.dsheirer.remote.RemoteOriginLookup;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
@@ -188,6 +191,61 @@ class StatsLiveServiceTest
             Map<String,Object> repeated = firstRow(subscription.poll(1, TimeUnit.SECONDS));
             assertEquals(sourceKey, repeated.get("source_identity_key"));
             assertEquals(targetKey, repeated.get("target_identity_key"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void projectsOnlyAGenericRemoteOriginIntoPublicLiveData() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        String configurationId = "00000000-0000-0000-0000-000000000017";
+        AtomicReference<RemoteOriginLookup.OriginSnapshot> origins = new AtomicReference<>(
+            new RemoteOriginLookup.OriginSnapshot(1L, Map.of(configurationId,
+                new RemoteOriginLookup.RemoteOrigin("sender-1", "Hilltop", "feed-1", "North",
+                    RemoteLinkAdministrationService.FeedState.CONNECTED,
+                    RemoteLinkAdministrationService.DependencyState.READY))));
+        StatsLiveService service = StatsLiveService.fromActivitySource(source, null, origins::get);
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
+        {
+            source.publish(unresolvedDigitalActivity());
+            StatsLiveEventHub.LiveEvent event = subscription.poll(1, TimeUnit.SECONDS);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> update = (Map<String,Object>)event.data();
+            @SuppressWarnings("unchecked")
+            Map<String,Object> table = (Map<String,Object>)update.get("table");
+            @SuppressWarnings("unchecked")
+            Map<String,Object> tableOrigin = (Map<String,Object>)table.get("remote_origin");
+            @SuppressWarnings("unchecked")
+            Map<String,Object> rowOrigin = (Map<String,Object>)firstRow(event).get("remote_origin");
+            assertEquals(Map.of("remote", true), tableOrigin);
+            assertEquals(Map.of("remote", true), rowOrigin);
+            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            assertFalse(encoded.contains("sender_id"));
+            assertFalse(encoded.contains("sender_name"));
+            assertFalse(encoded.contains("feed_id"));
+            assertFalse(encoded.contains("feed_name"));
+            assertFalse(encoded.contains("dependency_state"));
+            assertFalse(encoded.contains("destination_host"));
+            assertFalse(encoded.contains("secret"));
+
+            origins.set(new RemoteOriginLookup.OriginSnapshot(2L, Map.of(configurationId,
+                new RemoteOriginLookup.RemoteOrigin("sender-1", "Hilltop", "feed-1", "North",
+                    RemoteLinkAdministrationService.FeedState.DISCONNECTED,
+                    RemoteLinkAdministrationService.DependencyState.DEGRADED))));
+            StatsLiveEventHub.LiveEvent refresh = subscription.poll(1, TimeUnit.SECONDS);
+            assertNotNull(refresh);
+            assertEquals("activity_resync", refresh.name());
+            @SuppressWarnings("unchecked")
+            Map<String,Object> refreshedOrigin = (Map<String,Object>)tables(service).stream()
+                .filter(item -> "p25-unresolved".equals(item.get("table_id"))).findFirst().orElseThrow()
+                .get("remote_origin");
+            assertEquals(Map.of("remote", true), refreshedOrigin);
         }
         finally
         {

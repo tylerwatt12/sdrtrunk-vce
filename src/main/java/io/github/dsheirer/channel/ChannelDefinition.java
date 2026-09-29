@@ -58,11 +58,20 @@ public record ChannelDefinition(String configurationId, String protocolId, Strin
     }
 
     public record Source(List<Long> frequenciesHz, Long minimumFrequencyHz, Long maximumFrequencyHz,
-                         Long preferredFrequencyHz, String preferredTuner, Integer rotationDelayMs)
+                         Long preferredFrequencyHz, String preferredTuner, Integer rotationDelayMs,
+                         String sourceType, String senderId, String feedId)
     {
         public Source
         {
             frequenciesHz = List.copyOf(frequenciesHz != null ? frequenciesHz : List.of());
+        }
+
+        /** Compatibility constructor for local tuner sources created before source identity was explicit. */
+        public Source(List<Long> frequenciesHz, Long minimumFrequencyHz, Long maximumFrequencyHz,
+                      Long preferredFrequencyHz, String preferredTuner, Integer rotationDelayMs)
+        {
+            this(frequenciesHz, minimumFrequencyHz, maximumFrequencyHz, preferredFrequencyHz, preferredTuner,
+                rotationDelayMs, null, null, null);
         }
     }
 

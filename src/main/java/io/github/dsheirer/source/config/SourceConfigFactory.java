@@ -45,6 +45,9 @@ public class SourceConfigFactory
             case TUNER_MULTIPLE_FREQUENCIES:
                 retVal = new SourceConfigTunerMultipleFrequency();
                 break;
+            case REMOTE:
+                retVal = new SourceConfigRemote();
+                break;
             case NONE:
             default:
                 retVal = new SourceConfigNone();
@@ -90,6 +93,13 @@ public class SourceConfigFactory
                     copyMulti.setMinimumFrequency(originalMulti.getMinimumFrequency());
                     copyMulti.setMaximumFrequency(originalMulti.getMaximumFrequency());
                     return copyMulti;
+                case REMOTE:
+                    SourceConfigRemote originalRemote = (SourceConfigRemote)config;
+                    SourceConfigRemote copyRemote = new SourceConfigRemote();
+                    copyRemote.setSenderId(originalRemote.getSenderId());
+                    copyRemote.setFeedId(originalRemote.getFeedId());
+                    copyRemote.setFrequency(originalRemote.getFrequency());
+                    return copyRemote;
                 case NONE:
                 default:
                     return new SourceConfigNone();

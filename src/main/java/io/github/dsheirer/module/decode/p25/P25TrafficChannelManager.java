@@ -24,6 +24,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager.RemoteTrafficOpenResult;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
@@ -86,12 +87,17 @@ import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.remote.P25RemoteChannelDescriptor;
+import io.github.dsheirer.remote.P25RemotePhase;
+import io.github.dsheirer.remote.P25RemoteTrafficOpen;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -140,6 +146,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private static final String PHASE_2_ENCRYPTED_CALL_IGNORED =
         ENCRYPTED_CALL_IGNORED + " - PHASE 2 CHANNEL GRANT";
     private static final String PHASE_1_CALL_DETAILS = "PHASE 1 CALL ";
+    private static final int MAX_REMOTE_TRAFFIC_GENERATION_TOMBSTONES = 2_048;
 
     private Queue<Channel> mAvailablePhase1TrafficChannelQueue = new LinkedTransferQueue<>();
     private Queue<Channel> mAvailablePhase2TrafficChannelQueue = new LinkedTransferQueue<>();
@@ -168,6 +175,62 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     //Used only for data calls
     private DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
+    private final boolean mGrantAllocationEnabled;
+    private final Map<String,RemoteTrafficAllocation> mRemoteTrafficAllocations = new HashMap<>();
+    private final RemoteTrafficGenerationHistory mRemoteTrafficGenerations =
+        new RemoteTrafficGenerationHistory(MAX_REMOTE_TRAFFIC_GENERATION_TOMBSTONES);
+
+    private record RemoteTrafficAllocation(long generation, long frequency, P25RemotePhase phase, Channel channel)
+    {
+    }
+
+    /**
+     * Keeps a bounded recent replay window. Sender stream IDs are random UUIDs and TCP preserves frame order, so an
+     * indefinite history provides no additional normal-session protection while leaking one entry per completed call.
+     * Access is protected by the traffic manager lock.
+     */
+    static final class RemoteTrafficGenerationHistory
+    {
+        private final int mCapacity;
+        private final LinkedHashMap<String,Long> mGenerations = new LinkedHashMap<>();
+
+        RemoteTrafficGenerationHistory(int capacity)
+        {
+            if(capacity <= 0)
+            {
+                throw new IllegalArgumentException("Replay history capacity must be positive");
+            }
+
+            mCapacity = capacity;
+        }
+
+        Long get(String streamId)
+        {
+            return mGenerations.get(streamId);
+        }
+
+        void record(String streamId, long generation)
+        {
+            //Refresh an existing stream's insertion position so its newest generation stays in the replay window.
+            mGenerations.remove(streamId);
+            mGenerations.put(streamId, generation);
+
+            while(mGenerations.size() > mCapacity)
+            {
+                mGenerations.remove(mGenerations.keySet().iterator().next());
+            }
+        }
+
+        int size()
+        {
+            return mGenerations.size();
+        }
+
+        void clear()
+        {
+            mGenerations.clear();
+        }
+    }
 
     /**
      * Constructs an instance.
@@ -195,6 +258,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                     BooleanSupplier voiceDecryptionModuleLoaded)
     {
         mParentChannel = parentChannel;
+        mGrantAllocationEnabled = !(parentChannel.getSourceConfiguration() instanceof SourceConfigRemote);
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded);
         mBandplanOverrideRegistry = bandplanOverrideRegistry != null ? bandplanOverrideRegistry :
             P25BandplanOverrideRegistry.empty();
@@ -1097,7 +1161,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to
             // see if there is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !mIgnoreDataCalls &&
+            if(mGrantAllocationEnabled && !mAllocatedTrafficChannelMap.containsKey(frequency) && !mIgnoreDataCalls &&
                     (getCurrentControlFrequency() != frequency))
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
@@ -1888,6 +1952,176 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
+     * Allocates a host mirror only after the sender confirms that its physical traffic chain started. Remote control
+     * grants remain visible to activity tracking but never allocate from this host pool.
+     */
+    public RemoteTrafficOpenResult acceptRemoteTrafficOpen(P25RemoteTrafficOpen open)
+    {
+        if(open == null || open.control() || mGrantAllocationEnabled ||
+            !Objects.equals(mParentChannel.getConfigurationId(), open.parentConfigurationId()) ||
+            !(mParentChannel.getSourceConfiguration() instanceof SourceConfigRemote parentSource) ||
+            !Objects.equals(parentSource.getFeedId(), open.feedId()))
+        {
+            return RemoteTrafficOpenResult.REJECTED;
+        }
+
+        mLock.lock();
+
+        try
+        {
+            RemoteTrafficAllocation existing = mRemoteTrafficAllocations.get(open.streamId());
+
+            if(existing != null)
+            {
+                return existing.generation() == open.generation() && existing.frequency() == open.frequency() &&
+                    existing.phase() == open.phase() ? RemoteTrafficOpenResult.ALREADY_OPEN :
+                        RemoteTrafficOpenResult.REJECTED;
+            }
+
+            Long lastGeneration = mRemoteTrafficGenerations.get(open.streamId());
+
+            if(lastGeneration != null && open.generation() <= lastGeneration)
+            {
+                return RemoteTrafficOpenResult.REJECTED;
+            }
+
+            if(mAllocatedTrafficChannelMap.containsKey(open.frequency()))
+            {
+                return RemoteTrafficOpenResult.REJECTED;
+            }
+
+            Channel trafficChannel = (open.phase() == P25RemotePhase.PHASE_1 ?
+                mAvailablePhase1TrafficChannelQueue : mAvailablePhase2TrafficChannelQueue).poll();
+
+            if(trafficChannel == null)
+            {
+                return RemoteTrafficOpenResult.REJECTED;
+            }
+
+            syncTrafficChannelIdentity(trafficChannel);
+            SourceConfigRemote trafficSource = new SourceConfigRemote();
+            trafficSource.setSenderId(parentSource.getSenderId());
+            trafficSource.setFeedId(parentSource.getFeedId());
+            trafficSource.setFrequency(open.frequency());
+            trafficChannel.setSourceConfiguration(trafficSource);
+
+            ScrambleParameters scrambleParameters = null;
+
+            if(open.phase() == P25RemotePhase.PHASE_2 &&
+                trafficChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
+            {
+                scrambleParameters = new ScrambleParameters(open.wacn(), open.systemId(), open.nac());
+                phase2.setScrambleParameters(scrambleParameters.copy());
+            }
+
+            mAllocatedTrafficChannelMap.put(open.frequency(), trafficChannel);
+            mRemoteTrafficAllocations.put(open.streamId(),
+                new RemoteTrafficAllocation(open.generation(), open.frequency(), open.phase(), trafficChannel));
+            mRemoteTrafficGenerations.record(open.streamId(), open.generation());
+
+            ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel,
+                new P25RemoteChannelDescriptor(open.frequency(), open.phase()),
+                getRemoteGrantIdentifiers(open), this);
+            request.setRemoteTrafficOpen(open);
+            request.addPreloadDataContent(new P25FrequencyBandPreloadDataContent(getEffectiveFrequencyBands().values()));
+
+            if(open.phase() == P25RemotePhase.PHASE_1)
+            {
+                request.addPreloadDataContent(new P25P1NACPreloadDataContent(open.nac()));
+            }
+            else if(scrambleParameters != null)
+            {
+                request.addPreloadDataContent(new P25P2ScrambleParametersPreloadData(scrambleParameters.copy()));
+            }
+
+            if(getInterModuleEventBus() == null)
+            {
+                removeRemoteAllocation(trafficChannel);
+                mAllocatedTrafficChannelMap.remove(open.frequency());
+                returnTrafficChannelToPool(trafficChannel);
+                return RemoteTrafficOpenResult.REJECTED;
+            }
+
+            getInterModuleEventBus().post(request);
+            RemoteTrafficAllocation started = mRemoteTrafficAllocations.get(open.streamId());
+            return started != null && started.generation() == open.generation() ?
+                RemoteTrafficOpenResult.STARTING : RemoteTrafficOpenResult.REJECTED;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Seeds the remote traffic mirror from the grant already decoded on this host. The sender OPEN remains the sole
+     * allocation authority; this only preserves the talkgroup/radio context that a normal local allocation passes to
+     * its traffic chain. A Phase 2 OPEN represents both timeslots, so prefer the most recently started active grant
+     * when both slots are present. The other slot continues to receive its identifiers from traffic signalling.
+     */
+    private IdentifierCollection getRemoteGrantIdentifiers(P25RemoteTrafficOpen open)
+    {
+        P25TrafficChannelEventTracker tracker = mTS1ChannelGrantEventMap.get(open.frequency());
+
+        if(open.phase() == P25RemotePhase.PHASE_2)
+        {
+            P25TrafficChannelEventTracker timeslot2 = mTS2ChannelGrantEventMap.get(open.frequency());
+
+            if(tracker == null || tracker.isComplete() || timeslot2 != null && !timeslot2.isComplete() &&
+                timeslot2.getEvent().getTimeStart() > tracker.getEvent().getTimeStart())
+            {
+                tracker = timeslot2;
+            }
+        }
+
+        IdentifierCollection tracked = tracker != null && !tracker.isComplete() ?
+            tracker.getEvent().getIdentifierCollection() : null;
+
+        if(tracked == null)
+        {
+            return new IdentifierCollection();
+        }
+
+        IdentifierCollection copy = new IdentifierCollection(tracked.getIdentifiers());
+        copy.setTimeslot(tracked.getTimeslot());
+        return copy;
+    }
+
+    /** Stops only the exact active generation; stale CLOSE frames cannot tear down a replacement stream. */
+    public boolean acceptRemoteTrafficClose(String streamId, long generation)
+    {
+        Channel channel = null;
+        mLock.lock();
+
+        try
+        {
+            RemoteTrafficAllocation allocation = mRemoteTrafficAllocations.get(streamId);
+
+            if(allocation != null && allocation.generation() == generation)
+            {
+                channel = allocation.channel();
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(channel != null)
+        {
+            broadcast(new ChannelEvent(channel, Event.REQUEST_DISABLE));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void removeRemoteAllocation(Channel channel)
+    {
+        mRemoteTrafficAllocations.entrySet().removeIf(entry -> entry.getValue().channel() == channel);
+    }
+
+    /**
      * Sends a channel start request to the ChannelProcessingManager.
      *
      * Note: this method is not thread safe and the calling method must protect access using mLock.
@@ -2100,7 +2334,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(needsAllocation && !skipEncryptedAllocation && !(mIgnoreDataCalls && isDataChannelGrant))
+            if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation &&
+                !(mIgnoreDataCalls && isDataChannelGrant))
             {
                 Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -2159,7 +2394,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         tracker = createControlTracker(event, frequency, TimeslotMessage.TIMESLOT_1);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
-        if(needsAllocation && !skipEncryptedAllocation)
+        if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation)
         {
             Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -2244,7 +2479,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(needsAllocation && !skipEncryptedAllocation && !(mIgnoreDataCalls && isDataChannelGrant))
+            if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation &&
+                !(mIgnoreDataCalls && isDataChannelGrant))
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -2295,7 +2531,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         tracker = createControlTracker(event, frequency, timeslot);
 
         //Allocate a traffic channel for the downlink frequency if one isn't already allocated
-        if(needsAllocation && !skipEncryptedAllocation)
+        if(mGrantAllocationEnabled && needsAllocation && !skipEncryptedAllocation)
         {
             Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -2577,6 +2813,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         mAvailablePhase1TrafficChannelQueue.clear();
         mAvailablePhase2TrafficChannelQueue.clear();
+        mRemoteTrafficAllocations.clear();
+        mRemoteTrafficGenerations.clear();
         mTS1ChannelGrantEventMap.clear();
         mTS2ChannelGrantEventMap.clear();
         resetControlSourceState();
@@ -2750,6 +2988,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     switch(channelEvent.getEvent())
                     {
                         case NOTIFICATION_PROCESSING_STOP:
+                            removeRemoteAllocation(channel);
                             mAllocatedTrafficChannelMap.entrySet()
                                     .stream()
                                     .filter(entry -> entry.getValue() == channel)
@@ -2762,6 +3001,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                     });
                             break;
                         case NOTIFICATION_PROCESSING_START_REJECTED:
+                            removeRemoteAllocation(channel);
                             mAllocatedTrafficChannelMap.entrySet().stream()
                                     .filter(entry -> entry.getValue() == channel)
                                     .map(Map.Entry::getKey)
@@ -2800,6 +3040,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     switch(channelEvent.getEvent())
                     {
                         case NOTIFICATION_PROCESSING_STOP:
+                            removeRemoteAllocation(channel);
                             mAllocatedTrafficChannelMap.entrySet()
                                     .stream()
                                     .filter(entry -> entry.getValue() == channel)
@@ -2814,6 +3055,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                     });
                             break;
                         case NOTIFICATION_PROCESSING_START_REJECTED:
+                            removeRemoteAllocation(channel);
                             mAllocatedTrafficChannelMap.entrySet().stream()
                                     .filter(entry -> entry.getValue() == channel)
                                     .map(Map.Entry::getKey)

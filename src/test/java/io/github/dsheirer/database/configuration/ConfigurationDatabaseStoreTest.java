@@ -34,6 +34,7 @@ import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -225,6 +226,53 @@ class ConfigurationDatabaseStoreTest
         {
             assertTrue(resultSet.next());
             assertEquals(rememberedFrequency, resultSet.getLong("primary_frequency_hz"));
+        }
+    }
+
+    @Test
+    void roundTripsRemoteP25SourceAndProjectsItsFrequency() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("remote-source.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+
+        Channel channel = new Channel("Remote Control");
+        String configurationId = channel.getConfigurationId();
+        channel.setAliasListId(insertAliasList(database, "Remote P25", "P25"));
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigRemote source = new SourceConfigRemote();
+        source.setSenderId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        source.setFeedId("11111111-2222-4333-8444-555555555555");
+        source.setFrequency(851_012_500L);
+        channel.setSourceConfiguration(source);
+
+        TestConfiguration state = new TestConfiguration();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+
+        Channel restoredChannel = store.load().channels().getFirst();
+        assertEquals(configurationId, restoredChannel.getConfigurationId());
+        SourceConfigRemote restored = assertInstanceOf(SourceConfigRemote.class,
+            restoredChannel.getSourceConfiguration());
+        assertEquals(source.getSenderId(), restored.getSenderId());
+        assertEquals(source.getFeedId(), restored.getFeedId());
+        assertEquals(source.getFrequency(), restored.getFrequency());
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT primary_frequency_hz,
+                       json_extract(config_json, '$.sourceConfiguration.type') AS source_type,
+                       json_extract(config_json, '$.sourceConfiguration.senderId') AS sender_id,
+                       json_extract(config_json, '$.sourceConfiguration.feedId') AS feed_id
+                FROM configuration_channel
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(851_012_500L, resultSet.getLong("primary_frequency_hz"));
+            assertEquals("sourceConfigRemote", resultSet.getString("source_type"));
+            assertEquals(source.getSenderId(), resultSet.getString("sender_id"));
+            assertEquals(source.getFeedId(), resultSet.getString("feed_id"));
         }
     }
 

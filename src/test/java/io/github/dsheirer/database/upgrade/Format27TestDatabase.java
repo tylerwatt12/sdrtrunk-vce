@@ -42,7 +42,7 @@ public final class Format27TestDatabase
             {
                 throw new IllegalStateException("Global format 27 fixture fingerprint mismatch: " + fingerprint);
             }
-            if(DatabaseFormatCatalog.requireCurrent(connection).version() != 27)
+            if(DatabaseFormatCatalog.inspect(connection).version() != 27)
             {
                 throw new IllegalStateException("Global format 27 fixture marker mismatch");
             }

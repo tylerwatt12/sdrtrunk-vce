@@ -133,6 +133,13 @@ public abstract class P25P2Decoder extends FeedbackDecoder implements ISourceEve
         return mSymbolRate;
     }
 
+    @Override
+    public void stop()
+    {
+        mByteBufferAssembler.flush();
+        super.stop();
+    }
+
     /**
      * Current sample rate for this decoder
      */

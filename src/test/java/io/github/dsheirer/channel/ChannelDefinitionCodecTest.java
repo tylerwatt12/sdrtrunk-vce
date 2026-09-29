@@ -7,6 +7,7 @@ package io.github.dsheirer.channel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,6 +17,8 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.source.SourceType;
+import io.github.dsheirer.source.config.SourceConfigRemote;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -60,6 +63,54 @@ class ChannelDefinitionCodecTest
         assertEquals(Boolean.TRUE, read.settings().get("learn_announced_control_channels"));
         assertEquals(Boolean.TRUE, read.settings().get("ignore_encrypted_calls"));
         assertEquals(list.getId(), read.aliasListId());
+    }
+
+    @Test
+    void remoteP25SourceRoundTripsStableRoutingIdentity()
+    {
+        AliasListDefinition list = aliasList(20, AliasListFamily.P25);
+        String senderId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        String feedId = "11111111-2222-4333-8444-555555555555";
+        ChannelDefinition submitted = new ChannelDefinition(null, "p25-phase1", "County", "Remote", "Control",
+            null, list.getId(), new ChannelDefinition.Source(List.of(851_012_500L), null, null, null, null, null,
+                SourceType.REMOTE.name(), senderId.toUpperCase(), feedId),
+            mRegistry.require("p25-phase1").defaultSettings(), List.of(), List.of(), List.of(), List.of(),
+            ChannelDefinition.Observed.EMPTY);
+
+        Channel channel = mCodec.toChannel(submitted, list, null);
+        SourceConfigRemote source = assertInstanceOf(SourceConfigRemote.class, channel.getSourceConfiguration());
+        assertEquals(senderId, source.getSenderId());
+        assertEquals(feedId, source.getFeedId());
+        assertEquals(List.of(851_012_500L), channel.getFrequencyList());
+        assertTrue(channel.getTunerChannels().isEmpty());
+
+        ChannelDefinition restored = mCodec.fromChannel(channel);
+        assertEquals(SourceType.REMOTE.name(), restored.source().sourceType());
+        assertEquals(senderId, restored.source().senderId());
+        assertEquals(feedId, restored.source().feedId());
+        assertEquals(List.of(851_012_500L), restored.source().frequenciesHz());
+    }
+
+    @Test
+    void remoteSourceIsLimitedToP25TrunkedProfilesAndHasNoTunerOptions()
+    {
+        String senderId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        String feedId = "11111111-2222-4333-8444-555555555555";
+        AliasListDefinition analog = aliasList(21, AliasListFamily.NBFM);
+        ChannelDefinition.Source remote = new ChannelDefinition.Source(List.of(155_000_000L), null, null, null,
+            null, null, "REMOTE", senderId, feedId);
+        ChannelDefinition analogDefinition = new ChannelDefinition(null, "nbfm", null, null, "Remote", null,
+            analog.getId(), remote, mRegistry.require("nbfm").defaultSettings(), List.of(), List.of(), List.of(),
+            List.of(), ChannelDefinition.Observed.EMPTY);
+        assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(analogDefinition, analog, null));
+
+        AliasListDefinition p25 = aliasList(22, AliasListFamily.P25);
+        ChannelDefinition.Source remoteWithTuner = new ChannelDefinition.Source(List.of(851_012_500L), null, null,
+            null, "Airspy", null, "REMOTE", senderId, feedId);
+        ChannelDefinition p25Definition = new ChannelDefinition(null, "p25-phase2", null, null, "Remote", null,
+            p25.getId(), remoteWithTuner, mRegistry.require("p25-phase2").defaultSettings(), List.of(), List.of(),
+            List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+        assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(p25Definition, p25, null));
     }
 
     @Test

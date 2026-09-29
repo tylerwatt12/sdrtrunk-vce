@@ -10,6 +10,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.remote.RemoteOriginLookup;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
@@ -46,6 +47,7 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_ROW_SYSTEM_SCOPES = MAXIMUM_TOTAL_LIVE_ROWS * 2;
     private final ActivitySource mActivitySource;
     private final WebEntityNavigationCatalog mNavigationCatalog;
+    private final RemoteOriginLookup mRemoteOriginLookup;
     private final StatsLiveEventHub mChannelActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
@@ -65,21 +67,36 @@ final class StatsLiveService implements AutoCloseable
     StatsLiveService(ChannelProcessingManager channelProcessingManager,
                      WebEntityNavigationCatalog navigationCatalog)
     {
-        this(channelProcessingManager != null ?
-            new ModelActivitySource(channelProcessingManager.getChannelActivityModel()) : ActivitySource.EMPTY,
-            navigationCatalog);
+        this(channelProcessingManager, navigationCatalog, RemoteOriginLookup.EMPTY);
     }
 
-    private StatsLiveService(ActivitySource activitySource, WebEntityNavigationCatalog navigationCatalog)
+    StatsLiveService(ChannelProcessingManager channelProcessingManager,
+                     WebEntityNavigationCatalog navigationCatalog, RemoteOriginLookup remoteOriginLookup)
+    {
+        this(channelProcessingManager != null ?
+            new ModelActivitySource(channelProcessingManager.getChannelActivityModel()) : ActivitySource.EMPTY,
+            navigationCatalog, remoteOriginLookup);
+    }
+
+    private StatsLiveService(ActivitySource activitySource, WebEntityNavigationCatalog navigationCatalog,
+                             RemoteOriginLookup remoteOriginLookup)
     {
         mActivitySource = Objects.requireNonNull(activitySource, "Channel activity source cannot be null");
         mNavigationCatalog = navigationCatalog;
+        mRemoteOriginLookup = remoteOriginLookup != null ? remoteOriginLookup : RemoteOriginLookup.EMPTY;
     }
 
     static StatsLiveService fromActivitySource(ActivitySource activitySource,
                                                WebEntityNavigationCatalog navigationCatalog)
     {
-        return new StatsLiveService(activitySource, navigationCatalog);
+        return new StatsLiveService(activitySource, navigationCatalog, RemoteOriginLookup.EMPTY);
+    }
+
+    static StatsLiveService fromActivitySource(ActivitySource activitySource,
+                                               WebEntityNavigationCatalog navigationCatalog,
+                                               RemoteOriginLookup remoteOriginLookup)
+    {
+        return new StatsLiveService(activitySource, navigationCatalog, remoteOriginLookup);
     }
 
     void start()
@@ -95,7 +112,7 @@ final class StatsLiveService implements AutoCloseable
 
                 RowSystemScopeState scopes = new RowSystemScopeState();
                 ProjectionRun run = new ProjectionRun(mRunGeneration.incrementAndGet(), scopes,
-                    navigationSnapshot());
+                    navigationSnapshot(), remoteOriginSnapshot());
                 Thread worker = new ObserverThreadFactory("stats live projection")
                     .newThread(() -> projectionLoop(run));
                 run.mWorker = worker;
@@ -217,7 +234,8 @@ final class StatsLiveService implements AutoCloseable
     private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
     {
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        PreparedActivityEvent prepared = prepare(event, navigation, run.mRowSystemScopes);
+        RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
+        PreparedActivityEvent prepared = prepare(event, navigation, remoteOrigins, run.mRowSystemScopes);
 
         if(prepared == null)
         {
@@ -243,13 +261,14 @@ final class StatsLiveService implements AutoCloseable
 
             mEncodedChannelActivitySnapshot = null;
             run.mPublishedNavigation = navigation;
+            run.mPublishedRemoteOrigins = remoteOrigins;
             mChannelActivityHub.publish("activity_table", Map.copyOf(update));
         }
 
         if(run.mResyncRequired.getAndSet(false) && isCurrentRun(run))
         {
             Map<String,Object> authoritative = snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS,
-                navigationSnapshot(), run.mRowSystemScopes);
+                navigationSnapshot(), remoteOriginSnapshot(), run.mRowSystemScopes);
 
             synchronized(mLifecycleLock)
             {
@@ -264,22 +283,25 @@ final class StatsLiveService implements AutoCloseable
     private void publishNavigationRefreshIfNeeded(ProjectionRun run)
     {
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+        RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
 
-        if(run.mPublishedNavigation == navigation)
+        if(run.mPublishedNavigation == navigation && run.mPublishedRemoteOrigins == remoteOrigins)
         {
             return;
         }
 
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
-        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
+        Map<String,Object> authoritative = snapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation, remoteOrigins,
             run.mRowSystemScopes);
 
         synchronized(mLifecycleLock)
         {
-            if(isCurrentRun(run) && run.mPublishedNavigation != navigation)
+            if(isCurrentRun(run) && (run.mPublishedNavigation != navigation ||
+                run.mPublishedRemoteOrigins != remoteOrigins))
             {
                 mEncodedChannelActivitySnapshot = null;
                 run.mPublishedNavigation = navigation;
+                run.mPublishedRemoteOrigins = remoteOrigins;
                 mChannelActivityHub.publish("activity_resync", Map.of("snapshot", authoritative));
             }
         }
@@ -302,11 +324,13 @@ final class StatsLiveService implements AutoCloseable
 
     Map<String,Object> snapshot()
     {
-        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot(), mRowSystemScopeState);
+        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS, navigationSnapshot(), remoteOriginSnapshot(),
+            mRowSystemScopeState);
     }
 
     private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
                                         WebEntityNavigationCatalog.Snapshot navigation,
+                                        RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                         RowSystemScopeState rowSystemScopes)
     {
         List<ChannelActivitySnapshot> snapshots = source.tables().stream()
@@ -323,7 +347,8 @@ final class StatsLiveService implements AutoCloseable
             ChannelActivitySnapshot table = snapshots.get(index);
             int available = Math.max(0, maximumRows - rowsIncluded);
             int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
-            Map<String,Object> projected = activityTable(table, rowLimit, navigation, rowSystemScopes);
+            Map<String,Object> projected = activityTable(table, rowLimit, navigation, remoteOrigins,
+                rowSystemScopes);
             tables.add(projected);
             int included = projected.get("rows") instanceof List<?> rows ? rows.size() : 0;
             rowsIncluded += included;
@@ -360,11 +385,12 @@ final class StatsLiveService implements AutoCloseable
         long generation = mRunGeneration.get();
         ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
         WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
+        RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
         RowSystemScopeState rowSystemScopes = mRowSystemScopeState;
         EncodedSnapshot cached = mEncodedChannelActivitySnapshot;
 
         if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
-            cached.navigation() == navigation)
+            cached.navigation() == navigation && cached.remoteOrigins() == remoteOrigins)
         {
             return cached.payload();
         }
@@ -374,7 +400,7 @@ final class StatsLiveService implements AutoCloseable
             cached = mEncodedChannelActivitySnapshot;
 
             if(cached != null && cached.generation() == generation && cached.revision() == source.revision() &&
-                cached.navigation() == navigation)
+                cached.navigation() == navigation && cached.remoteOrigins() == remoteOrigins)
             {
                 return cached.payload();
             }
@@ -387,7 +413,8 @@ final class StatsLiveService implements AutoCloseable
             {
                 int candidateLimit = low + (high - low) / 2;
                 byte[] candidate = ApiHttpResponse.encodePayload(
-                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation, rowSystemScopes)));
+                    StatsApiV1Payload.present(snapshot(source, candidateLimit, navigation, remoteOrigins,
+                        rowSystemScopes)));
 
                 if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
                 {
@@ -405,7 +432,8 @@ final class StatsLiveService implements AutoCloseable
                 throw new IOException("Live channel-activity metadata exceeds the snapshot byte budget");
             }
 
-            EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation, best);
+            EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation,
+                remoteOrigins, best);
 
             if(mRunGeneration.get() == generation && mRowSystemScopeState == rowSystemScopes)
             {
@@ -423,6 +451,7 @@ final class StatsLiveService implements AutoCloseable
 
     private PreparedActivityEvent prepare(ChannelActivityEvent event,
                                           WebEntityNavigationCatalog.Snapshot navigation,
+                                          RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                           RowSystemScopeState rowSystemScopes)
     {
         String tableId = boundedText(event.snapshot().tableId(), MAXIMUM_LIVE_TEXT_LENGTH);
@@ -440,7 +469,8 @@ final class StatsLiveService implements AutoCloseable
         }
         else
         {
-            table = activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation, rowSystemScopes);
+            table = activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE, navigation, remoteOrigins,
+                rowSystemScopes);
         }
         return new PreparedActivityEvent(event.operation(), tableId, table);
     }
@@ -451,8 +481,23 @@ final class StatsLiveService implements AutoCloseable
             WebEntityNavigationCatalog.Snapshot.empty();
     }
 
+    private RemoteOriginLookup.OriginSnapshot remoteOriginSnapshot()
+    {
+        try
+        {
+            RemoteOriginLookup.OriginSnapshot snapshot = mRemoteOriginLookup.originSnapshot();
+            return snapshot != null ? snapshot : RemoteOriginLookup.OriginSnapshot.EMPTY;
+        }
+        catch(RuntimeException exception)
+        {
+            //Remote administration must never make the live projection unavailable.
+            return RemoteOriginLookup.OriginSnapshot.EMPTY;
+        }
+    }
+
     private Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows,
                                              WebEntityNavigationCatalog.Snapshot navigation,
+                                             RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                              RowSystemScopeState rowSystemScopes)
     {
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
@@ -465,6 +510,7 @@ final class StatsLiveService implements AutoCloseable
         table.put("site_name", boundedText(snapshot.siteName(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
+        putRemoteOrigin(table, remoteOrigins.find(snapshot.configurationId()));
         WebEntityRef.put(table, tableChannel != null ? tableChannel.entityRef() : null);
         if(tableSystemChannel != null && tableSystemChannel.radioSystemRef() != null)
         {
@@ -491,7 +537,7 @@ final class StatsLiveService implements AutoCloseable
         int included = Math.min(rowCount, Math.max(0, maximumRows));
         table.put("rows", snapshot.rows().stream().limit(included)
             .map(row -> activityRow(snapshot.tableId(), row, tableChannel, snapshot.site(), navigation,
-                rowSystemScopes)).toList());
+                remoteOrigins, rowSystemScopes)).toList());
         table.put("rows_total", rowCount);
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
@@ -511,6 +557,7 @@ final class StatsLiveService implements AutoCloseable
                                            WebEntityNavigationCatalog.Channel tableChannel,
                                            ChannelActivitySnapshot.Site site,
                                            WebEntityNavigationCatalog.Snapshot catalog,
+                                           RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                            RowSystemScopeState rowSystemScopes)
     {
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
@@ -537,6 +584,7 @@ final class StatsLiveService implements AutoCloseable
         row.put("key", boundedText(snapshot.key(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", configurationId, MAXIMUM_LIVE_TEXT_LENGTH);
+        putRemoteOrigin(row, remoteOrigins.find(configurationId));
         WebEntityRef.put(row, rowChannel != null ? rowChannel.entityRef() : null);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
         row.put("activation_order", snapshot.activationOrder());
@@ -743,6 +791,18 @@ final class StatsLiveService implements AutoCloseable
         return Map.copyOf(value);
     }
 
+    private static void putRemoteOrigin(Map<String,Object> values, RemoteOriginLookup.RemoteOrigin origin)
+    {
+        if(origin == null)
+        {
+            return;
+        }
+
+        // Live can be available without administrator authentication. Keep sender/feed identities and link health in
+        // the administrator-only Remote Links API while retaining the generic marker used for the cloud badge.
+        values.put("remote_origin", Map.of("remote", true));
+    }
+
     private static void putText(Map<String,Object> values, String key, Object value, int maximumLength)
     {
         if(value != null)
@@ -777,7 +837,9 @@ final class StatsLiveService implements AutoCloseable
     }
 
     private record EncodedSnapshot(long generation, long revision,
-                                   WebEntityNavigationCatalog.Snapshot navigation, byte[] payload)
+                                   WebEntityNavigationCatalog.Snapshot navigation,
+                                   RemoteOriginLookup.OriginSnapshot remoteOrigins,
+                                   byte[] payload)
     {
     }
 
@@ -801,14 +863,17 @@ final class StatsLiveService implements AutoCloseable
         private final AtomicBoolean mResyncRequired = new AtomicBoolean();
         private final Listener<ChannelActivityEvent> mListener = event -> receiveChannelActivity(this, event);
         private volatile WebEntityNavigationCatalog.Snapshot mPublishedNavigation;
+        private volatile RemoteOriginLookup.OriginSnapshot mPublishedRemoteOrigins;
         private volatile Thread mWorker;
 
         private ProjectionRun(long generation, RowSystemScopeState rowSystemScopes,
-                              WebEntityNavigationCatalog.Snapshot publishedNavigation)
+                              WebEntityNavigationCatalog.Snapshot publishedNavigation,
+                              RemoteOriginLookup.OriginSnapshot publishedRemoteOrigins)
         {
             mGeneration = generation;
             mRowSystemScopes = rowSystemScopes;
             mPublishedNavigation = publishedNavigation;
+            mPublishedRemoteOrigins = publishedRemoteOrigins;
         }
     }
 

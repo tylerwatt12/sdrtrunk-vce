@@ -36,7 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
-    public static final int CURRENT_VERSION = 27;
+    public static final int CURRENT_VERSION = 28;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -86,6 +86,7 @@ public final class DatabaseFormatCatalog
         "578ba3ea7686e7a04703a8e8536903cf4ab2bddb7ef2539ac67bef59feb704d2";
     private static final String FORMAT_27_FINGERPRINT =
         "5e4b968f42dd9a861d38d63824dd8c6989b1bb34f18ff9d09b98396dd786bca1";
+    private static final String FORMAT_28_FINGERPRINT = FORMAT_27_FINGERPRINT;
 
     private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
         "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
@@ -346,10 +347,21 @@ public final class DatabaseFormatCatalog
             "Keep the fixed primary administrator as the only ADMIN-tier account",
             "Convert each non-primary ADMIN account to USER without changing its credential or preferences"));
 
+    private static final FormatDescriptor FORMAT_28 = new FormatDescriptor(28, "remote-p25-source-v1",
+        "Saved remote P25 bitstream source configuration", FORMAT_28_FINGERPRINT, Map.of(),
+        List.of("main format 28"),
+        "src/test/java/io/github/dsheirer/database/upgrade/Format28TestDatabase.java", List.of(
+            "Preserve every usable existing saved channel and application setting unchanged",
+            "Repair or default only recoverable direct format-27 damage and report exact counts",
+            "Keep existing channels local; do not infer remote sender or feed identities",
+            "Allow an explicitly configured P25 trunked channel to persist stable sender and feed UUIDs plus frequency",
+            "Keep connection, session, stream, and generation identifiers out of persisted configuration"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
-            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27);
+            FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
+            FORMAT_28);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -455,9 +467,10 @@ public final class DatabaseFormatCatalog
             return new DetectedFormat(descriptor, true);
         }
 
-        if(FORMAT_25_FINGERPRINT.equals(fingerprint))
+        if(FORMAT_25_FINGERPRINT.equals(fingerprint) || FORMAT_28_FINGERPRINT.equals(fingerprint))
         {
-            //Formats 24 and 25 intentionally have identical DDL, preference generations, and preserved row content.
+            //These adjacent semantic formats intentionally have identical DDL, preference generations, and can have
+            //identical preserved row content.
             //No row invariant can prove which semantics produced a markerless file, including when an otherwise
             //repairable current component is damaged, so the global marker is the only safe authority.
             throw new FormatRejectionException("Markerless SQLite schema fingerprint " + fingerprint +
@@ -529,7 +542,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_27;
+        return FORMAT_28;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -812,7 +825,7 @@ public final class DatabaseFormatCatalog
             case 9, 10, 11 -> 4;
             case 12, 13, 14 -> 5;
             case 15, 16, 17, 18, 19, 20, 21, 22 -> 6;
-            case 23, 24, 25, 26, 27 -> 7;
+            case 23, 24, 25, 26, 27, 28 -> 7;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

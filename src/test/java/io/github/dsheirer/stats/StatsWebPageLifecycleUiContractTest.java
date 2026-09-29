@@ -25,7 +25,7 @@ class StatsWebPageLifecycleUiContractTest
         String source = readText(APP_JAVASCRIPT);
         int lifecycle = source.indexOf("import * as pageLifecycle from './core/page-lifecycle.js';");
         int systems = source.indexOf("import * as radioSystemsDirectory from './features/radio-systems-directory.js';");
-        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=288\"></script>");
+        int application = html.indexOf("<script type=\"module\" src=\"/assets/app.js?v=294\"></script>");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -119,7 +119,8 @@ class StatsWebPageLifecycleUiContractTest
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         String timeout = function(source, "function pageTimeout(callback, delay)");
         String close = function(source, "function closePageConnections()");
-        String qualityChart = function(source, "function qualityHistoryChart(channel, response, metric, domain)");
+        String qualityChart = function(source,
+            "function qualityHistoryChart(channel, response, metric, domain, decodeOnly = false)");
 
         assertOrdered(signalHealth, "await loadCurrent(true, true);",
             "if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);");

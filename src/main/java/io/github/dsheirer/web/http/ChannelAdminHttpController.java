@@ -396,12 +396,13 @@ public final class ChannelAdminHttpController
     }
 
     private record SourceRequest(List<Long> frequenciesHz, Long minimumFrequencyHz, Long maximumFrequencyHz,
-                                 Long preferredFrequencyHz, String preferredTuner, Integer rotationDelayMs)
+                                 Long preferredFrequencyHz, String preferredTuner, Integer rotationDelayMs,
+                                 String sourceType, String senderId, String feedId)
     {
         private ChannelDefinition.Source definition()
         {
             return new ChannelDefinition.Source(frequenciesHz, minimumFrequencyHz, maximumFrequencyHz,
-                preferredFrequencyHz, preferredTuner, rotationDelayMs);
+                preferredFrequencyHz, preferredTuner, rotationDelayMs, sourceType, senderId, feedId);
         }
     }
 

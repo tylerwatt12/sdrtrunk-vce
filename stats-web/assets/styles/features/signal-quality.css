@@ -119,6 +119,10 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.signal-history-overview.without-identity.decode-only {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .signal-history-identity {
   min-width: 0;
   padding: var(--space-2);
@@ -262,6 +266,10 @@
   .signal-current-grid,
   .signal-history-overview,
   .signal-history-overview.without-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-history-overview.without-identity.decode-only {
     grid-template-columns: 1fr;
   }
 }
