@@ -149,6 +149,72 @@ test('channel editor refreshes the voice-module override and renders the effecti
   expect(protocolRequests).toBe(3);
 });
 
+test('editing a channel opens the selected Alias List in a new tab', async ({ page }) => {
+  const configurationId = '00000000-0000-0000-0000-000000000001';
+  const profile = {
+    id: 'nbfm', label: 'NBFM', channel_kind: 'CONVENTIONAL', alias_family: 'NBFM',
+    sections: [{ id: 'general', label: 'General', fields: [
+      { path: 'system', label: 'System', type: 'text' },
+      { path: 'site', label: 'Site', type: 'text' },
+      { path: 'name', label: 'Name', type: 'text' },
+      { path: 'radioresolve_id', label: 'RadioResolve ID', type: 'text' },
+      { path: 'alias_list_id', label: 'Alias List', type: 'dynamic_select', required: true }
+    ] }]
+  };
+  const channel = {
+    configuration_id: configurationId, protocol_id: 'nbfm', system: 'Test system', site: 'Test site',
+    name: 'Test channel', radioresolve_id: '', alias_list_id: 1,
+    source: {}, settings: {}, frequency_map: [], event_logs: [], recorders: [], auxiliary_decoders: []
+  };
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const data = path === '/api/v1/auth/session' ? {
+      configured: true, authenticated: true, username: 'channel-admin', tier: 'admin', primary: true,
+      csrf_token: 'test-token', capabilities: { 'admin-channels': true, 'admin-aliases': true }
+    } : path === '/api/v1/admin/channels' ? {
+      revision: 1, channels: [{ ...channel, processing_state: 'STOPPED', editable: true }]
+    } : path === '/api/v1/admin/channels/options' ? {
+      revision: 1, alias_lists: [
+        { id: 1, name: 'First list', family: 'NBFM' },
+        { id: 2, name: 'Second list', family: 'NBFM' }
+      ], tuners: []
+    } : path === '/api/v1/admin/channels/protocols' ? { profiles: [profile] } :
+      path === `/api/v1/admin/channels/${configurationId}` ?
+        { revision: 1, channel, processing_state: 'STOPPED' } : null;
+    await route.fulfill({ status: data ? 200 : 404, contentType: 'application/json',
+      body: JSON.stringify(data ? apiData(data) : { error: { message: 'Not available in this browser contract' } }) });
+  });
+
+  await page.goto(`/app.html?view=channel-setup&channel=${configurationId}`);
+  const dialog = page.getByRole('dialog', { name: 'Edit Test channel' });
+  await expect(dialog).toBeVisible();
+  const select = dialog.getByLabel('Alias List', { exact: true });
+  const link = dialog.getByRole('link', { name: 'Open Alias List' });
+  await expect(link).toHaveAttribute('href', /view=aliases&list=1$/);
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  const selectBox = await select.boundingBox();
+  const linkBox = await link.boundingBox();
+  const radioResolveBox = await dialog.getByLabel('RadioResolve ID').boundingBox();
+  expect(linkBox.x).toBeGreaterThan(selectBox.x + selectBox.width);
+  expect(linkBox.y).toBeGreaterThan(radioResolveBox.y);
+
+  await select.selectOption('2');
+  await expect(link).toHaveAttribute('href', /view=aliases&list=2$/);
+  const popupPromise = page.waitForEvent('popup');
+  await link.click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/view=aliases&list=2$/);
+  await expect(dialog).toBeVisible();
+  await popup.close();
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  const mobileSelectBox = await select.boundingBox();
+  const mobileLinkBox = await link.boundingBox();
+  expect(mobileLinkBox.y).toBeGreaterThan(mobileSelectBox.y + mobileSelectBox.height);
+  expect(mobileLinkBox.x + mobileLinkBox.width).toBeLessThanOrEqual(390);
+});
+
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
   let revision = 40;

@@ -342,6 +342,25 @@
   gap: 5px;
 }
 
+.channel-alias-field {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.channel-alias-field > :not(.channel-alias-open) {
+  grid-column: 1;
+}
+
+.channel-alias-open {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  align-self: center;
+}
+
+.channel-alias-open[hidden] {
+  display: none;
+}
+
 .channel-editor-control {
   width: 100%;
 }
@@ -558,6 +577,15 @@
   .channel-editor-grid,
   .channel-multi-select {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-alias-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-alias-open {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .channel-map-header {

@@ -1701,8 +1701,8 @@ function aliasListLink(name, id) {
   return anchor(configuredLabel, href('aliases', { list: aliasListId }));
 }
 
-function externalAnchor(label, target) {
-  const element = anchor(label, target);
+function externalAnchor(label, target, className) {
+  const element = anchor(label, target, className);
   element.target = '_blank';
   element.rel = 'noopener noreferrer';
   return element;
@@ -19966,7 +19966,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
           const inlineAliasList = field.path === 'alias_list_id' && control instanceof HTMLSelectElement;
           let wrapper;
           if (inlineAliasList) {
-            wrapper = node('div', 'channel-editor-field ui-field');
+            wrapper = node('div', 'channel-editor-field ui-field channel-wide-field channel-alias-field');
             control.id = `channel-alias-list-${profile.id}`;
             const label = node('label', 'ui-field-label', field.label);
             label.htmlFor = control.id;
@@ -19987,7 +19987,7 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
             wrapper.append(node('small', 'ui-field-detail', CHANNEL_ENCRYPTED_SKIP_LOCK_HELP));
           }
           if (inlineAliasList) {
-            wrapper.append(inlineAliasListCreator({
+            const aliasListCreator = inlineAliasListCreator({
               select: control,
               family: profile.alias_family,
               getRevision: currentAliasListRevision,
@@ -20006,7 +20006,21 @@ async function openChannelEditorModal(mode = 'create', configurationId = null, p
                 control.value = option.value;
                 control.dispatchEvent(new Event('change', { bubbles: true }));
               }
-            }));
+            });
+            if (editing && aliasAdminAllowed()) {
+              const openAliasList = externalAnchor('Open Alias List', href('aliases'),
+                'ui-button ui-button-secondary channel-alias-open');
+              const syncAliasListLink = () => {
+                const listId = Number(control.value);
+                const selected = Number.isInteger(listId) && listId > 0;
+                openAliasList.hidden = !selected;
+                if (selected) openAliasList.href = href('aliases', { list: listId });
+              };
+              control.addEventListener('change', syncAliasListLink);
+              syncAliasListLink();
+              wrapper.append(openAliasList);
+            }
+            wrapper.append(aliasListCreator);
           }
           if (field.path === 'settings.use_bandplan_override' &&
               capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
