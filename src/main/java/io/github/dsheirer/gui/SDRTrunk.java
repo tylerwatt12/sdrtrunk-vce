@@ -1179,7 +1179,7 @@ public class SDRTrunk
     private JPanel getNetworkAccessPanel()
     {
         JPanel panel = new JPanel(new MigLayout("insets 0 6 2 6, fillx, hidemode 3", "[][grow,fill][]", "[][]"));
-        panel.add(new JLabel("Other devices:"), "cell 0 0");
+        panel.add(new JLabel("Sharable URL:"), "cell 0 0");
         mNetworkAccessUrlField = new JTextField("Checking network access…");
         mNetworkAccessUrlField.setEditable(false);
         mNetworkAccessUrlField.setToolTipText("Active listener and network address will appear here.");
