@@ -354,6 +354,23 @@ class RadioReferenceImportServiceTest
         }
     }
 
+    @Test
+    void preferredTalkgroupListMustBeAnExistingTrunkedFamily() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            assertTrue(fixture.importer.preferredTalkgroupAliasListExists(
+                aliasList(fixture, AliasListFamily.P25)));
+            assertTrue(fixture.importer.preferredTalkgroupAliasListExists(
+                aliasList(fixture, AliasListFamily.DMR)));
+            assertTrue(fixture.importer.preferredTalkgroupAliasListExists(
+                aliasList(fixture, AliasListFamily.NXDN)));
+            assertFalse(fixture.importer.preferredTalkgroupAliasListExists(
+                aliasList(fixture, AliasListFamily.NBFM)));
+            assertFalse(fixture.importer.preferredTalkgroupAliasListExists(Long.MAX_VALUE));
+        }
+    }
+
     private static ChannelDefinition copy(ChannelDefinition source, ChannelDefinition.Source sourceConfiguration,
                                           Map<String,Object> settings, List<String> recorders)
     {

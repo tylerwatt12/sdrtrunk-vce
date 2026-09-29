@@ -389,6 +389,16 @@ public final class RadioReferenceImportService
         return new LocalChannelSnapshot(options, catalog);
     }
 
+    /** Checks that a saved trunked-system preference names a local talkgroup Alias List. */
+    public boolean preferredTalkgroupAliasListExists(long aliasListId)
+    {
+        return aliasListId > 0 && mChannels.options().aliasLists().stream()
+            .anyMatch(candidate -> candidate.id() == aliasListId &&
+                (candidate.family().equals(AliasListFamily.P25.name()) ||
+                    candidate.family().equals(AliasListFamily.DMR.name()) ||
+                    candidate.family().equals(AliasListFamily.NXDN.name())));
+    }
+
     private long requireCompatibleAliasList(long aliasListId, String protocolId,
                                             ChannelAdministrationService.Options options)
     {

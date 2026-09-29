@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.preference.radioreference.RadioReferencePreference.PreferredAliasList;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Account;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Agency;
@@ -162,8 +163,34 @@ class RadioReferenceHttpControllerTest
                     .at("/0/id").intValue());
                 assertEquals(12, data(send(client, request(origin, "/bookmarks").GET()))
                     .at("/0/preferred_alias_list_id").intValue());
+                assertEquals(0, data(send(client, request(origin, "/system-preferences").GET()))
+                    .at("/items").size());
+                String preferredBody = "{\"system_id\":2001,\"preferred_alias_list_id\":12}";
+                assertEquals(12, data(send(client, jsonRequest(origin, "/system-preferences")
+                    .PUT(HttpRequest.BodyPublishers.ofString(preferredBody))))
+                    .at("/preferred_alias_list_id").longValue());
+                assertEquals(2001, data(send(client, request(origin, "/system-preferences").GET()))
+                    .at("/items/0/system_id").intValue());
                 assertEquals(0, data(send(client, jsonRequest(origin, "/bookmarks")
                     .method("DELETE", HttpRequest.BodyPublishers.ofString(bookmarkBody)))).size());
+                assertEquals(12, data(send(client, request(origin, "/system-preferences").GET()))
+                    .at("/items/0/preferred_alias_list_id").longValue());
+                assertEquals(400, send(client, jsonRequest(origin, "/system-preferences")
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString(
+                        "{\"system_id\":0}"))).statusCode());
+                assertTrue(data(send(client, jsonRequest(origin, "/system-preferences")
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString(
+                        "{\"system_id\":2001}")))).at("/preferred_alias_list_id").isNull());
+                assertTrue(data(send(client, request(origin, "/system-preferences").GET()))
+                    .at("/items/0/preferred_alias_list_id").isNull());
+                assertEquals(400, send(client, jsonRequest(origin, "/system-preferences")
+                    .PUT(HttpRequest.BodyPublishers.ofString(
+                        "{\"system_id\":2001,\"preferred_alias_list_id\":0}"))).statusCode());
+                assertEquals(400, send(client, jsonRequest(origin, "/system-preferences")
+                    .PUT(HttpRequest.BodyPublishers.ofString(
+                        "{\"system_id\":2001,\"preferred_alias_list_id\":999}"))).statusCode());
+                assertTrue(data(send(client, request(origin, "/system-preferences").GET()))
+                    .at("/items/0/preferred_alias_list_id").isNull());
 
                 for(String removedImportPath: List.of(
                     "/systems/site-preview?system_id=2001&site_id=3001",
@@ -213,6 +240,7 @@ class RadioReferenceHttpControllerTest
     {
         private final java.util.Map<String,io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark>
             bookmarks = new java.util.LinkedHashMap<>();
+        private final java.util.Map<Integer,PreferredAliasList> preferredAliasLists = new java.util.LinkedHashMap<>();
         private boolean credentialsStored;
         private String userName;
         private String password;
@@ -300,6 +328,34 @@ class RadioReferenceHttpControllerTest
         {
             bookmarks.remove(bookmark.key());
             return bookmarks();
+        }
+
+        @Override
+        public List<PreferredAliasList> preferredAliasLists()
+        {
+            return List.copyOf(preferredAliasLists.values());
+        }
+
+        @Override
+        public PreferredAliasList savePreferredAliasList(int systemId, long aliasListId)
+        {
+            PreferredAliasList choice = new PreferredAliasList(systemId, aliasListId);
+            preferredAliasLists.put(systemId, choice);
+            return choice;
+        }
+
+        @Override
+        public PreferredAliasList clearPreferredAliasList(int systemId)
+        {
+            PreferredAliasList cleared = new PreferredAliasList(systemId, null);
+            preferredAliasLists.put(systemId, cleared);
+            return cleared;
+        }
+
+        @Override
+        public boolean aliasListExists(long aliasListId)
+        {
+            return aliasListId == 12;
         }
     }
 

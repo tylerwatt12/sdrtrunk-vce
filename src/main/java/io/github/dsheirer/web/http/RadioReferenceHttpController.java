@@ -15,6 +15,7 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark;
+import io.github.dsheirer.preference.radioreference.RadioReferencePreference.PreferredAliasList;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountState;
@@ -69,14 +70,14 @@ public final class RadioReferenceHttpController
     public RadioReferenceHttpController(RadioReferenceDirectoryService service,
                                         RadioReferencePreference preference)
     {
-        this(service, new PreferenceSettings(preference), null);
+        this(service, new PreferenceSettings(preference, null), null);
     }
 
     public RadioReferenceHttpController(RadioReferenceDirectoryService service,
                                         RadioReferencePreference preference,
                                         RadioReferenceImportService importService)
     {
-        this(service, new PreferenceSettings(preference), importService);
+        this(service, new PreferenceSettings(preference, importService), importService);
     }
 
     RadioReferenceHttpController(RadioReferenceDirectoryService service, Settings settings)
@@ -118,6 +119,10 @@ public final class RadioReferenceHttpController
             else if((PATH + "/bookmarks").equals(path))
             {
                 bookmarks(exchange);
+            }
+            else if((PATH + "/system-preferences").equals(path))
+            {
+                systemPreferences(exchange);
             }
             else if((PATH + "/countries").equals(path))
             {
@@ -522,6 +527,41 @@ public final class RadioReferenceHttpController
         }
     }
 
+    private void systemPreferences(HttpExchange exchange) throws IOException, RequestException,
+        RadioReferenceDirectoryException
+    {
+        requireNoQuery(exchange);
+        ensureStoredSession();
+        if("GET".equals(exchange.getRequestMethod()))
+        {
+            requireEmptyBody(exchange, "GET");
+            ApiHttpResponse.sendData(exchange, 200,
+                new SystemPreferencesResponse(mSettings.preferredAliasLists()));
+        }
+        else if("PUT".equals(exchange.getRequestMethod()))
+        {
+            SystemPreferenceRequest request = read(exchange, SystemPreferenceRequest.class);
+            int systemId = requiredPositive(request.systemId(), "system_id");
+            long aliasListId = requiredPositive(request.preferredAliasListId(), "preferred_alias_list_id");
+            if(!mSettings.aliasListExists(aliasListId))
+            {
+                throw new RequestException(400, "invalid_request", "Alias List was not found");
+            }
+            ApiHttpResponse.sendData(exchange, 200,
+                mSettings.savePreferredAliasList(systemId, aliasListId));
+        }
+        else if("DELETE".equals(exchange.getRequestMethod()))
+        {
+            SystemPreferenceClearRequest request = read(exchange, SystemPreferenceClearRequest.class);
+            ApiHttpResponse.sendData(exchange, 200,
+                mSettings.clearPreferredAliasList(requiredPositive(request.systemId(), "system_id")));
+        }
+        else
+        {
+            methodNotAllowed(exchange, "GET, PUT, DELETE");
+        }
+    }
+
     private void location(HttpExchange exchange) throws IOException, RequestException,
         RadioReferenceDirectoryException
     {
@@ -904,15 +944,21 @@ public final class RadioReferenceHttpController
         List<Bookmark> bookmarks();
         List<Bookmark> saveBookmark(Bookmark bookmark);
         List<Bookmark> removeBookmark(Bookmark bookmark);
+        List<PreferredAliasList> preferredAliasLists();
+        PreferredAliasList savePreferredAliasList(int systemId, long aliasListId);
+        PreferredAliasList clearPreferredAliasList(int systemId);
+        boolean aliasListExists(long aliasListId);
     }
 
     private static final class PreferenceSettings implements Settings
     {
         private final RadioReferencePreference mPreference;
+        private final RadioReferenceImportService mImportService;
 
-        private PreferenceSettings(RadioReferencePreference preference)
+        private PreferenceSettings(RadioReferencePreference preference, RadioReferenceImportService importService)
         {
             mPreference = Objects.requireNonNull(preference);
+            mImportService = importService;
         }
 
         @Override
@@ -1000,6 +1046,30 @@ public final class RadioReferenceHttpController
         {
             return mPreference.removeBookmark(bookmark);
         }
+
+        @Override
+        public List<PreferredAliasList> preferredAliasLists()
+        {
+            return mPreference.getPreferredAliasLists();
+        }
+
+        @Override
+        public PreferredAliasList savePreferredAliasList(int systemId, long aliasListId)
+        {
+            return mPreference.savePreferredAliasList(systemId, aliasListId);
+        }
+
+        @Override
+        public PreferredAliasList clearPreferredAliasList(int systemId)
+        {
+            return mPreference.clearPreferredAliasList(systemId);
+        }
+
+        @Override
+        public boolean aliasListExists(long aliasListId)
+        {
+            return mImportService != null && mImportService.preferredTalkgroupAliasListExists(aliasListId);
+        }
     }
 
     private static class RequestException extends Exception
@@ -1038,6 +1108,18 @@ public final class RadioReferenceHttpController
     }
 
     private record LocationRequest(Integer countryId, Integer stateId, Integer countyId)
+    {
+    }
+
+    private record SystemPreferenceRequest(Integer systemId, Long preferredAliasListId)
+    {
+    }
+
+    private record SystemPreferenceClearRequest(Integer systemId)
+    {
+    }
+
+    private record SystemPreferencesResponse(List<PreferredAliasList> items)
     {
     }
 

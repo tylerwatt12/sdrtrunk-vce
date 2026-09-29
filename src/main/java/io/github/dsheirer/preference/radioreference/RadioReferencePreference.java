@@ -31,6 +31,8 @@ import java.util.prefs.BackingStoreException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * User preferences for the display of channel decode events
@@ -38,7 +40,7 @@ import java.util.List;
 public class RadioReferencePreference extends Preference
 {
     public static final int INVALID_ID = -1;
-    private Preferences mPreferences = Preferences.userNodeForPackage(RadioReferencePreference.class);
+    private final Preferences mPreferences;
     private static final String STORE_CREDENTIALS = "store.credentials";
     private static final String USER_NAME = "user.name";
     private static final String PASSWORD = "user.authorization";
@@ -46,6 +48,10 @@ public class RadioReferencePreference extends Preference
     private static final String PREFERRED_STATE_ID = "preferred.state";
     private static final String PREFERRED_COUNTY_ID = "preferred.county";
     private static final String BOOKMARKS = "bookmarks";
+    private static final String PREFERRED_ALIAS_LISTS = "preferred_alias_lists";
+    private static final String CLEARED_PREFERRED_ALIAS_LISTS = "cleared_preferred_alias_lists";
+    private static final String ALIAS_LIST_ID = "alias_list_id";
+    private static final String CLEARED = "cleared";
 
     private String mUserName;
     private String mPassword;
@@ -60,7 +66,13 @@ public class RadioReferencePreference extends Preference
      */
     public RadioReferencePreference(Listener<PreferenceType> updateListener)
     {
+        this(updateListener, Preferences.userNodeForPackage(RadioReferencePreference.class));
+    }
+
+    RadioReferencePreference(Listener<PreferenceType> updateListener, Preferences preferences)
+    {
         super(updateListener);
+        mPreferences = java.util.Objects.requireNonNull(preferences);
         loadSettings();
     }
 
@@ -370,6 +382,143 @@ public class RadioReferencePreference extends Preference
         catch(BackingStoreException exception)
         {
             throw new IllegalStateException("RadioReference bookmark could not be removed", exception);
+        }
+    }
+
+    /** A trunked system's Alias List choice; null marks an explicit clear. */
+    public record PreferredAliasList(int systemId, Long preferredAliasListId)
+    {
+        public PreferredAliasList
+        {
+            if(systemId <= 0 || preferredAliasListId != null && preferredAliasListId <= 0)
+            {
+                throw new IllegalArgumentException("RadioReference preferred Alias List is invalid");
+            }
+        }
+    }
+
+    /** Returns choices and explicit clears in system-ID order, importing older bookmark-only choices once. */
+    public synchronized List<PreferredAliasList> getPreferredAliasLists()
+    {
+        try
+        {
+            Preferences lists = mPreferences.node(PREFERRED_ALIAS_LISTS);
+            Preferences cleared = mPreferences.node(CLEARED_PREFERRED_ALIAS_LISTS);
+            Map<Integer,Long> values = new TreeMap<>();
+            for(String child: cleared.childrenNames())
+            {
+                try
+                {
+                    int systemId = Integer.parseInt(child);
+                    if(systemId > 0 && cleared.node(child).getBoolean(CLEARED, false))
+                    {
+                        values.put(systemId, null);
+                    }
+                }
+                catch(NumberFormatException ignored)
+                {
+                    // An invalid clear marker must not hide the remaining preferences.
+                }
+            }
+            for(String child: lists.childrenNames())
+            {
+                try
+                {
+                    int systemId = Integer.parseInt(child);
+                    long aliasListId = lists.node(child).getLong(ALIAS_LIST_ID, 0);
+                    if(systemId > 0 && aliasListId > 0 && !values.containsKey(systemId))
+                    {
+                        values.put(systemId, aliasListId);
+                    }
+                }
+                catch(NumberFormatException ignored)
+                {
+                    // An invalid saved item must not hide the remaining preferences.
+                }
+            }
+
+            // System bookmarks precede category bookmarks so the broader legacy choice wins.
+            boolean migrated = false;
+            for(Bookmark bookmark: getBookmarks())
+            {
+                int systemId = switch(bookmark.kind())
+                {
+                    case TRUNKED_SYSTEM -> bookmark.id();
+                    case TALKGROUP_CATEGORY -> bookmark.parentId();
+                    default -> INVALID_ID;
+                };
+                if(systemId > 0 && bookmark.preferredAliasListId() != null &&
+                    !values.containsKey(systemId))
+                {
+                    long aliasListId = bookmark.preferredAliasListId();
+                    lists.node(Integer.toString(systemId)).putLong(ALIAS_LIST_ID, aliasListId);
+                    values.put(systemId, aliasListId);
+                    migrated = true;
+                }
+            }
+            if(migrated)
+            {
+                lists.flush();
+            }
+
+            return values.entrySet().stream()
+                .map(entry -> new PreferredAliasList(entry.getKey(), entry.getValue())).toList();
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference preferred Alias Lists could not be loaded", exception);
+        }
+    }
+
+    public synchronized PreferredAliasList savePreferredAliasList(int systemId, long aliasListId)
+    {
+        PreferredAliasList choice = new PreferredAliasList(systemId, aliasListId);
+        try
+        {
+            Preferences lists = mPreferences.node(PREFERRED_ALIAS_LISTS);
+            lists.node(Integer.toString(systemId)).putLong(ALIAS_LIST_ID, aliasListId);
+            lists.flush();
+            Preferences cleared = mPreferences.node(CLEARED_PREFERRED_ALIAS_LISTS);
+            if(cleared.nodeExists(Integer.toString(systemId)))
+            {
+                cleared.node(Integer.toString(systemId)).removeNode();
+                cleared.flush();
+            }
+            notifyPreferenceUpdated();
+            return choice;
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference preferred Alias List could not be saved", exception);
+        }
+    }
+
+    /** Removes a choice and prevents an older bookmark from silently restoring it. */
+    public synchronized PreferredAliasList clearPreferredAliasList(int systemId)
+    {
+        if(systemId <= 0)
+        {
+            throw new IllegalArgumentException("RadioReference system ID must be positive");
+        }
+
+        try
+        {
+            String key = Integer.toString(systemId);
+            Preferences cleared = mPreferences.node(CLEARED_PREFERRED_ALIAS_LISTS);
+            cleared.node(key).putBoolean(CLEARED, true);
+            cleared.flush();
+            Preferences lists = mPreferences.node(PREFERRED_ALIAS_LISTS);
+            if(lists.nodeExists(key))
+            {
+                lists.node(key).removeNode();
+                lists.flush();
+            }
+            notifyPreferenceUpdated();
+            return new PreferredAliasList(systemId, null);
+        }
+        catch(BackingStoreException exception)
+        {
+            throw new IllegalStateException("RadioReference preferred Alias List could not be cleared", exception);
         }
     }
 
