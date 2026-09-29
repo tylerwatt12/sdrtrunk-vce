@@ -21017,6 +21017,7 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
     }));
   content.append(section('Access levels', body, titleActions));
   if (recordingsPolicies.length) {
+    const recordingsTitleActions = sectionActionHost();
     const recordingsBody = node('div', 'admin-section-body');
     recordingsBody.append(table(recordingsPolicies, [
       { id: 'capability', label: 'Recordings permission', render: accessPolicyIdentity,
@@ -21026,9 +21027,9 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
         sortValue: (policy) => accessTierRank(policy.requiredTier) }
     ], 'No recordings permissions are available', {
       type: 'admin-recordings-access', sortable: false, mobileCards: true,
-      tableClass: 'admin-responsive-table'
+      tableClass: 'admin-responsive-table', layoutMenuHost: recordingsTitleActions
     }));
-    content.append(section('Recordings', recordingsBody));
+    content.append(section('Recordings', recordingsBody, recordingsTitleActions));
   }
 }
 
