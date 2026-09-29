@@ -10,7 +10,7 @@
 @import url("./styles/tokens.css?v=9") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=1") layer(components);
 @import url("./styles/components/controls.css?v=21") layer(components);
-@import url("./styles/compositions/workspaces.css?v=13") layer(compositions);
+@import url("./styles/compositions/workspaces.css?v=14") layer(compositions);
 @import url("./styles/compositions/tables.css?v=8") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=11") layer(compositions);
 @import url("./styles/compositions/charts.css?v=3") layer(compositions);
@@ -27,7 +27,7 @@
 @import url("./styles/features/listen-map.css?v=2") layer(features);
 @import url("./styles/features/network-visualizer.css?v=8") layer(features);
 @import url("./styles/features/scanner.css?v=5") layer(features);
-@import url("./styles/features/aliases.css?v=10") layer(features);
+@import url("./styles/features/aliases.css?v=11") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=3") layer(features);
 @import url("./styles/features/administration.css?v=6") layer(features);

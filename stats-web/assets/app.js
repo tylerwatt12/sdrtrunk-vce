@@ -2179,26 +2179,25 @@ function detailedHistoryAvailable() {
 function detailedHistoryNotice() {
   const logging = statsLoggingState();
   if (!logging.available) {
-    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
+    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
       'Saved activity status could not be checked. Previously saved activity may still be available.');
   }
   if (logging.historyActive) return null;
   if (logging.historyRetained) {
     const lastSaved = logging.lastHistoryMs ?
       ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
-    return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
+    return node('div', 'ui-notice ui-notice-warning ui-notice-spaced ui-inset-notice',
       `New activity is not being saved.${lastSaved} Turn on Save individual activity events in ` +
       'Administration > Call output & activity to save new events.');
   }
   if (logging.historyConfigured && !logging.summaryActive) {
-    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
+    return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
       'Saved activity is unavailable because Save activity summaries is off. Turn it on in ' +
       'Administration > Call output & activity to begin saving activity.');
   }
-  return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
-    'No saved activity is available because Save individual activity events is off. Turn it on in ' +
-    'Administration > Call output & activity. Activity begins saving from that point forward; ' +
-    'earlier activity cannot be recovered.');
+  return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
+    'No saved activity is available. Turn on Save individual activity events in ' +
+    'Administration > Call output & activity.');
 }
 
 function databaseLoggingNotice(view) {
@@ -4225,7 +4224,7 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
     (aliasEditorPageController.canRefreshMutation?.(mutationRouteChanges) ||
       Number.isInteger(currentListId) && currentListId > 0 && requestedListId === currentListId);
   let refreshed = false;
-  resetAliasEditorSelection();
+  resetAliasEditorSelection(localRefresh ? aliasEditorSelectionScope : null);
   if (localRefresh) {
     try {
       refreshed = await aliasEditorPageController.refresh();
@@ -5024,7 +5023,7 @@ function aliasMutationSelectionIds() {
 }
 
 function aliasBulkBar(onClear) {
-  const bar = node('div', 'alias-bulk-bar');
+  const bar = node('div', 'alias-bulk-bar ui-selection-bar');
   bar.hidden = !aliasEditorSelection.size;
   const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
   const actions = [
@@ -5252,7 +5251,7 @@ function openAliasBulkModal(kind) {
 }
 
 function scanListMemberBulkBar(scanList, onClear) {
-  const bar = node('div', 'alias-bulk-bar scan-list-member-bulk-bar');
+  const bar = node('div', 'alias-bulk-bar ui-selection-bar scan-list-member-bulk-bar');
   bar.hidden = !aliasEditorSelection.size;
   const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
   const remove = node('button', 'ui-button ui-button-danger-quiet scan-list-member-remove',
@@ -6598,14 +6597,14 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
     resetAliasEditorSelection(selectionScope);
     updateSelection();
   });
-  block.append(bulkBar, selectionStatus);
+  block.append(selectionStatus);
   updateSelection();
   const pagerHost = node('div');
   pagerHost.append(pager(page));
   block.append(node('p', 'ui-section-note',
     'This view includes members from every alias list. Removing membership preserves each alias and its other ' +
       'scan-list memberships.'), pagerHost);
-  main.append(block);
+  main.append(bulkBar, block);
 
   const pageController = {
     isCurrent: () => aliasEditorPageController === pageController &&
@@ -6918,14 +6917,14 @@ async function renderAliases() {
     resetAliasEditorSelection(selectionScope);
     updateSelection();
   });
-  block.append(bulkBar, selectionStatus);
+  block.append(selectionStatus);
   renderTable();
   block.append(node('p', 'ui-section-note', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
     'Calls are completed transmissions. Signaling counts recognized system actions. A call can also have signaling, ' +
       'so the columns should not be added together. An em dash means unavailable; 0 means monitored with none ' +
       'observed.'), pagerHost);
-  main.append(block);
+  main.append(bulkBar, block);
 
   const pageController = {
     isCurrent: () => aliasEditorPageController === pageController &&

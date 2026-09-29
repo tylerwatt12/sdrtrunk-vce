@@ -272,8 +272,9 @@ assert.match(aliasMutationFinisher, /if \(!refreshed\) await render\(\)/,
   'Alias mutations should rerender only when an in-place refresh is not safe.');
 assert.match(aliasMutationFinisher, /if \(aliasEditorContext\?\.scanListScope\) delete mutationRouteChanges\.list/,
   'Scan-list mutations must not leave a stale alias-list route behind.');
-assert.match(aliasMutationFinisher, /resetAliasEditorSelection\(\);\s+if \(localRefresh\)/s,
-  'Alias mutations must clear selection before an in-place refresh redraws the toolbar.');
+assert.match(aliasMutationFinisher,
+  /resetAliasEditorSelection\(localRefresh \? aliasEditorSelectionScope : null\);\s+if \(localRefresh\)/s,
+  'Alias mutations must clear selection while retaining the scope of an in-place refreshed table.');
 
 vm.runInContext(`
   function closeReadOnlyModal() { return true; }
@@ -281,7 +282,7 @@ vm.runInContext(`
   async function render() {}
   let mutationRefreshSelection = null;
   ${aliasMutationFinisher}
-  globalThis.runMutationRefreshProbe = async () => {
+  globalThis.runMutationRefreshProbe = async (scope) => {
     aliasEditorContext = { selectedList: { alias_list_id: 7 }, scanListScope: null, revision: 1 };
     aliasEditorPageController = {
       isCurrent: () => true,
@@ -292,8 +293,10 @@ vm.runInContext(`
       }
     };
     aliasEditorSelection = new Set([11, 12]);
+    aliasEditorSelectionScope = scope;
     await finishAliasMutation({ setDirty: () => {} }, { revision: 2 });
-    return { refreshedSelection: mutationRefreshSelection, remainingSelection: [...aliasEditorSelection] };
+    return { refreshedSelection: mutationRefreshSelection, remainingSelection: [...aliasEditorSelection],
+      remainingScope: aliasEditorSelectionScope };
   };
 `, context);
 
@@ -502,11 +505,22 @@ async function verifyAsyncSelectionLifecycle() {
 
 async function verifyAdditionalAliasLifecycles() {
   await verifyAsyncSelectionLifecycle();
-  const result = await context.runMutationRefreshProbe();
+  const result = await context.runMutationRefreshProbe(selectionScope);
   assert.deepEqual(Array.from(result.refreshedSelection), [],
     'An in-place mutation refresh must see a cleared selection before it redraws the toolbar.');
   assert.deepEqual(Array.from(result.remainingSelection), [],
     'A completed mutation must leave the Alias Editor selection empty.');
+  assert.equal(result.remainingScope, selectionScope,
+    'An in-place mutation refresh must retain the scope used by Select All Matching.');
+
+  const messages = [];
+  context.api = async () => ({ alias_ids: [51, 52], count: 2 });
+  await context.selectAllMatching(selectionFilters, selectionScope,
+    { textContent: 'Select All Matching', disabled: false, isConnected: true },
+    (...message) => messages.push(message));
+  assert.deepEqual(Array.from(context.selectionState().ids), [51, 52],
+    'Select All Matching must select the returned aliases after saving and refreshing in place.');
+  assert.match(messages.at(-1)[0], /Selected all 2 matching aliases/);
 }
 
 verifyAdditionalAliasLifecycles().catch((error) => {

@@ -80,6 +80,11 @@
   box-shadow: var(--shadow-surface-soft);
 }
 
+.ui-section > .ui-notice,
+.ui-inset-notice {
+  margin: var(--space-3) var(--space-4);
+}
+
 .async-section-content {
   min-width: 0;
   max-width: 100%;
@@ -360,6 +365,11 @@
 @media (max-width: 560px) {
   .access-denied-card {
     margin: 18px auto;
+  }
+
+  .ui-section > .ui-notice,
+  .ui-inset-notice {
+    margin-inline: var(--space-3);
   }
 
   .ui-explainer-list {

@@ -329,21 +329,10 @@
 }
 
 .alias-bulk-bar {
-  min-height: 47px;
-  position: sticky;
-  z-index: 8;
-  bottom: 8px;
-  display: flex;
+  min-width: 0;
   flex-wrap: wrap;
-  align-items: center;
   gap: var(--space-2);
-  margin: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-raised);
+  margin: var(--space-2) 0;
 }
 
 .alias-bulk-count {
@@ -1077,11 +1066,6 @@
 
   .alias-tone-actions {
     grid-column: 1 / -1;
-  }
-
-  .alias-bulk-bar {
-    bottom: 0;
-    margin: 0 -1px;
   }
 
   .alias-bulk-clear {

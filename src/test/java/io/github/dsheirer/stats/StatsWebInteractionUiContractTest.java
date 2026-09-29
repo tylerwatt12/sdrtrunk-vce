@@ -155,7 +155,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(status.contains("History off"));
         assertTrue(historyNotice.contains("Save individual activity events"));
         assertTrue(historyNotice.contains("Administration > Call output & activity"));
-        assertTrue(historyNotice.contains("earlier activity cannot be recovered"));
+        assertTrue(historyNotice.contains("No saved activity is available."));
+        assertFalse(historyNotice.contains("earlier activity cannot be recovered"));
         assertTrue(historyNotice.contains("New activity is not being saved."));
         assertTrue(activity.contains("const historyNotice = detailedHistoryNotice()"));
         assertTrue(activity.contains("Detailed event history is enabled, but no matching activity has been recorded yet."));
@@ -318,7 +319,7 @@ class StatsWebInteractionUiContractTest
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"246\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"251\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -669,7 +670,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertFalse(html.contains("localStorage"));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=216"));
+        assertTrue(html.contains("/assets/app.css?v=220"));
         assertTrue(function(source, "function storedTheme()")
             .contains("activeUserPreferences().appearance.theme"));
         assertTrue(function(source, "function setTheme(theme)")
